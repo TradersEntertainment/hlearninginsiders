@@ -1,10 +1,14 @@
 {% extends "base.html" %}
 {% block title %}{{ symbol }} — HL Insider Radar{% endblock %}
+{% block head %}{% if scanning %}<meta http-equiv="refresh" content="12">{% endif %}{% endblock %}
 {% block content %}
 {% if not ticker %}
 <div class="panel"><p><b>{{ symbol }}</b> HL hisse evreninde bulunamadı.
 <a href="/{{ k }}">Evrendeki coin'lere bak</a>.</p></div>
 {% else %}
+{% if scanning %}
+<div class="scanbar">▓ TARAMA SÜRÜYOR — balina pozisyonları toplanıyor, sayfa kendini yenileyecek…</div>
+{% endif %}
 <div class="panel">
   <h2>{{ symbol }} <span class="dim">({{ coin }})</span></h2>
   <span class="stat">Mark <b>{{ summ.mark|px }}</b>
@@ -16,7 +20,7 @@
   {% if event %}<span class="stat warn">📅 Earnings: <b>{{ event.date_et }}</b>
     {{ {'amc':'AMC','bmo':'BMO'}.get(event.hour_hint,'?') }}</span>{% endif %}
   <form method="post" action="/t/{{ symbol }}/scan{{ k }}" style="display:inline">
-    <button type="submit">🔍 Şimdi tara</button>
+    <button type="submit">⟳ Yeniden tara</button>
   </form>
   <div class="dim" style="margin-top:6px">
     Long {{ long_total|usd }} / Short {{ short_total|usd }}
@@ -25,11 +29,15 @@
 </div>
 
 <div class="panel">
-  <h2>🐋 En büyük pozisyonlar</h2>
+  <h2>🐋 En büyük pozisyonlar <span style="text-transform:none">· güncel fiyat: <b>{{ summ.mark|px }}</b></span></h2>
   {% if rows %}
   <table>
     <tr><th>#</th><th>Skor</th><th class="l">Adres</th><th>Yön</th><th>Notional</th>
-        <th>Entry</th><th>Kald.</th><th>Liq</th><th>uPnL</th><th>Yaş</th><th class="l">Şüphe nedenleri</th></tr>
+        <th>Entry</th><th>Kald.</th><th>Liq</th><th>uPnL</th>
+        <th title="pozisyonun ilk açılışı">Açılış</th>
+        <th title="pozisyona son ekleme">Son ➕</th>
+        <th title="pozisyondan son kırpma">Son ✂</th>
+        <th class="l">Şüphe nedenleri</th></tr>
     {% for p in rows %}
     <tr>
       <td class="dim">{{ loop.index }}</td>
@@ -42,15 +50,18 @@
       <td>{{ p.liq_px|px }}</td>
       <td class="{{ 'long' if p.upnl>0 else 'short' }}">{{ p.upnl|usd }}</td>
       <td>{{ p.opened_ts|age }}</td>
+      <td class="long">{{ p.last_add_ts|age if p.last_add_ts else '-' }}</td>
+      <td class="short">{{ p.last_trim_ts|age if p.last_trim_ts else '-' }}</td>
       <td class="l reasons">{{ p.reasons }}</td>
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Henüz pozisyon taranmadı — "Şimdi tara"ya bas.</p>{% endif %}
+  {% elif scanning %}<p class="dim">▓ İlk tarama sürüyor — birazdan burada olacaklar…</p>
+  {% else %}<p class="dim">Havuzda bu coin için açık pozisyon bulunamadı (havuz büyüdükçe dolar).</p>{% endif %}
 </div>
 
 <div class="panel">
-  <h2>💣 Likidasyona en yakın büyük pozisyonlar</h2>
+  <h2>💣 Likidasyona en yakın büyük pozisyonlar <span style="text-transform:none">· güncel fiyat: <b>{{ summ.mark|px }}</b> · mesafe ≤ %{{ max_liq|int }}</span></h2>
   {% if liq_rows %}
   <table>
     <tr><th>#</th><th class="l">Adres</th><th>Yön</th><th>Notional</th>

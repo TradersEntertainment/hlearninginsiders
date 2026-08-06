@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS positions_current(
   side TEXT, szi REAL, entry_px REAL, leverage REAL,
   liq_px REAL, upnl REAL, notional REAL,
   opened_ts INTEGER, score INTEGER, score_reasons TEXT,
+  last_add_ts INTEGER, last_trim_ts INTEGER,
   PRIMARY KEY(coin, address)
 );
 CREATE TABLE IF NOT EXISTS position_snapshots(
@@ -53,7 +54,8 @@ CREATE TABLE IF NOT EXISTS position_snapshots(
   coin TEXT, address TEXT, ts INTEGER,
   side TEXT, szi REAL, entry_px REAL, leverage REAL,
   liq_px REAL, upnl REAL, notional REAL,
-  score INTEGER, score_reasons TEXT
+  score INTEGER, score_reasons TEXT,
+  last_add_ts INTEGER, last_trim_ts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_snap_event ON position_snapshots(event_id, phase);
 CREATE TABLE IF NOT EXISTS asset_metrics(
@@ -75,6 +77,7 @@ CREATE TABLE IF NOT EXISTS alerts_log(
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_kind_key ON alerts_log(kind, key, ts);
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS scans(coin TEXT PRIMARY KEY, ts INTEGER);
 """
 
 
@@ -96,11 +99,26 @@ async def db():
         await conn.close()
 
 
+# Var olan (canlı) DB'lere kolon ekleyen migration'lar — "zaten var" hatası yutulur
+MIGRATIONS = [
+    "ALTER TABLE positions_current ADD COLUMN last_add_ts INTEGER",
+    "ALTER TABLE positions_current ADD COLUMN last_trim_ts INTEGER",
+    "ALTER TABLE position_snapshots ADD COLUMN last_add_ts INTEGER",
+    "ALTER TABLE position_snapshots ADD COLUMN last_trim_ts INTEGER",
+    "ALTER TABLE addresses ADD COLUMN last_deposit_ts INTEGER",
+]
+
+
 async def init_db(path: str) -> None:
     set_db_path(path)
     conn = await aiosqlite.connect(path)
     try:
         await conn.executescript(SCHEMA)
+        for mig in MIGRATIONS:
+            try:
+                await conn.execute(mig)
+            except Exception:
+                pass  # kolon zaten var
         await conn.commit()
     finally:
         await conn.close()

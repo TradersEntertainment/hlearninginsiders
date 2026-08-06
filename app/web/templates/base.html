@@ -4,58 +4,102 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}HL Insider Radar{% endblock %}</title>
+{% block head %}{% endblock %}
 <style>
-:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--dim:#8b949e;
---green:#3fb950;--red:#f85149;--amber:#d29922;--accent:#58a6ff}
+:root{
+--bg:#000502;--panel:rgba(0,14,4,.88);--border:#0e3d18;
+--fg:#9dffb0;--bright:#00ff41;--dim:#2e8b47;
+--green:#00ff41;--red:#ff5544;--amber:#ffb000;--accent:#5cff8f
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);
-font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+html{background:var(--bg)}
+body{margin:0;background:transparent;color:var(--fg);
+font:14px/1.55 "Courier New",ui-monospace,SFMono-Regular,Menlo,monospace}
+canvas#rain{position:fixed;inset:0;z-index:-2;opacity:.14}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:999;
+background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px)}
 a{color:var(--accent);text-decoration:none}
-a:hover{text-decoration:underline}
-header{display:flex;gap:16px;align-items:center;padding:12px 20px;
-border-bottom:1px solid var(--border);flex-wrap:wrap}
-header h1{font-size:16px;margin:0}
+a:hover{color:var(--bright);text-shadow:0 0 8px rgba(0,255,65,.8)}
+header{display:flex;gap:16px;align-items:center;padding:12px 20px;flex-wrap:wrap;
+border-bottom:1px solid var(--border);background:rgba(0,10,3,.9);
+box-shadow:0 0 18px rgba(0,255,65,.08)}
+header h1{font-size:16px;margin:0;letter-spacing:.06em}
+header h1 a{color:var(--bright);text-shadow:0 0 10px rgba(0,255,65,.65)}
 header form{display:flex;gap:8px}
-input[type=text]{background:var(--panel);border:1px solid var(--border);
-color:var(--fg);padding:6px 10px;border-radius:6px;font:inherit;width:160px}
-button{background:#238636;border:1px solid #2ea043;color:#fff;padding:6px 14px;
-border-radius:6px;font:inherit;cursor:pointer}
-button.gray{background:var(--panel);border-color:var(--border)}
+input[type=text]{background:#000;border:1px solid var(--border);color:var(--bright);
+padding:6px 10px;border-radius:3px;font:inherit;width:170px;outline:none;
+caret-color:var(--bright)}
+input[type=text]:focus{border-color:var(--bright);box-shadow:0 0 10px rgba(0,255,65,.35)}
+input::placeholder{color:#1d6b31}
+button{background:transparent;border:1px solid var(--bright);color:var(--bright);
+padding:6px 14px;border-radius:3px;font:inherit;cursor:pointer;letter-spacing:.05em;
+text-transform:uppercase;transition:all .15s}
+button:hover{background:var(--bright);color:#000;box-shadow:0 0 16px rgba(0,255,65,.6)}
 main{padding:20px;max-width:1200px;margin:0 auto}
-.panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;
-padding:14px 16px;margin-bottom:18px;overflow-x:auto}
-.panel h2{font-size:14px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;
-letter-spacing:.05em}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;
+padding:14px 16px;margin-bottom:18px;overflow-x:auto;
+box-shadow:0 0 14px rgba(0,255,65,.05), inset 0 0 40px rgba(0,255,65,.02)}
+.panel h2{font-size:13px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;
+letter-spacing:.14em;border-bottom:1px dashed var(--border);padding-bottom:6px}
 table{border-collapse:collapse;width:100%;white-space:nowrap}
-th,td{padding:5px 10px;text-align:right;border-bottom:1px solid var(--border)}
-th{color:var(--dim);font-weight:600;font-size:12px}
+th,td{padding:5px 10px;text-align:right;border-bottom:1px solid rgba(14,61,24,.6)}
+th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
 th:first-child,td:first-child,th.l,td.l{text-align:left}
-tr:hover td{background:#1c2129}
-.long{color:var(--green);font-weight:700}
-.short{color:var(--red);font-weight:700}
-.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:12px;font-weight:700}
-.b-hi{background:#67060c;color:#ffdcd7}
-.b-mid{background:#5a3e00;color:#ffe8a3}
-.b-lo{background:#21262d;color:var(--dim)}
+tr:hover td{background:rgba(0,255,65,.07)}
+.long{color:var(--green);font-weight:700;text-shadow:0 0 6px rgba(0,255,65,.5)}
+.short{color:var(--red);font-weight:700;text-shadow:0 0 6px rgba(255,85,68,.5)}
+.badge{display:inline-block;padding:1px 8px;border-radius:2px;font-size:12px;font-weight:700;
+border:1px solid}
+.b-hi{color:var(--red);border-color:var(--red);text-shadow:0 0 8px rgba(255,85,68,.8);
+animation:blink 1.2s step-end infinite}
+.b-mid{color:var(--amber);border-color:var(--amber);text-shadow:0 0 6px rgba(255,176,0,.6)}
+.b-lo{color:var(--dim);border-color:var(--border)}
+@keyframes blink{50%{opacity:.55}}
 .stat{display:inline-block;margin-right:22px}
-.stat b{font-size:17px}
+.stat b{font-size:16px;color:var(--bright)}
 .dim{color:var(--dim)}
 .reasons{font-size:12px;color:var(--amber);white-space:normal}
 .warn{color:var(--amber)}
-footer{padding:16px 20px;color:var(--dim);font-size:12px}
+.scanbar{border:1px dashed var(--bright);color:var(--bright);padding:8px 12px;
+border-radius:3px;margin-bottom:14px;animation:blink 1.6s step-end infinite}
+footer{padding:16px 20px;color:#1d6b31;font-size:12px}
+.cursor::after{content:"█";animation:blink .9s step-end infinite}
 </style>
 </head>
 <body>
+<canvas id="rain"></canvas>
 <header>
-  <h1>🕵️ <a href="/{{ k }}" style="color:inherit">HL Insider Radar</a></h1>
+  <h1><a href="/{{ k }}">HL INSIDER RADAR</a><span class="cursor"></span></h1>
   <form action="/{{ k }}" method="get">
     {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
     <input type="text" name="q" placeholder="ticker ara: SNDK" autofocus>
     <button type="submit">Ara</button>
   </form>
-  <a href="/settings{{ k }}" title="Ayarlar">⚙️ ayarlar</a>
+  <a href="/settings{{ k }}" title="Ayarlar">⚙ ayarlar</a>
 </header>
 <main>{% block content %}{% endblock %}</main>
-<footer>Gözlem aracıdır, yatırım tavsiyesi değildir. Veriler Hyperliquid'in halka açık API'sinden.</footer>
+<footer>&gt; gözlem aracıdır, yatırım tavsiyesi değildir. veriler hyperliquid'in halka açık api'sinden._</footer>
+<script>
+(function(){
+  var c=document.getElementById('rain');if(!c)return;
+  var x=c.getContext('2d'),fs=14,W,H,cols,drops;
+  function rs(){W=c.width=innerWidth;H=c.height=innerHeight;
+    cols=Math.floor(W/fs);drops=[];
+    for(var i=0;i<cols;i++)drops[i]=Math.random()*H/fs}
+  rs();addEventListener('resize',rs);
+  var chars="アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF$Ξ";
+  function tick(){
+    x.fillStyle="rgba(0,5,2,0.08)";x.fillRect(0,0,W,H);
+    x.font=fs+"px monospace";
+    for(var i=0;i<cols;i++){
+      var ch=chars[(Math.random()*chars.length)|0];
+      x.fillStyle=Math.random()>0.97?"#c8ffc8":"#00ff41";
+      x.fillText(ch,i*fs,drops[i]*fs);
+      if(drops[i]*fs>H&&Math.random()>0.975)drops[i]=0;
+      drops[i]++}}
+  if(!(matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)){
+    setInterval(tick,66)}
+})();
+</script>
 </body>
 </html>

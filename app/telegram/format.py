@@ -86,9 +86,14 @@ def pos_line(i: int, p: dict) -> str:
     lev = f"{p['leverage']:.0f}x" if p.get("leverage") else "?"
     liq = f"liq {px(p['liq_px'])}" if p.get("liq_px") else "liq -"
     flags = _flags(p)
+    timeline = f"aç:{age_str(p.get('opened_ts'))}"
+    if p.get("last_add_ts"):
+        timeline += f" ➕{age_str(p['last_add_ts'])}"
+    if p.get("last_trim_ts"):
+        timeline += f" ✂{age_str(p['last_trim_ts'])}"
     return (f"{i}. {score_badge(p.get('score'))} {alink(p['address'])} {side} "
             f"<b>{usd(p['notional'])}</b> @{px(p['entry_px'])} {lev} {liq} "
-            f"│ {age_str(p.get('opened_ts'))}" + (f" │ {flags}" if flags else ""))
+            f"│ {timeline}" + (f" │ {flags}" if flags else ""))
 
 
 def _ls_balance(rows: list[dict]) -> str:

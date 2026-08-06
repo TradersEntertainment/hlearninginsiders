@@ -90,16 +90,28 @@ def _parse_positions(state: dict, coin: str) -> list[dict]:
     return out
 
 
-async def opened_ts_from_fills(coin: str, address: str, side: str, lookback_days: int) -> int | None:
-    """Yerel fill kayıtlarından yaklaşık pozisyon açılış zamanı."""
-    want = "buy" if side == "long" else "sell"
+async def timeline_from_fills(coin: str, address: str, side: str,
+                              lookback_days: int) -> dict:
+    """Yerel fill kayıtlarından yaklaşık zaman çizelgesi:
+    opened (ilk açılış), last_add (son ekleme), last_trim (son kırpma)."""
+    want_add = "buy" if side == "long" else "sell"
+    want_trim = "sell" if side == "long" else "buy"
     since = now() - lookback_days * 86400
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT ts FROM fills WHERE coin=? AND address=? AND side=? AND ts>=?"
-            " ORDER BY ts ASC LIMIT 1", (coin, address, want, since))
+            "SELECT MIN(ts) a, MAX(ts) b FROM fills"
+            " WHERE coin=? AND address=? AND side=? AND ts>=?",
+            (coin, address, want_add, since))
         row = await cur.fetchone()
-        return row["ts"] if row else None
+        opened, last_add = (row["a"], row["b"]) if row else (None, None)
+        trim_since = opened or since
+        cur = await conn.execute(
+            "SELECT MAX(ts) t FROM fills"
+            " WHERE coin=? AND address=? AND side=? AND ts>=?",
+            (coin, address, want_trim, trim_since))
+        row = await cur.fetchone()
+        last_trim = row["t"] if row else None
+    return {"opened": opened, "last_add": last_add, "last_trim": last_trim}
 
 
 async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
@@ -108,6 +120,9 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
     addrs = await candidates(cfg, client, coin)
     if max_candidates:
         addrs = addrs[:max_candidates]
+    async with db() as conn:
+        await conn.execute("INSERT OR REPLACE INTO scans(coin, ts) VALUES(?,?)",
+                           (coin, now()))
     if not addrs:
         return []
     log.info("%s taranıyor: %d aday adres", coin, len(addrs))
@@ -128,6 +143,9 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
         for addr, positions in results:
             if positions is None:
                 continue
+            # toz filtresi: eşik altı pozisyon = yok say
+            positions = [p for p in positions
+                         if p["notional"] >= cfg.min_position_notional]
             if not positions:
                 await conn.execute(
                     "DELETE FROM positions_current WHERE coin=? AND address=?", (coin, addr))
@@ -136,26 +154,33 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
             p["address"] = addr
             p["coin"] = coin
             found.append(p)
-    # açılış zamanı (yerel fill'lerden, yaklaşık)
+    # zaman çizelgesi (yerel fill'lerden, yaklaşık; derin taramada API ile netleşir)
     for p in found:
-        p["opened_ts"] = await opened_ts_from_fills(
-            coin, p["address"], p["side"], cfg.fills_lookback_days)
+        tl = await timeline_from_fills(coin, p["address"], p["side"],
+                                       cfg.fills_lookback_days)
+        p["opened_ts"] = tl["opened"]
+        p["last_add_ts"] = tl["last_add"]
+        p["last_trim_ts"] = tl["last_trim"]
 
     async with db() as conn:
         for p in found:
             await conn.execute(
                 """INSERT INTO positions_current
-                   (coin,address,ts,side,szi,entry_px,leverage,liq_px,upnl,notional,opened_ts,score,score_reasons)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   (coin,address,ts,side,szi,entry_px,leverage,liq_px,upnl,notional,
+                    opened_ts,score,score_reasons,last_add_ts,last_trim_ts)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(coin,address) DO UPDATE SET
                      ts=excluded.ts, side=excluded.side, szi=excluded.szi,
                      entry_px=excluded.entry_px, leverage=excluded.leverage,
                      liq_px=excluded.liq_px, upnl=excluded.upnl, notional=excluded.notional,
                      opened_ts=COALESCE(excluded.opened_ts, positions_current.opened_ts),
                      score=COALESCE(excluded.score, positions_current.score),
-                     score_reasons=COALESCE(excluded.score_reasons, positions_current.score_reasons)""",
+                     score_reasons=COALESCE(excluded.score_reasons, positions_current.score_reasons),
+                     last_add_ts=COALESCE(excluded.last_add_ts, positions_current.last_add_ts),
+                     last_trim_ts=COALESCE(excluded.last_trim_ts, positions_current.last_trim_ts)""",
                 (coin, p["address"], ts, p["side"], p["szi"], p["entry_px"], p["leverage"],
-                 p["liq_px"], p["upnl"], p["notional"], p.get("opened_ts"), None, None))
+                 p["liq_px"], p["upnl"], p["notional"], p.get("opened_ts"), None, None,
+                 p.get("last_add_ts"), p.get("last_trim_ts")))
 
     found.sort(key=lambda p: p["notional"], reverse=True)
     log.info("%s: %d pozisyon bulundu (en büyük: $%.0f)",
@@ -169,8 +194,10 @@ async def snapshot(event_id: int | None, phase: str, rows: list[dict]) -> None:
         for p in rows:
             await conn.execute(
                 """INSERT INTO position_snapshots
-                   (event_id,phase,coin,address,ts,side,szi,entry_px,leverage,liq_px,upnl,notional,score,score_reasons)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   (event_id,phase,coin,address,ts,side,szi,entry_px,leverage,liq_px,upnl,notional,
+                    score,score_reasons,last_add_ts,last_trim_ts)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (event_id, phase, p["coin"], p["address"], ts, p["side"], p["szi"],
                  p["entry_px"], p["leverage"], p["liq_px"], p["upnl"], p["notional"],
-                 p.get("score"), p.get("score_reasons")))
+                 p.get("score"), p.get("score_reasons"),
+                 p.get("last_add_ts"), p.get("last_trim_ts")))

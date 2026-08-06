@@ -16,6 +16,10 @@ EDITABLE_FIELDS: dict[str, dict] = {
                           "desc": "Bu boyut üstü işlemler adres havuzuna yazılır"},
     "whale_alert_notional": {"type": "float", "label": "Anlık balina alert eşiği ($)",
                              "desc": "Bu boyut üstü tek işlemde hemen Telegram alert"},
+    "min_position_notional": {"type": "float", "label": "Min pozisyon boyutu ($)",
+                              "desc": "Bundan küçük pozisyonlar listelenmez (toz filtresi)"},
+    "max_liq_distance_pct": {"type": "float", "label": "Liq tablosu mesafe sınırı (%)",
+                             "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez"},
     "fresh_wallet_days": {"type": "int", "label": "Taze cüzdan eşiği (gün)",
                           "desc": "İlk fonlaması bundan yeni hesaplar 'taze' sayılır (+25 puan)"},
     "recent_deposit_hours": {"type": "int", "label": "Yeni fonlama eşiği (saat)",
@@ -50,6 +54,10 @@ EDITABLE_FIELDS: dict[str, dict] = {
                              "desc": "HL coin listesi yenileme sıklığı"},
     "calendar_refresh_sec": {"type": "int", "label": "Takvim yenileme (sn)",
                              "desc": "Earnings takvimi çekme sıklığı"},
+    "auto_scan_interval_sec": {"type": "int", "label": "Oto-tarama periyodu (sn)",
+                               "desc": "Arka plan tarayıcısı bu aralıkla sıradaki coini tarar"},
+    "scan_stale_min": {"type": "int", "label": "Sayfa bayatlık eşiği (dk)",
+                       "desc": "Coin sayfası açıldığında veri bundan eskiyse otomatik tarama başlar"},
 }
 
 
@@ -98,6 +106,8 @@ class Config:
 
         # Eşikler
         self.min_fill_notional = float(os.getenv("MIN_FILL_NOTIONAL", "5000"))
+        self.min_position_notional = float(os.getenv("MIN_POSITION_NOTIONAL", "10000"))
+        self.max_liq_distance_pct = float(os.getenv("MAX_LIQ_DISTANCE_PCT", "50"))
         self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "250000"))
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))
         self.recent_deposit_hours = int(os.getenv("RECENT_DEPOSIT_HOURS", "72"))
@@ -105,6 +115,8 @@ class Config:
         self.leaderboard_top = int(os.getenv("LEADERBOARD_TOP", "500"))
         self.scan_max_candidates = int(os.getenv("SCAN_MAX_CANDIDATES", "600"))
         self.scan_concurrency = int(os.getenv("SCAN_CONCURRENCY", "8"))
+        self.auto_scan_interval_sec = int(os.getenv("AUTO_SCAN_INTERVAL_SEC", "180"))
+        self.scan_stale_min = int(os.getenv("SCAN_STALE_MIN", "10"))
         self.fills_lookback_days = int(os.getenv("FILLS_LOOKBACK_DAYS", "30"))
 
         # Anomali dedektörü

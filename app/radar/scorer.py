@@ -24,8 +24,9 @@ FUNDING_TYPES = {"deposit", "accountClassTransfer"}
 LINK_TYPES = {"internalTransfer", "subAccountTransfer", "spotTransfer"}
 
 
-async def _opened_ts_from_api(client: HLClient, coin: str, address: str) -> int | None:
-    """userFillsByTime ile pozisyon serisinin başlangıcını yaklaşık bul."""
+async def _position_timeline(client: HLClient, coin: str, address: str) -> dict | None:
+    """userFillsByTime ile pozisyon zaman çizelgesi:
+    opened (serinin başladığı an), last_add (son ekleme), last_trim (son kırpma)."""
     try:
         start_ms = (now() - 14 * 86400) * 1000
         fills = await client.user_fills_by_time(address, start_ms)
@@ -33,24 +34,36 @@ async def _opened_ts_from_api(client: HLClient, coin: str, address: str) -> int 
         log.debug("userFills %s: %s", address, e)
         return None
     sym = symbol_of(coin)
-    evs = [f for f in fills or []
-           if f.get("coin") == coin or symbol_of(f.get("coin") or "") == sym]
-    evs.sort(key=lambda f: f.get("time") or 0)
-    net = 0.0
-    opened = None
-    for f in evs:
+    evs = []
+    for f in fills or []:
+        if not (f.get("coin") == coin or symbol_of(f.get("coin") or "") == sym):
+            continue
         try:
             sz = float(f.get("sz") or 0)
             delta = sz if f.get("side") == "B" else -sz
+            t = int(f.get("time") or 0) // 1000
         except (TypeError, ValueError):
             continue
+        if t:
+            evs.append((t, delta))
+    evs.sort()
+    net = 0.0
+    opened = None
+    for t, delta in evs:
         prev = net
         net += delta
         if abs(net) < 1e-9:
             net, opened = 0.0, None      # pozisyon kapandı, seri sıfırlandı
         elif prev == 0.0 or (prev > 0 > net) or (prev < 0 < net):
-            opened = int(f.get("time") or 0) // 1000  # yeni seri başladı
-    return opened
+            opened = t                   # yeni seri başladı
+    if not opened or net == 0:
+        return {"opened": None, "last_add": None, "last_trim": None}
+    sign = 1 if net > 0 else -1
+    adds = [t for t, d in evs if t >= opened and (d > 0) == (sign > 0)]
+    trims = [t for t, d in evs if t >= opened and (d > 0) != (sign > 0)]
+    return {"opened": opened,
+            "last_add": max(adds) if adds else None,
+            "last_trim": max(trims) if trims else None}
 
 
 async def _ledger_scan(client: HLClient, address: str) -> dict | None:
@@ -116,14 +129,24 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
     reasons: list[str] = []
 
     opened = pos.get("opened_ts")
+    opened_recent = False
     if opened:
         age_h = max(0.0, (ref_ts - opened) / 3600)
         if age_h < 6:
             pts += 25
+            opened_recent = True
             reasons.append(f"pozisyon {age_h:.0f}h önce açıldı")
         elif age_h < 48:
             pts += 15
             reasons.append(f"pozisyon {age_h:.0f}h önce açıldı")
+
+    # Eski pozisyona earnings'ten hemen önce EKLEME yapmak da şüpheli
+    last_add = pos.get("last_add_ts")
+    if last_add and not opened_recent:
+        add_age_h = max(0.0, (ref_ts - last_add) / 3600)
+        if add_age_h < 6:
+            pts += 10
+            reasons.append(f"son ekleme {add_age_h:.0f}h önce")
 
     if fresh:
         pts += 25
@@ -209,8 +232,12 @@ async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
         funded_by_watch = False
 
         if deep and i < DEEP_TOP_N:
-            if not p.get("opened_ts"):
-                p["opened_ts"] = await _opened_ts_from_api(client, coin, p["address"])
+            tl = await _position_timeline(client, coin, p["address"])
+            if tl is not None:
+                # API verisi yerel yaklaşıklığı ezer (daha kesin)
+                p["opened_ts"] = tl["opened"] or p.get("opened_ts")
+                p["last_add_ts"] = tl["last_add"] or p.get("last_add_ts")
+                p["last_trim_ts"] = tl["last_trim"] or p.get("last_trim_ts")
             info = await _ledger_scan(client, p["address"])
             if info is not None:
                 first_dep = info["first"] or arow.get("first_deposit_ts")
@@ -240,7 +267,11 @@ async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
     async with db() as conn:
         for p in rows:
             await conn.execute(
-                "UPDATE positions_current SET score=?, score_reasons=?, opened_ts=COALESCE(?, opened_ts)"
-                " WHERE coin=? AND address=?",
-                (p["score"], p["score_reasons"], p.get("opened_ts"), coin, p["address"]))
+                """UPDATE positions_current SET score=?, score_reasons=?,
+                     opened_ts=COALESCE(?, opened_ts),
+                     last_add_ts=COALESCE(?, last_add_ts),
+                     last_trim_ts=COALESCE(?, last_trim_ts)
+                   WHERE coin=? AND address=?""",
+                (p["score"], p["score_reasons"], p.get("opened_ts"),
+                 p.get("last_add_ts"), p.get("last_trim_ts"), coin, p["address"]))
     return rows

@@ -12,7 +12,7 @@ from ..config import EDITABLE_FIELDS, convert_value, display_value
 from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import upcoming_events
 from ..hl.universe import find_ticker, get_universe
-from ..radar import clusters, metrics
+from ..radar import autoscan, clusters, metrics
 
 TR = ZoneInfo("Europe/Istanbul")
 
@@ -129,15 +129,32 @@ async def coin_page(request: Request, symbol: str):
             p["liq_dist"] = abs(mark - p["liq_px"]) / mark * 100
         else:
             p["liq_dist"] = None
-    liq_rows = sorted([p for p in rows if p["liq_dist"] is not None],
-                      key=lambda p: p["liq_dist"])[:30]
+    cfg = request.app.state.cfg
+    liq_rows = sorted(
+        [p for p in rows
+         if p["liq_dist"] is not None and p["liq_dist"] <= cfg.max_liq_distance_pct],
+        key=lambda p: p["liq_dist"])[:30]
     lo = sum(p["notional"] for p in rows if p["side"] == "long")
     sh = sum(p["notional"] for p in rows if p["side"] == "short")
-    scanned_ts = max((p["ts"] for p in rows), default=None)
+
+    async with db() as conn:
+        cur = await conn.execute("SELECT ts FROM scans WHERE coin=?", (coin,))
+        srow = await cur.fetchone()
+    scanned_ts = srow["ts"] if srow else None
+
+    # Bayatsa arka planda otomatik tara — kullanıcı butona basmak zorunda kalmasın
+    scanning = autoscan.is_scanning(coin)
+    stale = scanned_ts is None or (now() - scanned_ts) > cfg.scan_stale_min * 60
+    if stale and not scanning:
+        from ..radar.report import coin_dex
+        autoscan.kick(cfg, request.app.state.client, coin, coin_dex(coin))
+        scanning = True
+
     return _render(request, "coin.html", {
         "ticker": t, "symbol": t["symbol"], "coin": coin, "summ": summ,
         "rows": rows[:50], "liq_rows": liq_rows, "fills": fills, "event": ev,
         "long_total": lo, "short_total": sh, "scanned_ts": scanned_ts,
+        "scanning": scanning, "max_liq": cfg.max_liq_distance_pct,
     })
 
 
