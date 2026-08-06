@@ -77,7 +77,7 @@ vertical-align:1px;white-space:nowrap}
 .ecard .fl{color:var(--amber);font-size:12px}
 @media(min-width:1050px){
   main{display:grid;grid-template-columns:repeat(6,1fr);gap:0 14px;align-items:start}
-  main>.panel{grid-column:span 6}
+  main>.panel,main>form{grid-column:span 6}
   main>.panel.half{grid-column:span 3}
   main>.panel.third{grid-column:span 2}
 }
@@ -104,6 +104,8 @@ font-variant-numeric:tabular-nums}
 .longliq-t{color:#e09b4e}
 .shortliq-t{color:#5fb0d9}
 /* ---- ayarlar ---- */
+.setwrap{columns:330px;column-gap:14px;margin-bottom:8px}
+.setwrap > .panel{break-inside:avoid;display:inline-block;width:100%;margin:0 0 14px}
 .setpanel{padding:0;overflow:visible}
 .sect{padding:12px 16px}
 .sect > summary{cursor:pointer;font-weight:800;font-size:14px;color:var(--head);
