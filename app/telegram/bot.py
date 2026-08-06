@@ -121,10 +121,16 @@ class TelegramBot:
             try:
                 n = await cal.refresh_calendar(self.cfg, self.session)
                 stats = await kv_get("calendar_stats") or {}
+                srcs = " · ".join(
+                    f"{k}: {stats.get(k, 0)}"
+                    for k in ("tradingview", "yahoo", "nasdaq", "finnhub"))
+                warn = ""
+                if not stats.get("tradingview"):
+                    warn = ("\n⚠️ TradingView'dan veri gelmedi — tam saatler eksik kalabilir."
+                            " Yanlış gördüğün saati <code>/settime SEMBOL bmo</code> ile düzelt.")
                 await self.send(
                     f"✅ Takvim yenilendi: <b>{n}</b> HL-eşleşen earnings\n"
-                    f"Kaynaklar → yahoo: {stats.get('yahoo', '?')}, finnhub: {stats.get('finnhub', '?')},"
-                    f" nasdaq: {stats.get('nasdaq', '?')}\n\n"
+                    f"Kaynaklar → {srcs}{warn}\n\n"
                     + fmt.upcoming_list(await upcoming_events(14)), chat_id)
             except Exception as e:
                 await self.send(f"❌ Takvim yenilenemedi: {e}", chat_id)

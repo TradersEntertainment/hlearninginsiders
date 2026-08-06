@@ -434,6 +434,8 @@ async def index(request: Request):
                        "icon": e["icon"], "when_txt": e["when_txt"], "tsi": e["tsi"],
                        "exact": e["exact"], "countdown": e["countdown"],
                        "passed": e["passed"], "note": e.get("note"),
+                       "maybe_passed": e["maybe_passed"], "alt_tsi": e["alt_tsi"],
+                       "uncertain": e["uncertain"],
                        "hour": e.get("hour_hint"), "days_left": days_left,
                        "mark": s.get("mark"), "px_change": s.get("px_change_pct"),
                        "oi_ntl": s.get("oi_ntl"), "oi_change": s.get("oi_change_pct"),

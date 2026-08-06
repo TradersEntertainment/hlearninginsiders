@@ -36,6 +36,7 @@
         <b>Earnings</b><span>şirketin bilanço açıklaması. AMC = borsa kapandıktan sonra, BMO = açılmadan önce</span>
         <b>🤖 MM</b><span>market maker / robot hesap — insider değil, sayılmaz</span>
         <b>☀️ / 🌙</b><span>☀️ bilanço sabah açılıştan ÖNCE, 🌙 akşam kapanıştan SONRA açıklanır. Saatler TSİ; "geçti" yazıyorsa açıklama yapılmış demektir</span>
+        <b class="short">⚠️ olabilir</b><span>saat zayıf bir kaynaktan geliyor ve sabah açıklanmış olabilir — işlem açmadan önce mutlaka doğrula</span>
         <b>🗂 Geçmiş</b><span>eski bilançoların arşivi: öncesinde kim ne pozisyondaydı, kim doğru bildi</span>
       </div>
       <p style="margin-bottom:0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
@@ -57,7 +58,9 @@
         <span class="cd {{ 'short' if c.passed else '' }}">{{ c.countdown }}</span></h3>
       <div title="{{ c.when_txt }}">{{ c.icon }} <b>{{ c.tsi }}</b> TSİ
         <span class="dim">· {{ c.when_txt }}{% if not c.exact %} (yaklaşık){% endif %}</span></div>
-      {% if c.passed %}<div class="short"><b>⚠️ AÇIKLANDI — bu bilanço geçti!</b></div>{% endif %}
+      {% if c.passed %}<div class="short"><b>⚠️ AÇIKLANDI — bu bilanço geçti!</b></div>
+      {% elif c.maybe_passed %}<div class="short"><b>⚠️ SABAH AÇIKLANMIŞ OLABİLİR</b>
+        <span class="dim">— saat zayıf kaynaktan; {{ c.alt_tsi }} TSİ ihtimali var. İşlem açmadan doğrula.</span></div>{% endif %}
       {% if c.note %}<div class="fl">{{ c.note }}</div>{% endif %}
       <div>Fiyat <b>{{ c.mark|px }}</b>{% if c.px_change is not none %}
         <span class="{{ 'long' if c.px_change > 0 else 'short' }}">{{ '%+.1f'|format(c.px_change) }}%</span>{% endif %}
@@ -161,7 +164,9 @@
       <td class="l {{ 'dim' if e.passed else '' }}">{{ e.date_et[5:] }}</td>
       <td class="l"><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a>{% if e.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>
       <td class="l" title="{{ e.when_txt }}{% if not e.exact %} (yaklaşık){% endif %}">{{ e.icon }} {{ e.tsi[6:] }}</td>
-      <td class="l">{% if e.passed %}<span class="short">geçti</span>{% elif e.alerted_t1 %}✅{% elif e.alerted_pre %}🕐{% else %}{{ e.countdown }}{% endif %}{% if e.note %} <span class="warn" title="{{ e.note }}">⚠</span>{% endif %}</td>
+      <td class="l">{% if e.passed %}<span class="short">geçti</span>
+        {%- elif e.maybe_passed %}<span class="short" title="Saat zayıf kaynaktan geliyor — {{ e.alt_tsi }} TSİ'de açıklanmış olabilir">⚠️{{ e.countdown }}?</span>
+        {%- elif e.alerted_t1 %}✅{% elif e.alerted_pre %}🕐{% else %}{{ e.countdown }}{% endif %}{% if e.note %} <span class="warn" title="{{ e.note }}">📝</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>

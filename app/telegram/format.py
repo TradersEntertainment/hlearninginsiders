@@ -334,12 +334,21 @@ def upcoming_list(events: list[dict]) -> str:
     evs.sort(key=lambda e: (e["passed"], e["report_ts"]))
     lines = ["📅 <b>Yaklaşan earnings (HL'de listeli):</b>",
              "<i>☀️ sabah açılış öncesi · 🌙 akşam kapanış sonrası · saatler TSİ</i>"]
+    warned = False
     for e in evs[:25]:
         tail = "❗geçti" if e["passed"] else (
             "✅raporlandı" if e.get("alerted_t1") else f"⏳{e['countdown']}")
+        risk = ""
+        if e.get("maybe_passed"):
+            risk = " ⚠️<b>SABAH AÇIKLANMIŞ OLABİLİR</b>"
+            warned = True
         lines.append(f"  {e['icon']} <b>{e['symbol']}</b> {e['tsi']}"
-                     + ("" if e["exact"] else "~") + f" · {tail}"
-                     + (" ⚠️" if e.get("note") else ""))
+                     + ("" if e["exact"] else "~") + f" · {tail}{risk}"
+                     + (" 📝" if e.get("note") else ""))
+    if warned:
+        lines.append("\n⚠️ <i>Saati zayıf kaynaktan gelen bilançolar sabah açıklanmış olabilir."
+                     " İşlem açmadan önce doğrula, doğrusunu"
+                     " <code>/settime SEMBOL bmo</code> ile sabitle.</i>")
     return "\n".join(lines)
 
 

@@ -347,16 +347,19 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
                  ev.get("eps_est"), ev.get("source"), ev.get("note"), now()),
             )
             n += 1
-        # Tarihi düzeltilen kayıtları temizle — bugünkü yanlış kayıt da silinmeli
-        # (BIRD vakası: "bugün" diye duran hatalı satır listede kalıyordu)
+        # Tarihi düzeltilen kayıtları temizle. Alert bayrağı işaretlenmiş olsa bile
+        # sil — "pencere kaçtı" diye otomatik işaretlenen hatalı satırlar listede
+        # kalıyordu (BIRD hem 06.08 hem 12.08 görünüyordu). Arşiv değeri olanlara
+        # (snapshot alınmış ya da değerlendirilmiş) ve elle girilenlere dokunma.
         today = datetime.now(ET).strftime("%Y-%m-%d")
         for sym in symbols:
             if sym in merged:
                 await conn.execute(
                     """DELETE FROM earnings_events
-                       WHERE symbol=? AND date_et>=? AND alerted_pre=0 AND alerted_t1=0
-                         AND evaluated=0 AND date_et<>?
-                         AND COALESCE(source,'') NOT LIKE '%manual%'""",
+                       WHERE symbol=? AND date_et>=? AND date_et<>? AND evaluated=0
+                         AND COALESCE(source,'') NOT LIKE '%manual%'
+                         AND id NOT IN (SELECT event_id FROM position_snapshots
+                                        WHERE event_id IS NOT NULL)""",
                     (sym, today, merged[sym]["date_et"]),
                 )
     log.info("takvim yenilendi: %d HL-eşleşen earnings", n)
@@ -405,12 +408,17 @@ def countdown_str(mins: int) -> str:
     return f"{mins // (24 * 60)} gün"
 
 
+# Saati doğrulanmış sayılan kaynaklar — bunlar demiyorsa "kesin" deme
+STRONG_SOURCES = ("manual", "tradingview", "yahoo")
+
+
 def annotate(events: list[dict]) -> list[dict]:
-    """Her event'e rapor zamanı, geçti mi, geri sayım ve ☀️/🌙 işareti ekle."""
+    """Her event'e rapor zamanı, geçti mi, geri sayım, ☀️/🌙 ve belirsizlik uyarısı ekle."""
     ts = now()
     for e in events:
         rts = event_ts_estimate(e)
         hint = e.get("hour_hint") or "unknown"
+        src = (e.get("source") or "").lower()
         e["report_ts"] = rts
         e["passed"] = ts > rts
         e["mins_left"] = int((rts - ts) / 60)
@@ -420,6 +428,17 @@ def annotate(events: list[dict]) -> list[dict]:
         e["when_txt"] = {"bmo": "sabah, açılış öncesi",
                          "amc": "akşam, kapanış sonrası"}.get(hint, "saati belirsiz")
         e["tsi"] = datetime.fromtimestamp(rts, TR).strftime("%d.%m %H:%M")
+
+        # SHAZ dersi: zayıf kaynak "akşam" derken hisse sabah açıklamış olabilir.
+        # Saat güçlü bir kaynakla doğrulanmadıysa ve sabah penceresi geçtiyse uyar.
+        strong = e["exact"] or any(s in src for s in STRONG_SOURCES)
+        e["uncertain"] = not strong
+        try:
+            earliest = _et_ts(e["date_et"], 7, 0)
+        except (ValueError, TypeError, KeyError):
+            earliest = rts
+        e["maybe_passed"] = bool(not e["passed"] and e["uncertain"] and ts > earliest)
+        e["alt_tsi"] = datetime.fromtimestamp(earliest, TR).strftime("%H:%M")
     return events
 
 
