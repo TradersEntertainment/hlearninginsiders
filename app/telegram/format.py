@@ -192,6 +192,40 @@ def new_big_position_alert(coin: str, p: dict, event: dict | None) -> str:
     return "\n".join(lines)
 
 
+LIQ_STAGE_HEAD = {
+    1: "⚠️ <b>LİKİDASYON RADARI</b> — %1 bölgesine girdi",
+    2: "🔶 <b>LİKİDASYON YAKLAŞIYOR</b> — %0.5 kaldı",
+    3: "🚨 <b>SON UYARI</b> — likidasyona %0.1!",
+}
+
+
+def liq_alert(coin: str, addr: str, p: dict, mark: float, dist: float, stage: int) -> str:
+    sym = coin.split(":")[-1]
+    side = "🔴SHORT" if p["side"] == "short" else "🟢LONG"
+    etki = ("likide olursa ~{} zorunlu <b>ALIŞ</b> → fiyatı yukarı süpürebilir"
+            if p["side"] == "short" else
+            "likide olursa ~{} zorunlu <b>SATIŞ</b> → fiyatı aşağı süpürebilir").format(usd(p["notional"]))
+    return "\n".join([
+        f"{LIQ_STAGE_HEAD.get(stage, '')} — <b>{sym}</b>",
+        f"{side} <b>{usd(p['notional'])}</b> @ {px(p.get('entry_px'))}"
+        f" │ liq <b>{px(p['liq_px'])}</b> │ şimdi {px(mark)} (mesafe %{dist:.2f})",
+        f"👤 {alink(addr)}",
+        f"💥 {etki}",
+        DISCLAIMER,
+    ])
+
+
+def liq_closed(coin: str, addr: str, row: dict) -> str:
+    sym = coin.split(":")[-1]
+    side = "SHORT" if row.get("side") == "short" else "LONG"
+    return "\n".join([
+        f"🏁 <b>İzlenen dev pozisyon kapandı</b> — {sym}",
+        f"{side} {usd(row.get('notional'))} (son mesafe %{(row.get('last_dist') or 0):.2f})"
+        " — likidasyon ya da kapatma",
+        f"👤 {alink(addr)}",
+    ])
+
+
 def anomaly_alert(symbol: str, coin: str, triggers: list[str], event: dict | None) -> str:
     lines = [f"📡 <b>ANOMALİ — {symbol}</b>"]
     if event:

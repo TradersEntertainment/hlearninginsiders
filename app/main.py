@@ -20,7 +20,7 @@ from .earnings import evaluator
 from .hl import universe as uni
 from .hl.client import HLClient
 from .hl.collector import Collector
-from .radar import anomaly, autoscan, metrics, report
+from .radar import anomaly, autoscan, liqwatch, metrics, report
 from .telegram.bot import TelegramBot
 from .web.routes import router
 
@@ -168,6 +168,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(supervised("due", lambda: due_loop(cfg, client, bot))),
         asyncio.create_task(supervised("anomaly", lambda: anomaly_loop(cfg, bot))),
         asyncio.create_task(supervised("autoscan", lambda: autoscan.loop(cfg, client, bot))),
+        asyncio.create_task(supervised("liqwatch", lambda: liqwatch.loop(cfg, client, bot))),
         asyncio.create_task(supervised("collector", collector.run)),
     ]
     if bot:

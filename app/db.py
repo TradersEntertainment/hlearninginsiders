@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS alerts_log(
 CREATE INDEX IF NOT EXISTS idx_alerts_kind_key ON alerts_log(kind, key, ts);
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS scans(coin TEXT PRIMARY KEY, ts INTEGER);
+CREATE TABLE IF NOT EXISTS liq_watch(
+  address TEXT, coin TEXT,
+  side TEXT, notional REAL, liq_px REAL,
+  stage INTEGER DEFAULT 0,         -- 0 yok | 1 %1 | 2 %0.5 | 3 %0.1 bildirimi gitti
+  last_dist REAL, updated_ts INTEGER,
+  PRIMARY KEY(address, coin)
+);
 """
 
 

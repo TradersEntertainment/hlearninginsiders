@@ -30,6 +30,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "Bu kadar+ açık pozisyonu olan hesap market maker sayılır (skorlama/alert dışı)"},
     "mm_max_fills_24h": {"type": "int", "label": "MM eşiği: 24h fill sayısı",
                          "desc": "24 saatte bu kadar+ büyük fill yapan çift yönlü hesap MM sayılır"},
+    "liq_watch_min_notional": {"type": "float", "label": "Liq radarı: min pozisyon ($)",
+                               "desc": "Bu boyut üstü pozisyonlar TÜM dex'lerde likidasyon radarına girer"},
+    "liq_watch_poll_sec": {"type": "int", "label": "Liq radarı periyodu (sn)",
+                           "desc": "Likidasyon mesafesi kontrol sıklığı (kademeler: %1 → %0.5 → %0.1)"},
+    "liq_watch_top_accounts": {"type": "int", "label": "Liq radarı: taranan hesap",
+                               "desc": "Leaderboard'dan likidasyon radarına alınan hesap sayısı"},
     "max_liq_distance_pct": {"type": "float", "label": "Liq tablosu mesafe sınırı (%)",
                              "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez"},
     "fresh_wallet_days": {"type": "int", "label": "Taze cüzdan eşiği (gün)",
@@ -127,6 +133,9 @@ class Config:
         self.fresh_big_alert_hours = int(os.getenv("FRESH_BIG_ALERT_HOURS", "24"))
         self.mm_max_positions = int(os.getenv("MM_MAX_POSITIONS", "10"))
         self.mm_max_fills_24h = int(os.getenv("MM_MAX_FILLS_24H", "80"))
+        self.liq_watch_min_notional = float(os.getenv("LIQ_WATCH_MIN_NOTIONAL", "70000000"))
+        self.liq_watch_poll_sec = int(os.getenv("LIQ_WATCH_POLL_SEC", "120"))
+        self.liq_watch_top_accounts = int(os.getenv("LIQ_WATCH_TOP_ACCOUNTS", "300"))
         self.max_liq_distance_pct = float(os.getenv("MAX_LIQ_DISTANCE_PCT", "50"))
         self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "250000"))
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))
