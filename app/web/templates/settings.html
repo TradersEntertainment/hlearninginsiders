@@ -4,64 +4,66 @@
 <div class="panel">
   <h2>⚙️ Ayarlar</h2>
   {% if saved %}<p class="okline"><b>✓ Kaydedildi</b> — değişiklikler anında geçerli, deploy gerekmez.</p>{% endif %}
-
   {% if not is_admin %}
-  <p class="warn"><b>🔒 Salt okunur</b> — değişiklik yapmak için
+  <p class="warn"><b>🔒 Salt okunur</b> — değişiklik için
     <a href="/login{{ '?nxt=/settings' if not k else k + '&nxt=/settings' }}">yönetici girişi</a> gerekir.</p>
   {% elif not has_pw %}
-  <p class="warn">⚠️ <b>Şifre tanımlı değil</b> — Railway'de <code>ADMIN_PASSWORD</code> ayarlarsan
-  bu sayfayı ve Telegram butonlarını sadece sen kullanabilirsin.</p>
+  <p class="warn">⚠️ <b>Şifre tanımlı değil</b> — Railway'de <code>ADMIN_PASSWORD</code> ayarla.</p>
   {% endif %}
-
-  <p class="sub">Değerler DB'de saklanır (deploy'a dayanıklı) ve env değişkenini ezer. Boş bırakılan
-  alan varsayılana döner. Gizli anahtarlar (bot token, API key, şifre) sadece Railway Variables'tan yönetilir.</p>
-
   {% if is_admin %}
   <div class="btnrow">
     <form method="post" action="/settings/test-telegram{{ k }}">
       <button type="submit" {% if not has_bot %}disabled title="TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram test mesajı</button>
     </form>
-    <form method="post" action="/logout{{ k }}"><button type="submit" class="tab">🔓 çıkış yap</button></form>
-    {% if tg == 'ok' %}<span class="long">✓ Test mesajı gitti!</span>
-    {% elif tg == 'err' %}<span class="short">✗ Gönderilemedi — token / chat id doğru mu?</span>{% endif %}
+    <form method="post" action="/logout{{ k }}"><button type="submit" class="tab">🔓 çıkış</button></form>
+    {% if tg == 'ok' %}<span class="long">✓ gitti!</span>
+    {% elif tg == 'err' %}<span class="short">✗ gönderilemedi — token / chat id?</span>{% endif %}
+    <span class="dim" style="font-size:12px">Ayarın üstüne gel → ne işe yaradığını gösterir</span>
   </div>
   {% endif %}
 </div>
 
 <form method="post" action="/settings{{ k }}">
 {% for gname, fields in groups.items() %}
-<div class="panel">
-  <h2>{{ '🔔' if gname == 'Bildirimler' else '🎛' }} {{ gname }}</h2>
-  {% if gname == 'Bildirimler' %}
-  <p class="sub">Hangi bildirimleri, ne zaman alacağını buradan seçersin. Sessiz saatte
-  normal bildirimler beklemeye alınır ve sabah özetinde toplu gelir; "önemli" bildirimler
-  (earnings, yeni büyük pozisyon, likidasyon) istersen sessiz saatte de düşer.</p>
-  {% endif %}
-  <div class="setgrid">
-    {% for f in fields %}
-    <div class="setrow {{ 'ison' if f.type == 'bool' and f.on else '' }}">
-      {% if f.type == 'bool' %}
-      <label class="sw-wrap">
+<div class="panel setpanel">
+  <details class="sect" {% if loop.first %}open{% endif %}>
+    <summary>{{ '🔔' if gname == 'Bildirimler' else '🎛' }} {{ gname }}
+      <span class="dim">({{ fields|length }})</span></summary>
+    {% if gname == 'Bildirimler' %}
+    <p class="sub">Sessiz saatte normal bildirimler beklemeye alınır, sabah özetinde toplu gelir.
+    "Önemli" olanlar (earnings · yeni büyük poz · likidasyon) istersen sessizde de düşer.</p>
+    {% endif %}
+    {% set bools = fields | selectattr('type', 'equalto', 'bool') | list %}
+    {% set vals = fields | rejectattr('type', 'equalto', 'bool') | list %}
+    {% if bools %}
+    <div class="togglegrid">
+      {% for f in bools %}
+      <label class="trow {{ 'ison' if f.on }}" title="{{ f.desc }}">
         <input type="checkbox" name="{{ f.name }}" {% if f.on %}checked{% endif %}
                {% if not is_admin %}disabled{% endif %}>
         <span class="sw-track"><span class="sw-knob"></span></span>
-        <span class="sw-label">{{ f.label }}{% if f.overridden %} <span class="badge b-mid">özel</span>{% endif %}</span>
+        <span class="tname">{{ f.label }}{% if f.overridden %} <i class="dot" title="özel değer"></i>{% endif %}</span>
       </label>
-      {% else %}
-      <label class="setlabel">{{ f.label }}{% if f.overridden %} <span class="badge b-mid">özel</span>{% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if vals %}
+    <div class="valgrid">
+      {% for f in vals %}
+      <label class="vrow" title="{{ f.desc }} · varsayılan: {{ f.default }}">
+        <span class="vname">{{ f.label }}{% if f.overridden %} <i class="dot" title="özel değer"></i>{% endif %}</span>
         <input type="text" name="{{ f.name }}" value="{{ f.current }}"
                {% if not is_admin %}disabled{% endif %}>
-        <span class="dim">vars: {{ f.default }}</span>
       </label>
-      {% endif %}
-      <div class="setdesc">{{ f.desc }}</div>
+      {% endfor %}
     </div>
-    {% endfor %}
-  </div>
+    {% endif %}
+  </details>
 </div>
 {% endfor %}
 {% if is_admin %}
-<div class="panel savebar"><button type="submit">💾 Tüm ayarları kaydet</button></div>
+<div class="savebar"><button type="submit">💾 Kaydet</button>
+  <span class="dim">değişiklikler anında geçerli olur</span></div>
 {% endif %}
 </form>
 {% endblock %}
