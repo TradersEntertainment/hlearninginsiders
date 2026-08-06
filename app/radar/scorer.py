@@ -1,15 +1,18 @@
 """İnsider skorlama (0-100).
 
-Ucuz sinyaller herkese, pahalı (ek API isteği gerektiren) sinyaller sadece
-en büyük N pozisyona uygulanır.
+Ucuz sinyaller (yerel DB: zamanlama, TWAP, boyut, liq) herkese; pahalı
+sinyaller (ledger: taze cüzdan, yeni fonlama, cüzdan bağları) sadece en
+büyük N pozisyona uygulanır.
 """
 import json
 import logging
+import statistics
 
 from ..config import Config
 from ..db import db, now
 from ..hl.client import HLClient
 from ..hl.universe import symbol_of
+from . import clusters
 
 log = logging.getLogger("radar.scorer")
 
@@ -17,6 +20,8 @@ DEEP_TOP_N = 15
 
 # Hesaba para girişi sayılan ledger olayları
 FUNDING_TYPES = {"deposit", "accountClassTransfer"}
+# Cüzdanlar arası bağ kuran olaylar
+LINK_TYPES = {"internalTransfer", "subAccountTransfer", "spotTransfer"}
 
 
 async def _opened_ts_from_api(client: HLClient, coin: str, address: str) -> int | None:
@@ -48,31 +53,65 @@ async def _opened_ts_from_api(client: HLClient, coin: str, address: str) -> int 
     return opened
 
 
-async def _deposit_info(client: HLClient, address: str) -> dict | None:
-    """Son 90 günün fonlama olayları → {'first': ts|None, 'last': ts|None}.
-    'first' 90 günden eskiyse None kalır (pencere dışı) — taze cüzdan tespiti
-    için pencere içi ilk olay yeterli."""
+async def _ledger_scan(client: HLClient, address: str) -> dict | None:
+    """Son 90 günün ledger'ı → fonlama zamanları + cüzdan bağları + fonlayıcılar."""
     try:
         start_ms = (now() - 90 * 86400) * 1000
         updates = await client.ledger_updates(address, start_ms)
     except Exception as e:
         log.debug("ledger %s: %s", address, e)
         return None
-    times = []
+    fund_times: list[int] = []
+    links: list[tuple[str, str, int]] = []
+    funders: set[str] = set()
     for u in updates or []:
         d = u.get("delta") or {}
-        if d.get("type") in FUNDING_TYPES:
-            t = int(u.get("time") or 0) // 1000
-            if t:
-                times.append(t)
-    if not times:
-        return {"first": None, "last": None}
-    return {"first": min(times), "last": max(times)}
+        t = d.get("type")
+        ts = int(u.get("time") or 0) // 1000
+        if t in FUNDING_TYPES and ts:
+            fund_times.append(ts)
+        elif t in LINK_TYPES:
+            user = (d.get("user") or "").lower()
+            dest = (d.get("destination") or "").lower()
+            other = dest if user == address else user
+            if other and other.startswith("0x") and other != address:
+                links.append((other, t, ts))
+                if dest == address and ts:      # para BU hesaba gelmiş → fonlayıcı
+                    funders.add(other)
+                    fund_times.append(ts)
+    return {
+        "first": min(fund_times) if fund_times else None,
+        "last": max(fund_times) if fund_times else None,
+        "links": links,
+        "funders": funders,
+    }
+
+
+async def _twap_fills(coin: str, address: str, side: str) -> int:
+    """Yerel fill'lerden TWAP paterni: düzenli aralık + benzer boyut. Fill sayısı döner."""
+    want = "buy" if side == "long" else "sell"
+    since = now() - 48 * 3600
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT ts, sz FROM fills WHERE coin=? AND address=? AND side=? AND ts>=?"
+            " ORDER BY ts", (coin, address, want, since))
+        rows = await cur.fetchall()
+    if len(rows) < 5:
+        return 0
+    ts_list = [r["ts"] for r in rows]
+    sizes = [r["sz"] for r in rows]
+    gaps = [b - a for a, b in zip(ts_list, ts_list[1:])]
+    mg, ms = statistics.mean(gaps), statistics.mean(sizes)
+    if mg <= 0 or ms <= 0:
+        return 0
+    cv_gap = statistics.pstdev(gaps) / mg
+    cv_size = statistics.pstdev(sizes) / ms
+    return len(rows) if (cv_gap < 0.35 and cv_size < 0.35) else 0
 
 
 def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             addr_row: dict | None, fresh: bool | None, last_deposit_ts: int | None,
-            ref_ts: int) -> tuple[int, list[str]]:
+            ref_ts: int, twap_n: int = 0, funded_by_watch: bool = False) -> tuple[int, list[str]]:
     pts = 0
     reasons: list[str] = []
 
@@ -94,6 +133,10 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
         if dep_age_h <= cfg.recent_deposit_hours:
             pts += 12
             reasons.append(f"hesap {dep_age_h:.0f}h önce fonlanmış")
+
+    if funded_by_watch:
+        pts += 20
+        reasons.append("⭐ watchlist adresinden fonlanmış")
 
     if pos.get("n_open_positions") == 1:
         pts += 10
@@ -120,6 +163,10 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             pts += 5
             reasons.append("funding ödeyerek tutuyor")
 
+    if twap_n:
+        pts += 5
+        reasons.append(f"TWAP paterni ({twap_n} fill/48h)")
+
     hits = (addr_row or {}).get("hits") or 0
     misses = (addr_row or {}).get("misses") or 0
     if hits >= 2:
@@ -130,6 +177,12 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
         reasons.append(f"sicil: 1 doğru / {misses} yanlış")
 
     return min(pts, 100), reasons
+
+
+async def _watchlist_set() -> set[str]:
+    async with db() as conn:
+        cur = await conn.execute("SELECT address FROM addresses WHERE watchlist=1")
+        return {r["address"] for r in await cur.fetchall()}
 
 
 async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
@@ -145,6 +198,7 @@ async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
                 f"SELECT * FROM addresses WHERE address IN ({q})", addrs)
             for r in await cur.fetchall():
                 addr_rows[r["address"]] = dict(r)
+    watch = await _watchlist_set()
 
     fresh_cut = now() - cfg.fresh_wallet_days * 86400
     for i, p in enumerate(rows):
@@ -152,26 +206,32 @@ async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
         arow = addr_rows.get(p["address"]) or {}
         fresh = None
         last_dep = arow.get("last_deposit_ts")
+        funded_by_watch = False
+
         if deep and i < DEEP_TOP_N:
             if not p.get("opened_ts"):
                 p["opened_ts"] = await _opened_ts_from_api(client, coin, p["address"])
-            dep = await _deposit_info(client, p["address"])
-            if dep is not None:
-                first_dep = dep["first"] or arow.get("first_deposit_ts")
-                last_dep = dep["last"] or last_dep
+            info = await _ledger_scan(client, p["address"])
+            if info is not None:
+                first_dep = info["first"] or arow.get("first_deposit_ts")
+                last_dep = info["last"] or last_dep
                 if first_dep:
                     fresh = first_dep >= fresh_cut
+                funded_by_watch = bool(info["funders"] & watch)
+                await clusters.store_links(p["address"], info["links"])
                 async with db() as conn:
                     await conn.execute(
                         """UPDATE addresses SET
                              first_deposit_ts=COALESCE(?, first_deposit_ts),
                              last_deposit_ts=COALESCE(?, last_deposit_ts)
                            WHERE address=?""",
-                        (dep["first"], dep["last"], p["address"]))
+                        (info["first"], info["last"], p["address"]))
             elif arow.get("first_deposit_ts"):
                 fresh = arow["first_deposit_ts"] >= fresh_cut
 
-        score, reasons = compute(cfg, p, oi_ntl, funding, arow, fresh, last_dep, ref)
+        twap_n = await _twap_fills(coin, p["address"], p["side"])
+        score, reasons = compute(cfg, p, oi_ntl, funding, arow, fresh, last_dep, ref,
+                                 twap_n=twap_n, funded_by_watch=funded_by_watch)
         p["score"] = score
         p["score_reasons"] = json.dumps(reasons, ensure_ascii=False)
         p["watch_record"] = (arow.get("hits") or 0, arow.get("misses") or 0)

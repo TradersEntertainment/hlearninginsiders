@@ -33,6 +33,23 @@
 </div>
 
 <div class="panel">
+  <h2>🧩 Bağlantılı cüzdanlar <span class="dim">(transfer geçmişinden)</span></h2>
+  {% if linked %}
+  <table>
+    <tr><th class="l">Adres</th><th class="l">Bağ türü</th><th class="l">Son transfer</th></tr>
+    {% for l in linked %}
+    <tr>
+      <td class="l"><a href="/whale/{{ l.address }}{{ k }}">{{ l.address[:10] }}..{{ l.address[-6:] }}</a></td>
+      <td class="l">{{ l.kind }}</td>
+      <td class="l dim">{{ l.ts|dt }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="dim">Aynı kümedeki cüzdanlar aynı yönde pozisyon taşıyorsa bölünmüş tek balina olabilir.</p>
+  {% else %}<p class="dim">Bilinen bağlantı yok (derin tarama yapıldıkça dolar).</p>{% endif %}
+</div>
+
+<div class="panel">
   <h2>🗂 Geçmiş snapshot'lar</h2>
   {% if snaps %}
   <table>

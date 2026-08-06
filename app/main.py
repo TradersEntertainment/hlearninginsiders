@@ -20,7 +20,7 @@ from .earnings import evaluator
 from .hl import universe as uni
 from .hl.client import HLClient
 from .hl.collector import Collector
-from .radar import metrics, report
+from .radar import anomaly, metrics, report
 from .telegram.bot import TelegramBot
 from .web.routes import router
 
@@ -119,6 +119,17 @@ async def due_loop(cfg, client, bot):
         await asyncio.sleep(cfg.due_check_sec)
 
 
+async def anomaly_loop(cfg, bot):
+    await asyncio.sleep(120)  # önce metrik birikmeye başlasın
+    while True:
+        try:
+            await anomaly.check_anomalies(cfg, bot)
+            _stamp("anomali taraması")
+        except Exception:
+            log.exception("anomali taraması hatası")
+        await asyncio.sleep(cfg.anomaly_poll_sec)
+
+
 # ---------------- uygulama ----------------
 
 @asynccontextmanager
@@ -129,6 +140,12 @@ async def lifespan(app: FastAPI):
         os.makedirs(dirn, exist_ok=True)
     await dbm.init_db(cfg.db_path)
     log.info("DB hazır: %s", cfg.db_path)
+
+    # Dashboard'dan kaydedilmiş ayar override'larını yükle
+    overrides = await dbm.kv_get("settings_overrides")
+    if overrides:
+        cfg.apply_overrides(overrides)
+        log.info("%d ayar override'ı yüklendi: %s", len(overrides), ", ".join(overrides))
 
     session = aiohttp.ClientSession()
     client = HLClient(session, cfg.api_base, cfg.stats_leaderboard_url,
@@ -149,6 +166,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(supervised("calendar", lambda: calendar_loop(cfg, session))),
         asyncio.create_task(supervised("metrics", lambda: metrics_loop(cfg, client))),
         asyncio.create_task(supervised("due", lambda: due_loop(cfg, client, bot))),
+        asyncio.create_task(supervised("anomaly", lambda: anomaly_loop(cfg, bot))),
         asyncio.create_task(supervised("collector", collector.run)),
     ]
     if bot:

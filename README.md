@@ -38,6 +38,13 @@ Detaylı mimari için: [PLAN.md](PLAN.md)
 | `/watchlist` | Sicilli adresler |
 | `/status` | Bot durumu (WS, havuz boyutları, son yenilemeler) |
 
+## Ayarlar
+
+Eşikler ve periyotlar dashboard'daki **⚙️ /settings** sayfasından canlı değiştirilir
+(DB'de saklanır → deploy'a dayanıklı, restart gerekmez). Env değişkenleri sadece ilk
+varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
+`DASHBOARD_TOKEN`, `DB_PATH`) güvenlik gereği yalnızca env'den yönetilir.
+
 ## Nasıl Çalışıyor?
 
 1. `perpDexs` + `meta` ile HL'deki hisse perp evreni keşfedilir (varsayılan dex: `xyz`).

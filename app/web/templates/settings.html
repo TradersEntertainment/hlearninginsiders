@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Ayarlar — HL Insider Radar{% endblock %}
+{% block content %}
+<div class="panel">
+  <h2>⚙️ Ayarlar</h2>
+  {% if saved %}<p style="color:var(--green)"><b>✓ Kaydedildi</b> — değişiklikler anında geçerli, deploy gerekmez.</p>{% endif %}
+  <p class="dim">Buradaki değerler DB'de saklanır (deploy'lara dayanıklı) ve env değişkenini ezer.
+  Bir alanı boş bırakırsan env/kod varsayılanına döner.
+  Gizli anahtarlar (bot token, API key) güvenlik gereği sadece Railway Variables'tan değişir.</p>
+  <form method="post" action="/settings{{ k }}">
+    <table>
+      <tr><th class="l">Ayar</th><th class="l">Değer</th><th class="l">Varsayılan</th><th class="l">Açıklama</th></tr>
+      {% for f in fields %}
+      <tr>
+        <td class="l"><b>{{ f.label }}</b>{% if f.overridden %} <span class="badge b-mid">özel</span>{% endif %}
+            <div class="dim" style="font-size:11px">{{ f.name }}</div></td>
+        <td class="l"><input type="text" name="{{ f.name }}" value="{{ f.current }}" style="width:140px"></td>
+        <td class="l dim">{{ f.default }}</td>
+        <td class="l dim" style="white-space:normal;max-width:340px">{{ f.desc }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p><button type="submit">💾 Kaydet</button></p>
+  </form>
+</div>
+{% endblock %}

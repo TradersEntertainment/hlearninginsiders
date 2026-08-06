@@ -142,6 +142,7 @@ class TelegramBot:
         await self.send(fmt.status_text(st), chat_id)
 
     async def _cmd_scan(self, args: list[str], chat_id: str) -> None:
+        from ..radar import clusters
         from ..radar.report import build_scan, coin_dex  # döngüsel importu kır
 
         if not args:
@@ -154,9 +155,11 @@ class TelegramBot:
         await self.send(f"🔍 <b>{t['symbol']}</b> taranıyor…", chat_id)
         summ, rows = await build_scan(self.cfg, self.client, t["coin"],
                                       coin_dex(t["coin"]), quick=True)
+        cluster_list = await clusters.find_clusters(rows)
         fake_event = {"symbol": t["symbol"], "date_et": "şimdi", "hour_hint": "",
                       "eps_est": None, "note": None}
-        text = fmt.earnings_report(fake_event, "ondemand", summ, rows, self.cfg)
+        text = fmt.earnings_report(fake_event, "ondemand", summ, rows, self.cfg,
+                                   cluster_list=cluster_list)
         await self.send(text.replace("🎯", "🔍").replace("earnings — ⏰ ~1 saat kaldı", "anlık tarama")
                         .replace("earnings — 🕐 erken pencere", "anlık tarama"), chat_id)
 

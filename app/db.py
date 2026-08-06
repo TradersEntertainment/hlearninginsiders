@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS asset_metrics(
   PRIMARY KEY(coin, ts)
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_coin_ts ON asset_metrics(coin, ts);
+CREATE TABLE IF NOT EXISTS wallet_links(
+  a TEXT, b TEXT,                  -- normalize: a < b
+  kind TEXT, last_ts INTEGER,
+  PRIMARY KEY(a, b)
+);
+CREATE INDEX IF NOT EXISTS idx_links_a ON wallet_links(a);
+CREATE INDEX IF NOT EXISTS idx_links_b ON wallet_links(b);
 CREATE TABLE IF NOT EXISTS alerts_log(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT, key TEXT, ts INTEGER, payload TEXT

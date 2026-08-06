@@ -1,9 +1,78 @@
-"""Ortam değişkenlerinden okunan uygulama ayarları."""
+"""Uygulama ayarları.
+
+Öncelik sırası: dashboard /settings'te kaydedilen değer (DB'de yaşar)
+> ortam değişkeni > kod varsayılanı. Gizli anahtarlar (token/key) sadece env'den.
+"""
 import os
 
 
 def _csv(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
+
+
+# Dashboard'dan canlı değiştirilebilen alanlar
+EDITABLE_FIELDS: dict[str, dict] = {
+    "min_fill_notional": {"type": "float", "label": "Min fill boyutu ($)",
+                          "desc": "Bu boyut üstü işlemler adres havuzuna yazılır"},
+    "whale_alert_notional": {"type": "float", "label": "Anlık balina alert eşiği ($)",
+                             "desc": "Bu boyut üstü tek işlemde hemen Telegram alert"},
+    "fresh_wallet_days": {"type": "int", "label": "Taze cüzdan eşiği (gün)",
+                          "desc": "İlk fonlaması bundan yeni hesaplar 'taze' sayılır (+25 puan)"},
+    "recent_deposit_hours": {"type": "int", "label": "Yeni fonlama eşiği (saat)",
+                             "desc": "Son fonlaması bundan yeni hesaplar şüpheli (+12 puan)"},
+    "eval_move_threshold": {"type": "float", "label": "Sicil için min hareket (%)",
+                            "desc": "Earnings sonrası bu kadar hareket yoksa doğru/yanlış işlenmez"},
+    "leaderboard_top": {"type": "int", "label": "Leaderboard tohumu (adres)",
+                        "desc": "Havuza eklenen en büyük hesap sayısı"},
+    "scan_max_candidates": {"type": "int", "label": "Tarama aday limiti",
+                            "desc": "T-1h taramasında sorgulanacak maksimum adres"},
+    "scan_concurrency": {"type": "int", "label": "Eşzamanlı API isteği",
+                         "desc": "HL API paralellik (rate limit'e dikkat)"},
+    "equity_dexes": {"type": "csv", "label": "Hisse dex'leri",
+                     "desc": "HIP-3 hisse perp dex'leri, virgülle (ör: xyz)"},
+    "calendar_horizon_days": {"type": "int", "label": "Takvim ufku (gün)",
+                              "desc": "Kaç gün ilerisinin earnings'leri çekilsin"},
+    "metrics_poll_sec": {"type": "int", "label": "Metrik periyodu (sn)",
+                         "desc": "OI/funding örnekleme sıklığı"},
+    "anomaly_poll_sec": {"type": "int", "label": "Anomali kontrol periyodu (sn)",
+                         "desc": "OI/funding anomali taraması sıklığı"},
+    "oi_spike_pct_event": {"type": "float", "label": "OI spike eşiği - earnings yakın (%)",
+                           "desc": "Earnings <72h iken 24h OI artışı alarmı"},
+    "oi_spike_pct_normal": {"type": "float", "label": "OI spike eşiği - normal (%)",
+                            "desc": "Earnings yokken 24h OI artışı alarmı"},
+    "oi_spike_floor_usd": {"type": "float", "label": "OI spike tabanı ($)",
+                           "desc": "Bu OI'nin altındaki mikro marketlerde alarm verme"},
+    "funding_extreme": {"type": "float", "label": "Aşırı funding eşiği (saatlik)",
+                        "desc": "ör: 0.0005 = %0.05/saat"},
+    "peers_override": {"type": "str", "label": "Korele hisse override",
+                       "desc": "Format: SNDK:WDC|MU;TSLA:RIVN (varsayılan tabloya eklenir)"},
+    "universe_refresh_sec": {"type": "int", "label": "Evren yenileme (sn)",
+                             "desc": "HL coin listesi yenileme sıklığı"},
+    "calendar_refresh_sec": {"type": "int", "label": "Takvim yenileme (sn)",
+                             "desc": "Earnings takvimi çekme sıklığı"},
+}
+
+
+def convert_value(typ: str, v):
+    if typ == "int":
+        return int(float(str(v).replace(",", ".")))
+    if typ == "float":
+        return float(str(v).replace(",", "."))
+    if typ == "csv":
+        return _csv(str(v))
+    return str(v)
+
+
+def display_value(typ: str, v) -> str:
+    if typ == "csv" and isinstance(v, list):
+        return ",".join(v)
+    if typ == "float":
+        try:
+            f = float(v)
+            return str(int(f)) if f == int(f) else str(f)
+        except (TypeError, ValueError):
+            return str(v)
+    return str(v)
 
 
 class Config:
@@ -38,6 +107,16 @@ class Config:
         self.scan_concurrency = int(os.getenv("SCAN_CONCURRENCY", "8"))
         self.fills_lookback_days = int(os.getenv("FILLS_LOOKBACK_DAYS", "30"))
 
+        # Anomali dedektörü
+        self.anomaly_poll_sec = int(os.getenv("ANOMALY_POLL_SEC", "1800"))
+        self.oi_spike_pct_event = float(os.getenv("OI_SPIKE_PCT_EVENT", "50"))    # earnings <72h iken
+        self.oi_spike_pct_normal = float(os.getenv("OI_SPIKE_PCT_NORMAL", "150"))
+        self.oi_spike_floor_usd = float(os.getenv("OI_SPIKE_FLOOR_USD", "200000"))
+        self.funding_extreme = float(os.getenv("FUNDING_EXTREME", "0.0005"))      # saatlik oran (0.05%/h)
+
+        # Korele hisseler: "SNDK:WDC|MU;TSLA:RIVN" formatıyla override edilebilir
+        self.peers_override = os.getenv("PEERS", "")
+
         # Periyotlar (saniye)
         self.universe_refresh_sec = int(os.getenv("UNIVERSE_REFRESH_SEC", str(6 * 3600)))
         self.calendar_refresh_sec = int(os.getenv("CALENDAR_REFRESH_SEC", str(12 * 3600)))
@@ -50,6 +129,25 @@ class Config:
         # Depolama ("hafıza") — Railway'de Volume /data'ya mount edilir
         default_db = "/data/radar.db" if os.path.isdir("/data") else "./data/radar.db"
         self.db_path = os.getenv("DB_PATH", default_db)
+
+        # Dashboard'dan kaydedilen override'lar (ad -> ham string)
+        self.overrides: dict[str, str] = {}
+
+    def apply_overrides(self, raw: dict) -> None:
+        """DB'den gelen override'ları canlı config'e uygula (hatalıyı atla)."""
+        for name, val in (raw or {}).items():
+            spec = EDITABLE_FIELDS.get(name)
+            if not spec:
+                continue
+            try:
+                setattr(self, name, convert_value(spec["type"], val))
+                self.overrides[name] = str(val)
+            except (TypeError, ValueError):
+                pass
+
+    def env_default(self, name: str):
+        """Env/kod varsayılanı (override'sız taze instance'tan)."""
+        return getattr(Config(), name)
 
 
 _cfg: Config | None = None

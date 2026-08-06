@@ -8,10 +8,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from ..db import db, now
+from ..config import EDITABLE_FIELDS, convert_value, display_value
+from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import upcoming_events
 from ..hl.universe import find_ticker, get_universe
-from ..radar import metrics
+from ..radar import clusters, metrics
 
 TR = ZoneInfo("Europe/Istanbul")
 
@@ -194,6 +195,54 @@ async def whale_page(request: Request, address: str):
                          "liq_px": float(p["liquidationPx"]) if p.get("liquidationPx") else None,
                          "upnl": float(p.get("unrealizedPnl") or 0)})
     live.sort(key=lambda p: p["notional"], reverse=True)
+    linked = await clusters.linked_addresses(addr)
     return _render(request, "whale.html", {
         "address": addr, "arow": arow, "live": live, "fills": fills, "snaps": snaps,
+        "linked": linked,
     })
+
+
+# ---------------- ayarlar ----------------
+
+@router.get("/settings")
+async def settings_page(request: Request, saved: int = 0):
+    _guard(request)
+    cfg = request.app.state.cfg
+    overrides = await kv_get("settings_overrides") or {}
+    fields = []
+    for name, spec in EDITABLE_FIELDS.items():
+        fields.append({
+            "name": name,
+            "label": spec["label"],
+            "desc": spec["desc"],
+            "current": display_value(spec["type"], getattr(cfg, name)),
+            "default": display_value(spec["type"], cfg.env_default(name)),
+            "overridden": name in overrides,
+        })
+    return _render(request, "settings.html", {"fields": fields, "saved": saved})
+
+
+@router.post("/settings")
+async def settings_save(request: Request):
+    key = _guard(request)
+    cfg = request.app.state.cfg
+    form = await request.form()
+    overrides = await kv_get("settings_overrides") or {}
+    for name, spec in EDITABLE_FIELDS.items():
+        raw = (form.get(name) or "").strip()
+        try:
+            conv = convert_value(spec["type"], raw) if raw else None
+        except (TypeError, ValueError):
+            continue  # bozuk değer — sessizce atla
+        if conv is None or conv == cfg.env_default(name):
+            # boş bırakıldı ya da varsayılana döndü → override'ı kaldır
+            if name in overrides:
+                del overrides[name]
+                setattr(cfg, name, cfg.env_default(name))
+                cfg.overrides.pop(name, None)
+            continue
+        overrides[name] = raw
+    await kv_set("settings_overrides", overrides)
+    cfg.apply_overrides(overrides)
+    return RedirectResponse(f"/settings?saved=1" + (f"&key={key}" if key else ""),
+                            status_code=303)

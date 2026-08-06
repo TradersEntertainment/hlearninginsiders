@@ -136,7 +136,47 @@ def _reasons_block(rows: list[dict], limit: int = 3) -> str:
     return "\n".join(lines)
 
 
-def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg) -> str:
+def clusters_block(cluster_list: list[dict]) -> str:
+    lines = []
+    for c in cluster_list[:4]:
+        side = {"long": "LONG", "short": "SHORT"}.get(c["side"], "KARIŞIK")
+        addrs = "+".join(short(a) for a in c["addrs"][:4])
+        lines.append(f"  {addrs} → {side} toplam <b>{usd(c['total'])}</b> (bölünmüş pozisyon olabilir)")
+    return "\n".join(lines)
+
+
+def peers_block(peer_list: list[dict]) -> str:
+    lines = []
+    for p in peer_list:
+        s = p.get("summ") or {}
+        line = f"  <b>{p['symbol']}</b>: OI {usd(s.get('oi_ntl'))}"
+        if s.get("oi_change_pct") is not None:
+            line += f" (24h {pct(s['oi_change_pct'])})"
+        if s.get("funding") is not None:
+            line += f", fund {s['funding'] * 100:+.4f}%/h"
+        top = p.get("top")
+        if top:
+            side = "SHORT" if top["side"] == "short" else "LONG"
+            line += f" │ en büyük: {side} {usd(top['notional'])}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def anomaly_alert(symbol: str, coin: str, triggers: list[str], event: dict | None) -> str:
+    lines = [f"📡 <b>ANOMALİ — {symbol}</b>"]
+    if event:
+        hint = {"amc": "AMC", "bmo": "BMO"}.get(event.get("hour_hint") or "", "?")
+        lines.append(f"📅 Earnings yaklaşıyor: <b>{event['date_et']}</b> ({hint}) — birileri biliyor olabilir")
+    for t in triggers:
+        lines.append(f"  ⚠️ {t}")
+    lines.append(f"🔍 Detay için: /scan {symbol}")
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
+def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg,
+                    cluster_list: list[dict] | None = None,
+                    peer_list: list[dict] | None = None) -> str:
     sym = event["symbol"]
     hint = {"amc": "kapanış sonrası", "bmo": "açılış öncesi"}.get(
         event.get("hour_hint") or "", "saat belirsiz")
@@ -156,6 +196,10 @@ def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg) 
             parts.append("\n🕵️ <b>Şüphe nedenleri:</b>\n" + reasons)
     else:
         parts.append("🐋 Havuzda açık pozisyon bulunamadı (havuz henüz dar olabilir).")
+    if cluster_list:
+        parts.append("\n🧩 <b>Bağlantılı cüzdanlar:</b>\n" + clusters_block(cluster_list))
+    if peer_list:
+        parts.append("\n🧲 <b>Korele hisseler:</b>\n" + peers_block(peer_list))
     parts.append(DISCLAIMER)
     return "\n".join(parts)
 
