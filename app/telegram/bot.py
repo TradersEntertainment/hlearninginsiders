@@ -142,6 +142,8 @@ class TelegramBot:
             await self._cmd_ignore(args, chat_id, on=False)
         elif cmd == "watchlist":
             await self._cmd_watchlist(chat_id)
+        elif cmd in ("settime", "saat"):
+            await self._cmd_settime(args, chat_id)
         elif cmd in ("gecmis", "history", "arsiv"):
             async with db() as conn:
                 cur = await conn.execute(
@@ -259,6 +261,94 @@ class TelegramBot:
                 await conn.execute(
                     "UPDATE addresses SET watchlist=0 WHERE address=?", (addr,))
         await self.send(("⭐ Eklendi: " if add else "Çıkarıldı: ") + fmt.short(addr), chat_id)
+
+    async def _cmd_settime(self, args: list[str], chat_id: str) -> None:
+        """Bilanço saatini elle düzelt — kaynaklar yanılırsa son söz sende.
+        /settime SHAZ bmo | amc | 16:30 (TSİ) | 09:30et [YYYY-MM-DD]"""
+        from datetime import datetime as _dt
+
+        from ..earnings.calendar import ET, TR, annotate
+
+        if len(args) < 2:
+            await self.send(
+                "Kullanım:\n"
+                "<code>/settime SHAZ bmo</code> — sabah (açılış öncesi)\n"
+                "<code>/settime SHAZ amc</code> — akşam (kapanış sonrası)\n"
+                "<code>/settime SHAZ 16:30</code> — tam saat (<b>TSİ</b>)\n"
+                "<code>/settime SHAZ 09:30et</code> — tam saat (ET/New York)\n"
+                "Tarih eklemek için sona: <code>/settime BIRD amc 2026-08-12</code>\n\n"
+                "Elle girilen kayıtları hiçbir kaynak ezmez.", chat_id)
+            return
+
+        sym = args[0].upper().lstrip("$")
+        spec = args[1].lower()
+        want_date = args[2] if len(args) > 2 else None
+
+        t = await find_ticker(sym)
+        if not t:
+            await self.send(f"'{sym}' HL evreninde yok.", chat_id)
+            return
+
+        async with db() as conn:
+            if want_date:
+                cur = await conn.execute(
+                    "SELECT * FROM earnings_events WHERE symbol=? AND date_et=?",
+                    (sym, want_date))
+            else:
+                cur = await conn.execute(
+                    """SELECT * FROM earnings_events WHERE symbol=? AND evaluated=0
+                       ORDER BY date_et LIMIT 1""", (sym,))
+            row = await cur.fetchone()
+        ev = dict(row) if row else None
+        date_et = want_date or (ev["date_et"] if ev else None)
+        if not date_et:
+            await self.send(f"{sym} için takvimde kayıt yok. Tarih de ver:"
+                            f" <code>/settime {sym} {spec} 2026-08-12</code>", chat_id)
+            return
+
+        hint, exact_ts = None, None
+        if spec in ("bmo", "amc"):
+            hint = spec
+        else:
+            zone, raw = TR, spec
+            if raw.endswith("et"):
+                zone, raw = ET, raw[:-2].strip()
+            elif raw.endswith("tsi"):
+                raw = raw[:-3].strip()
+            try:
+                hh, mm = (int(x) for x in raw.replace(".", ":").split(":"))
+                d = _dt.strptime(date_et, "%Y-%m-%d").replace(
+                    hour=hh, minute=mm, tzinfo=zone)
+            except (ValueError, TypeError):
+                await self.send("Saati anlayamadım. Örnek: <code>/settime SHAZ 16:30</code>", chat_id)
+                return
+            exact_ts = int(d.timestamp())
+            et_t = _dt.fromtimestamp(exact_ts, ET).time()
+            hint = "bmo" if et_t.hour < 12 else "amc"
+
+        async with db() as conn:
+            if ev:
+                await conn.execute(
+                    """UPDATE earnings_events SET hour_hint=?, exact_ts=?, date_et=?,
+                         source='manual', note='✍️ saat elle girildi'
+                       WHERE id=?""", (hint, exact_ts, date_et, ev["id"]))
+            else:
+                await conn.execute(
+                    """INSERT INTO earnings_events(symbol,coin,date_et,hour_hint,exact_ts,
+                         source,note,created_ts)
+                       VALUES(?,?,?,?,?,'manual','✍️ saat elle girildi',?)
+                       ON CONFLICT(symbol,date_et) DO UPDATE SET
+                         hour_hint=excluded.hour_hint, exact_ts=excluded.exact_ts,
+                         source='manual', note=excluded.note""",
+                    (sym, t["coin"], date_et, hint, exact_ts, now()))
+
+        ann = annotate([{"symbol": sym, "date_et": date_et, "hour_hint": hint,
+                         "exact_ts": exact_ts}])[0]
+        await self.send(
+            f"✅ <b>{sym}</b> güncellendi: {ann['icon']} <b>{ann['tsi']} TSİ</b>"
+            f" ({ann['when_txt']}{'' if ann['exact'] else ', yaklaşık'})"
+            f"\n{'❗ Bu saat geçti' if ann['passed'] else '⏳ ' + ann['countdown'] + ' kaldı'}"
+            "\n<i>Bu kayıt artık kaynaklar tarafından değiştirilmez.</i>", chat_id)
 
     async def _cmd_ignore(self, args: list[str], chat_id: str, on: bool) -> None:
         if not args or not args[0].startswith("0x"):

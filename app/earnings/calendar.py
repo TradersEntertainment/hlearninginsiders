@@ -308,16 +308,27 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
         for sym, ev in merged.items():
             if not ev.get("date_et"):
                 continue
+            # ÖNEMLİ: hour_hint artık "yapışkan" değil — daha güvenilir kaynak (merge
+            # sırasında seçildi) eski değeri düzeltebilmeli. Yoksa yanlış bir 'amc'
+            # sonsuza kadar kalıyor (SHAZ vakası). 'unknown' asla bilineni ezmez.
+            # Elle girilen (manual) kayıtlara hiçbir kaynak dokunamaz.
             await conn.execute(
                 """INSERT INTO earnings_events(symbol,coin,date_et,hour_hint,exact_ts,eps_est,source,note,created_ts)
                    VALUES(?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(symbol,date_et) DO UPDATE SET
-                     hour_hint=CASE WHEN earnings_events.hour_hint='unknown'
-                                    THEN excluded.hour_hint ELSE earnings_events.hour_hint END,
-                     exact_ts=COALESCE(excluded.exact_ts, earnings_events.exact_ts),
+                     hour_hint=CASE
+                       WHEN COALESCE(excluded.hour_hint,'unknown')='unknown'
+                         THEN earnings_events.hour_hint
+                       ELSE excluded.hour_hint END,
+                     exact_ts=CASE
+                       WHEN excluded.exact_ts IS NOT NULL THEN excluded.exact_ts
+                       WHEN COALESCE(excluded.hour_hint,'unknown')<>'unknown'
+                            AND excluded.hour_hint<>earnings_events.hour_hint THEN NULL
+                       ELSE earnings_events.exact_ts END,
                      eps_est=COALESCE(excluded.eps_est, earnings_events.eps_est),
                      source=excluded.source,
-                     note=COALESCE(excluded.note, earnings_events.note)""",
+                     note=excluded.note
+                   WHERE COALESCE(earnings_events.source,'') NOT LIKE '%manual%'""",
                 (sym, sym2coin[sym], ev["date_et"], ev["hour_hint"], ev.get("exact_ts"),
                  ev.get("eps_est"), ev.get("source"), ev.get("note"), now()),
             )
@@ -330,7 +341,8 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
                 await conn.execute(
                     """DELETE FROM earnings_events
                        WHERE symbol=? AND date_et>=? AND alerted_pre=0 AND alerted_t1=0
-                         AND evaluated=0 AND date_et<>?""",
+                         AND evaluated=0 AND date_et<>?
+                         AND COALESCE(source,'') NOT LIKE '%manual%'""",
                     (sym, today, merged[sym]["date_et"]),
                 )
     log.info("takvim yenilendi: %d HL-eşleşen earnings", n)
