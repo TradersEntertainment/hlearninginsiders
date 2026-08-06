@@ -7,7 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from ..config import EDITABLE_FIELDS, convert_value, display_value
@@ -57,6 +57,28 @@ def _dt(ts):
 templates.env.filters.update(usd=_usd, px=_px, age=_age, dt=_dt)
 
 router = APIRouter()
+
+# Sekme ikonu: radar halkaları + yeşil balina sinyali (16px'te de okunur)
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<rect width="64" height="64" rx="15" fill="#1d1730"/>
+<circle cx="30" cy="34" r="21" fill="none" stroke="#8f7bff" stroke-width="3.5" opacity=".45"/>
+<circle cx="30" cy="34" r="12" fill="none" stroke="#8f7bff" stroke-width="3.5" opacity=".8"/>
+<path d="M30 34 L47 17" stroke="#c3b3ff" stroke-width="3.5" stroke-linecap="round"/>
+<circle cx="46" cy="18" r="8" fill="#8be9b8"/>
+</svg>"""
+
+
+@router.get("/favicon.svg")
+async def favicon_svg():
+    return Response(FAVICON_SVG, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/favicon.ico")
+async def favicon_ico():
+    return Response(FAVICON_SVG, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
 
 CHART_SHORT = "#e5484d"   # validator'dan geçen çift (deutan ΔE 8.6)
 CHART_LONG = "#26997b"
@@ -500,7 +522,7 @@ async def coin_page(request: Request, symbol: str):
             "SELECT * FROM earnings_events WHERE coin=? AND date_et>=date('now','-1 day')"
             " ORDER BY date_et LIMIT 1", (coin,))
         ev = await cur.fetchone()
-        ev = dict(ev) if ev else None
+        ev = annotate([dict(ev)])[0] if ev else None
 
     for p in rows:
         p["reasons"] = ", ".join(json.loads(p.get("score_reasons") or "[]"))

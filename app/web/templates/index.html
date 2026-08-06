@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
+{% block title %}{% if suspicious %}🚨 {{ suspicious|length }} şüpheli · {% else %}🐋 {% endif %}HL Insider Radar{% endblock %}
 {% block bodyattrs %} data-refresh="60"{% endblock %}
 {% block content %}
 <div class="panel strip">

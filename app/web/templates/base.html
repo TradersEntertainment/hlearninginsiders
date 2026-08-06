@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}HL Insider Radar{% endblock %}</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/favicon.svg">
+<meta name="theme-color" content="#1d1730">
+<meta name="description" content="Hyperliquid hisse perp'lerinde earnings öncesi insider şüpheli balina pozisyonlarını yakalar.">
 {% block head %}{% endblock %}
 <style>
 :root{
@@ -39,6 +43,7 @@ border-bottom:1px solid var(--border)}
 header h1{font-size:17px;margin:0;font-weight:800;letter-spacing:.02em}
 header h1 a{color:var(--fg)}
 header h1 .wig{display:inline-block;animation:bob 2.6s ease-in-out infinite}
+header h1 .logo{width:26px;height:26px;vertical-align:-6px;border-radius:7px}
 @keyframes bob{50%{transform:translateY(-3px) rotate(-6deg)}}
 header form{display:flex;gap:8px}
 input[type=text]{background:rgba(23,19,34,.8);border:1.5px solid var(--border);
@@ -166,7 +171,7 @@ footer{padding:18px 22px;color:#6f6590;font-size:12px}
 <span class="spark" style="top:12%;left:55%;animation-delay:4s">💫</span>
 <span class="whale">🐋</span>
 <header>
-  <h1><a href="/{{ k }}"><span class="wig">🐋</span> HL Insider Radar</a></h1>
+  <h1><a href="/{{ k }}"><img src="/favicon.svg" alt="" class="wig logo"> HL Insider Radar</a></h1>
   <form action="/{{ k }}" method="get">
     {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
     <input type="text" name="q" placeholder="ticker ara: SNDK" autofocus>

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
-{% block title %}{{ symbol }} — HL Insider Radar{% endblock %}
+{% block title %}{% if rows and (rows[0].score or 0) >= 50 %}🚨{% elif ticker %}🐋{% endif %}{{ symbol }}{% if summ and summ.mark %} {{ summ.mark|px }}{% endif %}{% if event and not event.passed %} · 📅{% endif %} · HL Radar{% endblock %}
 {% block bodyattrs %} data-refresh="{{ 10 if scanning else 45 }}"{% endblock %}
 {% block content %}
 {% if not ticker %}
@@ -20,8 +20,11 @@
     {% if summ.oi_change_pct is not none %}(24h {{ '%+.0f'|format(summ.oi_change_pct) }}%{% if summ.oi_change_pct>=50 %} ⚠️{% endif %}){% endif %}</span>
   <span class="stat">Funding <b>{% if summ.funding is not none %}{{ '%+.4f'|format(summ.funding*100) }}%/h{% else %}-{% endif %}</b></span>
   <span class="stat">24h Hacim <b>{{ summ.day_volume|usd }}</b></span>
-  {% if event %}<span class="stat warn">📅 Earnings: <b>{{ event.date_et }}</b>
-    {{ {'amc':'AMC','bmo':'BMO'}.get(event.hour_hint,'?') }}</span>{% endif %}
+  {% if event %}<span class="stat warn" title="{{ event.when_txt }}">📅 Earnings:
+    {{ event.icon }} <b>{{ event.tsi }}</b> TSİ{% if not event.exact %}~{% endif %}
+    {% if event.passed %}<span class="short">· açıklandı</span>
+    {% elif event.maybe_passed %}<span class="short">· ⚠️ sabah açıklanmış olabilir</span>
+    {% else %}· {{ event.countdown }} kaldı{% endif %}</span>{% endif %}
   <form method="post" action="/t/{{ symbol }}/scan{{ k }}" style="display:inline">
     <button type="submit">⟳ Yeniden tara</button>
   </form>

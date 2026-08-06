@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
-{% block title %}{{ address[:10] }} — HL Insider Radar{% endblock %}
+{% block title %}👤 {{ address[:6] }}..{{ address[-4:] }}{% if arow.get('hits') %} {{ arow.hits }}✓{% endif %} · HL Radar{% endblock %}
 {% block content %}
 <div class="panel">
   <h2>👤 Balina karnesi</h2>
