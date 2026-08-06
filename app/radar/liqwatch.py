@@ -84,7 +84,7 @@ async def _candidates(cfg: Config, client: HLClient) -> list[str]:
     return ordered[: cfg.liq_watch_top_accounts + 50]
 
 
-async def run_cycle(cfg: Config, client: HLClient, bot) -> None:
+async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
     marks = await _mark_map(cfg, client)
     if not marks:
         return
@@ -131,9 +131,10 @@ async def run_cycle(cfg: Config, client: HLClient, bot) -> None:
     for key, row in tracked.items():
         if key in found:
             continue
-        if row["stage"] >= 1 and bot:
+        if row["stage"] >= 1 and notifier:
             try:
-                await bot.send(fmt.liq_closed(key[1], key[0], row))
+                await notifier.send("liq", fmt.liq_closed(key[1], key[0], row),
+                                    priority="normal", key=f"{key[1]}:{key[0]}:closed")
             except Exception as e:
                 log.warning("liq kapanış notu gönderilemedi: %s", e)
         async with db() as conn:
@@ -148,9 +149,12 @@ async def run_cycle(cfg: Config, client: HLClient, bot) -> None:
         stage_sent = tracked.get((addr, coin), {}).get("stage") or 0
         need = needed_stage(dist)
         if need > stage_sent:
-            if bot:
+            if notifier:
                 try:
-                    await bot.send(fmt.liq_alert(coin, addr, p, mark, dist, need))
+                    await notifier.send(
+                        "liq", fmt.liq_alert(coin, addr, p, mark, dist, need),
+                        priority="critical" if need >= 3 else "high",
+                        key=f"{coin}:{addr}:{need}")
                 except Exception as e:
                     log.warning("liq alerti gönderilemedi: %s", e)
             log.info("liq kademe %d: %s %s %%%.2f", need, coin, addr, dist)
@@ -169,13 +173,13 @@ async def run_cycle(cfg: Config, client: HLClient, bot) -> None:
                  stage_sent))
 
 
-async def loop(cfg: Config, client: HLClient, bot=None) -> None:
+async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
     await asyncio.sleep(90)
     log.info("likidasyon radarı başladı (min $%.0fM, periyot %ds)",
              cfg.liq_watch_min_notional / 1e6, cfg.liq_watch_poll_sec)
     while True:
         try:
-            await run_cycle(cfg, client, bot)
+            await run_cycle(cfg, client, notifier)
         except asyncio.CancelledError:
             raise
         except Exception:

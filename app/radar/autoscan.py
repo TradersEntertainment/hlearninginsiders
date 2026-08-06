@@ -32,16 +32,18 @@ async def _upcoming_event(coin: str) -> dict | None:
         return dict(r) if r else None
 
 
-async def _alert_new_big(cfg: Config, bot, coin: str, rows: list[dict]) -> None:
+async def _alert_new_big(cfg: Config, notifier, coin: str, rows: list[dict]) -> None:
     """Earnings şartı YOK: yeni açılmış büyük pozisyon görülünce anında haber ver.
     (CEO istifası, ele geçirme, dava... insider her zaman ortaya çıkabilir.)"""
-    if not bot:
+    if not notifier:
         return
     ts = now()
     for p in rows:
         if p.get("entity"):  # MM/vault — gürültü, alert yok
             continue
         if p["notional"] < cfg.big_position_usd:
+            continue
+        if (p.get("score") or 0) < cfg.alert_min_score:
             continue
         opened = p.get("opened_ts")
         if not opened or ts - opened > cfg.fresh_big_alert_hours * 3600:
@@ -52,20 +54,21 @@ async def _alert_new_big(cfg: Config, bot, coin: str, rows: list[dict]) -> None:
         event = await _upcoming_event(coin)
         text = fmt.new_big_position_alert(coin, p, event)
         try:
-            if await bot.send(text):
+            prio = "critical" if (p.get("score") or 0) >= 70 else "high"
+            if await notifier.send("new_big", text, priority=prio, key=key):
                 await alert_log("new_big_pos", key, text)
         except Exception as e:
             log.warning("yeni-poz alerti gönderilemedi: %s", e)
 
 
-async def scan_coin(cfg: Config, client: HLClient, coin: str, dex: str, bot=None) -> None:
+async def scan_coin(cfg: Config, client: HLClient, coin: str, dex: str, notifier=None) -> None:
     from .report import build_scan  # döngüsel importu kır
     if coin in _inflight:
         return
     _inflight.add(coin)
     try:
         _, rows = await build_scan(cfg, client, coin, dex, quick=True)
-        await _alert_new_big(cfg, bot, coin, rows)
+        await _alert_new_big(cfg, notifier, coin, rows)
         log.info("oto-tarama tamam: %s (%d pozisyon)", coin, len(rows))
     except Exception as e:
         log.warning("oto-tarama %s: %s", coin, e)
@@ -73,10 +76,10 @@ async def scan_coin(cfg: Config, client: HLClient, coin: str, dex: str, bot=None
         _inflight.discard(coin)
 
 
-def kick(cfg: Config, client: HLClient, coin: str, dex: str, bot=None) -> None:
+def kick(cfg: Config, client: HLClient, coin: str, dex: str, notifier=None) -> None:
     """Ateşle-unut: sayfa açılışında bayat coin için arka plan taraması."""
     if coin not in _inflight:
-        asyncio.create_task(scan_coin(cfg, client, coin, dex, bot))
+        asyncio.create_task(scan_coin(cfg, client, coin, dex, notifier))
 
 
 async def _pick_next(cfg: Config) -> tuple[str, str] | None:
@@ -106,14 +109,14 @@ async def _pick_next(cfg: Config) -> tuple[str, str] | None:
         return (r["coin"], r["dex"]) if r else None
 
 
-async def loop(cfg: Config, client: HLClient, bot=None) -> None:
+async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
     await asyncio.sleep(45)  # evren keşfini bekle
     log.info("oto-tarayıcı başladı (periyot: %ds)", cfg.auto_scan_interval_sec)
     while True:
         try:
             nxt = await _pick_next(cfg)
             if nxt:
-                await scan_coin(cfg, client, nxt[0], nxt[1], bot)
+                await scan_coin(cfg, client, nxt[0], nxt[1], notifier)
         except asyncio.CancelledError:
             raise
         except Exception:

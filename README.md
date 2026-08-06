@@ -37,6 +37,19 @@ Detaylı mimari için: [PLAN.md](PLAN.md)
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
 | `/watchlist` | Sicilli adresler |
 | `/status` | Bot durumu (WS, havuz boyutları, son yenilemeler) |
+| `/bildirimler` | Bildirim ayarları + son gönderilenler |
+| `/gecmis` · `/winners` | Bilanço arşivi · en iyi biliciler |
+| `/settime SHAZ bmo` | Bilanço saatini elle düzelt |
+| `/refresh` | Takvimi tüm kaynaklardan yenile |
+
+## Bildirimler
+
+Her bildirim tipi (earnings raporu, yeni büyük pozisyon, likidasyon radarı, büyük işlem,
+anomali, sonuç raporu, sabah özeti) dashboard → ⚙️ Ayarlar → **Bildirimler**'den tek tek
+açılıp kapatılır. **Sessiz saat** penceresinde (varsayılan 01:00–08:00 TSİ) normal
+bildirimler beklemeye alınıp sabah **günlük özet**te toplu gelir; "önemli" olanlar
+(earnings, yeni büyük pozisyon, likidasyon) istersen sessiz saatte de düşer, **kritik**
+olanlar (son likidasyon uyarısı, 70+ skorlu insider) her zaman geçer.
 
 ## Ayarlar
 

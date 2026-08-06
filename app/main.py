@@ -20,6 +20,7 @@ from .earnings import evaluator
 from .hl import universe as uni
 from .hl.client import HLClient
 from .hl.collector import Collector
+from .notify import Notifier, clear_digest_items, pending_digest_items
 from .radar import anomaly, autoscan, liqwatch, metrics, report
 from .telegram.bot import TelegramBot
 from .web.routes import router
@@ -87,7 +88,7 @@ async def metrics_loop(cfg, client):
         await asyncio.sleep(cfg.metrics_poll_sec)
 
 
-async def check_due(cfg, client, bot):
+async def check_due(cfg, client, notifier):
     async with dbm.db() as conn:
         cur = await conn.execute("SELECT * FROM earnings_events WHERE evaluated=0")
         events = [dict(r) for r in await cur.fetchall()]
@@ -104,30 +105,62 @@ async def check_due(cfg, client, bot):
                         f"UPDATE earnings_events SET {flag}=1 WHERE id=?", (ev["id"],))
                 continue
             log.info("⏰ %s %s raporu tetiklendi", ev["symbol"], stage)
-            await report.run_stage(cfg, client, bot, ev, stage)
+            await report.run_stage(cfg, client, notifier, ev, stage)
             ev[flag] = 1
 
 
-async def due_loop(cfg, client, bot):
+async def due_loop(cfg, client, notifier):
     await asyncio.sleep(30)
     while True:
         try:
-            await check_due(cfg, client, bot)
-            await evaluator.evaluate_due(cfg, client, bot)
+            await check_due(cfg, client, notifier)
+            await evaluator.evaluate_due(cfg, client, notifier)
         except Exception:
             log.exception("due check hatası")
         await asyncio.sleep(cfg.due_check_sec)
 
 
-async def anomaly_loop(cfg, bot):
+async def anomaly_loop(cfg, notifier):
     await asyncio.sleep(120)  # önce metrik birikmeye başlasın
     while True:
         try:
-            await anomaly.check_anomalies(cfg, bot)
+            await anomaly.check_anomalies(cfg, notifier)
             _stamp("anomali taraması")
         except Exception:
             log.exception("anomali taraması hatası")
         await asyncio.sleep(cfg.anomaly_poll_sec)
+
+
+async def digest_loop(cfg, notifier):
+    """Her gün belirlenen saatte: gece biriken bildirimler + günün gündemi."""
+    await asyncio.sleep(180)
+    while True:
+        try:
+            hour = datetime.now(TR).hour
+            last = await dbm.kv_get("digest_last_day")
+            today = datetime.now(TR).strftime("%Y-%m-%d")
+            if hour == int(cfg.digest_hour) and last != today:
+                await dbm.kv_set("digest_last_day", today)
+                if cfg.notify_digest:
+                    from .earnings.calendar import annotate, upcoming_events
+                    from .telegram import format as fmt
+                    pending = await pending_digest_items()
+                    events = annotate(await upcoming_events(3))
+                    async with dbm.db() as conn:
+                        cur = await conn.execute(
+                            """SELECT p.*, t.symbol FROM positions_current p
+                               JOIN tickers t ON t.coin=p.coin
+                               LEFT JOIN addresses a ON a.address=p.address
+                               WHERE COALESCE(p.score,0) >= 50 AND COALESCE(a.entity,'')=''
+                               ORDER BY p.score DESC LIMIT 5""")
+                        top = [dict(r) for r in await cur.fetchall()]
+                    text = fmt.digest(pending, events, top)
+                    if await notifier.send("digest", text, priority="normal"):
+                        await clear_digest_items()
+                    _stamp("günlük özet")
+        except Exception:
+            log.exception("özet hatası")
+        await asyncio.sleep(600)
 
 
 # ---------------- uygulama ----------------
@@ -151,13 +184,15 @@ async def lifespan(app: FastAPI):
     client = HLClient(session, cfg.api_base, cfg.stats_leaderboard_url,
                       concurrency=cfg.scan_concurrency)
     bot = TelegramBot(cfg, session, client, STATE) if cfg.telegram_bot_token else None
-    collector = Collector(cfg, session, bot)
+    notifier = Notifier(cfg, bot)
+    collector = Collector(cfg, session, bot, notifier)
     if bot:
         bot.collector = collector
 
     app.state.cfg = cfg
     app.state.client = client
     app.state.bot = bot
+    app.state.notifier = notifier
     app.state.collector = collector
     app.state.state = STATE
 
@@ -165,10 +200,11 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(supervised("universe", lambda: universe_loop(cfg, client))),
         asyncio.create_task(supervised("calendar", lambda: calendar_loop(cfg, session))),
         asyncio.create_task(supervised("metrics", lambda: metrics_loop(cfg, client))),
-        asyncio.create_task(supervised("due", lambda: due_loop(cfg, client, bot))),
-        asyncio.create_task(supervised("anomaly", lambda: anomaly_loop(cfg, bot))),
-        asyncio.create_task(supervised("autoscan", lambda: autoscan.loop(cfg, client, bot))),
-        asyncio.create_task(supervised("liqwatch", lambda: liqwatch.loop(cfg, client, bot))),
+        asyncio.create_task(supervised("due", lambda: due_loop(cfg, client, notifier))),
+        asyncio.create_task(supervised("anomaly", lambda: anomaly_loop(cfg, notifier))),
+        asyncio.create_task(supervised("autoscan", lambda: autoscan.loop(cfg, client, notifier))),
+        asyncio.create_task(supervised("liqwatch", lambda: liqwatch.loop(cfg, client, notifier))),
+        asyncio.create_task(supervised("digest", lambda: digest_loop(cfg, notifier))),
         asyncio.create_task(supervised("collector", collector.run)),
     ]
     if bot:

@@ -55,7 +55,7 @@ async def peers_summary(cfg: Config, symbol: str, limit: int = 3) -> list[dict]:
     return out
 
 
-async def run_stage(cfg: Config, client: HLClient, bot, event: dict, stage: str) -> None:
+async def run_stage(cfg: Config, client: HLClient, notifier, event: dict, stage: str) -> None:
     coin = event["coin"]
     ref = event_ts_estimate(event)
     summ, rows = await build_scan(cfg, client, coin, coin_dex(coin), ref_ts=ref)
@@ -63,8 +63,9 @@ async def run_stage(cfg: Config, client: HLClient, bot, event: dict, stage: str)
     peer_list = await peers_summary(cfg, event["symbol"])
     text = fmt.earnings_report(event, stage, summ, rows, cfg,
                                cluster_list=cluster_list, peer_list=peer_list)
-    if bot:
-        await bot.send(text)
+    if notifier:
+        await notifier.send("earnings", text, priority="critical" if stage == "t1" else "high",
+                            key=f"{event['symbol']}:{stage}")
     await scanner.snapshot(event["id"], "T-1h" if stage == "t1" else "pre", rows)
     flag = "alerted_t1" if stage == "t1" else "alerted_pre"
     async with db() as conn:

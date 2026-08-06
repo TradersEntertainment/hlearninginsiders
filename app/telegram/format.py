@@ -380,6 +380,50 @@ def winners_list(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+DIGEST_LABELS = {
+    "whale_fill": "🐋 büyük işlem", "new_big": "🆕 yeni büyük pozisyon",
+    "anomaly": "📡 anomali", "liq": "💥 likidasyon", "earnings": "📊 earnings",
+    "eval": "🏁 sonuç",
+}
+
+
+def digest(pending: list[dict], events: list[dict], top: list[dict]) -> str:
+    lines = ["🌅 <b>GÜNAYDIN — gece raporu</b>"]
+
+    if pending:
+        counts: dict[str, int] = {}
+        for p in pending:
+            k = (p.get("kind") or "").split(":", 1)[-1]
+            counts[k] = counts.get(k, 0) + 1
+        lines.append("\n😴 <b>Sessiz saatte biriken bildirimler:</b>")
+        for k, n in sorted(counts.items(), key=lambda x: -x[1]):
+            lines.append(f"  {DIGEST_LABELS.get(k, k)} × {n}")
+        lines.append("\n<i>En önemli 3'ü:</i>")
+        for p in pending[-3:]:
+            first = (p.get("payload") or "").split("\n")[0]
+            lines.append(f"  • {first}")
+    else:
+        lines.append("\n😴 Gece sessizdi — bekleyen bildirim yok.")
+
+    if top:
+        lines.append("\n🚨 <b>Şu an en şüpheli pozisyonlar:</b>")
+        for p in top:
+            side = "SHORT" if p["side"] == "short" else "LONG"
+            lines.append(f"  [{p.get('score') or 0}] <b>{p['symbol']}</b> {side}"
+                         f" {usd(p['notional'])} · {age_str(p.get('opened_ts'))}")
+
+    live = [e for e in events if not e.get("passed")]
+    if live:
+        lines.append("\n📅 <b>Bugün/yarın bilanço:</b>")
+        for e in live[:6]:
+            lines.append(f"  {e['icon']} <b>{e['symbol']}</b> {e['tsi']} TSİ"
+                         + ("" if e.get("exact") else "~")
+                         + ("  ⚠️sabah olabilir" if e.get("maybe_passed") else ""))
+
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
 def status_text(state: dict) -> str:
     lines = ["🤖 <b>Durum</b>"]
     for k, v in state.items():
@@ -404,6 +448,7 @@ def help_text() -> str:
         "/watchlist — sicilli adresler\n"
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"
+        "/bildirimler — bildirim ayarları + son gönderilenler\n"
         "/status — bot durumu\n"
         "/id — bu sohbetin chat id'si"
     )

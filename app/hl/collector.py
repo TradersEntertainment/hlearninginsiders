@@ -20,10 +20,11 @@ WHALE_FILL_COOLDOWN = 1800  # aynı adres+coin için 30 dk'da bir alert
 
 
 class Collector:
-    def __init__(self, cfg: Config, session: aiohttp.ClientSession, bot=None):
+    def __init__(self, cfg: Config, session: aiohttp.ClientSession, bot=None, notifier=None):
         self.cfg = cfg
         self.session = session
         self.bot = bot
+        self.notifier = notifier
         self.connected = False
         self.subscribed: set[str] = set()
         self.fills_seen = 0
@@ -164,7 +165,8 @@ class Collector:
         record = (row["hits"], row["misses"]) if row else (0, 0)
         text = fmt.whale_fill_alert(coin, addr, side, px, notional, is_watch, record)
         try:
-            await self.bot.send(text)
-            await alert_log("whale_fill", key, text)
+            prio = "high" if is_watch else "normal"
+            if await self.notifier.send("whale_fill", text, priority=prio, key=key):
+                await alert_log("whale_fill", key, text)
         except Exception as e:
             log.warning("alert gönderilemedi: %s", e)

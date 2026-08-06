@@ -3,47 +3,65 @@
 {% block content %}
 <div class="panel">
   <h2>⚙️ Ayarlar</h2>
-  {% if saved %}<p style="color:var(--green)"><b>✓ Kaydedildi</b> — değişiklikler anında geçerli, deploy gerekmez.</p>{% endif %}
+  {% if saved %}<p class="okline"><b>✓ Kaydedildi</b> — değişiklikler anında geçerli, deploy gerekmez.</p>{% endif %}
 
   {% if not is_admin %}
   <p class="warn"><b>🔒 Salt okunur</b> — değişiklik yapmak için
     <a href="/login{{ '?nxt=/settings' if not k else k + '&nxt=/settings' }}">yönetici girişi</a> gerekir.</p>
   {% elif not has_pw %}
-  <p class="warn">⚠️ <b>Şifre tanımlı değil</b> — Railway'de <code>ADMIN_PASSWORD</code> değişkenini
-  ayarlarsan bu sayfayı ve Telegram butonlarını sadece sen kullanabilirsin.</p>
-  {% else %}
-  <form method="post" action="/logout{{ k }}" style="display:inline">
-    <button type="submit" class="tab">🔓 çıkış yap</button>
-  </form>
+  <p class="warn">⚠️ <b>Şifre tanımlı değil</b> — Railway'de <code>ADMIN_PASSWORD</code> ayarlarsan
+  bu sayfayı ve Telegram butonlarını sadece sen kullanabilirsin.</p>
   {% endif %}
 
-  <p class="dim">Buradaki değerler DB'de saklanır (deploy'lara dayanıklı) ve env değişkenini ezer.
-  Bir alanı boş bırakırsan env/kod varsayılanına döner.
-  Gizli anahtarlar (bot token, API key, şifre) güvenlik gereği sadece Railway Variables'tan değişir.</p>
+  <p class="sub">Değerler DB'de saklanır (deploy'a dayanıklı) ve env değişkenini ezer. Boş bırakılan
+  alan varsayılana döner. Gizli anahtarlar (bot token, API key, şifre) sadece Railway Variables'tan yönetilir.</p>
 
   {% if is_admin %}
-  <form method="post" action="/settings/test-telegram{{ k }}" style="display:inline">
-    <button type="submit" {% if not has_bot %}disabled title="TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram test mesajı gönder</button>
-  </form>
-  {% if tg == 'ok' %}<span class="long">✓ Test mesajı gitti — Telegram'ı kontrol et!</span>
-  {% elif tg == 'err' %}<span class="short">✗ Gönderilemedi — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID doğru mu?</span>{% endif %}
+  <div class="btnrow">
+    <form method="post" action="/settings/test-telegram{{ k }}">
+      <button type="submit" {% if not has_bot %}disabled title="TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram test mesajı</button>
+    </form>
+    <form method="post" action="/logout{{ k }}"><button type="submit" class="tab">🔓 çıkış yap</button></form>
+    {% if tg == 'ok' %}<span class="long">✓ Test mesajı gitti!</span>
+    {% elif tg == 'err' %}<span class="short">✗ Gönderilemedi — token / chat id doğru mu?</span>{% endif %}
+  </div>
   {% endif %}
-
-  <form method="post" action="/settings{{ k }}">
-    <table>
-      <tr><th class="l">Ayar</th><th class="l">Değer</th><th class="l">Varsayılan</th><th class="l">Açıklama</th></tr>
-      {% for f in fields %}
-      <tr>
-        <td class="l"><b>{{ f.label }}</b>{% if f.overridden %} <span class="badge b-mid">özel</span>{% endif %}
-            <div class="dim" style="font-size:11px">{{ f.name }}</div></td>
-        <td class="l"><input type="text" name="{{ f.name }}" value="{{ f.current }}" style="width:140px"
-            {% if not is_admin %}disabled{% endif %}></td>
-        <td class="l dim">{{ f.default }}</td>
-        <td class="l dim" style="white-space:normal;max-width:340px">{{ f.desc }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% if is_admin %}<p><button type="submit">💾 Kaydet</button></p>{% endif %}
-  </form>
 </div>
+
+<form method="post" action="/settings{{ k }}">
+{% for gname, fields in groups.items() %}
+<div class="panel">
+  <h2>{{ '🔔' if gname == 'Bildirimler' else '🎛' }} {{ gname }}</h2>
+  {% if gname == 'Bildirimler' %}
+  <p class="sub">Hangi bildirimleri, ne zaman alacağını buradan seçersin. Sessiz saatte
+  normal bildirimler beklemeye alınır ve sabah özetinde toplu gelir; "önemli" bildirimler
+  (earnings, yeni büyük pozisyon, likidasyon) istersen sessiz saatte de düşer.</p>
+  {% endif %}
+  <div class="setgrid">
+    {% for f in fields %}
+    <div class="setrow {{ 'ison' if f.type == 'bool' and f.on else '' }}">
+      {% if f.type == 'bool' %}
+      <label class="sw-wrap">
+        <input type="checkbox" name="{{ f.name }}" {% if f.on %}checked{% endif %}
+               {% if not is_admin %}disabled{% endif %}>
+        <span class="sw-track"><span class="sw-knob"></span></span>
+        <span class="sw-label">{{ f.label }}{% if f.overridden %} <span class="badge b-mid">özel</span>{% endif %}</span>
+      </label>
+      {% else %}
+      <label class="setlabel">{{ f.label }}{% if f.overridden %} <span class="badge b-mid">özel</span>{% endif %}
+        <input type="text" name="{{ f.name }}" value="{{ f.current }}"
+               {% if not is_admin %}disabled{% endif %}>
+        <span class="dim">vars: {{ f.default }}</span>
+      </label>
+      {% endif %}
+      <div class="setdesc">{{ f.desc }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+{% if is_admin %}
+<div class="panel savebar"><button type="submit">💾 Tüm ayarları kaydet</button></div>
+{% endif %}
+</form>
 {% endblock %}

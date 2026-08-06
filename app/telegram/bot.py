@@ -12,6 +12,7 @@ from ..earnings.calendar import upcoming_events
 from ..hl.client import HLClient
 from ..hl.universe import find_ticker
 from . import format as fmt
+from .format import tr_time
 
 log = logging.getLogger("telegram.bot")
 
@@ -148,6 +149,8 @@ class TelegramBot:
             await self._cmd_ignore(args, chat_id, on=False)
         elif cmd == "watchlist":
             await self._cmd_watchlist(chat_id)
+        elif cmd in ("bildirimler", "notifications", "notif"):
+            await self._cmd_notifications(chat_id)
         elif cmd in ("settime", "saat"):
             await self._cmd_settime(args, chat_id)
         elif cmd in ("gecmis", "history", "arsiv"):
@@ -267,6 +270,37 @@ class TelegramBot:
                 await conn.execute(
                     "UPDATE addresses SET watchlist=0 WHERE address=?", (addr,))
         await self.send(("⭐ Eklendi: " if add else "Çıkarıldı: ") + fmt.short(addr), chat_id)
+
+    async def _cmd_notifications(self, chat_id: str) -> None:
+        from ..notify import KINDS, in_quiet_hours, recent_sent
+        lines = ["🔔 <b>Bildirim ayarları</b>"]
+        for kind, (field, label, prio) in KINDS.items():
+            if not field:
+                continue
+            on = bool(getattr(self.cfg, field, True))
+            lines.append(f"  {'✅' if on else '⛔'} {label}")
+        qs, qe = int(self.cfg.quiet_start_hour), int(self.cfg.quiet_end_hour)
+        if qs == qe:
+            lines.append("\n🌙 Sessiz saat: kapalı")
+        else:
+            lines.append(f"\n🌙 Sessiz saat: <b>{qs:02d}:00–{qe:02d}:00</b> TSİ"
+                         + (" (şu an sessizdeyiz)" if in_quiet_hours(self.cfg) else "")
+                         + ("\n   Önemliler yine de geliyor" if self.cfg.quiet_allow_high
+                            else "\n   Hiçbir şey gelmiyor, sabah özetine yazılıyor"))
+        lines.append(f"🌅 Sabah özeti: <b>{int(self.cfg.digest_hour):02d}:00</b> TSİ"
+                     + ("" if self.cfg.notify_digest else " (kapalı)"))
+        if self.cfg.alert_min_score:
+            lines.append(f"🎯 Yeni poz bildirimi için min skor: <b>{self.cfg.alert_min_score}</b>")
+        sent = await recent_sent(8)
+        if sent:
+            lines.append("\n📜 <b>Son bildirimler:</b>")
+            for s in sent:
+                kind = (s["kind"] or "").split(":", 1)
+                mark = "😴" if kind[0] == "quiet" else "✅"
+                first = (s.get("payload") or "").split("\n")[0][:60]
+                lines.append(f"  {mark} {tr_time(s['ts'])} {first}")
+        lines.append("\n<i>Ayarları dashboard → ⚙️ Ayarlar → Bildirimler'den değiştir.</i>")
+        await self.send("\n".join(lines), chat_id)
 
     async def _cmd_settime(self, args: list[str], chat_id: str) -> None:
         """Bilanço saatini elle düzelt — kaynaklar yanılırsa son söz sende.

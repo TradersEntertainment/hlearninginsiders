@@ -33,7 +33,7 @@ async def _events_within(hours: int) -> dict[str, dict]:
         return out
 
 
-async def check_anomalies(cfg: Config, bot) -> None:
+async def check_anomalies(cfg: Config, notifier) -> None:
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         coins = [(r["coin"], r["symbol"]) for r in await cur.fetchall()]
@@ -76,10 +76,10 @@ async def check_anomalies(cfg: Config, bot) -> None:
         if await alert_recent("anomaly", coin, COOLDOWN):
             continue
         text = fmt.anomaly_alert(sym, coin, triggers, soon.get(coin))
-        if bot:
-            try:
-                await bot.send(text)
-            except Exception as e:
-                log.warning("anomali alerti gönderilemedi: %s", e)
+        try:
+            prio = "high" if has_event else "normal"
+            await notifier.send("anomaly", text, priority=prio, key=coin)
+        except Exception as e:
+            log.warning("anomali alerti gönderilemedi: %s", e)
         await alert_log("anomaly", coin, text)
         log.info("anomali: %s → %s", sym, "; ".join(triggers))

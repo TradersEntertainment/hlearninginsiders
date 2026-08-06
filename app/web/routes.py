@@ -592,7 +592,9 @@ async def coin_send_telegram(request: Request, symbol: str):
         text = fmt.earnings_report(fake_event, "ondemand", summ, rows,
                                    request.app.state.cfg, cluster_list=cluster_list)
         text = text.replace("🎯", "🔍").replace("earnings — 🕐 erken pencere", "anlık rapor")
-        if await bot.send(text):
+        notifier = getattr(request.app.state, "notifier", None)
+        if notifier and await notifier.send("earnings", text, priority="critical",
+                                            key=f"manual:{t['symbol']}"):
             tg = "ok"
     sep = "&" if key else "?"
     return RedirectResponse(
@@ -604,9 +606,11 @@ async def coin_send_telegram(request: Request, symbol: str):
 async def settings_test_telegram(request: Request):
     key = _guard(request)
     _require_admin(request)
-    bot = request.app.state.bot
+    notifier = getattr(request.app.state, "notifier", None)
     tg = "err"
-    if bot and await bot.send("🐋 Test — HL Insider Radar bağlantısı çalışıyor! ✨"):
+    if notifier and await notifier.send(
+            "test", "🐋 Test — HL Insider Radar bağlantısı çalışıyor! ✨",
+            priority="critical", key="manual-test"):
         tg = "ok"
     sep = "&" if key else "?"
     return RedirectResponse(
@@ -710,18 +714,20 @@ async def settings_page(request: Request, saved: int = 0):
     _guard(request)
     cfg = request.app.state.cfg
     overrides = await kv_get("settings_overrides") or {}
-    fields = []
+    groups: dict[str, list[dict]] = {}
     for name, spec in EDITABLE_FIELDS.items():
-        fields.append({
+        groups.setdefault(spec.get("group", "Radar ayarları"), []).append({
             "name": name,
             "label": spec["label"],
             "desc": spec["desc"],
+            "type": spec["type"],
             "current": display_value(spec["type"], getattr(cfg, name)),
+            "on": bool(getattr(cfg, name)) if spec["type"] == "bool" else False,
             "default": display_value(spec["type"], cfg.env_default(name)),
             "overridden": name in overrides,
         })
     return _render(request, "settings.html", {
-        "fields": fields, "saved": saved,
+        "groups": groups, "saved": saved,
         "tg": request.query_params.get("tg"),
         "has_bot": request.app.state.bot is not None,
     })
@@ -735,7 +741,11 @@ async def settings_save(request: Request):
     form = await request.form()
     overrides = await kv_get("settings_overrides") or {}
     for name, spec in EDITABLE_FIELDS.items():
-        raw = (form.get(name) or "").strip()
+        if spec["type"] == "bool":
+            # işaretsiz checkbox form'a gelmez → "0"
+            raw = "1" if form.get(name) else "0"
+        else:
+            raw = (form.get(name) or "").strip()
         try:
             conv = convert_value(spec["type"], raw) if raw else None
         except (TypeError, ValueError):

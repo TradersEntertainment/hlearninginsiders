@@ -12,6 +12,31 @@ def _csv(s: str) -> list[str]:
 
 # Dashboard'dan canlı değiştirilebilen alanlar
 EDITABLE_FIELDS: dict[str, dict] = {
+    # ---- Bildirimler ----
+    "notify_earnings": {"type": "bool", "label": "📊 Earnings raporu bildirimi", "group": "Bildirimler",
+                        "desc": "Bilançoya ~1 saat kala balina raporu (1 = açık, 0 = kapalı)"},
+    "notify_new_big": {"type": "bool", "label": "🆕 Yeni büyük pozisyon", "group": "Bildirimler",
+                       "desc": "Eşik üstü yeni pozisyon açılınca anında haber"},
+    "notify_liq": {"type": "bool", "label": "💥 Likidasyon radarı", "group": "Bildirimler",
+                   "desc": "Dev pozisyonlar likidasyona yaklaşınca kademeli uyarı"},
+    "notify_whale_fill": {"type": "bool", "label": "🐋 Büyük işlem / sicilli balina", "group": "Bildirimler",
+                          "desc": "Canlı akışta eşik üstü işlem ya da watchlist adresi hareketi"},
+    "notify_anomaly": {"type": "bool", "label": "📡 OI / funding anomalisi", "group": "Bildirimler",
+                       "desc": "Pozisyon sahibi bilinmese de 'birileri birikiyor' alarmı"},
+    "notify_eval": {"type": "bool", "label": "🏁 Earnings sonuç raporu", "group": "Bildirimler",
+                    "desc": "Bilanço sonrası kim doğru bildi raporu"},
+    "notify_digest": {"type": "bool", "label": "🌅 Günlük sabah özeti", "group": "Bildirimler",
+                      "desc": "Sessiz saatte biriken bildirimler + günün gündemi"},
+    "quiet_start_hour": {"type": "int", "label": "Sessiz saat başlangıcı (TSİ)", "group": "Bildirimler",
+                         "desc": "Bu saatten sonra normal bildirimler beklemeye alınır (başlangıç=bitiş ise kapalı)"},
+    "quiet_end_hour": {"type": "int", "label": "Sessiz saat bitişi (TSİ)", "group": "Bildirimler",
+                       "desc": "Bu saatte sessizlik biter ve sabah özeti gönderilir"},
+    "quiet_allow_high": {"type": "bool", "label": "Sessiz saatte önemli bildirimler geçsin", "group": "Bildirimler",
+                         "desc": "1 = earnings/yeni büyük poz/likidasyon sessiz saatte de gelir"},
+    "digest_hour": {"type": "int", "label": "Sabah özeti saati (TSİ)", "group": "Bildirimler",
+                    "desc": "Günlük özetin gönderileceği saat"},
+    "alert_min_score": {"type": "int", "label": "Bildirim için min şüphe skoru", "group": "Bildirimler",
+                        "desc": "Yeni büyük pozisyon bildirimi için gereken minimum skor (0 = hepsi)"},
     "min_fill_notional": {"type": "float", "label": "Min fill boyutu ($)",
                           "desc": "Bu boyut üstü işlemler adres havuzuna yazılır"},
     "whale_alert_notional": {"type": "float", "label": "Anlık balina alert eşiği ($)",
@@ -88,6 +113,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
 
 
 def convert_value(typ: str, v):
+    if typ == "bool":
+        return str(v).strip().lower() in ("1", "true", "evet", "on", "açık", "yes")
     if typ == "int":
         return int(float(str(v).replace(",", ".")))
     if typ == "float":
@@ -98,6 +125,8 @@ def convert_value(typ: str, v):
 
 
 def display_value(typ: str, v) -> str:
+    if typ == "bool":
+        return "1" if v else "0"
     if typ == "csv" and isinstance(v, list):
         return ",".join(v)
     if typ == "float":
@@ -116,6 +145,20 @@ class Config:
         # Telegram
         self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+
+        # Bildirim tercihleri (hepsi /settings'ten canlı değişir)
+        self.notify_earnings = True
+        self.notify_new_big = True
+        self.notify_liq = True
+        self.notify_whale_fill = True
+        self.notify_anomaly = True
+        self.notify_eval = True
+        self.notify_digest = True
+        self.quiet_start_hour = int(os.getenv("QUIET_START_HOUR", "1"))
+        self.quiet_end_hour = int(os.getenv("QUIET_END_HOUR", "8"))
+        self.quiet_allow_high = True
+        self.digest_hour = int(os.getenv("DIGEST_HOUR", "9"))
+        self.alert_min_score = int(os.getenv("ALERT_MIN_SCORE", "0"))
 
         # Takvim kaynakları
         self.finnhub_api_key = os.getenv("FINNHUB_API_KEY", "")

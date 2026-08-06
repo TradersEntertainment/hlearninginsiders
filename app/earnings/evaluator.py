@@ -17,7 +17,7 @@ from .calendar import event_ts_estimate
 log = logging.getLogger("earnings.evaluator")
 
 
-async def evaluate_due(cfg: Config, client: HLClient, bot) -> None:
+async def evaluate_due(cfg: Config, client: HLClient, notifier) -> None:
     cutoff = now()
     async with db() as conn:
         cur = await conn.execute(
@@ -30,12 +30,12 @@ async def evaluate_due(cfg: Config, client: HLClient, bot) -> None:
         if cutoff < est + 24 * 3600:
             continue
         try:
-            await _evaluate(cfg, client, bot, ev, est)
+            await _evaluate(cfg, client, notifier, ev, est)
         except Exception as e:
             log.warning("değerlendirme hatası %s: %s", ev["symbol"], e)
 
 
-async def _evaluate(cfg: Config, client: HLClient, bot, ev: dict, est: int) -> None:
+async def _evaluate(cfg: Config, client: HLClient, notifier, ev: dict, est: int) -> None:
     coin = ev["coin"]
     before = await metrics.metric_at(coin, est - 300)
     after = await metrics.latest_metric(coin)
@@ -110,9 +110,9 @@ async def _evaluate(cfg: Config, client: HLClient, bot, ev: dict, est: int) -> N
             "UPDATE earnings_events SET evaluated=1, move_pct=?, result_note=? WHERE id=?",
             (move_pct, note, ev["id"]))
 
-    if bot and snaps:
+    if notifier and snaps:
         text = fmt.eval_report(ev, move_pct, results, closed, promoted, cfg)
-        await bot.send(text)
+        await notifier.send("eval", text, key=f"{ev['symbol']}:{ev['date_et']}")
     log.info("%s değerlendirildi: hareket %s, %d adres işlendi, %d watchlist'e alındı",
              ev["symbol"], f"%{move_pct:.1f}" if move_pct is not None else "?",
              len(results), len(promoted))
