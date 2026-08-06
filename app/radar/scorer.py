@@ -100,6 +100,21 @@ async def _ledger_scan(client: HLClient, address: str) -> dict | None:
     }
 
 
+async def _coin_focus(coin: str, address: str) -> bool:
+    """Adres son 30 günde ağırlıklı olarak (>=%90) sadece bu hisseyi mi trade etmiş?"""
+    since = now() - 30 * 86400
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT coin, COUNT(*) c FROM fills WHERE address=? AND ts>=? GROUP BY coin",
+            (address, since))
+        rows = await cur.fetchall()
+    total = sum(r["c"] for r in rows)
+    if total < 5:
+        return False
+    mine = next((r["c"] for r in rows if r["coin"] == coin), 0)
+    return mine / total >= 0.9
+
+
 async def _twap_fills(coin: str, address: str, side: str) -> int:
     """Yerel fill'lerden TWAP paterni: düzenli aralık + benzer boyut. Fill sayısı döner."""
     want = "buy" if side == "long" else "sell"
@@ -124,7 +139,8 @@ async def _twap_fills(coin: str, address: str, side: str) -> int:
 
 def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             addr_row: dict | None, fresh: bool | None, last_deposit_ts: int | None,
-            ref_ts: int, twap_n: int = 0, funded_by_watch: bool = False) -> tuple[int, list[str]]:
+            ref_ts: int, twap_n: int = 0, funded_by_watch: bool = False,
+            coin_focus: bool = False) -> tuple[int, list[str]]:
     pts = 0
     reasons: list[str] = []
 
@@ -172,6 +188,10 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
     if pos.get("n_open_positions") == 1:
         pts += 10
         reasons.append("hesapta tek pozisyon bu")
+
+    if coin_focus:
+        pts += 8
+        reasons.append("30 gündür sadece bu hisseyi trade ediyor")
 
     # Mutlak boyut: zengin balina liq'i uzak tutar ama BOYUT yalan söylemez
     ntl = pos["notional"]
@@ -280,8 +300,10 @@ async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
                 fresh = arow["first_deposit_ts"] >= fresh_cut
 
         twap_n = await _twap_fills(coin, p["address"], p["side"])
+        focus = await _coin_focus(coin, p["address"])
         score, reasons = compute(cfg, p, oi_ntl, funding, arow, fresh, last_dep, ref,
-                                 twap_n=twap_n, funded_by_watch=funded_by_watch)
+                                 twap_n=twap_n, funded_by_watch=funded_by_watch,
+                                 coin_focus=focus)
         p["score"] = score
         p["score_reasons"] = json.dumps(reasons, ensure_ascii=False)
         p["watch_record"] = (arow.get("hits") or 0, arow.get("misses") or 0)

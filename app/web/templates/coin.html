@@ -33,10 +33,50 @@
   </div>
 </div>
 
+{% if chart %}
+<div class="panel">
+  <h2>📍 Nereden açtılar? · entry haritası</h2>
+  <div class="legendrow">
+    <span><i class="sw" style="background:{{ chart.c_short }}"></i> Short ({{ chart.n_short }}) — solda</span>
+    <span><i class="sw" style="background:{{ chart.c_long }}"></i> Long ({{ chart.n_long }}) — sağda</span>
+    <span class="dim">bar boyu = pozisyon büyüklüğü · kesikli çizgi = güncel fiyat</span>
+  </div>
+  <svg viewBox="0 0 {{ chart.W }} {{ chart.H }}" style="width:100%;height:auto"
+       role="img" aria-label="Pozisyonların entry fiyat haritası">
+    {% for t in chart.ticks %}
+    <line x1="{{ chart.left }}" x2="{{ chart.W - 16 }}" y1="{{ t.y }}" y2="{{ t.y }}"
+          stroke="rgba(167,158,196,.13)"/>
+    <text x="{{ chart.left - 8 }}" y="{{ t.y + 4 }}" text-anchor="end"
+          font-size="11" fill="#a79ec4">{{ t.v }}</text>
+    {% endfor %}
+    <line x1="{{ chart.cx }}" x2="{{ chart.cx }}" y1="10" y2="{{ chart.H - 18 }}"
+          stroke="rgba(167,158,196,.28)"/>
+    {% for b in chart.bars %}
+    <rect x="{{ b.x }}" y="{{ b.y - 3 }}" width="{{ b.w }}" height="6" rx="3"
+          fill="{{ chart.c_short if b.side == 'short' else chart.c_long }}"
+          stroke="#282138" stroke-width="1"><title>{{ b.tip }}</title></rect>
+    {% endfor %}
+    <line x1="{{ chart.left }}" x2="{{ chart.W - 16 }}" y1="{{ chart.mark_y }}" y2="{{ chart.mark_y }}"
+          stroke="#cbbfef" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="{{ chart.W - 18 }}" y="{{ chart.mark_y - 6 }}" text-anchor="end"
+          font-size="11" font-weight="700" fill="#cbbfef">şimdi {{ chart.mark_txt }}</text>
+    {% for l in chart.labels %}
+    <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="{{ l.anchor }}"
+          font-size="11" fill="#cbbfef">{{ l.text }}</text>
+    {% endfor %}
+  </svg>
+</div>
+{% endif %}
+
 <div class="panel">
   <h2>🐋 En büyük pozisyonlar <span style="text-transform:none">· güncel fiyat: <b>{{ summ.mark|px }}</b></span></h2>
   {% if rows %}
-  <table>
+  <div class="tabs">
+    <button type="button" class="tab active" data-f="all">Tümü ({{ rows|length }})</button>
+    <button type="button" class="tab" data-f="long">🟢 Long ({{ n_long }})</button>
+    <button type="button" class="tab" data-f="short">🔴 Short ({{ n_short }})</button>
+  </div>
+  <table id="postable">
     <tr><th>#</th><th>Skor</th><th class="l">Adres</th><th>Yön</th><th>Notional</th>
         <th>Entry</th><th>Kald.</th><th>Liq</th><th>uPnL</th>
         <th title="pozisyonun ilk açılışı">Açılış</th>
@@ -44,7 +84,7 @@
         <th title="pozisyondan son kırpma">Son ✂</th>
         <th class="l">Şüphe nedenleri</th></tr>
     {% for p in rows %}
-    <tr>
+    <tr data-side="{{ p.side }}">
       <td class="dim">{{ loop.index }}</td>
       <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
       <td class="l"><a href="/whale/{{ p.address }}{{ k }}">{{ p.address[:8] }}..{{ p.address[-4:] }}</a></td>
@@ -61,7 +101,17 @@
     </tr>
     {% endfor %}
   </table>
-  {% elif scanning %}<p class="dim">▓ İlk tarama sürüyor — birazdan burada olacaklar…</p>
+  <script>
+  (function(){
+    var tabs=document.querySelectorAll('.tab'),rows=document.querySelectorAll('#postable tr[data-side]');
+    tabs.forEach(function(t){t.addEventListener('click',function(){
+      tabs.forEach(function(x){x.classList.remove('active')});t.classList.add('active');
+      var f=t.dataset.f;
+      rows.forEach(function(r){r.style.display=(f==='all'||r.dataset.side===f)?'':'none'});
+    })});
+  })();
+  </script>
+  {% elif scanning %}<p class="dim">🐋 İlk tarama sürüyor — birazdan burada olacaklar…</p>
   {% else %}<p class="dim">Havuzda bu coin için açık pozisyon bulunamadı (havuz büyüdükçe dolar).</p>{% endif %}
 </div>
 

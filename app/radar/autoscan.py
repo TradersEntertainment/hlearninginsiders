@@ -8,36 +8,73 @@ import asyncio
 import logging
 
 from ..config import Config
-from ..db import db, now
+from ..db import alert_log, alert_recent, db, now
 from ..hl.client import HLClient
+from ..telegram import format as fmt
 
 log = logging.getLogger("radar.autoscan")
 
 _inflight: set[str] = set()
+
+NEW_BIG_COOLDOWN = 48 * 3600  # aynı coin+adres için tekrar alert etme
 
 
 def is_scanning(coin: str) -> bool:
     return coin in _inflight
 
 
-async def scan_coin(cfg: Config, client: HLClient, coin: str, dex: str) -> None:
+async def _upcoming_event(coin: str) -> dict | None:
+    async with db() as conn:
+        cur = await conn.execute(
+            """SELECT * FROM earnings_events WHERE coin=? AND evaluated=0
+               AND date_et>=date('now') ORDER BY date_et LIMIT 1""", (coin,))
+        r = await cur.fetchone()
+        return dict(r) if r else None
+
+
+async def _alert_new_big(cfg: Config, bot, coin: str, rows: list[dict]) -> None:
+    """Earnings şartı YOK: yeni açılmış büyük pozisyon görülünce anında haber ver.
+    (CEO istifası, ele geçirme, dava... insider her zaman ortaya çıkabilir.)"""
+    if not bot:
+        return
+    ts = now()
+    for p in rows:
+        if p["notional"] < cfg.big_position_usd:
+            continue
+        opened = p.get("opened_ts")
+        if not opened or ts - opened > cfg.fresh_big_alert_hours * 3600:
+            continue
+        key = f"{coin}:{p['address']}"
+        if await alert_recent("new_big_pos", key, NEW_BIG_COOLDOWN):
+            continue
+        event = await _upcoming_event(coin)
+        text = fmt.new_big_position_alert(coin, p, event)
+        try:
+            if await bot.send(text):
+                await alert_log("new_big_pos", key, text)
+        except Exception as e:
+            log.warning("yeni-poz alerti gönderilemedi: %s", e)
+
+
+async def scan_coin(cfg: Config, client: HLClient, coin: str, dex: str, bot=None) -> None:
     from .report import build_scan  # döngüsel importu kır
     if coin in _inflight:
         return
     _inflight.add(coin)
     try:
-        await build_scan(cfg, client, coin, dex, quick=True)
-        log.info("oto-tarama tamam: %s", coin)
+        _, rows = await build_scan(cfg, client, coin, dex, quick=True)
+        await _alert_new_big(cfg, bot, coin, rows)
+        log.info("oto-tarama tamam: %s (%d pozisyon)", coin, len(rows))
     except Exception as e:
         log.warning("oto-tarama %s: %s", coin, e)
     finally:
         _inflight.discard(coin)
 
 
-def kick(cfg: Config, client: HLClient, coin: str, dex: str) -> None:
+def kick(cfg: Config, client: HLClient, coin: str, dex: str, bot=None) -> None:
     """Ateşle-unut: sayfa açılışında bayat coin için arka plan taraması."""
     if coin not in _inflight:
-        asyncio.create_task(scan_coin(cfg, client, coin, dex))
+        asyncio.create_task(scan_coin(cfg, client, coin, dex, bot))
 
 
 async def _pick_next(cfg: Config) -> tuple[str, str] | None:
@@ -67,14 +104,14 @@ async def _pick_next(cfg: Config) -> tuple[str, str] | None:
         return (r["coin"], r["dex"]) if r else None
 
 
-async def loop(cfg: Config, client: HLClient) -> None:
+async def loop(cfg: Config, client: HLClient, bot=None) -> None:
     await asyncio.sleep(45)  # evren keşfini bekle
     log.info("oto-tarayıcı başladı (periyot: %ds)", cfg.auto_scan_interval_sec)
     while True:
         try:
             nxt = await _pick_next(cfg)
             if nxt:
-                await scan_coin(cfg, client, nxt[0], nxt[1])
+                await scan_coin(cfg, client, nxt[0], nxt[1], bot)
         except asyncio.CancelledError:
             raise
         except Exception:

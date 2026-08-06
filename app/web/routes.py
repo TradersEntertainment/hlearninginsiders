@@ -55,6 +55,61 @@ templates.env.filters.update(usd=_usd, px=_px, age=_age, dt=_dt)
 
 router = APIRouter()
 
+CHART_SHORT = "#e5484d"   # validator'dan geçen çift (deutan ΔE 8.6)
+CHART_LONG = "#26997b"
+
+
+def _entry_chart(rows: list[dict], mark: float | None) -> dict | None:
+    """Entry haritası: her pozisyon, açıldığı fiyat seviyesinde yatay bir bar.
+    Shortlar merkez ekseninin solunda, longlar sağında; bar boyu = notional."""
+    pts = [p for p in rows if p.get("entry_px") and p["notional"] > 0][:40]
+    if not pts or not mark:
+        return None
+    prices = [p["entry_px"] for p in pts] + [mark]
+    lo, hi = min(prices), max(prices)
+    pad = (hi - lo) * 0.07 or lo * 0.01 or 1.0
+    lo, hi = lo - pad, hi + pad
+    W, H, top, bot, left, right = 820, 320, 16, 26, 64, 16
+    cx = left + (W - left - right) / 2
+    half = (W - left - right) / 2 - 10
+
+    def yf(v: float) -> float:
+        return top + (hi - v) / (hi - lo) * (H - top - bot)
+
+    maxn = max(p["notional"] for p in pts)
+    bars = []
+    for p in sorted(pts, key=lambda r: -r["notional"]):
+        w = max(6.0, p["notional"] / maxn * half)
+        y = yf(p["entry_px"])
+        bars.append({"y": round(y, 1), "w": round(w, 1), "side": p["side"],
+                     "x": round(cx - w, 1) if p["side"] == "short" else round(cx, 1),
+                     "addr": p["address"],
+                     "tip": f"{p['address'][:8]}..{p['address'][-4:]} · "
+                            f"{'SHORT' if p['side'] == 'short' else 'LONG'} "
+                            f"{_usd(p['notional'])} @{_px(p['entry_px'])}"})
+    # aynı seviyeye yığılanları dikeyde hafifçe ayır
+    for side in ("short", "long"):
+        prev = None
+        for b in sorted((b for b in bars if b["side"] == side), key=lambda b: b["y"]):
+            if prev is not None and b["y"] - prev < 7:
+                b["y"] = round(prev + 7, 1)
+            prev = b["y"]
+    # en büyük 3 pozisyona seçici doğrudan etiket
+    labels = []
+    for b in bars[:3]:
+        short_side = b["side"] == "short"
+        labels.append({"y": b["y"] + 3.5,
+                       "x": b["x"] - 6 if short_side else b["x"] + b["w"] + 6,
+                       "anchor": "end" if short_side else "start",
+                       "text": b["tip"].split(" · ")[1]})
+    ticks = [{"v": _px(lo + (hi - lo) * i / 4), "y": round(yf(lo + (hi - lo) * i / 4), 1)}
+             for i in range(5)]
+    return {"W": W, "H": H, "cx": cx, "left": left, "bars": bars, "ticks": ticks,
+            "labels": labels, "mark_y": round(yf(mark), 1), "mark_txt": _px(mark),
+            "c_short": CHART_SHORT, "c_long": CHART_LONG,
+            "n_short": sum(1 for b in bars if b["side"] == "short"),
+            "n_long": sum(1 for b in bars if b["side"] == "long")}
+
 
 def _guard(request: Request) -> str:
     tok = request.app.state.cfg.dashboard_token
@@ -83,8 +138,10 @@ async def index(request: Request):
         url = f"/t/{q.upper()}" + (f"?key={key}" if key else "")
         _guard(request)
         return RedirectResponse(url)
+    cfg = request.app.state.cfg
     universe = await get_universe()
     events = await upcoming_events(14)
+    ts_now = now()
     async with db() as conn:
         cur = await conn.execute("SELECT COUNT(*) c FROM fills")
         fills_n = (await cur.fetchone())["c"]
@@ -92,9 +149,67 @@ async def index(request: Request):
         addr_n = (await cur.fetchone())["c"]
         cur = await conn.execute("SELECT COUNT(*) c FROM addresses WHERE watchlist=1")
         watch_n = (await cur.fetchone())["c"]
+        # Son 72 saatte açılmış büyük pozisyonlar (earnings şartı yok)
+        cur = await conn.execute(
+            """SELECT p.*, t.symbol FROM positions_current p
+               JOIN tickers t ON t.coin = p.coin
+               WHERE p.notional >= ? AND p.opened_ts IS NOT NULL AND p.opened_ts >= ?
+               ORDER BY p.opened_ts DESC LIMIT 12""",
+            (cfg.big_position_usd, ts_now - 72 * 3600))
+        recent_big = [dict(r) for r in await cur.fetchall()]
+        # En şüpheli açık pozisyonlar (skora göre)
+        cur = await conn.execute(
+            """SELECT p.*, t.symbol FROM positions_current p
+               JOIN tickers t ON t.coin = p.coin
+               WHERE COALESCE(p.score, 0) >= 40
+               ORDER BY p.score DESC, p.notional DESC LIMIT 10""")
+        suspicious = [dict(r) for r in await cur.fetchall()]
+        # Tek hisse uzmanları: 30 günde >=5 fill, >=%90'ı tek coin'de
+        cur = await conn.execute(
+            "SELECT address, coin, COUNT(*) c, SUM(notional) v FROM fills"
+            " WHERE ts >= ? GROUP BY address, coin", (ts_now - 30 * 86400,))
+        fillagg = [dict(r) for r in await cur.fetchall()]
+
+    by_addr: dict[str, list[dict]] = {}
+    for r in fillagg:
+        by_addr.setdefault(r["address"], []).append(r)
+    sym_map = {t["coin"]: t["symbol"] for t in universe}
+    specialists = []
+    for addr, lst in by_addr.items():
+        total = sum(r["c"] for r in lst)
+        if total < 5:
+            continue
+        top = max(lst, key=lambda r: r["c"])
+        if top["c"] / total < 0.9:
+            continue
+        specialists.append({"address": addr, "coin": top["coin"],
+                            "symbol": sym_map.get(top["coin"], top["coin"]),
+                            "n": top["c"], "vol": top["v"]})
+    specialists.sort(key=lambda s: -s["vol"])
+    specialists = specialists[:10]
+    if specialists:
+        addrs = [s["address"] for s in specialists]
+        qm = ",".join("?" * len(addrs))
+        async with db() as conn:
+            cur = await conn.execute(
+                f"SELECT address, hits, misses, watchlist FROM addresses"
+                f" WHERE address IN ({qm})", addrs)
+            rec = {r["address"]: dict(r) for r in await cur.fetchall()}
+            cur = await conn.execute(
+                f"SELECT address, coin, side, notional FROM positions_current"
+                f" WHERE address IN ({qm})", addrs)
+            posmap: dict[str, list[dict]] = {}
+            for r in await cur.fetchall():
+                posmap.setdefault(r["address"], []).append(dict(r))
+        for s in specialists:
+            s.update(rec.get(s["address"], {}))
+            open_pos = [p for p in posmap.get(s["address"], []) if p["coin"] == s["coin"]]
+            s["open"] = open_pos[0] if open_pos else None
+
     collector = getattr(request.app.state, "collector", None)
     return _render(request, "index.html", {
         "universe": universe, "events": events,
+        "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,
                   "ws": "🟢 bağlı" if collector and collector.connected else "🔴 kopuk"},
     })
@@ -147,7 +262,8 @@ async def coin_page(request: Request, symbol: str):
     stale = scanned_ts is None or (now() - scanned_ts) > cfg.scan_stale_min * 60
     if stale and not scanning:
         from ..radar.report import coin_dex
-        autoscan.kick(cfg, request.app.state.client, coin, coin_dex(coin))
+        autoscan.kick(cfg, request.app.state.client, coin, coin_dex(coin),
+                      request.app.state.bot)
         scanning = True
 
     return _render(request, "coin.html", {
@@ -157,6 +273,9 @@ async def coin_page(request: Request, symbol: str):
         "scanning": scanning, "max_liq": cfg.max_liq_distance_pct,
         "tg": request.query_params.get("tg"),
         "has_bot": request.app.state.bot is not None,
+        "chart": _entry_chart(rows, summ.get("mark")),
+        "n_long": sum(1 for p in rows if p["side"] == "long"),
+        "n_short": sum(1 for p in rows if p["side"] == "short"),
     })
 
 

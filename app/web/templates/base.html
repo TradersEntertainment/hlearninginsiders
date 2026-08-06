@@ -51,7 +51,20 @@ border-radius:999px;font:inherit;font-weight:700;cursor:pointer;
 box-shadow:0 4px 14px rgba(143,123,255,.35);transition:transform .15s, box-shadow .15s}
 button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 8px 20px rgba(143,123,255,.5)}
 button:active{transform:scale(.97)}
-main{padding:22px;max-width:1200px;margin:0 auto}
+main{padding:22px;max-width:1380px;margin:0 auto}
+@media(min-width:1050px){
+  main{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;align-items:start}
+  main>.panel{grid-column:1/-1}
+  main>.panel.half{grid-column:auto}
+}
+.tabs{display:flex;gap:8px;margin-bottom:10px}
+.tab{background:transparent;border:1.5px solid var(--border);color:var(--dim);
+padding:4px 14px;border-radius:999px;font-size:12.5px;font-weight:700;box-shadow:none}
+.tab:hover{transform:none;border-color:var(--btn);color:var(--fg);box-shadow:none}
+.tab.active{background:var(--btn);border-color:var(--btn);color:#fff}
+.legendrow{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-bottom:8px}
+.legendrow .sw{display:inline-block;width:12px;height:12px;border-radius:3px;
+vertical-align:-2px;margin-right:5px}
 .panel{background:var(--panel);border:1px solid var(--border);border-radius:18px;
 padding:16px 18px;margin-bottom:18px;overflow-x:auto;
 box-shadow:0 10px 30px rgba(0,0,0,.3);

@@ -167,6 +167,29 @@ def peers_block(peer_list: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def new_big_position_alert(coin: str, p: dict, event: dict | None) -> str:
+    sym = coin.split(":")[-1]
+    side = "🔴SHORT" if p["side"] == "short" else "🟢LONG"
+    lev = f"{p['leverage']:.0f}x" if p.get("leverage") else "?"
+    lines = [f"🆕🐋 <b>YENİ BÜYÜK POZİSYON — {sym}</b>",
+             f"{side} <b>{usd(p['notional'])}</b> @{px(p['entry_px'])} {lev}"
+             f" │ {age_str(p.get('opened_ts'))} önce açıldı",
+             f"👤 {alink(p['address'])} │ skor {p.get('score') or 0}"]
+    try:
+        reasons = json.loads(p.get("score_reasons") or "[]")
+    except json.JSONDecodeError:
+        reasons = []
+    if reasons:
+        lines.append("  └ " + ", ".join(reasons))
+    if event:
+        hint = {"amc": "AMC", "bmo": "BMO"}.get(event.get("hour_hint") or "", "?")
+        lines.append(f"📅 Dikkat: {event['date_et']} ({hint}) earnings var!")
+    else:
+        lines.append("ℹ️ Yaklaşan earnings yok — başka bir şey mi biliyor? 🤔")
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
 def anomaly_alert(symbol: str, coin: str, triggers: list[str], event: dict | None) -> str:
     lines = [f"📡 <b>ANOMALİ — {symbol}</b>"]
     if event:

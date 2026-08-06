@@ -24,6 +24,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                           "desc": "Bu boyut üstü pozisyona +20 şüphe puanı"},
     "combo_window_hours": {"type": "int", "label": "İnsider paterni penceresi (saat)",
                            "desc": "Büyük pozisyon + bu pencerede açılış = +15 bonus (varsayılan 72h = 3 gün)"},
+    "fresh_big_alert_hours": {"type": "int", "label": "Yeni büyük poz alert penceresi (saat)",
+                              "desc": "Bu pencerede açılmış büyük pozisyon bulununca anlık Telegram alert (earnings şartı yok)"},
     "max_liq_distance_pct": {"type": "float", "label": "Liq tablosu mesafe sınırı (%)",
                              "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez"},
     "fresh_wallet_days": {"type": "int", "label": "Taze cüzdan eşiği (gün)",
@@ -56,6 +58,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                         "desc": "ör: 0.0005 = %0.05/saat"},
     "peers_override": {"type": "str", "label": "Korele hisse override",
                        "desc": "Format: SNDK:WDC|MU;TSLA:RIVN (varsayılan tabloya eklenir)"},
+    "yahoo_symbol_map": {"type": "str", "label": "Yahoo sembol eşleme",
+                         "desc": "ABD dışı hisseler için: SMSN:005930.KS;SOFTBANK:9984.T formatı (varsayılan eşlemeye eklenir)"},
     "universe_refresh_sec": {"type": "int", "label": "Evren yenileme (sn)",
                              "desc": "HL coin listesi yenileme sıklığı"},
     "calendar_refresh_sec": {"type": "int", "label": "Takvim yenileme (sn)",
@@ -116,6 +120,7 @@ class Config:
         self.big_position_usd = float(os.getenv("BIG_POSITION_USD", "1000000"))
         self.huge_position_usd = float(os.getenv("HUGE_POSITION_USD", "5000000"))
         self.combo_window_hours = int(os.getenv("COMBO_WINDOW_HOURS", "72"))
+        self.fresh_big_alert_hours = int(os.getenv("FRESH_BIG_ALERT_HOURS", "24"))
         self.max_liq_distance_pct = float(os.getenv("MAX_LIQ_DISTANCE_PCT", "50"))
         self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "250000"))
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))
@@ -137,6 +142,8 @@ class Config:
 
         # Korele hisseler: "SNDK:WDC|MU;TSLA:RIVN" formatıyla override edilebilir
         self.peers_override = os.getenv("PEERS", "")
+        # ABD dışı hisselerin Yahoo sembolleri (varsayılan eşlemeye eklenir)
+        self.yahoo_symbol_map = os.getenv("YAHOO_SYMBOL_MAP", "")
 
         # Periyotlar (saniye)
         self.universe_refresh_sec = int(os.getenv("UNIVERSE_REFRESH_SEC", str(6 * 3600)))

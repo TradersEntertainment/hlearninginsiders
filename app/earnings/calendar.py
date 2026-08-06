@@ -17,19 +17,43 @@ log = logging.getLogger("earnings.calendar")
 ET = ZoneInfo("America/New_York")
 TR = ZoneInfo("Europe/Istanbul")
 
+# HL sembolü → Yahoo sembolü (ABD dışı listelemeler için).
+# Kore/Japonya hisseleri Yahoo'da borsa son ekiyle yaşar; earnings verisi oradan gelir.
+# /settings'teki "yahoo_symbol_map" ile genişletilebilir: "SMSN:005930.KS;X:Y.T"
+DEFAULT_SYMBOL_MAP: dict[str, str] = {
+    "SMSN": "005930.KS",      # Samsung Electronics (KRX)
+    "HYUNDAI": "005380.KS",   # Hyundai Motor (KRX)
+    "SOFTBANK": "9984.T",     # SoftBank Group (TSE)
+    "KIOXIA": "285A.T",       # Kioxia Holdings (TSE)
+}
+
+
+def parse_symbol_map(s: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for part in (s or "").split(";"):
+        part = part.strip()
+        if ":" in part:
+            k, v = part.split(":", 1)
+            if k.strip() and v.strip():
+                out[k.strip().upper()] = v.strip()
+    return out
+
 
 # ---------------- Yahoo (birincil) ----------------
 
-def _fetch_yahoo_sync(symbols: list[str], horizon_days: int) -> dict[str, dict]:
+def _fetch_yahoo_sync(symbols: list[str], horizon_days: int,
+                      symbol_map: dict[str, str] | None = None) -> dict[str, dict]:
     """Senkron — thread'de çalışır. symbol -> {date_et, hour_hint, eps_est}"""
     import yfinance as yf  # ağır import, sadece burada
 
+    smap = symbol_map or {}
     out: dict[str, dict] = {}
     now_et = datetime.now(ET)
     horizon = now_et + timedelta(days=horizon_days)
     for sym in symbols:
+        yahoo_sym = smap.get(sym, sym)
         try:
-            df = yf.Ticker(sym).get_earnings_dates(limit=12)
+            df = yf.Ticker(yahoo_sym).get_earnings_dates(limit=12)
             if df is None or df.empty:
                 continue
             future = []
@@ -98,7 +122,10 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
         log.info("evren boş, takvim atlandı")
         return 0
 
-    yahoo = await asyncio.to_thread(_fetch_yahoo_sync, symbols, cfg.calendar_horizon_days)
+    smap = dict(DEFAULT_SYMBOL_MAP)
+    smap.update(parse_symbol_map(getattr(cfg, "yahoo_symbol_map", "")))
+    yahoo = await asyncio.to_thread(_fetch_yahoo_sync, symbols,
+                                    cfg.calendar_horizon_days, smap)
     finnhub = {}
     if cfg.finnhub_api_key:
         fh_all = await _fetch_finnhub(session, cfg.finnhub_api_key, cfg.calendar_horizon_days)
