@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ address[:10] }} — HL Insider Radar{% endblock %}
+{% block content %}
+<div class="panel">
+  <h2>👤 Balina karnesi</h2>
+  <p><code>{{ address }}</code>
+    · <a href="https://hypurrscan.io/address/{{ address }}" target="_blank">hypurrscan ↗</a></p>
+  <span class="stat">Sicil: <b>{{ arow.get('hits', 0) }}✓ / {{ arow.get('misses', 0) }}✗</b></span>
+  {% if arow.get('watchlist') %}<span class="stat">⭐ <b>Watchlist'te</b></span>{% endif %}
+  {% if arow.get('first_deposit_ts') %}<span class="stat">İlk fonlama: <b>{{ arow.first_deposit_ts|dt }}</b></span>{% endif %}
+  {% if arow.get('last_deposit_ts') %}<span class="stat">Son fonlama: <b>{{ arow.last_deposit_ts|dt }}</b></span>{% endif %}
+  {% if arow.get('first_seen') %}<span class="stat dim">İlk görülme: {{ arow.first_seen|dt }}</span>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>📌 Açık pozisyonlar (canlı)</h2>
+  {% if live %}
+  <table>
+    <tr><th class="l">Coin</th><th>Yön</th><th>Notional</th><th>Entry</th><th>Kald.</th><th>Liq</th><th>uPnL</th></tr>
+    {% for p in live %}
+    <tr>
+      <td class="l"><b>{{ p.coin }}</b></td>
+      <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
+      <td><b>{{ p.notional|usd }}</b></td>
+      <td>{{ p.entry_px|px }}</td>
+      <td>{{ p.leverage|int }}x</td>
+      <td>{{ p.liq_px|px }}</td>
+      <td class="{{ 'long' if p.upnl>0 else 'short' }}">{{ p.upnl|usd }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Şu an açık pozisyon yok (hisse dex'leri + ana dex).</p>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>🗂 Geçmiş snapshot'lar</h2>
+  {% if snaps %}
+  <table>
+    <tr><th class="l">Zaman</th><th class="l">Evre</th><th class="l">Coin</th><th class="l">Earnings</th><th>Yön</th><th>Notional</th><th>Skor</th></tr>
+    {% for s in snaps %}
+    <tr>
+      <td class="l dim">{{ s.ts|dt }}</td>
+      <td class="l">{{ s.phase }}</td>
+      <td class="l">{{ s.coin }}</td>
+      <td class="l dim">{{ s.ev_symbol or '-' }} {{ s.ev_date or '' }}</td>
+      <td class="{{ s.side }}">{{ 'LONG' if s.side=='long' else 'SHORT' }}</td>
+      <td>{{ s.notional|usd }}</td>
+      <td>{{ s.score or 0 }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Kayıtlı snapshot yok.</p>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>⚡ Son işlemleri</h2>
+  {% if fills %}
+  <table>
+    <tr><th class="l">Zaman</th><th class="l">Coin</th><th>Taraf</th><th>Fiyat</th><th>Notional</th></tr>
+    {% for f in fills %}
+    <tr>
+      <td class="l dim">{{ f.ts|dt }}</td>
+      <td class="l">{{ f.coin }}</td>
+      <td class="{{ 'long' if f.side=='buy' else 'short' }}">{{ 'ALIŞ' if f.side=='buy' else 'SATIŞ' }}</td>
+      <td>{{ f.px|px }}</td>
+      <td>{{ f.notional|usd }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Fill kaydı yok.</p>{% endif %}
+</div>
+{% endblock %}

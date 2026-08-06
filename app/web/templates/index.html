@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="panel">
+  <h2>Durum</h2>
+  <span class="stat">WS: <b>{{ stats.ws }}</b></span>
+  <span class="stat">Evren: <b>{{ universe|length }}</b> coin</span>
+  <span class="stat">Fill havuzu: <b>{{ stats.fills }}</b></span>
+  <span class="stat">Adres havuzu: <b>{{ stats.addrs }}</b></span>
+  <span class="stat">Watchlist: <b>{{ stats.watch }}</b></span>
+</div>
+
+<div class="panel">
+  <h2>📅 Yaklaşan earnings (HL'de listeli)</h2>
+  {% if events %}
+  <table>
+    <tr><th class="l">Tarih (ET)</th><th class="l">Sembol</th><th class="l">Saat</th><th class="l">Kaynak</th><th class="l">Durum</th></tr>
+    {% for e in events %}
+    <tr>
+      <td>{{ e.date_et }}</td>
+      <td><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a></td>
+      <td>{{ {'amc':'AMC (kapanış sonrası)','bmo':'BMO (açılış öncesi)'}.get(e.hour_hint, '?') }}</td>
+      <td class="dim">{{ e.source or '-' }}</td>
+      <td>{% if e.alerted_t1 %}✅ raporlandı{% elif e.alerted_pre %}🕐 erken rapor gitti{% else %}bekliyor{% endif %}
+          {% if e.note %}<span class="warn">⚠ {{ e.note }}</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Henüz eşleşen earnings yok (takvim ilk çekimini bekliyor olabilir).</p>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>🎰 HL hisse perp evreni</h2>
+  {% if universe %}
+  <p>{% for t in universe %}<a href="/t/{{ t.symbol }}{{ k }}">{{ t.symbol }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% else %}<p class="dim">Evren henüz keşfedilmedi — HL API'ye ilk erişim bekleniyor.</p>{% endif %}
+</div>
+{% endblock %}

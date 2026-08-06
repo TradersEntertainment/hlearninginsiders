@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} — HL Insider Radar{% endblock %}
+{% block content %}
+{% if not ticker %}
+<div class="panel"><p><b>{{ symbol }}</b> HL hisse evreninde bulunamadı.
+<a href="/{{ k }}">Evrendeki coin'lere bak</a>.</p></div>
+{% else %}
+<div class="panel">
+  <h2>{{ symbol }} <span class="dim">({{ coin }})</span></h2>
+  <span class="stat">Mark <b>{{ summ.mark|px }}</b>
+    {% if summ.px_change_pct is not none %}<span class="{{ 'long' if summ.px_change_pct>0 else 'short' }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</span>{% endif %}</span>
+  <span class="stat">OI <b>{{ summ.oi_ntl|usd }}</b>
+    {% if summ.oi_change_pct is not none %}(24h {{ '%+.0f'|format(summ.oi_change_pct) }}%{% if summ.oi_change_pct>=50 %} ⚠️{% endif %}){% endif %}</span>
+  <span class="stat">Funding <b>{% if summ.funding is not none %}{{ '%+.4f'|format(summ.funding*100) }}%/h{% else %}-{% endif %}</b></span>
+  <span class="stat">24h Hacim <b>{{ summ.day_volume|usd }}</b></span>
+  {% if event %}<span class="stat warn">📅 Earnings: <b>{{ event.date_et }}</b>
+    {{ {'amc':'AMC','bmo':'BMO'}.get(event.hour_hint,'?') }}</span>{% endif %}
+  <form method="post" action="/t/{{ symbol }}/scan{{ k }}" style="display:inline">
+    <button type="submit">🔍 Şimdi tara</button>
+  </form>
+  <div class="dim" style="margin-top:6px">
+    Long {{ long_total|usd }} / Short {{ short_total|usd }}
+    {% if scanned_ts %} · son tarama: {{ scanned_ts|dt }}{% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <h2>🐋 En büyük pozisyonlar</h2>
+  {% if rows %}
+  <table>
+    <tr><th>#</th><th>Skor</th><th class="l">Adres</th><th>Yön</th><th>Notional</th>
+        <th>Entry</th><th>Kald.</th><th>Liq</th><th>uPnL</th><th>Yaş</th><th class="l">Şüphe nedenleri</th></tr>
+    {% for p in rows %}
+    <tr>
+      <td class="dim">{{ loop.index }}</td>
+      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
+      <td class="l"><a href="/whale/{{ p.address }}{{ k }}">{{ p.address[:8] }}..{{ p.address[-4:] }}</a></td>
+      <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
+      <td><b>{{ p.notional|usd }}</b></td>
+      <td>{{ p.entry_px|px }}</td>
+      <td>{{ p.leverage|int }}x</td>
+      <td>{{ p.liq_px|px }}</td>
+      <td class="{{ 'long' if p.upnl>0 else 'short' }}">{{ p.upnl|usd }}</td>
+      <td>{{ p.opened_ts|age }}</td>
+      <td class="l reasons">{{ p.reasons }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Henüz pozisyon taranmadı — "Şimdi tara"ya bas.</p>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>💣 Likidasyona en yakın büyük pozisyonlar</h2>
+  {% if liq_rows %}
+  <table>
+    <tr><th>#</th><th class="l">Adres</th><th>Yön</th><th>Notional</th>
+        <th>Liq fiyatı</th><th>Mesafe</th><th>Kald.</th><th>Entry</th></tr>
+    {% for p in liq_rows %}
+    <tr>
+      <td class="dim">{{ loop.index }}</td>
+      <td class="l"><a href="/whale/{{ p.address }}{{ k }}">{{ p.address[:8] }}..{{ p.address[-4:] }}</a></td>
+      <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
+      <td><b>{{ p.notional|usd }}</b></td>
+      <td>{{ p.liq_px|px }}</td>
+      <td class="{{ 'warn' if p.liq_dist<15 else '' }}">%{{ '%.1f'|format(p.liq_dist) }}</td>
+      <td>{{ p.leverage|int }}x</td>
+      <td>{{ p.entry_px|px }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Liq fiyatlı pozisyon yok.</p>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>⚡ Son büyük işlemler (WS havuzundan)</h2>
+  {% if fills %}
+  <table>
+    <tr><th class="l">Zaman</th><th class="l">Adres</th><th>Taraf</th><th>Fiyat</th><th>Notional</th></tr>
+    {% for f in fills %}
+    <tr>
+      <td class="l dim">{{ f.ts|dt }}</td>
+      <td class="l"><a href="/whale/{{ f.address }}{{ k }}">{{ f.address[:8] }}..{{ f.address[-4:] }}</a></td>
+      <td class="{{ 'long' if f.side=='buy' else 'short' }}">{{ 'ALIŞ' if f.side=='buy' else 'SATIŞ' }}</td>
+      <td>{{ f.px|px }}</td>
+      <td><b>{{ f.notional|usd }}</b></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Bu coin için henüz büyük fill kaydı yok.</p>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

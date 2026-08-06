@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}HL Insider Radar{% endblock %}</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--dim:#8b949e;
+--green:#3fb950;--red:#f85149;--amber:#d29922;--accent:#58a6ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+header{display:flex;gap:16px;align-items:center;padding:12px 20px;
+border-bottom:1px solid var(--border);flex-wrap:wrap}
+header h1{font-size:16px;margin:0}
+header form{display:flex;gap:8px}
+input[type=text]{background:var(--panel);border:1px solid var(--border);
+color:var(--fg);padding:6px 10px;border-radius:6px;font:inherit;width:160px}
+button{background:#238636;border:1px solid #2ea043;color:#fff;padding:6px 14px;
+border-radius:6px;font:inherit;cursor:pointer}
+button.gray{background:var(--panel);border-color:var(--border)}
+main{padding:20px;max-width:1200px;margin:0 auto}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+padding:14px 16px;margin-bottom:18px;overflow-x:auto}
+.panel h2{font-size:14px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;
+letter-spacing:.05em}
+table{border-collapse:collapse;width:100%;white-space:nowrap}
+th,td{padding:5px 10px;text-align:right;border-bottom:1px solid var(--border)}
+th{color:var(--dim);font-weight:600;font-size:12px}
+th:first-child,td:first-child,th.l,td.l{text-align:left}
+tr:hover td{background:#1c2129}
+.long{color:var(--green);font-weight:700}
+.short{color:var(--red);font-weight:700}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:12px;font-weight:700}
+.b-hi{background:#67060c;color:#ffdcd7}
+.b-mid{background:#5a3e00;color:#ffe8a3}
+.b-lo{background:#21262d;color:var(--dim)}
+.stat{display:inline-block;margin-right:22px}
+.stat b{font-size:17px}
+.dim{color:var(--dim)}
+.reasons{font-size:12px;color:var(--amber);white-space:normal}
+.warn{color:var(--amber)}
+footer{padding:16px 20px;color:var(--dim);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🕵️ <a href="/{{ k }}" style="color:inherit">HL Insider Radar</a></h1>
+  <form action="/{{ k }}" method="get">
+    {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
+    <input type="text" name="q" placeholder="ticker ara: SNDK" autofocus>
+    <button type="submit">Ara</button>
+  </form>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<footer>Gözlem aracıdır, yatırım tavsiyesi değildir. Veriler Hyperliquid'in halka açık API'sinden.</footer>
+</body>
+</html>

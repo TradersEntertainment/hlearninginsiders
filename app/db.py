@@ -1,0 +1,139 @@
+"""SQLite depolama — botun "hafızası". Railway Volume (/data) üzerinde yaşar."""
+import json
+import time
+from contextlib import asynccontextmanager
+
+import aiosqlite
+
+_DB_PATH = "./data/radar.db"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS tickers(
+  coin TEXT PRIMARY KEY,           -- ör. "xyz:SNDK"
+  dex TEXT, symbol TEXT, name TEXT,
+  max_leverage INTEGER, listed_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS earnings_events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT, coin TEXT,
+  date_et TEXT,                    -- YYYY-MM-DD (New York günü)
+  hour_hint TEXT,                  -- bmo / amc / unknown
+  exact_ts INTEGER,                -- biliniyorsa epoch sn
+  eps_est REAL, source TEXT, note TEXT,
+  alerted_pre INTEGER DEFAULT 0,   -- erken pencere (bmo akşam / unknown sabah)
+  alerted_t1 INTEGER DEFAULT 0,    -- ana T-1h raporu
+  evaluated INTEGER DEFAULT 0,
+  created_ts INTEGER,
+  UNIQUE(symbol, date_et)
+);
+CREATE TABLE IF NOT EXISTS fills(
+  coin TEXT, tid TEXT, address TEXT,
+  side TEXT,                       -- buy / sell (adres perspektifi)
+  px REAL, sz REAL, notional REAL, ts INTEGER,
+  PRIMARY KEY(coin, tid, address)
+);
+CREATE INDEX IF NOT EXISTS idx_fills_coin_ts ON fills(coin, ts);
+CREATE INDEX IF NOT EXISTS idx_fills_addr ON fills(address);
+CREATE TABLE IF NOT EXISTS addresses(
+  address TEXT PRIMARY KEY,
+  first_seen INTEGER, first_deposit_ts INTEGER, last_deposit_ts INTEGER,
+  label TEXT, hits INTEGER DEFAULT 0, misses INTEGER DEFAULT 0,
+  watchlist INTEGER DEFAULT 0, notes TEXT
+);
+CREATE TABLE IF NOT EXISTS positions_current(
+  coin TEXT, address TEXT, ts INTEGER,
+  side TEXT, szi REAL, entry_px REAL, leverage REAL,
+  liq_px REAL, upnl REAL, notional REAL,
+  opened_ts INTEGER, score INTEGER, score_reasons TEXT,
+  PRIMARY KEY(coin, address)
+);
+CREATE TABLE IF NOT EXISTS position_snapshots(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER, phase TEXT,    -- pre / T-1h / T+24h / ondemand
+  coin TEXT, address TEXT, ts INTEGER,
+  side TEXT, szi REAL, entry_px REAL, leverage REAL,
+  liq_px REAL, upnl REAL, notional REAL,
+  score INTEGER, score_reasons TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_snap_event ON position_snapshots(event_id, phase);
+CREATE TABLE IF NOT EXISTS asset_metrics(
+  coin TEXT, ts INTEGER,
+  mark_px REAL, oi REAL, funding REAL, day_volume REAL,
+  PRIMARY KEY(coin, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_metrics_coin_ts ON asset_metrics(coin, ts);
+CREATE TABLE IF NOT EXISTS alerts_log(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT, key TEXT, ts INTEGER, payload TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_kind_key ON alerts_log(kind, key, ts);
+CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
+"""
+
+
+def set_db_path(path: str) -> None:
+    global _DB_PATH
+    _DB_PATH = path
+
+
+@asynccontextmanager
+async def db():
+    conn = await aiosqlite.connect(_DB_PATH)
+    try:
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA busy_timeout=5000")
+        conn.row_factory = aiosqlite.Row
+        yield conn
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
+async def init_db(path: str) -> None:
+    set_db_path(path)
+    conn = await aiosqlite.connect(path)
+    try:
+        await conn.executescript(SCHEMA)
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
+def now() -> int:
+    return int(time.time())
+
+
+# ---------- kv ----------
+
+async def kv_get(key: str):
+    async with db() as conn:
+        cur = await conn.execute("SELECT v FROM kv WHERE k=?", (key,))
+        row = await cur.fetchone()
+        return json.loads(row["v"]) if row else None
+
+
+async def kv_set(key: str, value) -> None:
+    async with db() as conn:
+        await conn.execute(
+            "INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            (key, json.dumps(value)),
+        )
+
+
+# ---------- alerts / cooldown ----------
+
+async def alert_recent(kind: str, key: str, within_sec: int) -> bool:
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT 1 FROM alerts_log WHERE kind=? AND key=? AND ts>? LIMIT 1",
+            (kind, key, now() - within_sec),
+        )
+        return await cur.fetchone() is not None
+
+
+async def alert_log(kind: str, key: str, payload: str = "") -> None:
+    async with db() as conn:
+        await conn.execute(
+            "INSERT INTO alerts_log(kind,key,ts,payload) VALUES(?,?,?,?)",
+            (kind, key, now(), payload[:2000]),
+        )

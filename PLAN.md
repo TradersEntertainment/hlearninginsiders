@@ -61,9 +61,9 @@ Her trade mesajı: `{coin, side, px, sz, time, tid, users:[buyer, seller]}` → 
 
 | Kaynak | Artı | Eksi |
 |---|---|---|
-| **Finnhub** `/calendar/earnings` (birincil) | Ücretsiz 60 çağrı/dk, `hour` alanı (bmo/amc/dmh), EPS beklentisi | Key gerekir (ücretsiz) |
-| **Alpha Vantage** `EARNINGS_CALENDAR` (yedek) | 3 aylık horizon, CSV | 25 çağrı/gün (günlük 1 çekim için yeterli) |
-| **Nasdaq public JSON** (yedek 2) | Keysiz | Resmi değil, kırılgan |
+| **Yahoo Finance / yfinance** (birincil) | Keysiz, kurulumsuz çalışır; HL evreni küçük olduğu için ticker başına sorgu yeterli; saat ipucu var | Resmi API değil; datacenter IP'lerinde nadiren engel |
+| **Finnhub** `/calendar/earnings` (opsiyonel yedek) | Ücretsiz 60 çağrı/dk, `hour` alanı (bmo/amc/dmh), EPS beklentisi | Key gerekir (ücretsiz) — key girilirse otomatik devreye girer, saat bilgisini iyileştirir |
+| **Alpha Vantage / Nasdaq JSON** (yedek 2) | Alternatif çapraz kontrol | İleriki faz |
 
 Günde 2 kez (TSİ sabah + akşam) 14 günlük pencere çekilir, HL hisse evreniyle kesiştirilir, `earnings_events` tablosuna yazılır. İki kaynak çapraz doğrulanır (tarih uyuşmazsa alert'e "tarih belirsiz" notu düşülür).
 
