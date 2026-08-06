@@ -27,21 +27,28 @@ class TelegramBot:
 
     # ---------- gönderim ----------
 
-    async def send(self, text: str, chat_id: str | None = None) -> None:
+    async def send(self, text: str, chat_id: str | None = None) -> bool:
         chat = chat_id or self.cfg.telegram_chat_id
         if not chat:
             log.info("TELEGRAM_CHAT_ID yok, mesaj atlandı:\n%s", text[:200])
-            return
+            return False
+        ok = True
         for chunk in self._split(text):
-            async with self.session.post(
-                f"{self.api}/sendMessage",
-                json={"chat_id": chat, "text": chunk, "parse_mode": "HTML",
-                      "disable_web_page_preview": True},
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as r:
-                if r.status != 200:
-                    body = (await r.text())[:300]
-                    log.warning("sendMessage %s: %s", r.status, body)
+            try:
+                async with self.session.post(
+                    f"{self.api}/sendMessage",
+                    json={"chat_id": chat, "text": chunk, "parse_mode": "HTML",
+                          "disable_web_page_preview": True},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as r:
+                    if r.status != 200:
+                        body = (await r.text())[:300]
+                        log.warning("sendMessage %s: %s", r.status, body)
+                        ok = False
+            except Exception as e:
+                log.warning("sendMessage hatası: %s", e)
+                ok = False
+        return ok
 
     @staticmethod
     def _split(text: str) -> list[str]:

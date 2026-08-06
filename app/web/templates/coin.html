@@ -7,7 +7,7 @@
 <a href="/{{ k }}">Evrendeki coin'lere bak</a>.</p></div>
 {% else %}
 {% if scanning %}
-<div class="scanbar">▓ TARAMA SÜRÜYOR — balina pozisyonları toplanıyor, sayfa kendini yenileyecek…</div>
+<div class="scanbar"><span class="swimmer">🐋</span> Balinalar aranıyor<span class="dots"></span> sayfa kendini yenileyecek</div>
 {% endif %}
 <div class="panel">
   <h2>{{ symbol }} <span class="dim">({{ coin }})</span></h2>
@@ -22,6 +22,11 @@
   <form method="post" action="/t/{{ symbol }}/scan{{ k }}" style="display:inline">
     <button type="submit">⟳ Yeniden tara</button>
   </form>
+  <form method="post" action="/t/{{ symbol }}/send{{ k }}" style="display:inline">
+    <button type="submit" {% if not has_bot %}disabled title="TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram'a gönder</button>
+  </form>
+  {% if tg == 'ok' %}<span class="long">✓ Telegram'a gitti!</span>
+  {% elif tg == 'err' %}<span class="short">✗ Gönderilemedi — token/chat id'yi ve logları kontrol et</span>{% endif %}
   <div class="dim" style="margin-top:6px">
     Long {{ long_total|usd }} / Short {{ short_total|usd }}
     {% if scanned_ts %} · son tarama: {{ scanned_ts|dt }}{% endif %}

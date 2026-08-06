@@ -4,6 +4,11 @@
 <div class="panel">
   <h2>⚙️ Ayarlar</h2>
   {% if saved %}<p style="color:var(--green)"><b>✓ Kaydedildi</b> — değişiklikler anında geçerli, deploy gerekmez.</p>{% endif %}
+  <form method="post" action="/settings/test-telegram{{ k }}" style="display:inline">
+    <button type="submit" {% if not has_bot %}disabled title="TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram test mesajı gönder</button>
+  </form>
+  {% if tg == 'ok' %}<span class="long">✓ Test mesajı gitti — Telegram'ı kontrol et!</span>
+  {% elif tg == 'err' %}<span class="short">✗ Gönderilemedi — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID doğru mu?</span>{% endif %}
   <p class="dim">Buradaki değerler DB'de saklanır (deploy'lara dayanıklı) ve env değişkenini ezer.
   Bir alanı boş bırakırsan env/kod varsayılanına döner.
   Gizli anahtarlar (bot token, API key) güvenlik gereği sadece Railway Variables'tan değişir.</p>

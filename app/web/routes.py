@@ -155,7 +155,53 @@ async def coin_page(request: Request, symbol: str):
         "rows": rows[:50], "liq_rows": liq_rows, "fills": fills, "event": ev,
         "long_total": lo, "short_total": sh, "scanned_ts": scanned_ts,
         "scanning": scanning, "max_liq": cfg.max_liq_distance_pct,
+        "tg": request.query_params.get("tg"),
+        "has_bot": request.app.state.bot is not None,
     })
+
+
+@router.post("/t/{symbol}/send")
+async def coin_send_telegram(request: Request, symbol: str):
+    """Mevcut taranmış veriden raporu derleyip Telegram'a yolla (yeniden tarama yok)."""
+    key = _guard(request)
+    t = await find_ticker(symbol)
+    if not t:
+        raise HTTPException(404, "coin yok")
+    bot = request.app.state.bot
+    coin = t["coin"]
+    tg = "err"
+    if bot:
+        from ..telegram import format as fmt
+        summ = await metrics.summary(coin)
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT * FROM positions_current WHERE coin=? ORDER BY notional DESC LIMIT 50",
+                (coin,))
+            rows = [dict(r) for r in await cur.fetchall()]
+        cluster_list = await clusters.find_clusters(rows)
+        fake_event = {"symbol": t["symbol"], "date_et": "dashboard'dan gönderildi",
+                      "hour_hint": "", "eps_est": None, "note": None}
+        text = fmt.earnings_report(fake_event, "ondemand", summ, rows,
+                                   request.app.state.cfg, cluster_list=cluster_list)
+        text = text.replace("🎯", "🔍").replace("earnings — 🕐 erken pencere", "anlık rapor")
+        if await bot.send(text):
+            tg = "ok"
+    sep = "&" if key else "?"
+    return RedirectResponse(
+        f"/t/{t['symbol']}" + (f"?key={key}" if key else "") + f"{sep}tg={tg}",
+        status_code=303)
+
+
+@router.post("/settings/test-telegram")
+async def settings_test_telegram(request: Request):
+    key = _guard(request)
+    bot = request.app.state.bot
+    tg = "err"
+    if bot and await bot.send("🐋 Test — HL Insider Radar bağlantısı çalışıyor! ✨"):
+        tg = "ok"
+    sep = "&" if key else "?"
+    return RedirectResponse(
+        "/settings" + (f"?key={key}" if key else "") + f"{sep}tg={tg}", status_code=303)
 
 
 @router.post("/t/{symbol}/scan")
@@ -236,7 +282,11 @@ async def settings_page(request: Request, saved: int = 0):
             "default": display_value(spec["type"], cfg.env_default(name)),
             "overridden": name in overrides,
         })
-    return _render(request, "settings.html", {"fields": fields, "saved": saved})
+    return _render(request, "settings.html", {
+        "fields": fields, "saved": saved,
+        "tg": request.query_params.get("tg"),
+        "has_bot": request.app.state.bot is not None,
+    })
 
 
 @router.post("/settings")

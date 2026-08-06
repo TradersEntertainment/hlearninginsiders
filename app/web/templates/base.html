@@ -7,99 +7,110 @@
 {% block head %}{% endblock %}
 <style>
 :root{
---bg:#000502;--panel:rgba(0,14,4,.88);--border:#0e3d18;
---fg:#9dffb0;--bright:#00ff41;--dim:#2e8b47;
---green:#00ff41;--red:#ff5544;--amber:#ffb000;--accent:#5cff8f
+--bg1:#171322;--bg2:#221b33;--panel:rgba(40,33,60,.92);--border:#3a3153;
+--fg:#ece7fa;--dim:#a79ec4;--head:#cbbfef;
+--green:#8be9b8;--red:#ff92a8;--amber:#ffce8a;--accent:#c3b3ff;--btn:#8f7bff
 }
 *{box-sizing:border-box}
-html{background:var(--bg)}
+html{background:linear-gradient(160deg,var(--bg1),var(--bg2)) fixed}
 body{margin:0;background:transparent;color:var(--fg);
-font:14px/1.55 "Courier New",ui-monospace,SFMono-Regular,Menlo,monospace}
-canvas#rain{position:fixed;inset:0;z-index:-2;opacity:.14}
-body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:999;
-background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px)}
-a{color:var(--accent);text-decoration:none}
-a:hover{color:var(--bright);text-shadow:0 0 8px rgba(0,255,65,.8)}
-header{display:flex;gap:16px;align-items:center;padding:12px 20px;flex-wrap:wrap;
-border-bottom:1px solid var(--border);background:rgba(0,10,3,.9);
-box-shadow:0 0 18px rgba(0,255,65,.08)}
-header h1{font-size:16px;margin:0;letter-spacing:.06em}
-header h1 a{color:var(--bright);text-shadow:0 0 10px rgba(0,255,65,.65)}
+font:14px/1.6 ui-rounded,"SF Pro Rounded",Manrope,Quicksand,"Segoe UI",system-ui,-apple-system,sans-serif}
+/* --- yumuşak arka plan baloncukları --- */
+.blob{position:fixed;border-radius:50%;filter:blur(90px);opacity:.22;z-index:-2;
+animation:drift 36s ease-in-out infinite alternate}
+.b1{width:46vw;height:46vw;background:#6a5acd;top:-12%;left:-12%}
+.b2{width:40vw;height:40vw;background:#c04a6b;bottom:-18%;right:-8%;animation-delay:-12s}
+.b3{width:30vw;height:30vw;background:#2e9e6e;top:42%;left:62%;animation-delay:-24s}
+@keyframes drift{to{transform:translate(5vw,4vh) scale(1.18)}}
+/* --- parıltılar + yüzen balina --- */
+.spark{position:fixed;z-index:-1;font-size:13px;opacity:0;animation:twinkle 5s ease-in-out infinite}
+@keyframes twinkle{0%,100%{opacity:0;transform:scale(.7)}50%{opacity:.7;transform:scale(1.1)}}
+.whale{position:fixed;bottom:26px;left:-12vw;z-index:-1;font-size:30px;opacity:.5;
+animation:swim 75s linear infinite}
+@keyframes swim{0%{left:-12vw;transform:scaleX(1) translateY(0)}
+48%{transform:scaleX(1) translateY(-14px)}49%{left:112vw;transform:scaleX(1)}
+50%{left:112vw;transform:scaleX(-1)}98%{transform:scaleX(-1) translateY(-14px)}
+100%{left:-12vw;transform:scaleX(-1)}}
+a{color:var(--accent);text-decoration:none;transition:color .15s}
+a:hover{color:#fff}
+header{display:flex;gap:14px;align-items:center;padding:14px 22px;flex-wrap:wrap;
+background:rgba(30,24,46,.75);backdrop-filter:blur(8px);
+border-bottom:1px solid var(--border)}
+header h1{font-size:17px;margin:0;font-weight:800;letter-spacing:.02em}
+header h1 a{color:var(--fg)}
+header h1 .wig{display:inline-block;animation:bob 2.6s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-3px) rotate(-6deg)}}
 header form{display:flex;gap:8px}
-input[type=text]{background:#000;border:1px solid var(--border);color:var(--bright);
-padding:6px 10px;border-radius:3px;font:inherit;width:170px;outline:none;
-caret-color:var(--bright)}
-input[type=text]:focus{border-color:var(--bright);box-shadow:0 0 10px rgba(0,255,65,.35)}
-input::placeholder{color:#1d6b31}
-button{background:transparent;border:1px solid var(--bright);color:var(--bright);
-padding:6px 14px;border-radius:3px;font:inherit;cursor:pointer;letter-spacing:.05em;
-text-transform:uppercase;transition:all .15s}
-button:hover{background:var(--bright);color:#000;box-shadow:0 0 16px rgba(0,255,65,.6)}
-main{padding:20px;max-width:1200px;margin:0 auto}
-.panel{background:var(--panel);border:1px solid var(--border);border-radius:4px;
-padding:14px 16px;margin-bottom:18px;overflow-x:auto;
-box-shadow:0 0 14px rgba(0,255,65,.05), inset 0 0 40px rgba(0,255,65,.02)}
-.panel h2{font-size:13px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;
-letter-spacing:.14em;border-bottom:1px dashed var(--border);padding-bottom:6px}
+input[type=text]{background:rgba(23,19,34,.8);border:1.5px solid var(--border);
+color:var(--fg);padding:8px 16px;border-radius:999px;font:inherit;width:180px;
+outline:none;transition:border-color .2s, box-shadow .2s}
+input[type=text]:focus{border-color:var(--btn);box-shadow:0 0 0 4px rgba(143,123,255,.18)}
+input::placeholder{color:#6f6590}
+button{background:var(--btn);border:none;color:#fff;padding:8px 18px;
+border-radius:999px;font:inherit;font-weight:700;cursor:pointer;
+box-shadow:0 4px 14px rgba(143,123,255,.35);transition:transform .15s, box-shadow .15s}
+button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 8px 20px rgba(143,123,255,.5)}
+button:active{transform:scale(.97)}
+main{padding:22px;max-width:1200px;margin:0 auto}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:18px;
+padding:16px 18px;margin-bottom:18px;overflow-x:auto;
+box-shadow:0 10px 30px rgba(0,0,0,.3);
+animation:pop .45s cubic-bezier(.22,1,.36,1) both}
+.panel:nth-of-type(2){animation-delay:.06s}
+.panel:nth-of-type(3){animation-delay:.12s}
+.panel:nth-of-type(4){animation-delay:.18s}
+.panel:nth-of-type(5){animation-delay:.24s}
+@keyframes pop{from{opacity:0;transform:translateY(14px) scale(.985)}}
+.panel h2{font-size:13.5px;margin:0 0 12px;color:var(--head);font-weight:800;
+letter-spacing:.04em;border-bottom:1px dashed var(--border);padding-bottom:8px}
 table{border-collapse:collapse;width:100%;white-space:nowrap}
-th,td{padding:5px 10px;text-align:right;border-bottom:1px solid rgba(14,61,24,.6)}
-th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+th,td{padding:6px 10px;text-align:right;border-bottom:1px solid rgba(58,49,83,.55);
+font-variant-numeric:tabular-nums}
+th{color:var(--dim);font-weight:700;font-size:12px}
 th:first-child,td:first-child,th.l,td.l{text-align:left}
-tr:hover td{background:rgba(0,255,65,.07)}
-.long{color:var(--green);font-weight:700;text-shadow:0 0 6px rgba(0,255,65,.5)}
-.short{color:var(--red);font-weight:700;text-shadow:0 0 6px rgba(255,85,68,.5)}
-.badge{display:inline-block;padding:1px 8px;border-radius:2px;font-size:12px;font-weight:700;
-border:1px solid}
-.b-hi{color:var(--red);border-color:var(--red);text-shadow:0 0 8px rgba(255,85,68,.8);
-animation:blink 1.2s step-end infinite}
-.b-mid{color:var(--amber);border-color:var(--amber);text-shadow:0 0 6px rgba(255,176,0,.6)}
-.b-lo{color:var(--dim);border-color:var(--border)}
-@keyframes blink{50%{opacity:.55}}
+tbody tr,tr{transition:background .15s}
+tr:hover td{background:rgba(195,179,255,.07)}
+.long{color:var(--green);font-weight:800}
+.short{color:var(--red);font-weight:800}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:800}
+.b-hi{background:rgba(255,110,135,.18);color:#ffa9b8;animation:pulse 1.8s ease-in-out infinite}
+.b-mid{background:rgba(255,206,138,.16);color:var(--amber)}
+.b-lo{background:rgba(167,158,196,.12);color:var(--dim)}
+@keyframes pulse{50%{box-shadow:0 0 0 6px rgba(255,110,135,.08)}}
 .stat{display:inline-block;margin-right:22px}
-.stat b{font-size:16px;color:var(--bright)}
+.stat b{font-size:16px}
 .dim{color:var(--dim)}
 .reasons{font-size:12px;color:var(--amber);white-space:normal}
 .warn{color:var(--amber)}
-.scanbar{border:1px dashed var(--bright);color:var(--bright);padding:8px 12px;
-border-radius:3px;margin-bottom:14px;animation:blink 1.6s step-end infinite}
-footer{padding:16px 20px;color:#1d6b31;font-size:12px}
-.cursor::after{content:"█";animation:blink .9s step-end infinite}
+.scanbar{border:1.5px dashed var(--green);background:rgba(139,233,184,.07);
+color:var(--green);padding:10px 16px;border-radius:14px;margin-bottom:14px;font-weight:700}
+.scanbar .swimmer{display:inline-block;animation:bob 1.2s ease-in-out infinite}
+.scanbar .dots::after{content:"";animation:dots 1.5s steps(4,end) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+footer{padding:18px 22px;color:#6f6590;font-size:12px}
+.cursor{display:none}
+@media (prefers-reduced-motion: reduce){
+  .blob,.spark,.whale,.wig,.b-hi,.panel,.scanbar .swimmer{animation:none!important}}
 </style>
 </head>
 <body>
-<canvas id="rain"></canvas>
+<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+<span class="spark" style="top:18%;left:12%">✨</span>
+<span class="spark" style="top:30%;left:78%;animation-delay:1.2s">✨</span>
+<span class="spark" style="top:64%;left:28%;animation-delay:2.4s">⭐</span>
+<span class="spark" style="top:76%;left:86%;animation-delay:3.1s">✨</span>
+<span class="spark" style="top:12%;left:55%;animation-delay:4s">💫</span>
+<span class="whale">🐋</span>
 <header>
-  <h1><a href="/{{ k }}">HL INSIDER RADAR</a><span class="cursor"></span></h1>
+  <h1><a href="/{{ k }}"><span class="wig">🐋</span> HL Insider Radar</a></h1>
   <form action="/{{ k }}" method="get">
     {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
     <input type="text" name="q" placeholder="ticker ara: SNDK" autofocus>
     <button type="submit">Ara</button>
   </form>
-  <a href="/settings{{ k }}" title="Ayarlar">⚙ ayarlar</a>
+  <a href="/settings{{ k }}" title="Ayarlar">⚙️ ayarlar</a>
 </header>
 <main>{% block content %}{% endblock %}</main>
-<footer>&gt; gözlem aracıdır, yatırım tavsiyesi değildir. veriler hyperliquid'in halka açık api'sinden._</footer>
-<script>
-(function(){
-  var c=document.getElementById('rain');if(!c)return;
-  var x=c.getContext('2d'),fs=14,W,H,cols,drops;
-  function rs(){W=c.width=innerWidth;H=c.height=innerHeight;
-    cols=Math.floor(W/fs);drops=[];
-    for(var i=0;i<cols;i++)drops[i]=Math.random()*H/fs}
-  rs();addEventListener('resize',rs);
-  var chars="アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF$Ξ";
-  function tick(){
-    x.fillStyle="rgba(0,5,2,0.08)";x.fillRect(0,0,W,H);
-    x.font=fs+"px monospace";
-    for(var i=0;i<cols;i++){
-      var ch=chars[(Math.random()*chars.length)|0];
-      x.fillStyle=Math.random()>0.97?"#c8ffc8":"#00ff41";
-      x.fillText(ch,i*fs,drops[i]*fs);
-      if(drops[i]*fs>H&&Math.random()>0.975)drops[i]=0;
-      drops[i]++}}
-  if(!(matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)){
-    setInterval(tick,66)}
-})();
-</script>
+<footer>🌙 gözlem aracıdır, yatırım tavsiyesi değildir · veriler hyperliquid'in halka açık api'sinden</footer>
 </body>
 </html>
