@@ -57,6 +57,62 @@ router = APIRouter()
 
 CHART_SHORT = "#e5484d"   # validator'dan geçen çift (deutan ΔE 8.6)
 CHART_LONG = "#26997b"
+LIQ_LONG = "#c47216"      # long liq (fiyatın altında) — validator'dan geçen çift
+LIQ_SHORT = "#2b8cbe"     # short liq (fiyatın üstünde)
+
+
+def _liq_chart(rows: list[dict], mark: float | None, max_dist_pct: float) -> dict | None:
+    """Likidasyon haritası: her pozisyon, likide olacağı fiyat seviyesinde
+    soldan sağa bir bar (boy = notional). Long liq'ler fiyatın altında (turuncu),
+    short liq'ler üstünde (mavi)."""
+    if not mark:
+        return None
+    pts = []
+    for p in rows:
+        liq = p.get("liq_px")
+        if not liq or p["notional"] <= 0:
+            continue
+        dist = abs(mark - liq) / mark * 100
+        if dist <= max_dist_pct:
+            pts.append({**p, "_dist": dist})
+    pts = pts[:40]
+    if not pts:
+        return None
+    prices = [p["liq_px"] for p in pts] + [mark]
+    lo, hi = min(prices), max(prices)
+    pad = (hi - lo) * 0.07 or lo * 0.01 or 1.0
+    lo, hi = lo - pad, hi + pad
+    W, H, top, bot, left, right = 820, 300, 16, 26, 64, 16
+    span = W - left - right
+
+    def yf(v: float) -> float:
+        return top + (hi - v) / (hi - lo) * (H - top - bot)
+
+    maxn = max(p["notional"] for p in pts)
+    bars = []
+    for p in sorted(pts, key=lambda r: -r["notional"]):
+        w = max(6.0, p["notional"] / maxn * span)
+        bars.append({"y": round(yf(p["liq_px"]), 1), "w": round(w, 1),
+                     "side": p["side"], "addr": p["address"],
+                     "tip": f"{p['address'][:8]}..{p['address'][-4:]} · "
+                            f"{'LONG' if p['side'] == 'long' else 'SHORT'} "
+                            f"{_usd(p['notional'])} → liq {_px(p['liq_px'])}"
+                            f" (mesafe %{p['_dist']:.1f})"})
+    for side in ("short", "long"):
+        prev = None
+        for b in sorted((b for b in bars if b["side"] == side), key=lambda b: b["y"]):
+            if prev is not None and b["y"] - prev < 7:
+                b["y"] = round(prev + 7, 1)
+            prev = b["y"]
+    labels = [{"y": b["y"] + 3.5, "x": left + b["w"] + 6, "text": b["tip"].split(" · ")[1].split(" → ")[0]}
+              for b in bars[:3]]
+    ticks = [{"v": _px(lo + (hi - lo) * i / 4), "y": round(yf(lo + (hi - lo) * i / 4), 1)}
+             for i in range(5)]
+    return {"W": W, "H": H, "left": left, "bars": bars, "ticks": ticks, "labels": labels,
+            "mark_y": round(yf(mark), 1), "mark_txt": _px(mark),
+            "c_long": LIQ_LONG, "c_short": LIQ_SHORT,
+            "n_long": sum(1 for b in bars if b["side"] == "long"),
+            "n_short": sum(1 for b in bars if b["side"] == "short")}
 
 
 def _entry_chart(rows: list[dict], mark: float | None) -> dict | None:
@@ -210,10 +266,61 @@ async def index(request: Request):
             s["open"] = open_pos[0] if open_pos else None
         specialists = [s for s in specialists if not s.get("entity")]  # MM/vault hariç
 
+    # ---- Likidasyon haritası (tüm coin'ler; equity taraması ∪ dev-poz radarı) ----
+    try:
+        liqmin = float(request.query_params.get("liqmin") or 250_000)
+    except ValueError:
+        liqmin = 250_000
+    async with db() as conn:
+        cur = await conn.execute(
+            """SELECT a.coin, a.mark_px FROM asset_metrics a
+               JOIN (SELECT coin, MAX(ts) mts FROM asset_metrics GROUP BY coin) b
+                 ON a.coin=b.coin AND a.ts=b.mts""")
+        marks = {r["coin"]: r["mark_px"] for r in await cur.fetchall()}
+        cur = await conn.execute(
+            """SELECT p.coin, p.address, p.side, p.notional, p.liq_px, t.symbol
+               FROM positions_current p JOIN tickers t ON t.coin=p.coin
+               WHERE p.liq_px IS NOT NULL AND p.notional>=?""", (liqmin,))
+        eq_rows = [dict(r) for r in await cur.fetchall()]
+        cur = await conn.execute(
+            "SELECT address, coin, side, notional, liq_px, last_dist FROM liq_watch"
+            " WHERE notional>=?", (liqmin,))
+        lw_rows = [dict(r) for r in await cur.fetchall()]
+    liq_map = []
+    seen_keys = set()
+    for r in eq_rows:
+        mark = marks.get(r["coin"])
+        if not mark:
+            continue
+        dist = abs(mark - r["liq_px"]) / mark * 100
+        if dist > cfg.max_liq_distance_pct:
+            continue
+        seen_keys.add((r["address"], r["coin"]))
+        liq_map.append({"symbol": r["symbol"], "coin": r["coin"], "address": r["address"],
+                        "side": r["side"], "notional": r["notional"],
+                        "liq_px": r["liq_px"], "dist": dist})
+    for r in lw_rows:
+        if (r["address"], r["coin"]) in seen_keys or r["last_dist"] is None:
+            continue
+        if r["last_dist"] > cfg.max_liq_distance_pct:
+            continue
+        liq_map.append({"symbol": r["coin"].split(":")[-1], "coin": r["coin"],
+                        "address": r["address"], "side": r["side"],
+                        "notional": r["notional"], "liq_px": r["liq_px"],
+                        "dist": r["last_dist"]})
+    liq_map.sort(key=lambda x: x["dist"])
+    liq_map = liq_map[:20]
+    liq_maxn = max((x["notional"] for x in liq_map), default=1)
+    for x in liq_map:
+        x["wpct"] = max(4, x["notional"] / liq_maxn * 100)
+
     collector = getattr(request.app.state, "collector", None)
     return _render(request, "index.html", {
         "universe": universe, "events": events,
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
+        "liq_map": liq_map, "liqmin": liqmin,
+        "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
+                      (5_000_000, "5M+"), (30_000_000, "30M+")],
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,
                   "ws": "🟢 bağlı" if collector and collector.connected else "🔴 kopuk"},
     })
@@ -278,6 +385,7 @@ async def coin_page(request: Request, symbol: str):
         "tg": request.query_params.get("tg"),
         "has_bot": request.app.state.bot is not None,
         "chart": _entry_chart(rows, summ.get("mark")),
+        "liqchart": _liq_chart(rows, summ.get("mark"), cfg.max_liq_distance_pct),
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
     })

@@ -1,94 +1,117 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="panel">
-  <h2>Durum</h2>
-  <span class="stat">WS: <b>{{ stats.ws }}</b></span>
-  <span class="stat">Evren: <b>{{ universe|length }}</b> coin</span>
-  <span class="stat">Fill havuzu: <b>{{ stats.fills }}</b></span>
-  <span class="stat">Adres havuzu: <b>{{ stats.addrs }}</b></span>
-  <span class="stat">Watchlist: <b>{{ stats.watch }}</b></span>
+<div class="panel strip">
+  <span>WS <b>{{ stats.ws }}</b></span>
+  <span>Evren <b>{{ universe|length }}</b></span>
+  <span>Fill <b>{{ stats.fills }}</b></span>
+  <span>Adres <b>{{ stats.addrs }}</b></span>
+  <span>Watchlist <b>{{ stats.watch }}</b></span>
+  {% if events %}<span class="warn">📅 Sıradaki: <b>{{ events[0].symbol }}</b> {{ events[0].date_et }}</span>{% endif %}
 </div>
 
-<div class="panel half">
-  <h2>🆕 Son açılan büyük pozisyonlar <span class="dim" style="text-transform:none">· 72 saat · earnings şartı yok</span></h2>
-  {% if recent_big %}
-  <table>
-    <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Yön</th><th>Notional</th><th>Açılış</th><th>Skor</th></tr>
-    {% for p in recent_big %}
-    <tr>
-      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a></td>
-      <td class="l"><a href="/whale/{{ p.address }}{{ k }}">{{ p.address[:8] }}..{{ p.address[-4:] }}</a></td>
-      <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
-      <td><b>{{ p.notional|usd }}</b></td>
-      <td>{{ p.opened_ts|age }} önce</td>
-      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
-    </tr>
+<div class="panel compact">
+  <h2>💥 Likidasyon haritası <span class="dim" style="text-transform:none">· tüm coin'ler · mesafeye göre sıralı</span></h2>
+  <div class="chips">
+    {% for v, lbl in liq_chips %}
+    <a href="/?liqmin={{ v|int }}{{ '&key=' + k[5:] if k else '' }}" class="{{ 'on' if liqmin == v else '' }}">{{ lbl }}</a>
     {% endfor %}
-  </table>
-  {% else %}<p class="dim">Son 72 saatte açılmış büyük pozisyon görülmedi (oto-tarama dolaştıkça dolar).</p>{% endif %}
+    <span class="dim" style="font-size:12px;align-self:center">
+      <i class="sw" style="background:#c47216;display:inline-block;width:10px;height:10px;border-radius:2px"></i> long liq (fiyat altı) ·
+      <i class="sw" style="background:#2b8cbe;display:inline-block;width:10px;height:10px;border-radius:2px"></i> short liq (fiyat üstü)</span>
+  </div>
+  {% if liq_map %}
+  {% for x in liq_map %}
+  <div class="lbar">
+    <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a></span>
+    <span class="lside {{ 'longliq-t' if x.side == 'long' else 'shortliq-t' }}">{{ 'L-LIQ' if x.side == 'long' else 'S-LIQ' }}</span>
+    <div class="ltrack"><div class="lfill {{ 'longliq' if x.side == 'long' else 'shortliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
+    <span class="lval">{{ x.notional|usd }}</span>
+    <span class="lpx">liq {{ x.liq_px|px }}</span>
+    <span class="ldist {{ 'warn' if x.dist < 5 else 'dim' }}">%{{ '%.1f'|format(x.dist) }}</span>
+    <a href="/whale/{{ x.address }}{{ k }}" class="dim" style="font-size:11px">{{ x.address[:6] }}..</a>
+  </div>
+  {% endfor %}
+  {% else %}<p class="dim">Bu filtrede likidasyona yakın pozisyon yok — filtreyi düşür ya da taramaların dolmasını bekle.</p>{% endif %}
 </div>
 
-<div class="panel half">
-  <h2>🚨 En şüpheli pozisyonlar <span class="dim" style="text-transform:none">· skor ≥ 40</span></h2>
+<div class="panel third compact">
+  <h2>🚨 En şüpheliler</h2>
   {% if suspicious %}
   <table>
-    <tr><th>Skor</th><th class="l">Hisse</th><th class="l">Adres</th><th>Yön</th><th>Notional</th><th>Açılış</th></tr>
+    <tr><th>Skor</th><th class="l">Hisse</th><th>Yön</th><th>Boyut</th><th>Açılış</th></tr>
     {% for p in suspicious %}
     <tr>
       <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else 'b-mid' }}">{{ p.score }}</span></td>
-      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a></td>
-      <td class="l"><a href="/whale/{{ p.address }}{{ k }}">{{ p.address[:8] }}..{{ p.address[-4:] }}</a></td>
-      <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
+      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
+          <a href="/whale/{{ p.address }}{{ k }}" class="dim" style="font-size:11px">{{ p.address[:6] }}..</a></td>
+      <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
       <td>{{ p.opened_ts|age }}</td>
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Şu an skor ≥ 40 pozisyon yok — sakin sular 🌊</p>{% endif %}
+  {% else %}<p class="dim">Skor ≥ 40 pozisyon yok — sakin sular 🌊</p>{% endif %}
 </div>
 
-<div class="panel half">
-  <h2>📅 Yaklaşan earnings <span class="dim" style="text-transform:none">· HL'de listeli</span></h2>
-  {% if events %}
+<div class="panel third compact">
+  <h2>🆕 Son açılan büyükler <span class="dim" style="text-transform:none">· 72h</span></h2>
+  {% if recent_big %}
   <table>
-    <tr><th class="l">Tarih (ET)</th><th class="l">Sembol</th><th class="l">Saat</th><th class="l">Durum</th></tr>
-    {% for e in events %}
+    <tr><th class="l">Hisse</th><th>Yön</th><th>Boyut</th><th>Açılış</th><th>Skor</th></tr>
+    {% for p in recent_big %}
     <tr>
-      <td class="l">{{ e.date_et }}</td>
-      <td class="l"><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a></td>
-      <td class="l">{{ {'amc':'AMC (kapanış sonrası)','bmo':'BMO (açılış öncesi)'}.get(e.hour_hint, '?') }}</td>
-      <td class="l">{% if e.alerted_t1 %}✅ raporlandı{% elif e.alerted_pre %}🕐 erken rapor gitti{% else %}bekliyor{% endif %}
-          {% if e.note %}<span class="warn">⚠ {{ e.note }}</span>{% endif %}</td>
+      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
+          <a href="/whale/{{ p.address }}{{ k }}" class="dim" style="font-size:11px">{{ p.address[:6] }}..</a></td>
+      <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
+      <td><b>{{ p.notional|usd }}</b></td>
+      <td>{{ p.opened_ts|age }}</td>
+      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Önümüzdeki 14 günde eşleşen earnings yok (ya da takvim ilk çekimini bekliyor).</p>{% endif %}
+  {% else %}<p class="dim">Son 72 saatte yeni büyük pozisyon yok.</p>{% endif %}
 </div>
 
-<div class="panel half">
-  <h2>🎯 Tek hisse uzmanları <span class="dim" style="text-transform:none">· 30 günde ≥%90 tek coin</span></h2>
+<div class="panel third compact">
+  <h2>📅 Yaklaşan earnings</h2>
+  {% if events %}
+  <table>
+    <tr><th class="l">Tarih</th><th class="l">Sembol</th><th class="l">Saat</th><th class="l">Durum</th></tr>
+    {% for e in events %}
+    <tr>
+      <td class="l">{{ e.date_et[5:] }}</td>
+      <td class="l"><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a></td>
+      <td class="l">{{ {'amc':'AMC','bmo':'BMO'}.get(e.hour_hint, '?') }}</td>
+      <td class="l">{% if e.alerted_t1 %}✅{% elif e.alerted_pre %}🕐{% else %}⏳{% endif %}{% if e.note %} <span class="warn">⚠</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">14 günde eşleşen earnings yok.</p>{% endif %}
+</div>
+
+<div class="panel half compact">
+  <h2>🎯 Tek hisse uzmanları <span class="dim" style="text-transform:none">· 30g ≥%90 tek coin</span></h2>
   {% if specialists %}
   <table>
     <tr><th class="l">Adres</th><th class="l">Hisse</th><th>İşlem</th><th>Hacim</th><th>Sicil</th><th class="l">Açık poz</th></tr>
     {% for s in specialists %}
     <tr>
-      <td class="l"><a href="/whale/{{ s.address }}{{ k }}">{{ s.address[:8] }}..{{ s.address[-4:] }}</a>
-          {% if s.watchlist %}⭐{% endif %}</td>
+      <td class="l"><a href="/whale/{{ s.address }}{{ k }}">{{ s.address[:8] }}..{{ s.address[-4:] }}</a>{% if s.watchlist %} ⭐{% endif %}</td>
       <td class="l"><a href="/t/{{ s.symbol }}{{ k }}"><b>{{ s.symbol }}</b></a></td>
       <td>{{ s.n }}</td>
       <td>{{ s.vol|usd }}</td>
       <td>{{ s.hits or 0 }}✓/{{ s.misses or 0 }}✗</td>
-      <td class="l">{% if s.open %}<span class="{{ s.open.side }}">{{ 'LONG' if s.open.side=='long' else 'SHORT' }}</span> {{ s.open.notional|usd }}{% else %}-{% endif %}</td>
+      <td class="l">{% if s.open %}<span class="{{ s.open.side }}">{{ 'L' if s.open.side=='long' else 'S' }}</span> {{ s.open.notional|usd }}{% else %}-{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Henüz tek-hisse uzmanı tespit edilmedi — fill havuzu büyüdükçe ortaya çıkarlar.</p>{% endif %}
+  {% else %}<p class="dim">Henüz tek-hisse uzmanı yok — havuz büyüdükçe çıkarlar.</p>{% endif %}
 </div>
 
-<div class="panel">
+<div class="panel half compact">
   <h2>🎰 HL hisse perp evreni</h2>
   {% if universe %}
-  <p>{% for t in universe %}<a href="/t/{{ t.symbol }}{{ k }}">{{ t.symbol }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
-  {% else %}<p class="dim">Evren henüz keşfedilmedi — HL API'ye ilk erişim bekleniyor.</p>{% endif %}
+  <p style="line-height:2">{% for t in universe %}<a href="/t/{{ t.symbol }}{{ k }}">{{ t.symbol }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% else %}<p class="dim">Evren henüz keşfedilmedi.</p>{% endif %}
 </div>
 {% endblock %}

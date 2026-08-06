@@ -68,6 +68,38 @@
 </div>
 {% endif %}
 
+{% if liqchart %}
+<div class="panel">
+  <h2>💥 Likidasyon haritası <span style="text-transform:none">· hangi fiyatta kim likide olur</span></h2>
+  <div class="legendrow">
+    <span><i class="sw" style="background:{{ liqchart.c_long }}"></i> Long liq ({{ liqchart.n_long }}) — fiyat düşerse</span>
+    <span><i class="sw" style="background:{{ liqchart.c_short }}"></i> Short liq ({{ liqchart.n_short }}) — fiyat çıkarsa</span>
+    <span class="dim">bar boyu = pozisyon büyüklüğü · kesikli çizgi = güncel fiyat</span>
+  </div>
+  <svg viewBox="0 0 {{ liqchart.W }} {{ liqchart.H }}" style="width:100%;height:auto"
+       role="img" aria-label="Likidasyon fiyat haritası">
+    {% for t in liqchart.ticks %}
+    <line x1="{{ liqchart.left }}" x2="{{ liqchart.W - 16 }}" y1="{{ t.y }}" y2="{{ t.y }}"
+          stroke="rgba(167,158,196,.13)"/>
+    <text x="{{ liqchart.left - 8 }}" y="{{ t.y + 4 }}" text-anchor="end"
+          font-size="11" fill="#a79ec4">{{ t.v }}</text>
+    {% endfor %}
+    {% for b in liqchart.bars %}
+    <rect x="{{ liqchart.left }}" y="{{ b.y - 3 }}" width="{{ b.w }}" height="6" rx="3"
+          fill="{{ liqchart.c_long if b.side == 'long' else liqchart.c_short }}"
+          stroke="#282138" stroke-width="1"><title>{{ b.tip }}</title></rect>
+    {% endfor %}
+    <line x1="{{ liqchart.left }}" x2="{{ liqchart.W - 16 }}" y1="{{ liqchart.mark_y }}" y2="{{ liqchart.mark_y }}"
+          stroke="#cbbfef" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="{{ liqchart.W - 18 }}" y="{{ liqchart.mark_y - 6 }}" text-anchor="end"
+          font-size="11" font-weight="700" fill="#cbbfef">şimdi {{ liqchart.mark_txt }}</text>
+    {% for l in liqchart.labels %}
+    <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="start" font-size="11" fill="#cbbfef">{{ l.text }}</text>
+    {% endfor %}
+  </svg>
+</div>
+{% endif %}
+
 <div class="panel">
   <h2>🐋 En büyük pozisyonlar <span style="text-transform:none">· güncel fiyat: <b>{{ summ.mark|px }}</b></span></h2>
   {% if rows %}

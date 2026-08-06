@@ -51,12 +51,35 @@ border-radius:999px;font:inherit;font-weight:700;cursor:pointer;
 box-shadow:0 4px 14px rgba(143,123,255,.35);transition:transform .15s, box-shadow .15s}
 button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 8px 20px rgba(143,123,255,.5)}
 button:active{transform:scale(.97)}
-main{padding:22px;max-width:1380px;margin:0 auto}
+main{padding:18px;max-width:1520px;margin:0 auto}
 @media(min-width:1050px){
-  main{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;align-items:start}
-  main>.panel{grid-column:1/-1}
-  main>.panel.half{grid-column:auto}
+  main{display:grid;grid-template-columns:repeat(6,1fr);gap:0 14px;align-items:start}
+  main>.panel{grid-column:span 6}
+  main>.panel.half{grid-column:span 3}
+  main>.panel.third{grid-column:span 2}
 }
+.compact th,.compact td{padding:3px 8px;font-size:12.5px}
+.compact h2{margin-bottom:8px}
+.strip{display:flex;gap:20px;flex-wrap:wrap;align-items:center;
+padding:8px 16px!important;margin-bottom:14px!important;font-size:13px}
+.strip b{font-size:14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.chips a{border:1.5px solid var(--border);color:var(--dim);padding:2px 12px;
+border-radius:999px;font-size:12px;font-weight:700}
+.chips a.on{background:var(--btn);border-color:var(--btn);color:#fff}
+.lbar{display:flex;gap:10px;align-items:center;padding:3px 0;font-size:12.5px;
+font-variant-numeric:tabular-nums}
+.lbar .lsym{width:64px;font-weight:800}
+.lbar .lside{width:52px;font-weight:800}
+.lbar .ltrack{flex:1;height:10px;background:rgba(167,158,196,.1);border-radius:999px;overflow:hidden}
+.lbar .lfill{height:100%;border-radius:999px}
+.lbar .lfill.longliq{background:#c47216}
+.lbar .lfill.shortliq{background:#2b8cbe}
+.lbar .lval{width:64px;text-align:right;font-weight:700}
+.lbar .lpx{width:96px;text-align:right;color:var(--dim)}
+.lbar .ldist{width:56px;text-align:right;font-weight:800}
+.longliq-t{color:#e09b4e}
+.shortliq-t{color:#5fb0d9}
 .tabs{display:flex;gap:8px;margin-bottom:10px}
 .tab{background:transparent;border:1.5px solid var(--border);color:var(--dim);
 padding:4px 14px;border-radius:999px;font-size:12.5px;font-weight:700;box-shadow:none}
