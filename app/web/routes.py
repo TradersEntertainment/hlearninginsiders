@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..config import EDITABLE_FIELDS, convert_value, display_value
 from ..db import db, kv_get, kv_set, now
-from ..earnings.calendar import upcoming_events
+from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..radar import autoscan, clusters, metrics
@@ -264,7 +264,9 @@ async def index(request: Request):
         return RedirectResponse(url)
     cfg = request.app.state.cfg
     universe = await get_universe()
-    events = await upcoming_events(14)
+    events = annotate(await upcoming_events(14))
+    # Açıklanmış olanlar listenin sonuna — "bugün" sanıp geç kalınmasın
+    events.sort(key=lambda e: (e["passed"], e["report_ts"]))
     ts_now = now()
     async with db() as conn:
         cur = await conn.execute("SELECT COUNT(*) c FROM fills")
@@ -391,7 +393,8 @@ async def index(request: Request):
     from datetime import date as _date
     ecards = []
     today = _date.today()
-    for e in events[:6]:
+    live_events = [e for e in events if not e["passed"]]
+    for e in (live_events or events)[:6]:
         coin = e["coin"]
         s = await metrics.summary(coin)
         async with db() as conn:
@@ -428,6 +431,9 @@ async def index(request: Request):
             days_left = None
         ecards.append({"symbol": e["symbol"], "date_et": e["date_et"],
                        "propr": propr_listed(e["symbol"]),
+                       "icon": e["icon"], "when_txt": e["when_txt"], "tsi": e["tsi"],
+                       "exact": e["exact"], "countdown": e["countdown"],
+                       "passed": e["passed"], "note": e.get("note"),
                        "hour": e.get("hour_hint"), "days_left": days_left,
                        "mark": s.get("mark"), "px_change": s.get("px_change_pct"),
                        "oi_ntl": s.get("oi_ntl"), "oi_change": s.get("oi_change_pct"),
@@ -436,18 +442,32 @@ async def index(request: Request):
                        "top": dict(top) if top else None})
 
     # Durum şeridi için: yaklaşan earnings'ler tarihe göre gruplu (ör. 11.08: CRWV LITE QNT)
-    strip_days: dict[str, list[str]] = {}
+    strip_days: dict[str, list[dict]] = {}
     n = 0
-    for e in events:
+    for e in live_events:
         if n >= 8:
             break
         d = f"{e['date_et'][8:10]}.{e['date_et'][5:7]}"
-        strip_days.setdefault(d, []).append(e["symbol"])
+        strip_days.setdefault(d, []).append({"symbol": e["symbol"], "icon": e["icon"]})
         n += 1
+
+    # ---- Hafıza: en iyi biliciler + son arşiv kayıtları ----
+    async with db() as conn:
+        cur = await conn.execute(
+            """SELECT address, hits, misses, watchlist FROM addresses
+               WHERE hits > 0 AND COALESCE(entity,'')=''
+               ORDER BY hits DESC, misses ASC LIMIT 8""")
+        winners = [dict(r) for r in await cur.fetchall()]
+        cur = await conn.execute(
+            """SELECT symbol, date_et, hour_hint, move_pct, result_note FROM earnings_events
+               WHERE evaluated=1 AND result_note IS NOT NULL
+               ORDER BY date_et DESC LIMIT 6""")
+        archive = [dict(r) for r in await cur.fetchall()]
 
     collector = getattr(request.app.state, "collector", None)
     return _render(request, "index.html", {
         "universe": universe, "events": events, "strip_days": strip_days, "ecards": ecards,
+        "winners": winners, "archive": archive,
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "liq_map": liq_map, "liqmin": liqmin,
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
@@ -631,6 +651,35 @@ async def whale_page(request: Request, address: str):
 
 
 # ---------------- ayarlar ----------------
+
+@router.get("/gecmis")
+async def history_page(request: Request):
+    _guard(request)
+    async with db() as conn:
+        cur = await conn.execute(
+            """SELECT * FROM earnings_events WHERE evaluated=1
+               ORDER BY date_et DESC LIMIT 60""")
+        rows = [dict(r) for r in await cur.fetchall()]
+        for r in rows:
+            cur = await conn.execute(
+                """SELECT s.*, COALESCE(a.hits,0) hits, COALESCE(a.misses,0) misses,
+                          COALESCE(a.watchlist,0) watchlist
+                   FROM position_snapshots s LEFT JOIN addresses a ON a.address=s.address
+                   WHERE s.event_id=? AND s.phase IN ('T-1h','pre')
+                   ORDER BY s.notional DESC LIMIT 5""", (r["id"],))
+            r["pre"] = [dict(x) for x in await cur.fetchall()]
+            move = r.get("move_pct")
+            for p in r["pre"]:
+                p["hit"] = (None if move is None else
+                            ((p["side"] == "short" and move < 0) or
+                             (p["side"] == "long" and move > 0)))
+        cur = await conn.execute(
+            """SELECT address, hits, misses, watchlist, first_deposit_ts, last_deposit_ts
+               FROM addresses WHERE hits > 0 AND COALESCE(entity,'')=''
+               ORDER BY hits DESC, misses ASC LIMIT 30""")
+        winners = [dict(r) for r in await cur.fetchall()]
+    return _render(request, "history.html", {"rows": rows, "winners": winners})
+
 
 @router.get("/settings")
 async def settings_page(request: Request, saved: int = 0):

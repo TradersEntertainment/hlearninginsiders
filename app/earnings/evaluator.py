@@ -85,8 +85,30 @@ async def _evaluate(cfg: Config, client: HLClient, bot, ev: dict, est: int) -> N
     except Exception as e:
         log.warning("T+24h taraması başarısız %s: %s", coin, e)
 
+    # ---- Arşiv notu: earnings öncesi en büyük poz kimdi, haklı çıktı mı ----
+    note = None
+    if snaps:
+        top = snaps[0]
+        side_txt = "SHORT" if top["side"] == "short" else "LONG"
+        who = f"{top['address'][:8]}..{top['address'][-4:]}"
+        size = fmt.usd(top["notional"])
+        if move_pct is None:
+            note = f"En büyük poz {side_txt} {size} ({who}) — sonuç ölçülemedi"
+        elif abs(move_pct) < cfg.eval_move_threshold:
+            note = (f"En büyük poz {side_txt} {size} ({who}) — fiyat %{move_pct:+.1f},"
+                    " hareket eşiğin altında")
+        else:
+            hit = (top["side"] == "short" and move_pct < 0) or \
+                  (top["side"] == "long" and move_pct > 0)
+            verdict = "✅ DOĞRU BİLDİ (insider olabilir)" if hit else "❌ yanılmış"
+            n_right = sum(1 for r in results if r["hit"])
+            note = (f"En büyük poz {side_txt} {size} ({who}) → fiyat %{move_pct:+.1f}"
+                    f" · {verdict} · {n_right}/{len(results)} adres doğru")
+
     async with db() as conn:
-        await conn.execute("UPDATE earnings_events SET evaluated=1 WHERE id=?", (ev["id"],))
+        await conn.execute(
+            "UPDATE earnings_events SET evaluated=1, move_pct=?, result_note=? WHERE id=?",
+            (move_pct, note, ev["id"]))
 
     if bot and snaps:
         text = fmt.eval_report(ev, move_pct, results, closed, promoted, cfg)

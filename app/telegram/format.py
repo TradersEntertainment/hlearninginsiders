@@ -249,12 +249,14 @@ def anomaly_alert(symbol: str, coin: str, triggers: list[str], event: dict | Non
 def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg,
                     cluster_list: list[dict] | None = None,
                     peer_list: list[dict] | None = None) -> str:
+    from ..earnings.calendar import annotate  # döngüsel importu kır
+
     sym = event["symbol"]
-    hint = {"amc": "kapanış sonrası", "bmo": "açılış öncesi"}.get(
-        event.get("hour_hint") or "", "saat belirsiz")
+    ann = annotate([dict(event)])[0]
     stage_txt = "⏰ ~1 saat kaldı" if stage == "t1" else "🕐 erken pencere"
-    head = (f"🎯 <b>{sym}</b> earnings — {stage_txt}\n"
-            f"📅 {event['date_et']} ({hint})"
+    head = (f"{ann['icon']} <b>{sym}</b> earnings — {stage_txt}\n"
+            f"📅 {event['date_et']} · <b>{ann['tsi']} TSİ</b> ({ann['when_txt']}"
+            + ("" if ann["exact"] else ", yaklaşık") + ")"
             + (f" │ EPS beklentisi {event['eps_est']}" if event.get("eps_est") else ""))
     if event.get("note"):
         head += f"\n⚠️ {event['note']}"
@@ -324,16 +326,48 @@ def eval_report(event: dict, move_pct: float | None, results: list[dict],
 
 
 def upcoming_list(events: list[dict]) -> str:
+    from ..earnings.calendar import annotate
+
     if not events:
         return "📅 Önümüzdeki 14 günde HL'de listeli hisse earnings'i yok (ya da takvim henüz çekilmedi)."
-    lines = ["📅 <b>Yaklaşan earnings (HL'de listeli):</b>"]
-    for e in events[:25]:
-        hint = {"amc": "AMC", "bmo": "BMO"}.get(e.get("hour_hint") or "", "?")
-        flags = []
-        if e.get("alerted_t1"):
-            flags.append("✅raporlandı")
-        lines.append(f"  {e['date_et']} <b>{e['symbol']}</b> ({hint})"
-                     + (f" {' '.join(flags)}" if flags else ""))
+    evs = annotate([dict(e) for e in events])
+    evs.sort(key=lambda e: (e["passed"], e["report_ts"]))
+    lines = ["📅 <b>Yaklaşan earnings (HL'de listeli):</b>",
+             "<i>☀️ sabah açılış öncesi · 🌙 akşam kapanış sonrası · saatler TSİ</i>"]
+    for e in evs[:25]:
+        tail = "❗geçti" if e["passed"] else (
+            "✅raporlandı" if e.get("alerted_t1") else f"⏳{e['countdown']}")
+        lines.append(f"  {e['icon']} <b>{e['symbol']}</b> {e['tsi']}"
+                     + ("" if e["exact"] else "~") + f" · {tail}"
+                     + (" ⚠️" if e.get("note") else ""))
+    return "\n".join(lines)
+
+
+def history_list(rows: list[dict]) -> str:
+    if not rows:
+        return "🗂 Arşiv henüz boş — ilk bilanço değerlendirmesinden sonra dolar."
+    lines = ["🗂 <b>Geçmiş bilançolar</b> (öncesinde en büyük poz kimdi, haklı mıydı):"]
+    for r in rows[:12]:
+        icon = {"amc": "🌙", "bmo": "☀️"}.get(r.get("hour_hint") or "", "❓")
+        mv = f"{r['move_pct']:+.1f}%" if r.get("move_pct") is not None else "?"
+        lines.append(f"\n{icon} <b>{r['symbol']}</b> {r['date_et']} → fiyat <b>{mv}</b>")
+        if r.get("result_note"):
+            lines.append(f"  └ {r['result_note']}")
+    return "\n".join(lines)
+
+
+def winners_list(rows: list[dict]) -> str:
+    if not rows:
+        return ("🏆 Henüz sicilli adres yok — bot her earnings sonrası kim doğru bildi diye"
+                " işler, ilk sonuçlardan sonra burası dolar.")
+    lines = ["🏆 <b>En iyi biliciler</b> (bilanço yönünü doğru tahmin sicili):"]
+    for r in rows[:15]:
+        tot = (r.get("hits") or 0) + (r.get("misses") or 0)
+        rate = (r["hits"] / tot * 100) if tot else 0
+        star = " ⭐" if r.get("watchlist") else ""
+        lines.append(f"  {alink(r['address'])} — <b>{r.get('hits') or 0}</b>✓ /"
+                     f" {r.get('misses') or 0}✗ (%{rate:.0f}){star}")
+    lines.append("\n<i>⭐ = watchlist: yeni poz açtığı anda bildirim gelir.</i>")
     return "\n".join(lines)
 
 
@@ -358,6 +392,8 @@ def help_text() -> str:
         "/ignore 0x… — adresi ele (MM/vault gibi davran, alert üretme)\n"
         "/unignore 0x… — elemeyi kaldır\n"
         "/watchlist — sicilli adresler\n"
+        "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
+        "/winners — en iyi biliciler (doğru tahmin sicili)\n"
         "/status — bot durumu\n"
         "/id — bu sohbetin chat id'si"
     )

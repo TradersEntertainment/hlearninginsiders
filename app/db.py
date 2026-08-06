@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS earnings_events(
   alerted_pre INTEGER DEFAULT 0,   -- erken pencere (bmo akşam / unknown sabah)
   alerted_t1 INTEGER DEFAULT 0,    -- ana T-1h raporu
   evaluated INTEGER DEFAULT 0,
+  move_pct REAL,                   -- earnings sonrası fiyat hareketi (%)
+  result_note TEXT,                -- arşiv notu: en büyük poz kimdi, haklı mıydı
   created_ts INTEGER,
   UNIQUE(symbol, date_et)
 );
@@ -115,6 +117,8 @@ MIGRATIONS = [
     "ALTER TABLE position_snapshots ADD COLUMN last_trim_ts INTEGER",
     "ALTER TABLE addresses ADD COLUMN last_deposit_ts INTEGER",
     "ALTER TABLE addresses ADD COLUMN entity TEXT",
+    "ALTER TABLE earnings_events ADD COLUMN move_pct REAL",
+    "ALTER TABLE earnings_events ADD COLUMN result_note TEXT",
 ]
 
 

@@ -8,10 +8,11 @@
   <span title="Yakalanan büyük alım-satım sayısı">Fill <b>{{ stats.fills }}</b></span>
   <span title="Tanınan cüzdan sayısı">Adres <b>{{ stats.addrs }}</b></span>
   <span title="Daha önce bilanço 'bilmiş' takipteki cüzdanlar">Watchlist <b>{{ stats.watch }}</b></span>
-  {% if strip_days %}<span class="warn" title="Yaklaşan bilanço günleri">📅
+  {% if strip_days %}<span class="warn" title="Yaklaşan bilanço günleri · ☀️ sabah (açılış öncesi) · 🌙 akşam (kapanış sonrası)">📅
     {%- for d, syms in strip_days.items() %}
-    <b>{{ d }}</b>: {% for s in syms %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% if not loop.last %} {% endif %}{% endfor %}{% if not loop.last %} · {% endif %}
+    <b>{{ d }}</b>: {% for s in syms %}<a href="/t/{{ s.symbol }}{{ k }}">{{ s.icon }}{{ s.symbol }}</a>{% if not loop.last %} {% endif %}{% endfor %}{% if not loop.last %} · {% endif %}
     {%- endfor %}</span>{% endif %}
+  <a href="/gecmis{{ k }}" title="Geçmiş bilançolar ve en iyi biliciler">🗂 geçmiş</a>
 </div>
 
 <div class="panel">
@@ -34,6 +35,8 @@
         <b>Sicil</b><span>bu cüzdan daha önce kaç bilançoyu doğru (✓) / yanlış (✗) bildi</span>
         <b>Earnings</b><span>şirketin bilanço açıklaması. AMC = borsa kapandıktan sonra, BMO = açılmadan önce</span>
         <b>🤖 MM</b><span>market maker / robot hesap — insider değil, sayılmaz</span>
+        <b>☀️ / 🌙</b><span>☀️ bilanço sabah açılıştan ÖNCE, 🌙 akşam kapanıştan SONRA açıklanır. Saatler TSİ; "geçti" yazıyorsa açıklama yapılmış demektir</span>
+        <b>🗂 Geçmiş</b><span>eski bilançoların arşivi: öncesinde kim ne pozisyondaydı, kim doğru bildi</span>
       </div>
       <p style="margin-bottom:0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
       tablolardaki hisse/cüzdan linklerine tıkla. Bot her şeyi Telegram'a da atar.</p>
@@ -51,8 +54,11 @@
     <div class="ecard">
       <h3><a href="/t/{{ c.symbol }}{{ k }}">{{ c.symbol }}</a>
         {% if c.propr %}<span class="pbadge" title="propr.xyz'de listeli — işlem açabilirsin">✅ PROPR</span>{% endif %}
-        <span class="dim" style="font-weight:400">{{ c.date_et[5:] }} {{ {'amc':'AMC','bmo':'BMO'}.get(c.hour,'?') }}</span>
-        <span class="cd">{% if c.days_left == 0 %}BUGÜN{% elif c.days_left == 1 %}yarın{% elif c.days_left %}{{ c.days_left }} gün{% endif %}</span></h3>
+        <span class="cd {{ 'short' if c.passed else '' }}">{{ c.countdown }}</span></h3>
+      <div title="{{ c.when_txt }}">{{ c.icon }} <b>{{ c.tsi }}</b> TSİ
+        <span class="dim">· {{ c.when_txt }}{% if not c.exact %} (yaklaşık){% endif %}</span></div>
+      {% if c.passed %}<div class="short"><b>⚠️ AÇIKLANDI — bu bilanço geçti!</b></div>{% endif %}
+      {% if c.note %}<div class="fl">{{ c.note }}</div>{% endif %}
       <div>Fiyat <b>{{ c.mark|px }}</b>{% if c.px_change is not none %}
         <span class="{{ 'long' if c.px_change > 0 else 'short' }}">{{ '%+.1f'|format(c.px_change) }}%</span>{% endif %}
         · OI <b>{{ c.oi_ntl|usd }}</b>{% if c.oi_change is not none %} ({{ '%+.0f'|format(c.oi_change) }}%){% endif %}</div>
@@ -152,17 +158,53 @@
         <th class="l" title="⏳ bekliyor · 🕐 erken rapor gitti · ✅ raporlandı">Durum</th></tr>
     {% for e in events %}
     <tr>
-      <td class="l">{{ e.date_et[5:] }}</td>
-      <td class="l"><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a></td>
-      <td class="l">{{ {'amc':'AMC','bmo':'BMO'}.get(e.hour_hint, '?') }}</td>
-      <td class="l">{% if e.alerted_t1 %}✅{% elif e.alerted_pre %}🕐{% else %}⏳{% endif %}{% if e.note %} <span class="warn">⚠</span>{% endif %}</td>
+      <td class="l {{ 'dim' if e.passed else '' }}">{{ e.date_et[5:] }}</td>
+      <td class="l"><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a>{% if e.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>
+      <td class="l" title="{{ e.when_txt }}{% if not e.exact %} (yaklaşık){% endif %}">{{ e.icon }} {{ e.tsi[6:] }}</td>
+      <td class="l">{% if e.passed %}<span class="short">geçti</span>{% elif e.alerted_t1 %}✅{% elif e.alerted_pre %}🕐{% else %}{{ e.countdown }}{% endif %}{% if e.note %} <span class="warn" title="{{ e.note }}">⚠</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
   {% else %}<p class="dim">14 günde eşleşen earnings yok.</p>{% endif %}
 </div>
 
+<div class="panel third compact">
+  <h2>🏆 En iyi biliciler <span class="dim" style="text-transform:none">· <a href="/gecmis{{ k }}">tümü →</a></span></h2>
+  <p class="sub">Bilanço yönünü doğru bilen cüzdanlar. 2+ doğru = otomatik ⭐ watchlist + anlık bildirim.</p>
+  {% if winners %}
+  <table>
+    <tr><th class="l">Adres</th><th>Doğru</th><th>Yanlış</th><th class="l">Durum</th></tr>
+    {% for w in winners %}
+    <tr>
+      <td class="l">{{ m.addr(w.address, k, 6) }}</td>
+      <td class="long"><b>{{ w.hits }}</b></td>
+      <td class="short">{{ w.misses }}</td>
+      <td class="l">{% if w.watchlist %}⭐{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Sicil henüz boş — ilk bilanço sonucuyla dolmaya başlar.</p>{% endif %}
+</div>
+
 <div class="panel half compact">
+  <h2>🗂 Son bilanço arşivi <span class="dim" style="text-transform:none">· <a href="/gecmis{{ k }}">tümü →</a></span></h2>
+  <p class="sub">Geçmiş bilançolarda öncesinde en büyük poz kimdeydi, haklı çıktı mı.</p>
+  {% if archive %}
+  <table>
+    <tr><th class="l">Tarih</th><th class="l">Hisse</th><th>Hareket</th><th class="l">Not</th></tr>
+    {% for a in archive %}
+    <tr>
+      <td class="l dim">{{ a.date_et[5:] }} {{ {'amc':'🌙','bmo':'☀️'}.get(a.hour_hint,'') }}</td>
+      <td class="l"><a href="/t/{{ a.symbol }}{{ k }}"><b>{{ a.symbol }}</b></a></td>
+      <td class="{{ 'long' if (a.move_pct or 0) > 0 else 'short' }}">{% if a.move_pct is not none %}{{ '%+.1f'|format(a.move_pct) }}%{% else %}-{% endif %}</td>
+      <td class="l dim" style="white-space:normal">{{ a.result_note }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Arşiv boş — ilk değerlendirme sonrası dolar.</p>{% endif %}
+</div>
+
+<div class="panel third compact">
   <h2>🎯 Tek hisse uzmanları</h2>
   <p class="sub">Sadece TEK bir hisseyi işleyen cüzdanlar — bir şirketi bu kadar yakından takip eden,
   içeriden bilgi sahibi olabilir. Sicili tutmaya başladık.</p>

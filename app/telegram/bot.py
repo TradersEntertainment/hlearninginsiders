@@ -142,6 +142,22 @@ class TelegramBot:
             await self._cmd_ignore(args, chat_id, on=False)
         elif cmd == "watchlist":
             await self._cmd_watchlist(chat_id)
+        elif cmd in ("gecmis", "history", "arsiv"):
+            async with db() as conn:
+                cur = await conn.execute(
+                    """SELECT symbol, date_et, hour_hint, move_pct, result_note
+                       FROM earnings_events WHERE evaluated=1 AND result_note IS NOT NULL
+                       ORDER BY date_et DESC LIMIT 12""")
+                rows = [dict(r) for r in await cur.fetchall()]
+            await self.send(fmt.history_list(rows), chat_id)
+        elif cmd in ("winners", "kazananlar"):
+            async with db() as conn:
+                cur = await conn.execute(
+                    """SELECT address, hits, misses, watchlist FROM addresses
+                       WHERE hits > 0 AND COALESCE(entity,'')=''
+                       ORDER BY hits DESC, misses ASC LIMIT 15""")
+                rows = [dict(r) for r in await cur.fetchall()]
+            await self.send(fmt.winners_list(rows), chat_id)
         elif cmd == "status":
             await self._cmd_status(chat_id)
 

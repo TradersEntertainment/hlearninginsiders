@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Geçmiş earnings — HL Insider Radar{% endblock %}
+{% block content %}
+<div class="panel">
+  <h2>🏆 En iyi biliciler <span class="dim" style="text-transform:none">· bilanço yönünü doğru tahmin sicili</span></h2>
+  <p class="sub">Bilanço öncesi pozisyonu doğru yönde olan cüzdanlar. 2+ doğru bilen otomatik
+  watchlist'e (⭐) girer ve yeni poz açtığı anda Telegram'a bildirim düşer — insider avımızın hafızası burası.</p>
+  {% if winners %}
+  <table>
+    <tr><th class="l">Adres</th><th title="Kaç bilanço yönünü doğru bildi">Doğru</th>
+        <th>Yanlış</th><th>İsabet</th><th class="l">Durum</th><th class="l">İlk fonlama</th></tr>
+    {% for w in winners %}
+    <tr>
+      <td class="l">{{ m.addr(w.address, k) }}</td>
+      <td class="long"><b>{{ w.hits }}</b></td>
+      <td class="short">{{ w.misses }}</td>
+      <td><b>%{{ ((w.hits / ((w.hits + w.misses) or 1)) * 100)|round|int }}</b></td>
+      <td class="l">{% if w.watchlist %}⭐ watchlist{% else %}izleniyor{% endif %}</td>
+      <td class="l dim">{{ w.first_deposit_ts|dt }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Henüz sicil oluşmadı — ilk bilanço değerlendirmesinden sonra dolmaya başlar.</p>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>🗂 Geçmiş bilançolar · arşiv</h2>
+  <p class="sub">Her bilanço için: açıklamadan önce en büyük pozisyonlar kimlerdeydi, fiyat ne yaptı,
+  kim haklı çıktı. Bot bunu otomatik kaydeder (T-1h anlık görüntüsü + T+24h sonucu).</p>
+  {% if rows %}
+  {% for r in rows %}
+  <div class="ecard" style="margin-bottom:12px">
+    <h3><a href="/t/{{ r.symbol }}{{ k }}">{{ r.symbol }}</a>
+      <span class="dim" style="font-weight:400">{{ r.date_et }}
+        {{ {'amc':'🌙 kapanış sonrası','bmo':'☀️ açılış öncesi'}.get(r.hour_hint,'❓') }}</span>
+      {% if r.move_pct is not none %}
+      <span class="cd {{ 'long' if r.move_pct > 0 else 'short' }}">{{ '%+.1f'|format(r.move_pct) }}%</span>
+      {% endif %}</h3>
+    {% if r.result_note %}<div class="verdict">{{ r.result_note }}</div>{% endif %}
+    {% if r.pre %}
+    <table style="margin-top:8px">
+      <tr><th class="l">Bilanço öncesi en büyük pozlar</th><th>Yön</th><th>Boyut</th><th>Skor</th><th class="l">Sonuç</th></tr>
+      {% for p in r.pre %}
+      <tr>
+        <td class="l">{{ m.addr(p.address, k) }}{% if p.watchlist %} ⭐{% endif %}</td>
+        <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
+        <td><b>{{ p.notional|usd }}</b></td>
+        <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
+        <td class="l">{% if p.hit is none %}<span class="dim">ölçülemedi</span>
+          {% elif p.hit %}<span class="long">✅ doğru bildi{% if (p.score or 0) >= 50 %} — insider şüphesi güçlü{% endif %}</span>
+          {% else %}<span class="short">❌ yanıldı</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}<div class="dim">Bu bilanço için önceden pozisyon kaydı yok.</div>{% endif %}
+  </div>
+  {% endfor %}
+  {% else %}<p class="dim">Arşiv henüz boş — ilk bilanço değerlendirmesi tamamlanınca dolar.</p>{% endif %}
+</div>
+{% endblock %}
