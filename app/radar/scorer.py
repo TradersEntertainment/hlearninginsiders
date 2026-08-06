@@ -100,6 +100,36 @@ async def _ledger_scan(client: HLClient, address: str) -> dict | None:
     }
 
 
+async def _detect_entity(cfg: Config, client: HLClient, address: str,
+                         n_open_positions: int | None) -> str | None:
+    """Market maker / vault tespiti — bunlar insider değil, gürültü.
+    1) Çok sayıda açık pozisyon (insan insider 1-3 poz taşır, MM onlarca)
+    2) 24 saatte aşırı sayıda çift yönlü büyük fill
+    3) Hyperliquid vault'u mu? (vaultDetails)"""
+    if (n_open_positions or 0) >= cfg.mm_max_positions:
+        return "mm"
+    since = now() - 86400
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) c, SUM(CASE WHEN side='buy' THEN 1 ELSE 0 END) b"
+            " FROM fills WHERE address=? AND ts>=?", (address, since))
+        r = await cur.fetchone()
+    c, b = (r["c"] or 0), (r["b"] or 0)
+    if c >= cfg.mm_max_fills_24h and 0 < b < c:
+        return "mm"
+    try:
+        v = await client.vault_details(address)
+        if v and (v.get("name") or v.get("vaultAddress")):
+            return "vault"
+    except Exception as e:
+        log.debug("vaultDetails %s: %s", address, e)
+    return None
+
+
+ENTITY_LABEL = {"mm": "🤖 market maker", "vault": "🏦 vault",
+                "manual": "🚫 elle elendi"}
+
+
 async def _coin_focus(coin: str, address: str) -> bool:
     """Adres son 30 günde ağırlıklı olarak (>=%90) sadece bu hisseyi mi trade etmiş?"""
     since = now() - 30 * 86400
@@ -273,6 +303,28 @@ async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
         fresh = None
         last_dep = arow.get("last_deposit_ts")
         funded_by_watch = False
+
+        # Otomatik hesaplar (MM/vault) insider skorlamasına girmez
+        entity = arow.get("entity")
+        if not entity and deep and i < DEEP_TOP_N:
+            entity = await _detect_entity(cfg, client, p["address"],
+                                          p.get("n_open_positions"))
+            if entity:
+                async with db() as conn:
+                    await conn.execute(
+                        "INSERT INTO addresses(address, first_seen, entity) VALUES(?,?,?)"
+                        " ON CONFLICT(address) DO UPDATE SET entity=excluded.entity",
+                        (p["address"], now(), entity))
+                log.info("otomatik hesap etiketlendi: %s → %s", p["address"], entity)
+        if entity:
+            p["entity"] = entity
+            p["score"] = 0
+            p["score_reasons"] = json.dumps(
+                [f"{ENTITY_LABEL.get(entity, entity)} — skorlama dışı"],
+                ensure_ascii=False)
+            p["watch_record"] = (arow.get("hits") or 0, arow.get("misses") or 0)
+            p["fresh"] = False
+            continue
 
         if deep and i < DEEP_TOP_N:
             tl = await _position_timeline(client, coin, p["address"])

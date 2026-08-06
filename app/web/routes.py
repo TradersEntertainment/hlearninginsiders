@@ -149,19 +149,22 @@ async def index(request: Request):
         addr_n = (await cur.fetchone())["c"]
         cur = await conn.execute("SELECT COUNT(*) c FROM addresses WHERE watchlist=1")
         watch_n = (await cur.fetchone())["c"]
-        # Son 72 saatte açılmış büyük pozisyonlar (earnings şartı yok)
+        # Son 72 saatte açılmış büyük pozisyonlar (earnings şartı yok; MM/vault hariç)
         cur = await conn.execute(
             """SELECT p.*, t.symbol FROM positions_current p
                JOIN tickers t ON t.coin = p.coin
+               LEFT JOIN addresses a ON a.address = p.address
                WHERE p.notional >= ? AND p.opened_ts IS NOT NULL AND p.opened_ts >= ?
+                 AND COALESCE(a.entity, '') = ''
                ORDER BY p.opened_ts DESC LIMIT 12""",
             (cfg.big_position_usd, ts_now - 72 * 3600))
         recent_big = [dict(r) for r in await cur.fetchall()]
-        # En şüpheli açık pozisyonlar (skora göre)
+        # En şüpheli açık pozisyonlar (skora göre; MM/vault hariç)
         cur = await conn.execute(
             """SELECT p.*, t.symbol FROM positions_current p
                JOIN tickers t ON t.coin = p.coin
-               WHERE COALESCE(p.score, 0) >= 40
+               LEFT JOIN addresses a ON a.address = p.address
+               WHERE COALESCE(p.score, 0) >= 40 AND COALESCE(a.entity, '') = ''
                ORDER BY p.score DESC, p.notional DESC LIMIT 10""")
         suspicious = [dict(r) for r in await cur.fetchall()]
         # Tek hisse uzmanları: 30 günde >=5 fill, >=%90'ı tek coin'de
@@ -192,7 +195,7 @@ async def index(request: Request):
         qm = ",".join("?" * len(addrs))
         async with db() as conn:
             cur = await conn.execute(
-                f"SELECT address, hits, misses, watchlist FROM addresses"
+                f"SELECT address, hits, misses, watchlist, entity FROM addresses"
                 f" WHERE address IN ({qm})", addrs)
             rec = {r["address"]: dict(r) for r in await cur.fetchall()}
             cur = await conn.execute(
@@ -205,6 +208,7 @@ async def index(request: Request):
             s.update(rec.get(s["address"], {}))
             open_pos = [p for p in posmap.get(s["address"], []) if p["coin"] == s["coin"]]
             s["open"] = open_pos[0] if open_pos else None
+        specialists = [s for s in specialists if not s.get("entity")]  # MM/vault hariç
 
     collector = getattr(request.app.state, "collector", None)
     return _render(request, "index.html", {

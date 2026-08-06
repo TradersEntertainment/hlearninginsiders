@@ -157,8 +157,10 @@ class Collector:
             return
         async with db() as conn:
             cur = await conn.execute(
-                "SELECT hits, misses FROM addresses WHERE address=?", (addr,))
+                "SELECT hits, misses, entity FROM addresses WHERE address=?", (addr,))
             row = await cur.fetchone()
+        if row and row["entity"] and not is_watch:
+            return  # MM/vault fill'i — gürültü
         record = (row["hits"], row["misses"]) if row else (0, 0)
         text = fmt.whale_fill_alert(coin, addr, side, px, notional, is_watch, record)
         try:

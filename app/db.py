@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS addresses(
   address TEXT PRIMARY KEY,
   first_seen INTEGER, first_deposit_ts INTEGER, last_deposit_ts INTEGER,
   label TEXT, hits INTEGER DEFAULT 0, misses INTEGER DEFAULT 0,
-  watchlist INTEGER DEFAULT 0, notes TEXT
+  watchlist INTEGER DEFAULT 0, notes TEXT,
+  entity TEXT                      -- NULL=insan | mm | vault | manual (elle elendi)
 );
 CREATE TABLE IF NOT EXISTS positions_current(
   coin TEXT, address TEXT, ts INTEGER,
@@ -106,6 +107,7 @@ MIGRATIONS = [
     "ALTER TABLE position_snapshots ADD COLUMN last_add_ts INTEGER",
     "ALTER TABLE position_snapshots ADD COLUMN last_trim_ts INTEGER",
     "ALTER TABLE addresses ADD COLUMN last_deposit_ts INTEGER",
+    "ALTER TABLE addresses ADD COLUMN entity TEXT",
 ]
 
 

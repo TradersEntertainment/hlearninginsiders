@@ -78,6 +78,10 @@ class HLClient:
     async def recent_trades(self, coin: str):
         return await self.info({"type": "recentTrades", "coin": coin})
 
+    async def vault_details(self, address: str):
+        """Adres bir vault ise detay döner, değilse null."""
+        return await self.info({"type": "vaultDetails", "vaultAddress": address})
+
     async def leaderboard(self):
         """Resmi olmayan leaderboard — soft dependency, hata yutulur (None döner)."""
         try:

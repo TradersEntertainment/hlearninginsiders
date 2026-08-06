@@ -39,6 +39,8 @@ async def _alert_new_big(cfg: Config, bot, coin: str, rows: list[dict]) -> None:
         return
     ts = now()
     for p in rows:
+        if p.get("entity"):  # MM/vault — gürültü, alert yok
+            continue
         if p["notional"] < cfg.big_position_usd:
             continue
         opened = p.get("opened_ts")

@@ -73,6 +73,8 @@ def score_badge(score: int | None) -> str:
 
 def _flags(p: dict) -> str:
     f = []
+    if p.get("entity"):
+        f.append({"mm": "🤖MM", "vault": "🏦VAULT"}.get(p["entity"], "🚫"))
     if p.get("fresh"):
         f.append("🆕TAZE")
     hits, misses = p.get("watch_record") or (0, 0)
@@ -306,6 +308,8 @@ def help_text() -> str:
         "/whale 0x… — adres karnesi + açık pozisyonları\n"
         "/watch 0x… — adresi watchlist'e ekle\n"
         "/unwatch 0x… — watchlist'ten çıkar\n"
+        "/ignore 0x… — adresi ele (MM/vault gibi davran, alert üretme)\n"
+        "/unignore 0x… — elemeyi kaldır\n"
         "/watchlist — sicilli adresler\n"
         "/status — bot durumu\n"
         "/id — bu sohbetin chat id'si"

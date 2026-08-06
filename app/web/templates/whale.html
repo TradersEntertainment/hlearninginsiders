@@ -7,6 +7,7 @@
     · <a href="https://hypurrscan.io/address/{{ address }}" target="_blank">hypurrscan ↗</a></p>
   <span class="stat">Sicil: <b>{{ arow.get('hits', 0) }}✓ / {{ arow.get('misses', 0) }}✗</b></span>
   {% if arow.get('watchlist') %}<span class="stat">⭐ <b>Watchlist'te</b></span>{% endif %}
+  {% if arow.get('entity') %}<span class="stat warn">{{ {'mm':'🤖 Market maker','vault':'🏦 Vault','manual':'🚫 Elle elendi'}.get(arow.entity, arow.entity) }} — skorlama/alert dışı</span>{% endif %}
   {% if arow.get('first_deposit_ts') %}<span class="stat">İlk fonlama: <b>{{ arow.first_deposit_ts|dt }}</b></span>{% endif %}
   {% if arow.get('last_deposit_ts') %}<span class="stat">Son fonlama: <b>{{ arow.last_deposit_ts|dt }}</b></span>{% endif %}
   {% if arow.get('first_seen') %}<span class="stat dim">İlk görülme: {{ arow.first_seen|dt }}</span>{% endif %}

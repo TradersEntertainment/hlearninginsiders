@@ -26,6 +26,10 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "desc": "Büyük pozisyon + bu pencerede açılış = +15 bonus (varsayılan 72h = 3 gün)"},
     "fresh_big_alert_hours": {"type": "int", "label": "Yeni büyük poz alert penceresi (saat)",
                               "desc": "Bu pencerede açılmış büyük pozisyon bulununca anlık Telegram alert (earnings şartı yok)"},
+    "mm_max_positions": {"type": "int", "label": "MM eşiği: açık pozisyon sayısı",
+                         "desc": "Bu kadar+ açık pozisyonu olan hesap market maker sayılır (skorlama/alert dışı)"},
+    "mm_max_fills_24h": {"type": "int", "label": "MM eşiği: 24h fill sayısı",
+                         "desc": "24 saatte bu kadar+ büyük fill yapan çift yönlü hesap MM sayılır"},
     "max_liq_distance_pct": {"type": "float", "label": "Liq tablosu mesafe sınırı (%)",
                              "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez"},
     "fresh_wallet_days": {"type": "int", "label": "Taze cüzdan eşiği (gün)",
@@ -121,6 +125,8 @@ class Config:
         self.huge_position_usd = float(os.getenv("HUGE_POSITION_USD", "5000000"))
         self.combo_window_hours = int(os.getenv("COMBO_WINDOW_HOURS", "72"))
         self.fresh_big_alert_hours = int(os.getenv("FRESH_BIG_ALERT_HOURS", "24"))
+        self.mm_max_positions = int(os.getenv("MM_MAX_POSITIONS", "10"))
+        self.mm_max_fills_24h = int(os.getenv("MM_MAX_FILLS_24H", "80"))
         self.max_liq_distance_pct = float(os.getenv("MAX_LIQ_DISTANCE_PCT", "50"))
         self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "250000"))
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))

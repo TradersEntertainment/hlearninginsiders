@@ -122,6 +122,10 @@ class TelegramBot:
             await self._cmd_watch(args, chat_id, add=True)
         elif cmd == "unwatch":
             await self._cmd_watch(args, chat_id, add=False)
+        elif cmd == "ignore":
+            await self._cmd_ignore(args, chat_id, on=True)
+        elif cmd == "unignore":
+            await self._cmd_ignore(args, chat_id, on=False)
         elif cmd == "watchlist":
             await self._cmd_watchlist(chat_id)
         elif cmd == "status":
@@ -220,6 +224,22 @@ class TelegramBot:
                 await conn.execute(
                     "UPDATE addresses SET watchlist=0 WHERE address=?", (addr,))
         await self.send(("⭐ Eklendi: " if add else "Çıkarıldı: ") + fmt.short(addr), chat_id)
+
+    async def _cmd_ignore(self, args: list[str], chat_id: str, on: bool) -> None:
+        if not args or not args[0].startswith("0x"):
+            await self.send(f"Kullanım: /{'ignore' if on else 'unignore'} 0xADRES", chat_id)
+            return
+        addr = args[0].lower()
+        async with db() as conn:
+            if on:
+                await conn.execute(
+                    "INSERT INTO addresses(address, first_seen, entity) VALUES(?,?,'manual')"
+                    " ON CONFLICT(address) DO UPDATE SET entity='manual'", (addr, now()))
+            else:
+                await conn.execute(
+                    "UPDATE addresses SET entity=NULL WHERE address=?", (addr,))
+        await self.send(("🚫 Elendi (MM/vault muamelesi): " if on else "✅ Tekrar dahil: ")
+                        + fmt.short(addr), chat_id)
 
     async def _cmd_watchlist(self, chat_id: str) -> None:
         async with db() as conn:
