@@ -22,6 +22,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "Bu boyut üstü pozisyona +10 şüphe puanı"},
     "huge_position_usd": {"type": "float", "label": "Dev pozisyon eşiği ($)",
                           "desc": "Bu boyut üstü pozisyona +20 şüphe puanı"},
+    "combo_window_hours": {"type": "int", "label": "İnsider paterni penceresi (saat)",
+                           "desc": "Büyük pozisyon + bu pencerede açılış = +15 bonus (varsayılan 72h = 3 gün)"},
     "max_liq_distance_pct": {"type": "float", "label": "Liq tablosu mesafe sınırı (%)",
                              "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez"},
     "fresh_wallet_days": {"type": "int", "label": "Taze cüzdan eşiği (gün)",
@@ -113,6 +115,7 @@ class Config:
         self.min_position_notional = float(os.getenv("MIN_POSITION_NOTIONAL", "10000"))
         self.big_position_usd = float(os.getenv("BIG_POSITION_USD", "1000000"))
         self.huge_position_usd = float(os.getenv("HUGE_POSITION_USD", "5000000"))
+        self.combo_window_hours = int(os.getenv("COMBO_WINDOW_HOURS", "72"))
         self.max_liq_distance_pct = float(os.getenv("MAX_LIQ_DISTANCE_PCT", "50"))
         self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "250000"))
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))

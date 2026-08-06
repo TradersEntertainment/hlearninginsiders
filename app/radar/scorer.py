@@ -130,15 +130,23 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
 
     opened = pos.get("opened_ts")
     opened_recent = False
+    age_h = None
     if opened:
         age_h = max(0.0, (ref_ts - opened) / 3600)
+        age_txt = f"{age_h:.0f}h" if age_h < 48 else f"{age_h / 24:.0f}g"
         if age_h < 6:
             pts += 25
             opened_recent = True
-            reasons.append(f"pozisyon {age_h:.0f}h önce açıldı")
+            reasons.append(f"pozisyon {age_txt} önce açıldı")
         elif age_h < 48:
-            pts += 15
-            reasons.append(f"pozisyon {age_h:.0f}h önce açıldı")
+            pts += 18
+            reasons.append(f"pozisyon {age_txt} önce açıldı")
+        elif age_h < 72:
+            pts += 12
+            reasons.append(f"pozisyon {age_txt} önce açıldı")
+        elif age_h < 168:
+            pts += 6
+            reasons.append(f"pozisyon {age_txt} önce açıldı")
 
     # Eski pozisyona earnings'ten hemen önce EKLEME yapmak da şüpheli
     last_add = pos.get("last_add_ts")
@@ -173,6 +181,12 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
     elif ntl >= cfg.big_position_usd:
         pts += 10
         reasons.append(f"büyük pozisyon (${ntl / 1e6:.1f}M)")
+
+    # ASIL KALIP: büyük pozisyon + earnings'e yakın açılış (2-3 gün, maks 1 hafta)
+    if (age_h is not None and ntl >= cfg.big_position_usd
+            and age_h <= cfg.combo_window_hours):
+        pts += 15
+        reasons.append("🎯 büyük + taze açılış (insider paterni)")
 
     if oi_ntl and oi_ntl > 0:
         share = ntl / oi_ntl * 100
