@@ -172,6 +172,9 @@ class Config:
 
         # Dashboard
         self.dashboard_token = os.getenv("DASHBOARD_TOKEN", "")
+        # Yönetici şifresi: ayar değiştirme / Telegram gönderme gibi yazma işlemleri için.
+        # Tanımlı değilse DASHBOARD_TOKEN'a düşer.
+        self.admin_password = os.getenv("ADMIN_PASSWORD", "")
 
         # Depolama ("hafıza") — Railway'de Volume /data'ya mount edilir
         default_db = "/data/radar.db" if os.path.isdir("/data") else "./data/radar.db"

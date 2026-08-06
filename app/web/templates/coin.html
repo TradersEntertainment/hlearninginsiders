@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}{{ symbol }} — HL Insider Radar{% endblock %}
 {% block bodyattrs %} data-refresh="{{ 10 if scanning else 45 }}"{% endblock %}
 {% block content %}
@@ -24,9 +25,14 @@
   <form method="post" action="/t/{{ symbol }}/scan{{ k }}" style="display:inline">
     <button type="submit">⟳ Yeniden tara</button>
   </form>
+  {% if is_admin %}
   <form method="post" action="/t/{{ symbol }}/send{{ k }}" style="display:inline">
     <button type="submit" {% if not has_bot %}disabled title="TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram'a gönder</button>
   </form>
+  {% else %}
+  <a href="/login{{ '?nxt=/t/' + symbol if not k else k + '&nxt=/t/' + symbol }}" class="tab"
+     style="padding:6px 14px;border-radius:999px;border:1.5px solid var(--border)">🔐 giriş yap</a>
+  {% endif %}
   {% if tg == 'ok' %}<span class="long">✓ Telegram'a gitti!</span>
   {% elif tg == 'err' %}<span class="short">✗ Gönderilemedi — token/chat id'yi ve logları kontrol et</span>{% endif %}
   <div class="dim" style="margin-top:6px">
@@ -124,7 +130,7 @@
     <tr data-side="{{ p.side }}">
       <td class="dim">{{ loop.index }}</td>
       <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
-      <td class="l"><a href="/whale/{{ p.address }}{{ k }}">{{ p.address[:8] }}..{{ p.address[-4:] }}</a></td>
+      <td class="l">{{ m.addr(p.address, k) }}</td>
       <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
       <td>{{ p.entry_px|px }}</td>
@@ -151,7 +157,7 @@
     {% for p in liq_rows %}
     <tr>
       <td class="dim">{{ loop.index }}</td>
-      <td class="l"><a href="/whale/{{ p.address }}{{ k }}">{{ p.address[:8] }}..{{ p.address[-4:] }}</a></td>
+      <td class="l">{{ m.addr(p.address, k) }}</td>
       <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
       <td>{{ p.liq_px|px }}</td>
@@ -173,7 +179,7 @@
     {% for f in fills %}
     <tr>
       <td class="l dim">{{ f.ts|dt }}</td>
-      <td class="l"><a href="/whale/{{ f.address }}{{ k }}">{{ f.address[:8] }}..{{ f.address[-4:] }}</a></td>
+      <td class="l">{{ m.addr(f.address, k) }}</td>
       <td class="{{ 'long' if f.side=='buy' else 'short' }}">{{ 'ALIŞ' if f.side=='buy' else 'SATIŞ' }}</td>
       <td>{{ f.px|px }}</td>
       <td><b>{{ f.notional|usd }}</b></td>

@@ -1,0 +1,6 @@
+{# Adres linki: metin → Hyperliquid (hypurrscan) dış sayfası, 🐋 → bizim balina karnesi #}
+{% macro addr(a, k, chars=8) -%}
+<a href="https://hypurrscan.io/address/{{ a }}" target="_blank" rel="noopener"
+   title="Hyperliquid'de aç (hypurrscan) ↗">{{ a[:chars] }}..{{ a[-4:] }}</a><a
+   href="/whale/{{ a }}{{ k }}" class="wl" title="Bizim balina karnesi (skor, sicil, geçmiş)">🐋</a>
+{%- endmacro %}

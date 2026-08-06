@@ -1,4 +1,6 @@
 """Dashboard — ticker ara, en büyük pozlar + likidasyona en yakın pozlar."""
+import hashlib
+import hmac
 import json
 import pathlib
 from datetime import datetime
@@ -180,10 +182,75 @@ def _guard(request: Request) -> str:
 
 def _render(request: Request, name: str, ctx: dict):
     key = _guard(request)
-    ctx.update({"request": request, "k": f"?key={key}" if key else ""})
+    ctx.update({"request": request, "k": f"?key={key}" if key else "",
+                "is_admin": _is_admin(request), "has_pw": bool(_admin_secret(request))})
     resp = templates.TemplateResponse(request, name, ctx)
     if key and request.query_params.get("key"):
         resp.set_cookie("dbkey", key, max_age=30 * 86400, httponly=True)
+    return resp
+
+
+# ---------------- yönetici (yazma işlemleri) koruması ----------------
+
+def _admin_secret(request: Request) -> str:
+    cfg = request.app.state.cfg
+    return cfg.admin_password or cfg.dashboard_token
+
+
+def _admin_cookie(secret: str) -> str:
+    return hashlib.sha256(f"hlir-admin::{secret}".encode()).hexdigest()
+
+
+def _is_admin(request: Request) -> bool:
+    secret = _admin_secret(request)
+    if not secret:
+        return True  # şifre tanımlı değil → koruma yok (arayüzde uyarı gösterilir)
+    c = request.cookies.get("admin") or ""
+    return bool(c) and hmac.compare_digest(c, _admin_cookie(secret))
+
+
+def _require_admin(request: Request) -> None:
+    if not _is_admin(request):
+        raise HTTPException(403, "Bu işlem yönetici şifresi ister — /login sayfasından giriş yap")
+
+
+def _keyq(request: Request, extra: str = "") -> str:
+    """Mevcut ?key= parametresini koruyarak query string üret."""
+    tok = request.app.state.cfg.dashboard_token
+    parts = []
+    if tok and (request.query_params.get("key") or request.cookies.get("dbkey")):
+        parts.append(f"key={tok}")
+    if extra:
+        parts.append(extra)
+    return ("?" + "&".join(parts)) if parts else ""
+
+
+@router.get("/login")
+async def login_page(request: Request, err: int = 0):
+    _guard(request)
+    return _render(request, "login.html", {"err": err, "nxt": request.query_params.get("nxt", "/")})
+
+
+@router.post("/login")
+async def login_submit(request: Request):
+    _guard(request)
+    form = await request.form()
+    secret = _admin_secret(request)
+    nxt = (form.get("nxt") or "/").strip()
+    if not nxt.startswith("/"):
+        nxt = "/"
+    if not secret or not hmac.compare_digest((form.get("password") or "").strip(), secret):
+        return RedirectResponse(f"/login{_keyq(request, 'err=1')}", status_code=303)
+    resp = RedirectResponse(f"{nxt}{_keyq(request)}", status_code=303)
+    resp.set_cookie("admin", _admin_cookie(secret), max_age=30 * 86400,
+                    httponly=True, samesite="lax")
+    return resp
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    resp = RedirectResponse(f"/{_keyq(request)}", status_code=303)
+    resp.delete_cookie("admin")
     return resp
 
 
@@ -314,6 +381,11 @@ async def index(request: Request):
     liq_maxn = max((x["notional"] for x in liq_map), default=1)
     for x in liq_map:
         x["wpct"] = max(4, x["notional"] / liq_maxn * 100)
+        x["propr"] = propr_listed(x["symbol"])
+
+    # propr.xyz'de işlem görebildiklerimizi her listede işaretle
+    for _row in (*recent_big, *suspicious, *events, *specialists, *universe):
+        _row["propr"] = propr_listed(_row.get("symbol") or _row.get("coin") or "")
 
     # ---- Earnings radarı kartları: yaklaşan her bilanço için balina verisi + yön okuması ----
     from datetime import date as _date
@@ -455,6 +527,7 @@ async def coin_page(request: Request, symbol: str):
 async def coin_send_telegram(request: Request, symbol: str):
     """Mevcut taranmış veriden raporu derleyip Telegram'a yolla (yeniden tarama yok)."""
     key = _guard(request)
+    _require_admin(request)
     t = await find_ticker(symbol)
     if not t:
         raise HTTPException(404, "coin yok")
@@ -486,6 +559,7 @@ async def coin_send_telegram(request: Request, symbol: str):
 @router.post("/settings/test-telegram")
 async def settings_test_telegram(request: Request):
     key = _guard(request)
+    _require_admin(request)
     bot = request.app.state.bot
     tg = "err"
     if bot and await bot.send("🐋 Test — HL Insider Radar bağlantısı çalışıyor! ✨"):
@@ -583,6 +657,7 @@ async def settings_page(request: Request, saved: int = 0):
 @router.post("/settings")
 async def settings_save(request: Request):
     key = _guard(request)
+    _require_admin(request)
     cfg = request.app.state.cfg
     form = await request.form()
     overrides = await kv_get("settings_overrides") or {}

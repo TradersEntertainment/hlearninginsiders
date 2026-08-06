@@ -62,6 +62,13 @@ background:rgba(167,158,196,.12)}
 .ratio .rl{background:var(--green)}
 .ratio .rs{background:var(--red)}
 .verdict{font-weight:800;margin-top:6px}
+.pbadge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:10.5px;
+font-weight:800;background:rgba(139,233,184,.16);color:var(--green);letter-spacing:.02em;
+vertical-align:1px;white-space:nowrap}
+.ptick{color:var(--green);font-weight:800;cursor:help}
+.wl{margin-left:5px;font-size:11px;opacity:.55;text-decoration:none}
+.wl:hover{opacity:1}
+.udim{opacity:.42}
 .ecard .fl{color:var(--amber);font-size:12px}
 @media(min-width:1050px){
   main{display:grid;grid-template-columns:repeat(6,1fr);gap:0 14px;align-items:start}
@@ -166,6 +173,7 @@ footer{padding:18px 22px;color:#6f6590;font-size:12px}
     <button type="submit">Ara</button>
   </form>
   <a href="/settings{{ k }}" title="Ayarlar">⚙️ ayarlar</a>
+  {% if has_pw and not is_admin %}<a href="/login{{ k }}" title="Ayarları değiştirmek için giriş">🔐 giriş</a>{% endif %}
 </header>
 <main>{% block content %}{% endblock %}</main>
 <footer>🌙 gözlem aracıdır, yatırım tavsiyesi değildir · veriler hyperliquid'in halka açık api'sinden</footer>

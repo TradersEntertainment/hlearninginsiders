@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}{{ address[:10] }} — HL Insider Radar{% endblock %}
 {% block content %}
 <div class="panel">
@@ -40,7 +41,7 @@
     <tr><th class="l">Adres</th><th class="l">Bağ türü</th><th class="l">Son transfer</th></tr>
     {% for l in linked %}
     <tr>
-      <td class="l"><a href="/whale/{{ l.address }}{{ k }}">{{ l.address[:10] }}..{{ l.address[-6:] }}</a></td>
+      <td class="l">{{ m.addr(l.address, k, 10) }}</td>
       <td class="l">{{ l.kind }}</td>
       <td class="l dim">{{ l.ts|dt }}</td>
     </tr>

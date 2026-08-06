@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block bodyattrs %} data-refresh="60"{% endblock %}
 {% block content %}
 <div class="panel strip">
@@ -49,7 +50,7 @@
     {% for c in ecards %}
     <div class="ecard">
       <h3><a href="/t/{{ c.symbol }}{{ k }}">{{ c.symbol }}</a>
-        {% if c.propr %}<span class="long" style="font-size:11px" title="propr.xyz'de listeli — işlem açabilirsin">✅propr</span>{% endif %}
+        {% if c.propr %}<span class="pbadge" title="propr.xyz'de listeli — işlem açabilirsin">✅ PROPR</span>{% endif %}
         <span class="dim" style="font-weight:400">{{ c.date_et[5:] }} {{ {'amc':'AMC','bmo':'BMO'}.get(c.hour,'?') }}</span>
         <span class="cd">{% if c.days_left == 0 %}BUGÜN{% elif c.days_left == 1 %}yarın{% elif c.days_left %}{{ c.days_left }} gün{% endif %}</span></h3>
       <div>Fiyat <b>{{ c.mark|px }}</b>{% if c.px_change is not none %}
@@ -83,13 +84,13 @@
   {% if liq_map %}
   {% for x in liq_map %}
   <div class="lbar">
-    <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a></span>
+    <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
     <span class="lside {{ 'longliq-t' if x.side == 'long' else 'shortliq-t' }}">{{ 'L-LIQ' if x.side == 'long' else 'S-LIQ' }}</span>
     <div class="ltrack"><div class="lfill {{ 'longliq' if x.side == 'long' else 'shortliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
     <span class="lval">{{ x.notional|usd }}</span>
     <span class="lpx">liq {{ x.liq_px|px }}</span>
     <span class="ldist {{ 'warn' if x.dist < 5 else 'dim' }}">%{{ '%.1f'|format(x.dist) }}</span>
-    <a href="/whale/{{ x.address }}{{ k }}" class="dim" style="font-size:11px">{{ x.address[:6] }}..</a>
+    {{ m.addr(x.address, k, 6) }}
   </div>
   {% endfor %}
   {% else %}<p class="dim">Bu filtrede likidasyona yakın pozisyon yok — filtreyi düşür ya da taramaların dolmasını bekle.</p>{% endif %}
@@ -107,8 +108,8 @@
     {% for p in suspicious %}
     <tr>
       <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else 'b-mid' }}">{{ p.score }}</span></td>
-      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
-          <a href="/whale/{{ p.address }}{{ k }}" class="dim" style="font-size:11px">{{ p.address[:6] }}..</a></td>
+      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+          {{ m.addr(p.address, k, 6) }}</td>
       <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
       <td>{{ p.opened_ts|age }}</td>
@@ -129,8 +130,8 @@
         <th title="0-100 insider şüphe puanı">Skor</th></tr>
     {% for p in recent_big %}
     <tr>
-      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
-          <a href="/whale/{{ p.address }}{{ k }}" class="dim" style="font-size:11px">{{ p.address[:6] }}..</a></td>
+      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+          {{ m.addr(p.address, k, 6) }}</td>
       <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
       <td>{{ p.opened_ts|age }}</td>
@@ -173,7 +174,7 @@
         <th title="Kaç bilançoyu doğru/yanlış bildi">Sicil</th><th class="l">Açık poz</th></tr>
     {% for s in specialists %}
     <tr>
-      <td class="l"><a href="/whale/{{ s.address }}{{ k }}">{{ s.address[:8] }}..{{ s.address[-4:] }}</a>{% if s.watchlist %} ⭐{% endif %}</td>
+      <td class="l">{{ m.addr(s.address, k) }}{% if s.watchlist %} ⭐{% endif %}</td>
       <td class="l"><a href="/t/{{ s.symbol }}{{ k }}"><b>{{ s.symbol }}</b></a></td>
       <td>{{ s.n }}</td>
       <td>{{ s.vol|usd }}</td>

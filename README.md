@@ -40,6 +40,9 @@ Detaylı mimari için: [PLAN.md](PLAN.md)
 
 ## Ayarlar
 
+Ayar sayfası **`ADMIN_PASSWORD`** ile korunur: şifresi olmayan sayfayı görür ama değiştiremez
+(`/login` ile giriş yapılır; şifre yoksa `DASHBOARD_TOKEN` kullanılır, o da yoksa koruma kapalıdır).
+
 Eşikler ve periyotlar dashboard'daki **⚙️ /settings** sayfasından canlı değiştirilir
 (DB'de saklanır → deploy'a dayanıklı, restart gerekmez). Env değişkenleri sadece ilk
 varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
