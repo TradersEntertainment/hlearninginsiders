@@ -6,7 +6,10 @@
   <span>Fill <b>{{ stats.fills }}</b></span>
   <span>Adres <b>{{ stats.addrs }}</b></span>
   <span>Watchlist <b>{{ stats.watch }}</b></span>
-  {% if events %}<span class="warn">📅 Sıradaki: <b>{{ events[0].symbol }}</b> {{ events[0].date_et }}</span>{% endif %}
+  {% if strip_days %}<span class="warn">📅
+    {%- for d, syms in strip_days.items() %}
+    <b>{{ d }}</b>: {% for s in syms %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% if not loop.last %} {% endif %}{% endfor %}{% if not loop.last %} · {% endif %}
+    {%- endfor %}</span>{% endif %}
 </div>
 
 <div class="panel compact">

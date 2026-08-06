@@ -314,9 +314,19 @@ async def index(request: Request):
     for x in liq_map:
         x["wpct"] = max(4, x["notional"] / liq_maxn * 100)
 
+    # Durum şeridi için: yaklaşan earnings'ler tarihe göre gruplu (ör. 11.08: CRWV LITE QNT)
+    strip_days: dict[str, list[str]] = {}
+    n = 0
+    for e in events:
+        if n >= 8:
+            break
+        d = f"{e['date_et'][8:10]}.{e['date_et'][5:7]}"
+        strip_days.setdefault(d, []).append(e["symbol"])
+        n += 1
+
     collector = getattr(request.app.state, "collector", None)
     return _render(request, "index.html", {
-        "universe": universe, "events": events,
+        "universe": universe, "events": events, "strip_days": strip_days,
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "liq_map": liq_map, "liqmin": liqmin,
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
