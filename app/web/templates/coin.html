@@ -10,7 +10,9 @@
 <div class="scanbar"><span class="swimmer">🐋</span> Balinalar aranıyor<span class="dots"></span> veriler kendiliğinden gelecek (sayfa zıplamaz)</div>
 {% endif %}
 <div class="panel">
-  <h2>{{ symbol }} <span class="dim">({{ coin }})</span></h2>
+  <h2>{{ symbol }} <span class="dim">({{ coin }})</span>
+    {% if propr %}<span class="badge" style="background:rgba(139,233,184,.15);color:var(--green)"
+      title="propr.xyz'de listeli — trade ettiğin platformda işlem açabilirsin">✅ PROPR'da listeli</span>{% endif %}</h2>
   <span class="stat">Mark <b>{{ summ.mark|px }}</b>
     {% if summ.px_change_pct is not none %}<span class="{{ 'long' if summ.px_change_pct>0 else 'short' }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</span>{% endif %}</span>
   <span class="stat">OI <b>{{ summ.oi_ntl|usd }}</b>

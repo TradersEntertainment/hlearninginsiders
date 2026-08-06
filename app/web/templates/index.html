@@ -49,6 +49,7 @@
     {% for c in ecards %}
     <div class="ecard">
       <h3><a href="/t/{{ c.symbol }}{{ k }}">{{ c.symbol }}</a>
+        {% if c.propr %}<span class="long" style="font-size:11px" title="propr.xyz'de listeli — işlem açabilirsin">✅propr</span>{% endif %}
         <span class="dim" style="font-weight:400">{{ c.date_et[5:] }} {{ {'amc':'AMC','bmo':'BMO'}.get(c.hour,'?') }}</span>
         <span class="cd">{% if c.days_left == 0 %}BUGÜN{% elif c.days_left == 1 %}yarın{% elif c.days_left %}{{ c.days_left }} gün{% endif %}</span></h3>
       <div>Fiyat <b>{{ c.mark|px }}</b>{% if c.px_change is not none %}

@@ -70,6 +70,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "desc": "Format: SNDK:WDC|MU;TSLA:RIVN (varsayılan tabloya eklenir)"},
     "yahoo_symbol_map": {"type": "str", "label": "Yahoo sembol eşleme",
                          "desc": "ABD dışı hisseler için: SMSN:005930.KS;SOFTBANK:9984.T formatı (varsayılan eşlemeye eklenir)"},
+    "propr_symbols": {"type": "str", "label": "propr.xyz ek semboller",
+                      "desc": "propr yeni bir şey listelerse buraya virgülle ekle — alertlere '✅ PROPR'da listeli' düşer"},
     "universe_refresh_sec": {"type": "int", "label": "Evren yenileme (sn)",
                              "desc": "HL coin listesi yenileme sıklığı"},
     "calendar_refresh_sec": {"type": "int", "label": "Takvim yenileme (sn)",
@@ -159,6 +161,8 @@ class Config:
         self.peers_override = os.getenv("PEERS", "")
         # ABD dışı hisselerin Yahoo sembolleri (varsayılan eşlemeye eklenir)
         self.yahoo_symbol_map = os.getenv("YAHOO_SYMBOL_MAP", "")
+        # propr.xyz'de listeli ek semboller (varsayılan listeye eklenir)
+        self.propr_symbols = os.getenv("PROPR_SYMBOLS", "")
 
         # Periyotlar (saniye)
         self.universe_refresh_sec = int(os.getenv("UNIVERSE_REFRESH_SEC", str(6 * 3600)))

@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..db import now
+from ..propr import PROPR_NOTE, is_listed
 
 TR = ZoneInfo("Europe/Istanbul")
 ET = ZoneInfo("America/New_York")
@@ -188,6 +189,8 @@ def new_big_position_alert(coin: str, p: dict, event: dict | None) -> str:
         lines.append(f"📅 Dikkat: {event['date_et']} ({hint}) earnings var!")
     else:
         lines.append("ℹ️ Yaklaşan earnings yok — başka bir şey mi biliyor? 🤔")
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
     lines.append(DISCLAIMER)
     return "\n".join(lines)
 
@@ -205,14 +208,17 @@ def liq_alert(coin: str, addr: str, p: dict, mark: float, dist: float, stage: in
     etki = ("likide olursa ~{} zorunlu <b>ALIŞ</b> → fiyatı yukarı süpürebilir"
             if p["side"] == "short" else
             "likide olursa ~{} zorunlu <b>SATIŞ</b> → fiyatı aşağı süpürebilir").format(usd(p["notional"]))
-    return "\n".join([
+    lines = [
         f"{LIQ_STAGE_HEAD.get(stage, '')} — <b>{sym}</b>",
         f"{side} <b>{usd(p['notional'])}</b> @ {px(p.get('entry_px'))}"
         f" │ liq <b>{px(p['liq_px'])}</b> │ şimdi {px(mark)} (mesafe %{dist:.2f})",
         f"👤 {alink(addr)}",
         f"💥 {etki}",
-        DISCLAIMER,
-    ])
+    ]
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
 
 
 def liq_closed(coin: str, addr: str, row: dict) -> str:
@@ -234,6 +240,8 @@ def anomaly_alert(symbol: str, coin: str, triggers: list[str], event: dict | Non
     for t in triggers:
         lines.append(f"  ⚠️ {t}")
     lines.append(f"🔍 Detay için: /scan {symbol}")
+    if is_listed(symbol):
+        lines.append(PROPR_NOTE)
     lines.append(DISCLAIMER)
     return "\n".join(lines)
 
@@ -250,6 +258,8 @@ def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg,
             + (f" │ EPS beklentisi {event['eps_est']}" if event.get("eps_est") else ""))
     if event.get("note"):
         head += f"\n⚠️ {event['note']}"
+    if is_listed(sym):
+        head += f"\n{PROPR_NOTE}"
     parts = [head, _summary_block(summ)]
     if rows:
         parts.append(f"⚖️ Taranan havuzda: {_ls_balance(rows)}")
@@ -279,6 +289,8 @@ def whale_fill_alert(coin: str, addr: str, side: str, price: float,
     hits, misses = record
     if hits or misses:
         lines.append(f"🎯 Sicil: {hits} doğru / {misses} yanlış")
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
 

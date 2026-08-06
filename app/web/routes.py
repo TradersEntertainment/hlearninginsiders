@@ -12,6 +12,7 @@ from ..config import EDITABLE_FIELDS, convert_value, display_value
 from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import upcoming_events
 from ..hl.universe import find_ticker, get_universe
+from ..propr import is_listed as propr_listed
 from ..radar import autoscan, clusters, metrics
 
 TR = ZoneInfo("Europe/Istanbul")
@@ -354,6 +355,7 @@ async def index(request: Request):
         except ValueError:
             days_left = None
         ecards.append({"symbol": e["symbol"], "date_et": e["date_et"],
+                       "propr": propr_listed(e["symbol"]),
                        "hour": e.get("hour_hint"), "days_left": days_left,
                        "mark": s.get("mark"), "px_change": s.get("px_change_pct"),
                        "oi_ntl": s.get("oi_ntl"), "oi_change": s.get("oi_change_pct"),
@@ -443,6 +445,7 @@ async def coin_page(request: Request, symbol: str):
         "has_bot": request.app.state.bot is not None,
         "chart": _entry_chart(rows, summ.get("mark")),
         "liqchart": _liq_chart(rows, summ.get("mark"), cfg.max_liq_distance_pct),
+        "propr": propr_listed(t["symbol"]),
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
     })
