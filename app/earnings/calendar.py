@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 
+from ..assets import has_earnings
 from ..config import Config
 from ..db import db, now
 
@@ -22,6 +23,7 @@ TR = ZoneInfo("Europe/Istanbul")
 # /settings'teki "yahoo_symbol_map" ile genişletilebilir: "SMSN:005930.KS;X:Y.T"
 DEFAULT_SYMBOL_MAP: dict[str, str] = {
     "SMSN": "005930.KS",      # Samsung Electronics (KRX)
+    "SKHX": "000660.KS",      # SK Hynix (KRX)
     "HYUNDAI": "005380.KS",   # Hyundai Motor (KRX)
     "SOFTBANK": "9984.T",     # SoftBank Group (TSE)
     "KIOXIA": "285A.T",       # Kioxia Holdings (TSE)
@@ -45,6 +47,11 @@ def _fetch_yahoo_sync(symbols: list[str], horizon_days: int,
                       symbol_map: dict[str, str] | None = None) -> dict[str, dict]:
     """Senkron — thread'de çalışır. symbol -> {date_et, hour_hint, eps_est}"""
     import yfinance as yf  # ağır import, sadece burada
+
+    # yfinance "No earnings dates found" durumunu ERROR olarak basıyor — susturalım,
+    # bizim için normal bir sonuç (kaynak bilmiyor, diğerleri devrede)
+    for noisy in ("yfinance", "yfinance.data", "yfinance.utils"):
+        logging.getLogger(noisy).setLevel(logging.CRITICAL)
 
     smap = symbol_map or {}
     out: dict[str, dict] = {}
@@ -241,10 +248,16 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         rows = await cur.fetchall()
     sym2coin = {r["symbol"]: r["coin"] for r in rows}
-    symbols = sorted(sym2coin)
+    all_symbols = sorted(sym2coin)
+    # Endeks/emtia/FX/ETF/kripto ve pre-IPO'ların bilançosu yok — sorgulama
+    symbols = [s for s in all_symbols if has_earnings(s)]
+    skipped = len(all_symbols) - len(symbols)
     if not symbols:
-        log.info("evren boş, takvim atlandı")
+        log.info("takvim: sorgulanacak hisse yok (evren %d, hepsi muaf)", len(all_symbols))
         return 0
+    if skipped:
+        log.info("takvim: %d hisse sorgulanacak, %d enstrüman muaf (endeks/emtia/FX/ETF/pre-IPO)",
+                 len(symbols), skipped)
 
     smap = dict(DEFAULT_SYMBOL_MAP)
     smap.update(parse_symbol_map(getattr(cfg, "yahoo_symbol_map", "")))
@@ -253,11 +266,12 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
     finnhub = {}
     if cfg.finnhub_api_key:
         fh_all = await _fetch_finnhub(session, cfg.finnhub_api_key, cfg.calendar_horizon_days)
-        finnhub = {s: v for s, v in fh_all.items() if s in sym2coin}
+        finnhub = {s: v for s, v in fh_all.items() if s in symbols}
+    eligible = set(symbols)
     nasdaq_all = await _fetch_nasdaq(session, cfg.calendar_horizon_days)
-    nasdaq = {s: v for s, v in nasdaq_all.items() if s in sym2coin}
+    nasdaq = {s: v for s, v in nasdaq_all.items() if s in eligible}
     tv_all = await _fetch_tradingview(session, symbols, cfg.calendar_horizon_days)
-    tradingview = {s: v for s, v in tv_all.items() if s in sym2coin}
+    tradingview = {s: v for s, v in tv_all.items() if s in eligible}
 
     # Dört kaynağı güven sırasına göre birleştir. Tarih çelişkisinde GÜVENİLİR
     # kaynak kazanır (BIRD vakası: zayıf kaynak "bugün" derken TradingView doğru günü verir).
