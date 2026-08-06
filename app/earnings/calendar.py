@@ -110,6 +110,56 @@ async def _fetch_finnhub(session: aiohttp.ClientSession, key: str,
     return out
 
 
+# ---------------- Nasdaq (yedek 2 — keysiz, tam ABD kapsamı) ----------------
+
+NASDAQ_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                   " (KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+NASDAQ_TIME_MAP = {"time-after-hours": "amc", "time-pre-market": "bmo"}
+
+
+async def _fetch_nasdaq(session: aiohttp.ClientSession, horizon_days: int) -> dict[str, dict]:
+    """Nasdaq'ın halka açık takvimi — gün gün çekilir (sadece hafta içi)."""
+    out: dict[str, dict] = {}
+    today = datetime.now(ET).date()
+    for i in range(min(horizon_days, 14) + 1):
+        d = today + timedelta(days=i)
+        if d.weekday() >= 5:
+            continue
+        ds = d.strftime("%Y-%m-%d")
+        url = f"https://api.nasdaq.com/api/calendar/earnings?date={ds}"
+        try:
+            async with session.get(url, headers=NASDAQ_HEADERS,
+                                   timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status != 200:
+                    log.debug("nasdaq %s HTTP %s", ds, r.status)
+                    continue
+                data = await r.json(content_type=None)
+        except Exception as e:
+            log.debug("nasdaq %s: %s", ds, e)
+            continue
+        for row in ((data.get("data") or {}).get("rows") or []):
+            sym = (row.get("symbol") or "").upper().strip()
+            if not sym or sym in out:
+                continue
+            eps = None
+            try:
+                raw = (row.get("epsForecast") or "").replace("$", "").replace("(", "-").replace(")", "")
+                if raw:
+                    eps = float(raw)
+            except ValueError:
+                pass
+            out[sym] = {"date_et": ds,
+                        "hour_hint": NASDAQ_TIME_MAP.get(row.get("time") or "", "unknown"),
+                        "eps_est": eps, "source": "nasdaq"}
+        await asyncio.sleep(0.4)
+    return out
+
+
 # ---------------- Yenileme ----------------
 
 async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
@@ -130,19 +180,36 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
     if cfg.finnhub_api_key:
         fh_all = await _fetch_finnhub(session, cfg.finnhub_api_key, cfg.calendar_horizon_days)
         finnhub = {s: v for s, v in fh_all.items() if s in sym2coin}
+    nasdaq_all = await _fetch_nasdaq(session, cfg.calendar_horizon_days)
+    nasdaq = {s: v for s, v in nasdaq_all.items() if s in sym2coin}
 
+    # Üç kaynağı birleştir: yahoo taban, finnhub ve nasdaq boşluk doldurur +
+    # saat bilgisini iyileştirir. Tek kaynak eksik kalsa bile takvim dolu kalır.
     merged: dict[str, dict] = dict(yahoo)
-    for sym, fh in finnhub.items():
-        if sym in merged:
-            m = merged[sym]
-            if m["date_et"] == fh["date_et"]:
-                if m["hour_hint"] == "unknown" and fh["hour_hint"] != "unknown":
-                    m["hour_hint"] = fh["hour_hint"]
-                m["source"] = "yahoo+finnhub"
+    for src_name, src in (("finnhub", finnhub), ("nasdaq", nasdaq)):
+        for sym, ev in src.items():
+            if sym in merged:
+                m = merged[sym]
+                if m["date_et"] == ev["date_et"]:
+                    if m["hour_hint"] == "unknown" and ev["hour_hint"] != "unknown":
+                        m["hour_hint"] = ev["hour_hint"]
+                    if m.get("eps_est") is None:
+                        m["eps_est"] = ev.get("eps_est")
+                    if src_name not in (m.get("source") or ""):
+                        m["source"] = f"{m.get('source')}+{src_name}"
+                elif not m.get("note"):
+                    m["note"] = f"kaynak çelişkisi: {src_name} {ev['date_et']} diyor"
             else:
-                m["note"] = f"kaynak çelişkisi: finnhub {fh['date_et']} diyor"
-        else:
-            merged[sym] = fh
+                merged[sym] = dict(ev)
+
+    stats = {"yahoo": len(yahoo), "finnhub": len(finnhub),
+             "nasdaq": len(nasdaq), "merged": len(merged)}
+    if not yahoo:
+        log.warning("Yahoo takvimi 0 sonuç döndü (engel olabilir) — nasdaq/finnhub taşıyor")
+    log.info("takvim kaynakları: yahoo=%d finnhub=%d nasdaq=%d → birleşik=%d",
+             stats["yahoo"], stats["finnhub"], stats["nasdaq"], stats["merged"])
+    from ..db import kv_set
+    await kv_set("calendar_stats", stats)
 
     n = 0
     async with db() as conn:

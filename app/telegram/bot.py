@@ -6,6 +6,8 @@ import aiohttp
 
 from ..config import Config
 from ..db import db, now
+from ..db import kv_get
+from ..earnings import calendar as cal
 from ..earnings.calendar import upcoming_events
 from ..hl.client import HLClient
 from ..hl.universe import find_ticker
@@ -114,6 +116,18 @@ class TelegramBot:
             await self.send(f"Chat id: <code>{chat_id}</code>", chat_id)
         elif cmd == "upcoming":
             await self.send(fmt.upcoming_list(await upcoming_events(14)), chat_id)
+        elif cmd == "refresh":
+            await self.send("🔄 Takvim üç kaynaktan yenileniyor (yahoo+finnhub+nasdaq)…", chat_id)
+            try:
+                n = await cal.refresh_calendar(self.cfg, self.session)
+                stats = await kv_get("calendar_stats") or {}
+                await self.send(
+                    f"✅ Takvim yenilendi: <b>{n}</b> HL-eşleşen earnings\n"
+                    f"Kaynaklar → yahoo: {stats.get('yahoo', '?')}, finnhub: {stats.get('finnhub', '?')},"
+                    f" nasdaq: {stats.get('nasdaq', '?')}\n\n"
+                    + fmt.upcoming_list(await upcoming_events(14)), chat_id)
+            except Exception as e:
+                await self.send(f"❌ Takvim yenilenemedi: {e}", chat_id)
         elif cmd == "scan":
             await self._cmd_scan(args, chat_id)
         elif cmd == "whale":
@@ -146,6 +160,11 @@ class TelegramBot:
         st = dict(self.state)
         coll = getattr(self, "collector", None)
         st["WS"] = "🟢 bağlı" if coll and coll.connected else "🔴 kopuk"
+        cstats = await kv_get("calendar_stats") or {}
+        if cstats:
+            st["takvim kaynakları"] = (f"yahoo:{cstats.get('yahoo', 0)}"
+                                       f" finnhub:{cstats.get('finnhub', 0)}"
+                                       f" nasdaq:{cstats.get('nasdaq', 0)}")
         st["evren"] = f"{n_tick} coin"
         st["fill havuzu"] = n_fills
         st["adres havuzu"] = n_addr

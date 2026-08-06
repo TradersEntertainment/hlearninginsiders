@@ -339,6 +339,7 @@ def help_text() -> str:
         "Komutlar:\n"
         "/scan SNDK — coini şimdi tara, en büyük pozları göster\n"
         "/upcoming — yaklaşan HL-eşleşen earnings'ler\n"
+        "/refresh — takvimi ŞİMDİ üç kaynaktan yenile (eksik earnings görürsen bas)\n"
         "/whale 0x… — adres karnesi + açık pozisyonları\n"
         "/watch 0x… — adresi watchlist'e ekle\n"
         "/unwatch 0x… — watchlist'ten çıkar\n"

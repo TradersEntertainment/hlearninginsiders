@@ -1,26 +1,83 @@
 {% extends "base.html" %}
+{% block bodyattrs %} data-refresh="60"{% endblock %}
 {% block content %}
 <div class="panel strip">
-  <span>WS <b>{{ stats.ws }}</b></span>
-  <span>Evren <b>{{ universe|length }}</b></span>
-  <span>Fill <b>{{ stats.fills }}</b></span>
-  <span>Adres <b>{{ stats.addrs }}</b></span>
-  <span>Watchlist <b>{{ stats.watch }}</b></span>
-  {% if strip_days %}<span class="warn">📅
+  <span title="Borsanın canlı işlem akışına bağlantı">WS <b>{{ stats.ws }}</b></span>
+  <span title="Takip edilen hisse sayısı">Evren <b>{{ universe|length }}</b></span>
+  <span title="Yakalanan büyük alım-satım sayısı">Fill <b>{{ stats.fills }}</b></span>
+  <span title="Tanınan cüzdan sayısı">Adres <b>{{ stats.addrs }}</b></span>
+  <span title="Daha önce bilanço 'bilmiş' takipteki cüzdanlar">Watchlist <b>{{ stats.watch }}</b></span>
+  {% if strip_days %}<span class="warn" title="Yaklaşan bilanço günleri">📅
     {%- for d, syms in strip_days.items() %}
     <b>{{ d }}</b>: {% for s in syms %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% if not loop.last %} {% endif %}{% endfor %}{% if not loop.last %} · {% endif %}
     {%- endfor %}</span>{% endif %}
 </div>
 
+<div class="panel">
+  <details class="guide" open>
+    <summary>❓ Bu site ne işe yarıyor? Nasıl okunur? (kapatmak için tıkla)</summary>
+    <div class="body">
+      <p>🐋 <b>Kısaca:</b> Hyperliquid borsasında hisselere kaldıraçlı bahis oynanabiliyor.
+      Bazı insanlar şirket hakkında bir şeyi <i>herkesten önce</i> öğrenir (bilanço, istifa, anlaşma…)
+      ve açıklamadan hemen önce dev pozisyon açar. Blockchain'de her şey herkese açık olduğu için
+      bu site o pozisyonları yakalar: <b>kim, hangi hissede, kaç dolarla, hangi yöne oynuyor</b> —
+      ve şüphelileri Telegram'a bildirir.</p>
+      <div class="gloss">
+        <b class="long">LONG (L)</b><span>"fiyat YÜKSELECEK" bahsi (yeşil)</span>
+        <b class="short">SHORT (S)</b><span>"fiyat DÜŞECEK" bahsi (kırmızı)</span>
+        <b>Boyut</b><span>pozisyonun dolar değeri — $2M short = 2 milyon dolarlık düşüş bahsi</span>
+        <b>Kaldıraç (5x)</b><span>parasının 5 katı büyüklükte pozisyon; kâr da zarar da 5 kat</span>
+        <b>Liq</b><span>fiyat bu seviyeye değerse pozisyon otomatik patlar, para gider. "Mesafe %" = fiyat oraya ne kadar uzak</span>
+        <b>Skor (0-100)</b><span>insider şüphe puanı: taze cüzdan + bilançodan hemen önce + büyük pozisyon = yüksek puan. 70+ 🚨 çok şüpheli</span>
+        <b>Açılış</b><span>pozisyon ne zaman açıldı — bilançodan hemen önce açılanlar ilginçtir</span>
+        <b>Sicil</b><span>bu cüzdan daha önce kaç bilançoyu doğru (✓) / yanlış (✗) bildi</span>
+        <b>Earnings</b><span>şirketin bilanço açıklaması. AMC = borsa kapandıktan sonra, BMO = açılmadan önce</span>
+        <b>🤖 MM</b><span>market maker / robot hesap — insider değil, sayılmaz</span>
+      </div>
+      <p style="margin-bottom:0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
+      tablolardaki hisse/cüzdan linklerine tıkla. Bot her şeyi Telegram'a da atar.</p>
+    </div>
+  </details>
+</div>
+
+{% if ecards %}
+<div class="panel">
+  <h2>🎯 Earnings radarı <span class="dim" style="text-transform:none">· sıradaki bilançolara balinalar nasıl pozisyonlanmış?</span></h2>
+  <p class="sub">Sitenin kalbi burası: yaklaşan her bilanço için balina para dengesi ve düz yorum.
+  Yeşil çubuk = yükselişe oynayan para, kırmızı = düşüşe oynayan para.</p>
+  <div class="ecards">
+    {% for c in ecards %}
+    <div class="ecard">
+      <h3><a href="/t/{{ c.symbol }}{{ k }}">{{ c.symbol }}</a>
+        <span class="dim" style="font-weight:400">{{ c.date_et[5:] }} {{ {'amc':'AMC','bmo':'BMO'}.get(c.hour,'?') }}</span>
+        <span class="cd">{% if c.days_left == 0 %}BUGÜN{% elif c.days_left == 1 %}yarın{% elif c.days_left %}{{ c.days_left }} gün{% endif %}</span></h3>
+      <div>Fiyat <b>{{ c.mark|px }}</b>{% if c.px_change is not none %}
+        <span class="{{ 'long' if c.px_change > 0 else 'short' }}">{{ '%+.1f'|format(c.px_change) }}%</span>{% endif %}
+        · OI <b>{{ c.oi_ntl|usd }}</b>{% if c.oi_change is not none %} ({{ '%+.0f'|format(c.oi_change) }}%){% endif %}</div>
+      {% if c.shp is not none %}
+      <div class="ratio"><div class="rl" style="width:{{ '%.0f'|format(100 - c.shp) }}%"></div><div class="rs" style="width:{{ '%.0f'|format(c.shp) }}%"></div></div>
+      <div class="dim">🐂 {{ c.lo|usd }} yükseliş · 🐻 {{ c.sh|usd }} düşüş</div>
+      {% endif %}
+      <div class="verdict">{{ c.verdict[0] }} {{ c.verdict[1] }}</div>
+      {% for f in c.flags %}<div class="fl">{{ f }}</div>{% endfor %}
+      <div style="margin-top:6px"><a href="/t/{{ c.symbol }}{{ k }}">→ balinaları incele</a></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <div class="panel compact">
   <h2>💥 Likidasyon haritası <span class="dim" style="text-transform:none">· tüm coin'ler · mesafeye göre sıralı</span></h2>
+  <p class="sub">Fiyat "liq" seviyesine değerse bu pozisyonlar <b>zorla kapanır (patlar)</b>.
+  En üsttekiler patlamaya en yakın olanlar — patlarsa fiyatı sert oynatabilir. Filtreyle küçük pozisyonları gizle.</p>
   <div class="chips">
     {% for v, lbl in liq_chips %}
     <a href="/?liqmin={{ v|int }}{{ '&key=' + k[5:] if k else '' }}" class="{{ 'on' if liqmin == v else '' }}">{{ lbl }}</a>
     {% endfor %}
     <span class="dim" style="font-size:12px;align-self:center">
-      <i class="sw" style="background:#c47216;display:inline-block;width:10px;height:10px;border-radius:2px"></i> long liq (fiyat altı) ·
-      <i class="sw" style="background:#2b8cbe;display:inline-block;width:10px;height:10px;border-radius:2px"></i> short liq (fiyat üstü)</span>
+      <i class="sw" style="background:#c47216;display:inline-block;width:10px;height:10px;border-radius:2px"></i> long liq — fiyat <b>düşerse</b> patlar ·
+      <i class="sw" style="background:#2b8cbe;display:inline-block;width:10px;height:10px;border-radius:2px"></i> short liq — fiyat <b>çıkarsa</b> patlar</span>
   </div>
   {% if liq_map %}
   {% for x in liq_map %}
@@ -39,9 +96,13 @@
 
 <div class="panel third compact">
   <h2>🚨 En şüpheliler</h2>
+  <p class="sub">Botun "bu insider olabilir 🤨" dediği pozisyonlar. Skor yükseldikçe şüphe artar.</p>
   {% if suspicious %}
   <table>
-    <tr><th>Skor</th><th class="l">Hisse</th><th>Yön</th><th>Boyut</th><th>Açılış</th></tr>
+    <tr><th title="0-100 insider şüphe puanı">Skor</th><th class="l">Hisse</th>
+        <th title="L = yükseliş bahsi, S = düşüş bahsi">Yön</th>
+        <th title="Pozisyonun dolar değeri">Boyut</th>
+        <th title="Pozisyon ne zaman açıldı">Açılış</th></tr>
     {% for p in suspicious %}
     <tr>
       <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else 'b-mid' }}">{{ p.score }}</span></td>
@@ -53,14 +114,18 @@
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Skor ≥ 40 pozisyon yok — sakin sular 🌊</p>{% endif %}
+  {% else %}<p class="dim">Şu an şüpheli pozisyon yok — sakin sular 🌊</p>{% endif %}
 </div>
 
 <div class="panel third compact">
   <h2>🆕 Son açılan büyükler <span class="dim" style="text-transform:none">· 72h</span></h2>
+  <p class="sub">Son 3 günde açılmış 1M$+ yeni pozisyonlar. Biri bir şey mi biliyor?</p>
   {% if recent_big %}
   <table>
-    <tr><th class="l">Hisse</th><th>Yön</th><th>Boyut</th><th>Açılış</th><th>Skor</th></tr>
+    <tr><th class="l">Hisse</th><th title="L = yükseliş bahsi, S = düşüş bahsi">Yön</th>
+        <th title="Pozisyonun dolar değeri">Boyut</th>
+        <th title="Pozisyon ne zaman açıldı">Açılış</th>
+        <th title="0-100 insider şüphe puanı">Skor</th></tr>
     {% for p in recent_big %}
     <tr>
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
@@ -77,9 +142,12 @@
 
 <div class="panel third compact">
   <h2>📅 Yaklaşan earnings</h2>
+  <p class="sub">Bilanço günleri. Bot açıklamaya ~1 saat kala o hissenin balina raporunu Telegram'a atar.</p>
   {% if events %}
   <table>
-    <tr><th class="l">Tarih</th><th class="l">Sembol</th><th class="l">Saat</th><th class="l">Durum</th></tr>
+    <tr><th class="l">Tarih</th><th class="l">Sembol</th>
+        <th class="l" title="AMC = borsa kapanınca, BMO = borsa açılmadan">Saat</th>
+        <th class="l" title="⏳ bekliyor · 🕐 erken rapor gitti · ✅ raporlandı">Durum</th></tr>
     {% for e in events %}
     <tr>
       <td class="l">{{ e.date_et[5:] }}</td>
@@ -93,10 +161,15 @@
 </div>
 
 <div class="panel half compact">
-  <h2>🎯 Tek hisse uzmanları <span class="dim" style="text-transform:none">· 30g ≥%90 tek coin</span></h2>
+  <h2>🎯 Tek hisse uzmanları</h2>
+  <p class="sub">Sadece TEK bir hisseyi işleyen cüzdanlar — bir şirketi bu kadar yakından takip eden,
+  içeriden bilgi sahibi olabilir. Sicili tutmaya başladık.</p>
   {% if specialists %}
   <table>
-    <tr><th class="l">Adres</th><th class="l">Hisse</th><th>İşlem</th><th>Hacim</th><th>Sicil</th><th class="l">Açık poz</th></tr>
+    <tr><th class="l">Adres</th><th class="l">Hisse</th>
+        <th title="30 günde kaç büyük işlem yaptı">İşlem</th>
+        <th title="30 günlük toplam işlem hacmi">Hacim</th>
+        <th title="Kaç bilançoyu doğru/yanlış bildi">Sicil</th><th class="l">Açık poz</th></tr>
     {% for s in specialists %}
     <tr>
       <td class="l"><a href="/whale/{{ s.address }}{{ k }}">{{ s.address[:8] }}..{{ s.address[-4:] }}</a>{% if s.watchlist %} ⭐{% endif %}</td>
@@ -113,6 +186,8 @@
 
 <div class="panel half compact">
   <h2>🎰 HL hisse perp evreni</h2>
+  <p class="sub">Hyperliquid'de kaldıraçlı işlem gören tüm hisseler. Birine tıkla → balinalarını,
+  likidasyon haritasını ve şüphelileri gör.</p>
   {% if universe %}
   <p style="line-height:2">{% for t in universe %}<a href="/t/{{ t.symbol }}{{ k }}">{{ t.symbol }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
   {% else %}<p class="dim">Evren henüz keşfedilmedi.</p>{% endif %}

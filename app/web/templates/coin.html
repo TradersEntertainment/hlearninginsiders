@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ symbol }} — HL Insider Radar{% endblock %}
-{% block head %}{% if scanning %}<meta http-equiv="refresh" content="12">{% endif %}{% endblock %}
+{% block bodyattrs %} data-refresh="{{ 10 if scanning else 45 }}"{% endblock %}
 {% block content %}
 {% if not ticker %}
 <div class="panel"><p><b>{{ symbol }}</b> HL hisse evreninde bulunamadı.
 <a href="/{{ k }}">Evrendeki coin'lere bak</a>.</p></div>
 {% else %}
 {% if scanning %}
-<div class="scanbar"><span class="swimmer">🐋</span> Balinalar aranıyor<span class="dots"></span> sayfa kendini yenileyecek</div>
+<div class="scanbar"><span class="swimmer">🐋</span> Balinalar aranıyor<span class="dots"></span> veriler kendiliğinden gelecek (sayfa zıplamaz)</div>
 {% endif %}
 <div class="panel">
   <h2>{{ symbol }} <span class="dim">({{ coin }})</span></h2>
@@ -36,6 +36,7 @@
 {% if chart %}
 <div class="panel">
   <h2>📍 Nereden açtılar? · entry haritası</h2>
+  <p class="sub">Balinalar bu hisseye hangi fiyattan girdi? Her bar bir pozisyon: girdiği fiyat seviyesinde durur, boyu = kaç dolarlık. Üzerine gel → kim olduğunu gör.</p>
   <div class="legendrow">
     <span><i class="sw" style="background:{{ chart.c_short }}"></i> Short ({{ chart.n_short }}) — solda</span>
     <span><i class="sw" style="background:{{ chart.c_long }}"></i> Long ({{ chart.n_long }}) — sağda</span>
@@ -71,6 +72,7 @@
 {% if liqchart %}
 <div class="panel">
   <h2>💥 Likidasyon haritası <span style="text-transform:none">· hangi fiyatta kim likide olur</span></h2>
+  <p class="sub">Fiyat hangi seviyeye değerse hangi pozisyon zorla kapanır (patlar)? Patlama anında fiyat o yöne sert itilebilir — "stop avı" burada okunur.</p>
   <div class="legendrow">
     <span><i class="sw" style="background:{{ liqchart.c_long }}"></i> Long liq ({{ liqchart.n_long }}) — fiyat düşerse</span>
     <span><i class="sw" style="background:{{ liqchart.c_short }}"></i> Short liq ({{ liqchart.n_short }}) — fiyat çıkarsa</span>
@@ -102,6 +104,7 @@
 
 <div class="panel">
   <h2>🐋 En büyük pozisyonlar <span style="text-transform:none">· güncel fiyat: <b>{{ summ.mark|px }}</b></span></h2>
+  <p class="sub">Bu hisseye en çok para koyan cüzdanlar. 🚨 rozet = insider şüphelisi (nedenleri sağdaki kolonda). Adrese tıkla → cüzdanın tüm karnesi.</p>
   {% if rows %}
   <div class="tabs">
     <button type="button" class="tab active" data-f="all">Tümü ({{ rows|length }})</button>
@@ -133,16 +136,6 @@
     </tr>
     {% endfor %}
   </table>
-  <script>
-  (function(){
-    var tabs=document.querySelectorAll('.tab'),rows=document.querySelectorAll('#postable tr[data-side]');
-    tabs.forEach(function(t){t.addEventListener('click',function(){
-      tabs.forEach(function(x){x.classList.remove('active')});t.classList.add('active');
-      var f=t.dataset.f;
-      rows.forEach(function(r){r.style.display=(f==='all'||r.dataset.side===f)?'':'none'});
-    })});
-  })();
-  </script>
   {% elif scanning %}<p class="dim">🐋 İlk tarama sürüyor — birazdan burada olacaklar…</p>
   {% else %}<p class="dim">Havuzda bu coin için açık pozisyon bulunamadı (havuz büyüdükçe dolar).</p>{% endif %}
 </div>
@@ -171,6 +164,7 @@
 
 <div class="panel">
   <h2>⚡ Son büyük işlemler (WS havuzundan)</h2>
+  <p class="sub">Canlı akıştan yakalanan $5K üstü alım-satımlar — balina avlama havuzumuz buradan besleniyor.</p>
   {% if fills %}
   <table>
     <tr><th class="l">Zaman</th><th class="l">Adres</th><th>Taraf</th><th>Fiyat</th><th>Notional</th></tr>

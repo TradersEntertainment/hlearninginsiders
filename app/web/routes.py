@@ -314,6 +314,53 @@ async def index(request: Request):
     for x in liq_map:
         x["wpct"] = max(4, x["notional"] / liq_maxn * 100)
 
+    # ---- Earnings radarı kartları: yaklaşan her bilanço için balina verisi + yön okuması ----
+    from datetime import date as _date
+    ecards = []
+    today = _date.today()
+    for e in events[:6]:
+        coin = e["coin"]
+        s = await metrics.summary(coin)
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT side, SUM(notional) t FROM positions_current WHERE coin=? GROUP BY side",
+                (coin,))
+            sums = {r["side"]: r["t"] or 0 for r in await cur.fetchall()}
+            cur = await conn.execute(
+                """SELECT p.* FROM positions_current p
+                   LEFT JOIN addresses a ON a.address=p.address
+                   WHERE p.coin=? AND COALESCE(a.entity,'')='' AND COALESCE(p.score,0)>0
+                   ORDER BY p.score DESC, p.notional DESC LIMIT 1""", (coin,))
+            top = await cur.fetchone()
+        lo, sh = sums.get("long", 0), sums.get("short", 0)
+        tot = lo + sh
+        shp = sh / tot * 100 if tot else None
+        if shp is None:
+            verdict = ("❔", "Henüz pozisyon verisi yok — tarama sürüyor")
+        elif shp >= 65:
+            verdict = ("🐻", f"Balinalar DÜŞÜŞ tarafında (%{shp:.0f} short)")
+        elif shp <= 35:
+            verdict = ("🐂", f"Balinalar YÜKSELİŞ tarafında (%{100 - shp:.0f} long)")
+        else:
+            verdict = ("⚖️", f"Kararsız — %{100 - shp:.0f} long / %{shp:.0f} short")
+        flags = []
+        if s.get("oi_change_pct") is not None and s["oi_change_pct"] >= 50:
+            flags.append(f"⚠️ OI 24 saatte +%{s['oi_change_pct']:.0f} — birileri birikiyor")
+        if top and (top["score"] or 0) >= 50:
+            tside = "SHORT" if top["side"] == "short" else "LONG"
+            flags.append(f"🚨 {top['score']} puanlık şüpheli {tside} {_usd(top['notional'])} var")
+        try:
+            days_left = (_date.fromisoformat(e["date_et"]) - today).days
+        except ValueError:
+            days_left = None
+        ecards.append({"symbol": e["symbol"], "date_et": e["date_et"],
+                       "hour": e.get("hour_hint"), "days_left": days_left,
+                       "mark": s.get("mark"), "px_change": s.get("px_change_pct"),
+                       "oi_ntl": s.get("oi_ntl"), "oi_change": s.get("oi_change_pct"),
+                       "lo": lo, "sh": sh, "shp": shp,
+                       "verdict": verdict, "flags": flags,
+                       "top": dict(top) if top else None})
+
     # Durum şeridi için: yaklaşan earnings'ler tarihe göre gruplu (ör. 11.08: CRWV LITE QNT)
     strip_days: dict[str, list[str]] = {}
     n = 0
@@ -326,7 +373,7 @@ async def index(request: Request):
 
     collector = getattr(request.app.state, "collector", None)
     return _render(request, "index.html", {
-        "universe": universe, "events": events, "strip_days": strip_days,
+        "universe": universe, "events": events, "strip_days": strip_days, "ecards": ecards,
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "liq_map": liq_map, "liqmin": liqmin,
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
