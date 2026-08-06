@@ -165,8 +165,17 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
         pts += 10
         reasons.append("hesapta tek pozisyon bu")
 
+    # Mutlak boyut: zengin balina liq'i uzak tutar ama BOYUT yalan söylemez
+    ntl = pos["notional"]
+    if ntl >= cfg.huge_position_usd:
+        pts += 20
+        reasons.append(f"dev pozisyon (${ntl / 1e6:.1f}M)")
+    elif ntl >= cfg.big_position_usd:
+        pts += 10
+        reasons.append(f"büyük pozisyon (${ntl / 1e6:.1f}M)")
+
     if oi_ntl and oi_ntl > 0:
-        share = pos["notional"] / oi_ntl * 100
+        share = ntl / oi_ntl * 100
         if share >= 5:
             pts += 15
             reasons.append(f"OI'nin %{share:.1f}'i")
