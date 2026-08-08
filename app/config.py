@@ -37,6 +37,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                     "desc": "Günlük özetin gönderileceği saat"},
     "alert_min_score": {"type": "int", "label": "Bildirim için min şüphe skoru", "group": "Bildirimler",
                         "desc": "Yeni büyük pozisyon bildirimi için gereken minimum skor (0 = hepsi)"},
+    "notify_liqmap": {"type": "bool", "label": "🧲 Likidasyon duvarı (küme)", "group": "Bildirimler",
+                      "desc": "Fiyata yakın bölgede TOPLAMDA büyük liq yığını birikince haber (cascade/stop avı mıknatısı)"},
     "min_fill_notional": {"type": "float", "label": "Min fill boyutu ($)",
                           "group": "Skorlama eşikleri", "desc": "Bu boyut üstü işlemler adres havuzuna yazılır"},
     "whale_alert_notional": {"type": "float", "label": "Anlık balina alert eşiği ($)",
@@ -159,6 +161,7 @@ class Config:
         self.quiet_allow_high = True
         self.digest_hour = int(os.getenv("DIGEST_HOUR", "9"))
         self.alert_min_score = int(os.getenv("ALERT_MIN_SCORE", "0"))
+        self.notify_liqmap = True
 
         # Takvim kaynakları
         self.finnhub_api_key = os.getenv("FINNHUB_API_KEY", "")
@@ -185,6 +188,8 @@ class Config:
         self.liq_watch_min_notional = float(os.getenv("LIQ_WATCH_MIN_NOTIONAL", "70000000"))
         self.liq_watch_poll_sec = int(os.getenv("LIQ_WATCH_POLL_SEC", "120"))
         self.liq_watch_top_accounts = int(os.getenv("LIQ_WATCH_TOP_ACCOUNTS", "300"))
+        self.liq_cluster_window_pct = float(os.getenv("LIQ_CLUSTER_WINDOW_PCT", "5"))
+        self.liq_cluster_min_usd = float(os.getenv("LIQ_CLUSTER_MIN_USD", "1000000"))
         self.max_liq_distance_pct = float(os.getenv("MAX_LIQ_DISTANCE_PCT", "50"))
         self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "250000"))
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))

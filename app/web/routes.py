@@ -402,6 +402,10 @@ async def index(request: Request):
                         "dist": r["last_dist"]})
     liq_map.sort(key=lambda x: x["dist"])
     liq_map = liq_map[:20]
+
+    # Likidasyon duvarları (küme özeti) — tweet'teki heatmap okuması
+    from ..radar.liqwatch import find_clusters
+    liq_walls = (await find_clusters(cfg))[:4]
     liq_maxn = max((x["notional"] for x in liq_map), default=1)
     for x in liq_map:
         x["wpct"] = max(4, x["notional"] / liq_maxn * 100)
@@ -493,7 +497,7 @@ async def index(request: Request):
         "universe": universe, "events": events, "strip_days": strip_days, "ecards": ecards,
         "winners": winners, "archive": archive,
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
-        "liq_map": liq_map, "liqmin": liqmin,
+        "liq_map": liq_map, "liqmin": liqmin, "liq_walls": liq_walls,
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
                       (5_000_000, "5M+"), (30_000_000, "30M+")],
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,

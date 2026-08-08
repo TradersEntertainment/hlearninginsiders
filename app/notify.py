@@ -22,6 +22,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "whale_fill": ("notify_whale_fill", "🐋 Büyük işlem / sicilli balina",    "normal"),
     "anomaly":   ("notify_anomaly",   "📡 OI / funding anomalisi",            "normal"),
     "liq":       ("notify_liq",       "💥 Likidasyon radarı",                 "high"),
+    "liqmap":    ("notify_liqmap",    "🧲 Likidasyon duvarı (küme)",          "high"),
     "digest":    ("notify_digest",    "🌅 Günlük özet",                       "normal"),
     "test":      ("",                 "🔧 Test",                              "critical"),
 }

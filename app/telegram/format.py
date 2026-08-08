@@ -221,6 +221,35 @@ def liq_alert(coin: str, addr: str, p: dict, mark: float, dist: float, stage: in
     return "\n".join(lines)
 
 
+def liq_cluster_alert(c: dict) -> str:
+    """Likidasyon duvarı: fiyata yakın bölgede birikmiş toplu liq yığını."""
+    sym = c["symbol"]
+    is_short = c["side"] == "short"
+    yon = "🔵 SHORT" if is_short else "🟠 LONG"
+    nerede = "ÜSTÜNDE" if is_short else "ALTINDA"
+    etki = ("fiyat o bölgeye çekilirse zorunlu <b>ALIŞ</b>lar fiyatı yukarı süpürebilir"
+            if is_short else
+            "fiyat o bölgeye inerse zorunlu <b>SATIŞ</b>lar fiyatı aşağı süpürebilir")
+    lo = min(m["liq_px"] for m in c["members"])
+    hi = max(m["liq_px"] for m in c["members"])
+    top = c["members"][0]
+    lines = [
+        f"🧲 <b>LİKİDASYON DUVARI — {sym}</b>",
+        f"Fiyatın {nerede}: {yon} liq toplam <b>{usd(c['total'])}</b>"
+        f" · {c['count']} pozisyon · ort. mesafe %{c['avg_dist']:.1f}",
+        f"Bölge: <b>{px(lo)} – {px(hi)}</b> (şimdi {px(c['mark'])})",
+        f"En büyüğü: {usd(top['notional'])} liq {px(top['liq_px'])}"
+        f" (%{abs(top['dist']):.1f}) {alink(top['address'])}",
+        f"💥 {etki}",
+    ]
+    if c.get("other_total"):
+        lines.append(f"⚖️ Karşı yönde de {usd(c['other_total'])} liq var — iki yönlü sıkışma")
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
 def liq_closed(coin: str, addr: str, row: dict) -> str:
     sym = coin.split(":")[-1]
     side = "SHORT" if row.get("side") == "short" else "LONG"
@@ -382,7 +411,8 @@ def winners_list(rows: list[dict]) -> str:
 
 DIGEST_LABELS = {
     "whale_fill": "🐋 büyük işlem", "new_big": "🆕 yeni büyük pozisyon",
-    "anomaly": "📡 anomali", "liq": "💥 likidasyon", "earnings": "📊 earnings",
+    "anomaly": "📡 anomali", "liq": "💥 likidasyon", "liqmap": "🧲 liq duvarı",
+    "earnings": "📊 earnings",
     "eval": "🏁 sonuç",
 }
 

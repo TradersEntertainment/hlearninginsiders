@@ -91,6 +91,17 @@
       <i class="sw" style="background:#c47216;display:inline-block;width:10px;height:10px;border-radius:2px"></i> long liq — fiyat <b>düşerse</b> patlar ·
       <i class="sw" style="background:#2b8cbe;display:inline-block;width:10px;height:10px;border-radius:2px"></i> short liq — fiyat <b>çıkarsa</b> patlar</span>
   </div>
+  {% if liq_walls %}
+  <div class="walls">🧲 <b>Duvarlar:</b>
+    {% for w in liq_walls %}
+    <span class="wall {{ 'shortliq-t' if w.side == 'short' else 'longliq-t' }}"
+          title="{{ w.count }} pozisyon, ortalama mesafe %{{ '%.1f'|format(w.avg_dist) }} — fiyat o bölgeye {{ 'çekilirse zorunlu alışlar yukarı' if w.side == 'short' else 'inerse zorunlu satışlar aşağı' }} süpürebilir">
+      <a href="/t/{{ w.symbol }}{{ k }}">{{ w.symbol }}</a>
+      {{ 'S' if w.side == 'short' else 'L' }}-duvar <b>{{ w.total|usd }}</b>×{{ w.count }}
+      (%{{ '%.1f'|format(w.avg_dist) }})</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
   {% if liq_map %}
   {% for x in liq_map %}
   <div class="lbar">

@@ -9,7 +9,7 @@ import asyncio
 import logging
 
 from ..config import Config
-from ..db import db, now
+from ..db import alert_log, alert_recent, db, now
 from ..hl.client import HLClient
 from ..hl.universe import norm_coin
 from ..telegram import format as fmt
@@ -20,6 +20,7 @@ log = logging.getLogger("radar.liqwatch")
 # (kademe, mesafe eşiği %) — sıralı
 STAGES = [(3, 0.1), (2, 0.5), (1, 1.0)]
 RESET_DIST = 1.5  # bu mesafenin üstüne çıkarsa kademeler sıfırlanır
+CLUSTER_COOLDOWN = 6 * 3600  # aynı coin+yön duvarı için tekrar bildirim aralığı
 
 
 def needed_stage(dist_pct: float) -> int:
@@ -173,6 +174,67 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
                  stage_sent))
 
 
+async def find_clusters(cfg: Config) -> list[dict]:
+    """Likidasyon duvarları: tek tek küçük ama TOPLAMDA büyük, fiyata yakın
+    liq yığınları — prop firmaların heatmap'te okuduğu cascade/stop-avı mıknatısı.
+    Sadece DB verisi kullanır (equity taramaları), API isteği atmaz."""
+    async with db() as conn:
+        cur = await conn.execute(
+            """SELECT a.coin, a.mark_px FROM asset_metrics a
+               JOIN (SELECT coin, MAX(ts) mts FROM asset_metrics GROUP BY coin) b
+                 ON a.coin=b.coin AND a.ts=b.mts""")
+        marks = {r["coin"]: r["mark_px"] for r in await cur.fetchall()}
+        cur = await conn.execute(
+            """SELECT p.coin, t.symbol, p.side, p.notional, p.liq_px, p.address
+               FROM positions_current p JOIN tickers t ON t.coin=p.coin
+               WHERE p.liq_px IS NOT NULL AND p.notional > 0""")
+        rows = [dict(r) for r in await cur.fetchall()]
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        mark = marks.get(r["coin"])
+        if not mark:
+            continue
+        r["dist"] = (r["liq_px"] - mark) / mark * 100
+        if abs(r["dist"]) > cfg.liq_cluster_window_pct:
+            continue
+        r["mark"] = mark
+        groups.setdefault((r["coin"], r["side"]), []).append(r)
+
+    out = []
+    for (coin, side), members in groups.items():
+        total = sum(m["notional"] for m in members)
+        # duvar: 2+ pozisyon birikmiş YA DA tek ama çok büyük (eşiğin 3 katı)
+        if total < cfg.liq_cluster_min_usd or \
+                (len(members) < 2 and total < cfg.liq_cluster_min_usd * 3):
+            continue
+        other = sum(m["notional"] for (c2, s2), ms in groups.items()
+                    if c2 == coin and s2 != side for m in ms)
+        members.sort(key=lambda m: -m["notional"])
+        out.append({"coin": coin, "symbol": members[0]["symbol"], "side": side,
+                    "total": total, "count": len(members), "members": members,
+                    "other_total": other, "mark": members[0]["mark"],
+                    "avg_dist": sum(abs(m["dist"]) for m in members) / len(members)})
+    out.sort(key=lambda c: -c["total"])
+    return out
+
+
+async def check_clusters(cfg: Config, notifier) -> None:
+    for c in await find_clusters(cfg):
+        key = f"{c['coin']}:{c['side']}"
+        if await alert_recent("liq_cluster", key, CLUSTER_COOLDOWN):
+            continue
+        text = fmt.liq_cluster_alert(c)
+        await alert_log("liq_cluster", key, text)  # cooldown, gönderim sonucundan bağımsız
+        if notifier:
+            try:
+                await notifier.send("liqmap", text, key=key)
+            except Exception as e:
+                log.warning("liq duvarı alerti gönderilemedi: %s", e)
+        log.info("liq duvarı: %s %s %d poz, toplam $%.0f (ort mesafe %%%.1f)",
+                 c["symbol"], c["side"], c["count"], c["total"], c["avg_dist"])
+
+
 async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
     await asyncio.sleep(90)
     log.info("likidasyon radarı başladı (min $%.0fM, periyot %ds)",
@@ -180,6 +242,7 @@ async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
     while True:
         try:
             await run_cycle(cfg, client, notifier)
+            await check_clusters(cfg, notifier)
         except asyncio.CancelledError:
             raise
         except Exception:
