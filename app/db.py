@@ -81,6 +81,11 @@ CREATE TABLE IF NOT EXISTS alerts_log(
 CREATE INDEX IF NOT EXISTS idx_alerts_kind_key ON alerts_log(kind, key, ts);
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS scans(coin TEXT PRIMARY KEY, ts INTEGER);
+CREATE TABLE IF NOT EXISTS address_wins(
+  address TEXT, coin TEXT, event_id INTEGER, notional REAL, ts INTEGER,
+  PRIMARY KEY(address, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_wins_addr ON address_wins(address);
 CREATE TABLE IF NOT EXISTS liq_watch(
   address TEXT, coin TEXT,
   side TEXT, notional REAL, liq_px REAL,

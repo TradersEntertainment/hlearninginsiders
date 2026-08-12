@@ -77,6 +77,12 @@ async def _evaluate(cfg: Config, client: HLClient, notifier, ev: dict, est: int)
                     await conn.execute(
                         "UPDATE addresses SET watchlist=1 WHERE address=?", (s["address"],))
                     promoted.append(s["address"])
+                if hit:
+                    # bu adres BU hissede kazandı — tekrar dönerse bildirmek için sakla
+                    await conn.execute(
+                        "INSERT OR REPLACE INTO address_wins(address,coin,event_id,notional,ts)"
+                        " VALUES(?,?,?,?,?)",
+                        (s["address"], coin, ev["id"], s["notional"], now()))
                 results.append({**s, "hit": hit})
 
     # Kim kapattı? — güncel durumu tekrar tara ve T+24h snapshot'ı al (yalnız anlamlı pozlar)

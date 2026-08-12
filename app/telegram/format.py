@@ -317,11 +317,18 @@ def whale_fill_alert(coin: str, addr: str, side: str, price: float,
                      notional: float, is_watch: bool, record: tuple) -> str:
     sym = coin.split(":")[-1]
     act = "🟢 ALIŞ" if side == "buy" else "🔴 SATIŞ"
-    head = "🚨 <b>SİCİLLİ BALİNA İŞLEMDE</b>" if is_watch else "🐋 <b>BÜYÜK İŞLEM</b>"
-    lines = [f"{head} — {sym}",
-             f"{act} <b>{usd(notional)}</b> @ {px(price)}",
-             f"👤 {alink(addr)}"]
     hits, misses = record
+    if is_watch:
+        head = f"🎯 <b>SİCİLLİ BALİNA {sym}'E DÖNDÜ</b>"
+        note = f"Bu adres {sym}'i daha önce doğru bildi — şimdi tekrar poz açtı"
+    else:
+        head = "🐋 <b>BÜYÜK İŞLEM</b>"
+        note = None
+    lines = [f"{head} — {sym}"]
+    if note:
+        lines.append(note)
+    lines += [f"{act} pozisyon <b>{usd(notional)}</b> @ {px(price)}",
+              f"👤 {alink(addr)}"]
     if hits or misses:
         lines.append(f"🎯 Sicil: {hits} doğru / {misses} yanlış")
     if is_listed(sym):

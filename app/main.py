@@ -185,12 +185,19 @@ async def lifespan(app: FastAPI):
         cfg.apply_overrides(overrides)
         log.info("%d ayar override'ı yüklendi: %s", len(overrides), ", ".join(overrides))
 
+    # Sicil eşiği değiştiyse eski kayıtları yeni kurala göre yeniden hesapla (bir kez)
+    from .recompute import recompute_records
+    try:
+        await recompute_records(cfg)
+    except Exception:
+        log.exception("sicil yeniden hesaplanamadı")
+
     session = aiohttp.ClientSession()
     client = HLClient(session, cfg.api_base, cfg.stats_leaderboard_url,
                       concurrency=cfg.scan_concurrency)
     bot = TelegramBot(cfg, session, client, STATE) if cfg.telegram_bot_token else None
     notifier = Notifier(cfg, bot)
-    collector = Collector(cfg, session, bot, notifier)
+    collector = Collector(cfg, session, bot, notifier, client)
     if bot:
         bot.collector = collector
 

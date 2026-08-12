@@ -20,11 +20,13 @@ WHALE_FILL_COOLDOWN = 1800  # aynı adres+coin için 30 dk'da bir alert
 
 
 class Collector:
-    def __init__(self, cfg: Config, session: aiohttp.ClientSession, bot=None, notifier=None):
+    def __init__(self, cfg: Config, session: aiohttp.ClientSession, bot=None,
+                 notifier=None, client=None):
         self.cfg = cfg
         self.session = session
         self.bot = bot
         self.notifier = notifier
+        self.client = client
         self.connected = False
         self.subscribed: set[str] = set()
         self.fills_seen = 0
@@ -141,17 +143,38 @@ class Collector:
                 f"SELECT address FROM addresses WHERE watchlist=1 AND address IN ({q})", addr_list)
             watch = {row["address"] for row in await cur.fetchall()}
 
-        # Watchlist adresi işlem yaptığında, whale eşiğinden küçük olsa da alert —
-        # ama tozdan (min_fill * 4) büyük olsun ki $18K probe'lar spam yapmasın.
-        watch_floor = max(self.cfg.min_fill_notional * 4, 50_000)
-        for r in rows:
-            coin, _, addr, side, px, _, notional, _ = r
-            if addr in watch and notional >= watch_floor \
-                    and (coin, addr, side, px, notional) not in alerts:
-                alerts.append((coin, addr, side, px, notional))
+        # Sicilli adres SADECE daha önce kazandığı hisseye dönerse ilgi çeker.
+        # (Genel whale alertleri watchlist dışı büyük pozları da yakalar.)
+        if watch:
+            from ..recompute import winner_coins_map
+            win_map = await winner_coins_map(list(watch))
+            for r in rows:
+                coin, _, addr, side, px, _, notional, _ = r
+                if addr in watch and coin in win_map.get(addr, set()) \
+                        and (coin, addr, side, px, notional) not in alerts:
+                    alerts.append((coin, addr, side, px, notional))
 
         for coin, addr, side, px, notional in alerts:
             await self._maybe_alert(coin, addr, side, px, notional, addr in watch)
+
+    async def _position_notional(self, addr, coin, dex):
+        """Adresin bu coindeki güncel pozisyon büyüklüğü ($). Client yoksa None."""
+        if not self.client:
+            return None
+        try:
+            state = await self.client.clearinghouse(addr, dex)
+        except Exception:
+            return None
+        sym = coin.split(":")[-1]
+        for ap in (state or {}).get("assetPositions") or []:
+            pos = ap.get("position") or {}
+            pcoin = pos.get("coin") or ""
+            if pcoin == coin or pcoin.split(":")[-1] == sym:
+                try:
+                    return float(pos.get("positionValue") or 0)
+                except (TypeError, ValueError):
+                    return 0.0
+        return 0.0
 
     async def _maybe_alert(self, coin, addr, side, px, notional, is_watch):
         if not self.bot:
@@ -165,8 +188,19 @@ class Collector:
             row = await cur.fetchone()
         if row and row["entity"] and not is_watch:
             return  # MM/vault fill'i — gürültü
+
+        pos_ntl = notional
+        if is_watch:
+            # Sicilli adres kazandığı hisseye döndü — gerçek pozisyon $300K+ mı?
+            dex = coin.split(":")[0] if ":" in coin else ""
+            pn = await self._position_notional(addr, coin, dex)
+            if pn is not None:
+                pos_ntl = pn
+            if pos_ntl < self.cfg.eval_min_notional:
+                return  # küçük poz/probe — bildirme
+
         record = (row["hits"], row["misses"]) if row else (0, 0)
-        text = fmt.whale_fill_alert(coin, addr, side, px, notional, is_watch, record)
+        text = fmt.whale_fill_alert(coin, addr, side, px, pos_ntl, is_watch, record)
         try:
             prio = "high" if is_watch else "normal"
             if await self.notifier.send("whale_fill", text, priority=prio, key=key):
