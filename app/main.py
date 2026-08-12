@@ -94,19 +94,24 @@ async def check_due(cfg, client, notifier):
         events = [dict(r) for r in await cur.fetchall()]
     ts = dbm.now()
     for ev in events:
-        for stage, due in cal.stages(ev):
-            flag = "alerted_t1" if stage == "t1" else "alerted_pre"
-            if ev.get(flag) or ts < due:
-                continue
-            if ts - due > 7200:
-                # pencere kaçmış (ör. bot kapalıymış) — sessizce işaretle
-                async with dbm.db() as conn:
-                    await conn.execute(
-                        f"UPDATE earnings_events SET {flag}=1 WHERE id=?", (ev["id"],))
-                continue
-            log.info("⏰ %s %s raporu tetiklendi", ev["symbol"], stage)
-            await report.run_stage(cfg, client, notifier, ev, stage)
-            ev[flag] = 1
+        # Tek bozuk earnings satırı tüm döngüyü kilitlemesin
+        try:
+            for stage, due in cal.stages(ev):
+                flag = "alerted_t1" if stage == "t1" else "alerted_pre"
+                if ev.get(flag) or ts < due:
+                    continue
+                if ts - due > 7200:
+                    # pencere kaçmış (ör. bot kapalıymış) — sessizce işaretle
+                    async with dbm.db() as conn:
+                        await conn.execute(
+                            f"UPDATE earnings_events SET {flag}=1 WHERE id=?", (ev["id"],))
+                    continue
+                log.info("⏰ %s %s raporu tetiklendi", ev["symbol"], stage)
+                await report.run_stage(cfg, client, notifier, ev, stage)
+                ev[flag] = 1
+        except Exception:
+            log.exception("earnings işlenemedi: %s (%s)",
+                          ev.get("symbol"), ev.get("date_et"))
 
 
 async def due_loop(cfg, client, notifier):

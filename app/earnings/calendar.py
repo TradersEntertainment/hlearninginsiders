@@ -319,8 +319,13 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
 
     n = 0
     async with db() as conn:
+        # Geçersiz tarihli eski kayıtları temizle (due_loop'u çökertirlerdi)
+        await conn.execute(
+            "DELETE FROM earnings_events WHERE evaluated=0"
+            " AND (date_et IS NULL OR length(date_et) < 10 OR date_et NOT GLOB"
+            " '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')")
         for sym, ev in merged.items():
-            if not ev.get("date_et"):
+            if not valid_date_et(ev.get("date_et")):
                 continue
             # ÖNEMLİ: hour_hint artık "yapışkan" değil — daha güvenilir kaynak (merge
             # sırasında seçildi) eski değeri düzeltebilmeli. Yoksa yanlış bir 'amc'
@@ -368,8 +373,21 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
 
 # ---------------- Zamanlama ----------------
 
+def valid_date_et(date_str) -> bool:
+    """date_et sağlam bir YYYY-MM-DD mi?"""
+    if not isinstance(date_str, str):
+        return False
+    try:
+        datetime.strptime(date_str.strip()[:10], "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
 def _et_ts(date_str: str, hh: int, mm: int, day_offset: int = 0) -> int:
-    d = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=ET) + timedelta(days=day_offset)
+    # Bozuk tarih tüm döngüyü çökertmesin (tek kötü earnings satırı yüzünden)
+    d = datetime.strptime((date_str or "").strip()[:10], "%Y-%m-%d").replace(tzinfo=ET) \
+        + timedelta(days=day_offset)
     return int(d.replace(hour=hh, minute=mm).timestamp())
 
 
@@ -377,8 +395,10 @@ def stages(ev: dict) -> list[tuple[str, int]]:
     """Bir event için (aşama, due_ts) listesi. Aşamalar: pre, t1."""
     if ev.get("exact_ts"):
         return [("t1", int(ev["exact_ts"]) - 3600)]
+    d = ev.get("date_et")
+    if not valid_date_et(d):
+        return []  # geçersiz tarih → bu event zamanlanamaz, sessizce atla
     hint = ev.get("hour_hint") or "unknown"
-    d = ev["date_et"]
     if hint == "amc":
         # rapor ~16:05 ET → kapanışa 1 saat kala
         return [("t1", _et_ts(d, 15, 0))]
@@ -392,10 +412,13 @@ def stages(ev: dict) -> list[tuple[str, int]]:
 def event_ts_estimate(ev: dict) -> int:
     if ev.get("exact_ts"):
         return int(ev["exact_ts"])
+    d = ev.get("date_et")
+    if not valid_date_et(d):
+        return 0  # geçersiz → 0 (annotate bunu 'çok eski/geçmiş' sayar, alarm üretmez)
     hint = ev.get("hour_hint") or "unknown"
     if hint == "bmo":
-        return _et_ts(ev["date_et"], 7, 0)
-    return _et_ts(ev["date_et"], 16, 5)  # amc / unknown
+        return _et_ts(d, 7, 0)
+    return _et_ts(d, 16, 5)  # amc / unknown
 
 
 def countdown_str(mins: int) -> str:
@@ -419,15 +442,18 @@ def annotate(events: list[dict]) -> list[dict]:
         rts = event_ts_estimate(e)
         hint = e.get("hour_hint") or "unknown"
         src = (e.get("source") or "").lower()
+        bad_date = rts == 0  # geçersiz tarih
         e["report_ts"] = rts
-        e["passed"] = ts > rts
-        e["mins_left"] = int((rts - ts) / 60)
-        e["countdown"] = countdown_str(e["mins_left"])
+        e["bad_date"] = bad_date
+        e["passed"] = (not bad_date) and ts > rts
+        e["mins_left"] = 0 if bad_date else int((rts - ts) / 60)
+        e["countdown"] = "?" if bad_date else countdown_str(e["mins_left"])
         e["exact"] = bool(e.get("exact_ts"))
         e["icon"] = {"bmo": "☀️", "amc": "🌙"}.get(hint, "❓")
         e["when_txt"] = {"bmo": "sabah, açılış öncesi",
                          "amc": "akşam, kapanış sonrası"}.get(hint, "saati belirsiz")
-        e["tsi"] = datetime.fromtimestamp(rts, TR).strftime("%d.%m %H:%M")
+        e["tsi"] = (e.get("date_et") or "?") if bad_date \
+            else datetime.fromtimestamp(rts, TR).strftime("%d.%m %H:%M")
 
         # SHAZ dersi: zayıf kaynak "akşam" derken hisse sabah açıklamış olabilir.
         # Saat güçlü bir kaynakla doğrulanmadıysa ve sabah penceresi geçtiyse uyar.
@@ -437,8 +463,9 @@ def annotate(events: list[dict]) -> list[dict]:
             earliest = _et_ts(e["date_et"], 7, 0)
         except (ValueError, TypeError, KeyError):
             earliest = rts
-        e["maybe_passed"] = bool(not e["passed"] and e["uncertain"] and ts > earliest)
-        e["alt_tsi"] = datetime.fromtimestamp(earliest, TR).strftime("%H:%M")
+        e["maybe_passed"] = bool(not bad_date and not e["passed"]
+                                 and e["uncertain"] and ts > earliest)
+        e["alt_tsi"] = "" if bad_date else datetime.fromtimestamp(earliest, TR).strftime("%H:%M")
     return events
 
 
