@@ -591,11 +591,8 @@ async def coin_send_telegram(request: Request, symbol: str):
                 (coin,))
             rows = [dict(r) for r in await cur.fetchall()]
         cluster_list = await clusters.find_clusters(rows)
-        fake_event = {"symbol": t["symbol"], "date_et": "dashboard'dan gönderildi",
-                      "hour_hint": "", "eps_est": None, "note": None}
-        text = fmt.earnings_report(fake_event, "ondemand", summ, rows,
+        text = fmt.earnings_report({"symbol": t["symbol"]}, "ondemand", summ, rows,
                                    request.app.state.cfg, cluster_list=cluster_list)
-        text = text.replace("🎯", "🔍").replace("earnings — 🕐 erken pencere", "anlık rapor")
         notifier = getattr(request.app.state, "notifier", None)
         if notifier and await notifier.send("earnings", text, priority="critical",
                                             key=f"manual:{t['symbol']}"):

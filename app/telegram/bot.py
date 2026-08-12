@@ -210,15 +210,17 @@ class TelegramBot:
             await self.send(f"'{args[0]}' HL hisse evreninde yok. /status ile evren boyutuna bak.", chat_id)
             return
         await self.send(f"🔍 <b>{t['symbol']}</b> taranıyor…", chat_id)
-        summ, rows = await build_scan(self.cfg, self.client, t["coin"],
-                                      coin_dex(t["coin"]), quick=True)
-        cluster_list = await clusters.find_clusters(rows)
-        fake_event = {"symbol": t["symbol"], "date_et": "şimdi", "hour_hint": "",
-                      "eps_est": None, "note": None}
-        text = fmt.earnings_report(fake_event, "ondemand", summ, rows, self.cfg,
-                                   cluster_list=cluster_list)
-        await self.send(text.replace("🎯", "🔍").replace("earnings — ⏰ ~1 saat kaldı", "anlık tarama")
-                        .replace("earnings — 🕐 erken pencere", "anlık tarama"), chat_id)
+        try:
+            summ, rows = await build_scan(self.cfg, self.client, t["coin"],
+                                          coin_dex(t["coin"]), quick=True)
+            cluster_list = await clusters.find_clusters(rows)
+            ev = {"symbol": t["symbol"]}
+            text = fmt.earnings_report(ev, "ondemand", summ, rows, self.cfg,
+                                       cluster_list=cluster_list)
+            await self.send(text, chat_id)
+        except Exception as e:
+            log.exception("scan hatası: %s", t["symbol"])
+            await self.send(f"❌ <b>{t['symbol']}</b> taranamadı: {e}", chat_id)
 
     async def _cmd_whale(self, args: list[str], chat_id: str) -> None:
         if not args or not args[0].startswith("0x"):

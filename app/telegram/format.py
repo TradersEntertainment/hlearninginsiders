@@ -281,14 +281,18 @@ def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg,
     from ..earnings.calendar import annotate  # döngüsel importu kır
 
     sym = event["symbol"]
-    ann = annotate([dict(event)])[0]
-    stage_txt = "⏰ ~1 saat kaldı" if stage == "t1" else "🕐 erken pencere"
-    head = (f"{ann['icon']} <b>{sym}</b> earnings — {stage_txt}\n"
-            f"📅 {event['date_et']} · <b>{ann['tsi']} TSİ</b> ({ann['when_txt']}"
-            + ("" if ann["exact"] else ", yaklaşık") + ")"
-            + (f" │ EPS beklentisi {event['eps_est']}" if event.get("eps_est") else ""))
-    if event.get("note"):
-        head += f"\n⚠️ {event['note']}"
+    if stage == "ondemand":
+        # Elle /scan ya da dashboard'dan anlık tarama — earnings zamanı yok
+        head = f"🔍 <b>{sym}</b> — anlık tarama"
+    else:
+        ann = annotate([dict(event)])[0]
+        stage_txt = "⏰ ~1 saat kaldı" if stage == "t1" else "🕐 erken pencere"
+        head = (f"{ann['icon']} <b>{sym}</b> earnings — {stage_txt}\n"
+                f"📅 {event['date_et']} · <b>{ann['tsi']} TSİ</b> ({ann['when_txt']}"
+                + ("" if ann["exact"] else ", yaklaşık") + ")"
+                + (f" │ EPS beklentisi {event['eps_est']}" if event.get("eps_est") else ""))
+        if event.get("note"):
+            head += f"\n⚠️ {event['note']}"
     if is_listed(sym):
         head += f"\n{PROPR_NOTE}"
     parts = [head, _summary_block(summ)]
