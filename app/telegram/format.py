@@ -479,6 +479,7 @@ def help_text() -> str:
         "/unwatch 0x… — watchlist'ten çıkar\n"
         "/ignore 0x… — adresi ele (MM/vault gibi davran, alert üretme)\n"
         "/unignore 0x… — elemeyi kaldır\n"
+        "/forget 0x… — adresin sicilini sıfırla + watchlist'ten çıkar\n"
         "/watchlist — sicilli adresler\n"
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"

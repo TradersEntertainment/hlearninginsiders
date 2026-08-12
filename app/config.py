@@ -75,6 +75,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                              "group": "Skorlama eşikleri", "desc": "Son fonlaması bundan yeni hesaplar şüpheli (+12 puan)"},
     "eval_move_threshold": {"type": "float", "label": "Sicil için min hareket (%)",
                             "group": "Skorlama eşikleri", "desc": "Earnings sonrası bu kadar hareket yoksa doğru/yanlış işlenmez"},
+    "eval_min_notional": {"type": "float", "label": "Sicil için min pozisyon ($)",
+                          "group": "Skorlama eşikleri", "desc": "Bundan küçük pozisyonlar sicile/watchlist'e girmez (küçük 'tutturdu' insider sayılmaz)"},
     "leaderboard_top": {"type": "int", "label": "Leaderboard tohumu (adres)",
                         "group": "Tarama & performans", "desc": "Havuza eklenen en büyük hesap sayısı"},
     "scan_max_candidates": {"type": "int", "label": "Tarama aday limiti",
@@ -199,6 +201,7 @@ class Config:
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))
         self.recent_deposit_hours = int(os.getenv("RECENT_DEPOSIT_HOURS", "72"))
         self.eval_move_threshold = float(os.getenv("EVAL_MOVE_THRESHOLD", "2.0"))  # %
+        self.eval_min_notional = float(os.getenv("EVAL_MIN_NOTIONAL", "300000"))
         self.leaderboard_top = int(os.getenv("LEADERBOARD_TOP", "500"))
         self.scan_max_candidates = int(os.getenv("SCAN_MAX_CANDIDATES", "600"))
         self.scan_concurrency = int(os.getenv("SCAN_CONCURRENCY", "8"))

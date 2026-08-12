@@ -147,6 +147,8 @@ class TelegramBot:
             await self._cmd_ignore(args, chat_id, on=True)
         elif cmd == "unignore":
             await self._cmd_ignore(args, chat_id, on=False)
+        elif cmd in ("forget", "unut"):
+            await self._cmd_forget(args, chat_id)
         elif cmd == "watchlist":
             await self._cmd_watchlist(chat_id)
         elif cmd in ("bildirimler", "notifications", "notif"):
@@ -256,6 +258,28 @@ class TelegramBot:
         if not pos_found:
             lines.append("Açık pozisyon yok (hisse dex'leri + ana dex bakıldı).")
         await self.send("\n".join(lines), chat_id)
+
+    async def _cmd_forget(self, args: list[str], chat_id: str) -> None:
+        """Adresin tüm sicilini sıfırla: hits/misses=0, watchlist'ten çıkar.
+        Yanlışlıkla (küçük pozisyonla) eklenmiş adresleri temizlemek için."""
+        if not args or not args[0].startswith("0x"):
+            await self.send("Kullanım: /forget 0xADRES — sicilini sıfırlar,"
+                            " watchlist'ten çıkarır", chat_id)
+            return
+        addr = args[0].lower()
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT hits, misses, watchlist FROM addresses WHERE address=?", (addr,))
+            row = await cur.fetchone()
+            await conn.execute(
+                "UPDATE addresses SET hits=0, misses=0, watchlist=0 WHERE address=?", (addr,))
+        if row:
+            await self.send(
+                f"🧹 {fmt.short(addr)} unutuldu — sicil sıfırlandı"
+                f" (önceki: {row['hits']}✓/{row['misses']}✗"
+                + (", watchlist'teydi" if row["watchlist"] else "") + ")", chat_id)
+        else:
+            await self.send(f"{fmt.short(addr)} zaten kayıtlı değil.", chat_id)
 
     async def _cmd_watch(self, args: list[str], chat_id: str, add: bool) -> None:
         if not args or not args[0].startswith("0x"):

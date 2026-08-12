@@ -141,10 +141,13 @@ class Collector:
                 f"SELECT address FROM addresses WHERE watchlist=1 AND address IN ({q})", addr_list)
             watch = {row["address"] for row in await cur.fetchall()}
 
-        # Watchlist adresi eşik altı işlem yapsa da alert (sicilli balina)
+        # Watchlist adresi işlem yaptığında, whale eşiğinden küçük olsa da alert —
+        # ama tozdan (min_fill * 4) büyük olsun ki $18K probe'lar spam yapmasın.
+        watch_floor = max(self.cfg.min_fill_notional * 4, 50_000)
         for r in rows:
             coin, _, addr, side, px, _, notional, _ = r
-            if addr in watch and (coin, addr, side, px, notional) not in alerts:
+            if addr in watch and notional >= watch_floor \
+                    and (coin, addr, side, px, notional) not in alerts:
                 alerts.append((coin, addr, side, px, notional))
 
         for coin, addr, side, px, notional in alerts:
