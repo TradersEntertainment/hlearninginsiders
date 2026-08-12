@@ -39,6 +39,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                         "desc": "Yeni büyük pozisyon bildirimi için gereken minimum skor (0 = hepsi)"},
     "notify_liqmap": {"type": "bool", "label": "🧲 Likidasyon duvarı (küme)", "group": "Bildirimler",
                       "desc": "Fiyata yakın bölgede TOPLAMDA büyük liq yığını birikince haber (cascade/stop avı mıknatısı)"},
+    "notify_track": {"type": "bool", "label": "👣 Pozisyon kapanış takibi", "group": "Bildirimler",
+                     "desc": "Earnings geçince 'takip edelim mi?' teklifi + takipteki balina pozunu kapadıkça haber"},
+    "track_step_pct": {"type": "float", "label": "Takip bildirim adımı (%)", "group": "Bildirimler",
+                       "desc": "Takipteki poz, toplam boyutun bu yüzdesi kadar değişmeden bildirim GELMEZ (spam önleyici)"},
+    "track_expire_days": {"type": "int", "label": "Takip süresi (gün)", "group": "Bildirimler",
+                          "desc": "Takip bu kadar gün sonra kendiliğinden biter (poz hâlâ açıksa haber verir)"},
     "min_fill_notional": {"type": "float", "label": "Min fill boyutu ($)",
                           "group": "Skorlama eşikleri", "desc": "Bu boyut üstü işlemler adres havuzuna yazılır"},
     "whale_alert_notional": {"type": "float", "label": "Anlık balina alert eşiği ($)",
@@ -117,6 +123,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                                "group": "Tarama & performans", "desc": "Arka plan tarayıcısı bu aralıkla sıradaki coini tarar"},
     "scan_stale_min": {"type": "int", "label": "Sayfa bayatlık eşiği (dk)",
                        "group": "Tarama & performans", "desc": "Coin sayfası açıldığında veri bundan eskiyse otomatik tarama başlar"},
+    "track_poll_sec": {"type": "int", "label": "Takip kontrol periyodu (sn)",
+                       "group": "Tarama & performans", "desc": "Takipteki balina pozlarının kontrol sıklığı"},
 }
 
 
@@ -168,6 +176,10 @@ class Config:
         self.digest_hour = int(os.getenv("DIGEST_HOUR", "9"))
         self.alert_min_score = int(os.getenv("ALERT_MIN_SCORE", "0"))
         self.notify_liqmap = True
+        self.notify_track = True
+        self.track_step_pct = float(os.getenv("TRACK_STEP_PCT", "10"))
+        self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
+        self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
 
         # Takvim kaynakları
         self.finnhub_api_key = os.getenv("FINNHUB_API_KEY", "")

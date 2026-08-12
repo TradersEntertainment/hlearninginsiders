@@ -191,8 +191,13 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             pts += 12
             reasons.append(f"pozisyon {age_txt} önce açıldı")
         elif age_h < 168:
-            pts += 6
+            pts += 8
             reasons.append(f"pozisyon {age_txt} önce açıldı")
+        elif age_h < 504:
+            # CBRS dersi: insider illa taze olmak zorunda değil — 2 hafta önceden
+            # çaktırmadan açıp bekleyebilir
+            pts += 6
+            reasons.append(f"sabırlı açılış ({age_txt} önce) — erken kuş")
 
     # Eski pozisyona earnings'ten hemen önce EKLEME yapmak da şüpheli
     last_add = pos.get("last_add_ts")
@@ -237,6 +242,10 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             and age_h <= cfg.combo_window_hours):
         pts += 15
         reasons.append("🎯 büyük + taze açılış (insider paterni)")
+    elif age_h is not None and ntl >= cfg.big_position_usd and age_h <= 504:
+        # büyük poz + sessizce erkenden açılmış (CBRS paterni: 2 hafta önce)
+        pts += 8
+        reasons.append("🦉 büyük + sabırlı açılış (erken kuş insider)")
 
     if oi_ntl and oi_ntl > 0:
         share = ntl / oi_ntl * 100

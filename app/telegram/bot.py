@@ -151,6 +151,12 @@ class TelegramBot:
             await self._cmd_forget(args, chat_id)
         elif cmd == "watchlist":
             await self._cmd_watchlist(chat_id)
+        elif cmd.startswith("takip_"):
+            await self._cmd_track_start(cmd, chat_id)
+        elif cmd in ("takipler", "takip", "trackers"):
+            await self._cmd_track_list(chat_id)
+        elif cmd.startswith("birak_") or cmd.startswith("bırak_"):
+            await self._cmd_track_stop(cmd, chat_id)
         elif cmd in ("bildirimler", "notifications", "notif"):
             await self._cmd_notifications(chat_id)
         elif cmd in ("settime", "saat"):
@@ -431,6 +437,82 @@ class TelegramBot:
                     "UPDATE addresses SET entity=NULL WHERE address=?", (addr,))
         await self.send(("🚫 Elendi (MM/vault muamelesi): " if on else "✅ Tekrar dahil: ")
                         + fmt.short(addr), chat_id)
+
+    async def _cmd_track_start(self, cmd: str, chat_id: str) -> None:
+        """Teklif mesajındaki /takip_N — balina çıkış takibini başlat."""
+        from ..radar.tracker import live_position
+        try:
+            offer_id = int(cmd.split("_", 1)[1])
+        except (ValueError, IndexError):
+            await self.send("Teklif mesajındaki /takip_N komutuna bas.", chat_id)
+            return
+        async with db() as conn:
+            cur = await conn.execute("SELECT * FROM track_offers WHERE id=?", (offer_id,))
+            row = await cur.fetchone()
+        if not row:
+            await self.send(f"#{offer_id} numaralı takip teklifi bulunamadı.", chat_id)
+            return
+        offer = dict(row)
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT id FROM trackers WHERE active=1 AND address=? AND coin=?",
+                (offer["address"], offer["coin"]))
+            existing = await cur.fetchone()
+        if existing:
+            await self.send(f"Bu balina zaten takipte (#{existing['id']})."
+                            " /takipler ile bakabilirsin.", chat_id)
+            return
+        try:
+            live = await live_position(self.client, offer["address"], offer["coin"])
+        except Exception as e:
+            await self.send(f"❌ Pozisyon okunamadı, tekrar dene: {e}", chat_id)
+            return
+        async with db() as conn:
+            await conn.execute("UPDATE track_offers SET used=1 WHERE id=?", (offer_id,))
+        if not live:
+            await self.send(
+                f"🚪 {fmt.alink(offer['address'])} <b>{offer['symbol']}</b> pozisyonunu"
+                " ZATEN KAPATMIŞ — takip edilecek bir şey kalmadı.", chat_id)
+            return
+        expires = now() + int(self.cfg.track_expire_days) * 86400
+        async with db() as conn:
+            cur = await conn.execute(
+                """INSERT INTO trackers(address,coin,symbol,side,base_szi,last_szi,
+                     base_notional,created_ts,expires_ts,active,last_check_ts)
+                   VALUES(?,?,?,?,?,?,?,?,?,1,?)""",
+                (offer["address"], offer["coin"], offer["symbol"], live["side"],
+                 abs(live["szi"]), abs(live["szi"]), live["notional"],
+                 now(), expires, now()))
+            tid = cur.lastrowid
+        await self.send(fmt.track_started(tid, offer["symbol"], offer["address"],
+                                          live, self.cfg), chat_id)
+
+    async def _cmd_track_list(self, chat_id: str) -> None:
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT * FROM trackers WHERE active=1 ORDER BY id DESC LIMIT 20")
+            rows = [dict(r) for r in await cur.fetchall()]
+        await self.send(fmt.track_list(rows), chat_id)
+
+    async def _cmd_track_stop(self, cmd: str, chat_id: str) -> None:
+        try:
+            tid = int(cmd.split("_", 1)[1])
+        except (ValueError, IndexError):
+            await self.send("Kullanım: /takipler listesindeki /birak_N komutuna bas.", chat_id)
+            return
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT * FROM trackers WHERE id=? AND active=1", (tid,))
+            row = await cur.fetchone()
+            if row:
+                await conn.execute(
+                    "UPDATE trackers SET active=0, end_note='elle bırakıldı' WHERE id=?",
+                    (tid,))
+        if row:
+            await self.send(f"👣 Takip #{tid} (<b>{row['symbol']}</b>"
+                            f" {fmt.short(row['address'])}) bırakıldı.", chat_id)
+        else:
+            await self.send(f"#{tid} numaralı aktif takip yok. /takipler ile listeye bak.", chat_id)
 
     async def _cmd_watchlist(self, chat_id: str) -> None:
         async with db() as conn:

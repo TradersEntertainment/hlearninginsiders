@@ -21,7 +21,7 @@ from .hl import universe as uni
 from .hl.client import HLClient
 from .hl.collector import Collector
 from .notify import Notifier, clear_digest_items, pending_digest_items
-from .radar import anomaly, autoscan, liqwatch, metrics, report
+from .radar import anomaly, autoscan, liqwatch, metrics, report, tracker
 from .telegram.bot import TelegramBot
 from .web.routes import router
 
@@ -120,9 +120,22 @@ async def due_loop(cfg, client, notifier):
         try:
             await check_due(cfg, client, notifier)
             await evaluator.evaluate_due(cfg, client, notifier)
+            # earnings saati geçtiyse "çıkışı takip edelim mi?" teklifi
+            await tracker.make_offers(cfg, client, notifier)
         except Exception:
             log.exception("due check hatası")
         await asyncio.sleep(cfg.due_check_sec)
+
+
+async def tracker_loop(cfg, client, notifier):
+    """Takipteki balina pozlarını düzenli kontrol et (adım/kapanış/yön değişimi)."""
+    await asyncio.sleep(90)
+    while True:
+        try:
+            await tracker.check_trackers(cfg, client, notifier)
+        except Exception:
+            log.exception("takip kontrol hatası")
+        await asyncio.sleep(cfg.track_poll_sec)
 
 
 async def anomaly_loop(cfg, notifier):
@@ -216,6 +229,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(supervised("anomaly", lambda: anomaly_loop(cfg, notifier))),
         asyncio.create_task(supervised("autoscan", lambda: autoscan.loop(cfg, client, notifier))),
         asyncio.create_task(supervised("liqwatch", lambda: liqwatch.loop(cfg, client, notifier))),
+        asyncio.create_task(supervised("tracker", lambda: tracker_loop(cfg, client, notifier))),
         asyncio.create_task(supervised("digest", lambda: digest_loop(cfg, notifier))),
         asyncio.create_task(supervised("collector", collector.run)),
     ]

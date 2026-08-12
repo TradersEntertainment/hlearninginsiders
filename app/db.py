@@ -86,6 +86,20 @@ CREATE TABLE IF NOT EXISTS address_wins(
   PRIMARY KEY(address, event_id)
 );
 CREATE INDEX IF NOT EXISTS idx_wins_addr ON address_wins(address);
+CREATE TABLE IF NOT EXISTS trackers(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  address TEXT, coin TEXT, symbol TEXT, side TEXT,
+  base_szi REAL,                   -- takip başındaki boyut (adet — fiyattan etkilenmez)
+  last_szi REAL,                   -- son bildirimdeki boyut
+  base_notional REAL,              -- takip başındaki $ (gösterim için)
+  created_ts INTEGER, expires_ts INTEGER,
+  active INTEGER DEFAULT 1, last_check_ts INTEGER, end_note TEXT
+);
+CREATE TABLE IF NOT EXISTS track_offers(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  address TEXT, coin TEXT, symbol TEXT, side TEXT, notional REAL,
+  created_ts INTEGER, used INTEGER DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS liq_watch(
   address TEXT, coin TEXT,
   side TEXT, notional REAL, liq_px REAL,
@@ -124,6 +138,7 @@ MIGRATIONS = [
     "ALTER TABLE addresses ADD COLUMN entity TEXT",
     "ALTER TABLE earnings_events ADD COLUMN move_pct REAL",
     "ALTER TABLE earnings_events ADD COLUMN result_note TEXT",
+    "ALTER TABLE earnings_events ADD COLUMN offer_sent INTEGER DEFAULT 0",
 ]
 
 

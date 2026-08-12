@@ -336,6 +336,132 @@ def whale_fill_alert(coin: str, addr: str, side: str, price: float,
     return "\n".join(lines)
 
 
+def _side_badge(side: str) -> str:
+    return "🔴SHORT" if side == "short" else "🟢LONG"
+
+
+def track_offer(symbol: str, offers: list[dict], already_closed: list[dict], cfg) -> str:
+    """Earnings geçti — "çıkışı takip edelim mi?" teklifi (tıklanabilir /takip_N)."""
+    lines = [f"👣 <b>{symbol} earnings geçti — balina çıkışını takip edelim mi?</b>",
+             f"Komuta bas, takip başlasın. Balina toplam pozunun <b>%{pct_num(cfg.track_step_pct)}</b>"
+             " kadarını her kapattığında haber veririm (her işlemi değil — spam yok)."
+             " Tam kapanış + yön değişimi ANINDA gelir.", ""]
+    for i, o in enumerate(offers, 1):
+        live = o.get("live")
+        if live:
+            size_txt = f"şu an <b>{usd(live['notional'])}</b>"
+            if abs(live["notional"] - (o.get("notional") or 0)) > (o.get("notional") or 0) * 0.1:
+                size_txt += f" (rapordaki: {usd(o.get('notional'))})"
+        else:
+            size_txt = f"rapordaki boyut <b>{usd(o.get('notional'))}</b>"
+        score = f" · skor {o['score']}" if o.get("score") else ""
+        lines.append(f"{i}. {_side_badge(o['side'])} {alink(o['address'])} — {size_txt}{score}")
+        lines.append(f"   → /takip_{o['offer_id']}")
+    if already_closed:
+        lines.append("")
+        for c in already_closed:
+            lines.append(f"🚪 {alink(c['address'])} zaten kapatmış"
+                         f" ({_side_badge(c['side'])} {usd(c.get('notional'))} idi)")
+    lines.append(f"\n⏳ Takip {int(cfg.track_expire_days)} gün sürer · /takipler ile yönet")
+    return "\n".join(lines)
+
+
+def pct_num(p: float) -> str:
+    """10.0 → '10', 7.5 → '7.5'"""
+    f = float(p)
+    return str(int(f)) if f == int(f) else f"{f:g}"
+
+
+def track_started(tid: int, symbol: str, address: str, live: dict, cfg) -> str:
+    return (f"👣 <b>TAKİP BAŞLADI</b> — {symbol} (#{tid})\n"
+            f"👤 {alink(address)} {_side_badge(live['side'])} <b>{usd(live['notional'])}</b>"
+            f" @ {px(live['entry_px'])}\n"
+            f"Bu boyut baz alındı — toplamın <b>%{pct_num(cfg.track_step_pct)}</b> kadarı"
+            " her kapandığında bildirim gelecek.\n"
+            "🚪 Tam kapanış ve 🔁 yön değişimi anında bildirilir.\n"
+            f"⏳ Süre: {int(cfg.track_expire_days)} gün · bırakmak için /birak_{tid}")
+
+
+def track_step(t: dict, live: dict, base: float, last: float, cur: float) -> str:
+    sym = t["symbol"]
+    step_pct = (cur - last) / base * 100  # negatif = kapattı
+    closed_total = (base - cur) / base * 100
+    if step_pct < 0:
+        head = f"✂️ <b>BALİNA KAPATIYOR</b> — {sym}"
+        act = f"Bu adımda toplamın <b>%{abs(step_pct):.0f}</b> kadarını kapattı"
+    else:
+        head = f"➕ <b>BALİNA EKLİYOR</b> — {sym}"
+        act = f"Bu adımda toplamın <b>%{step_pct:.0f}</b> kadarını EKLEDİ"
+    if closed_total > 0:
+        total_txt = f"başlangıçtan beri <b>%{closed_total:.0f}</b> kapandı"
+    else:
+        total_txt = f"poz başlangıca göre <b>%{100 - closed_total:.0f}</b> seviyesinde"
+    lines = [head,
+             f"👤 {alink(t['address'])} {_side_badge(t['side'])}",
+             f"{act} · {total_txt}",
+             f"Güncel: <b>{usd(live['notional'])}</b>"
+             f" (başlangıç {usd(t.get('base_notional'))})"]
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    return "\n".join(lines)
+
+
+def track_closed(t: dict, base: float, last: float) -> str:
+    sym = t["symbol"]
+    lines = [f"🚨🚪 <b>BALİNA TAMAMEN KAPATTI</b> — {sym}",
+             f"👤 {alink(t['address'])} {_side_badge(t['side'])}"
+             f" <b>{usd(t.get('base_notional'))}</b> pozisyonunu kapattı.",
+             f"Takip #{t['id']} sona erdi."]
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    return "\n".join(lines)
+
+
+def track_flip(t: dict, live: dict) -> str:
+    sym = t["symbol"]
+    lines = [f"🚨🔁 <b>BALİNA YÖN DEĞİŞTİRDİ</b> — {sym}",
+             f"👤 {alink(t['address'])} {_side_badge(t['side'])} →"
+             f" {_side_badge(live['side'])} <b>{usd(live['notional'])}</b>"
+             f" @ {px(live['entry_px'])}",
+             f"Takip yeni yönle devam ediyor (#{t['id']})."]
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    return "\n".join(lines)
+
+
+def track_expired(t: dict, live: dict, base: float, offer_id: int) -> str:
+    closed_total = (base - abs(live["szi"])) / base * 100 if base > 0 else 0
+    prog = (f" · başlangıçtan beri %{closed_total:.0f} kapanmış"
+            if closed_total > 1 else "")
+    return (f"⏰ <b>Takip süresi doldu</b> — {t['symbol']} (#{t['id']})\n"
+            f"👤 {alink(t['address'])} pozu hâlâ açık:"
+            f" {_side_badge(live['side'])} <b>{usd(live['notional'])}</b>{prog}\n"
+            f"Devam etmek istersen: /takip_{offer_id}")
+
+
+def track_list(rows: list[dict]) -> str:
+    if not rows:
+        return ("👣 Aktif takip yok.\n"
+                "Earnings geçince gelen teklif mesajındaki /takip_N komutuyla"
+                " balina çıkışı takibi başlatabilirsin.")
+    lines = ["👣 <b>Aktif takipler:</b>"]
+    ts = now()
+    for r in rows:
+        base = float(r.get("base_szi") or 0)
+        last = float(r.get("last_szi") if r.get("last_szi") is not None else base)
+        closed_total = (base - last) / base * 100 if base > 0 else 0
+        left_d = max(0, (int(r.get("expires_ts") or 0) - ts) // 86400)
+        prog = (f"%{closed_total:.0f} kapandı" if closed_total > 1
+                else ("büyüttü" if closed_total < -1 else "değişim yok"))
+        chk = f" · son kontrol {tr_time(r['last_check_ts'])}" if r.get("last_check_ts") else ""
+        lines.append(f"  #{r['id']} <b>{r['symbol']}</b> {_side_badge(r['side'])}"
+                     f" {alink(r['address'])} — {prog}"
+                     f" (başlangıç {usd(r.get('base_notional'))})"
+                     f" · ⏳{left_d}g{chk} · /birak_{r['id']}")
+    lines.append("\n<i>Her %X adımında bildirim gelir; tam kapanış anında bildirilir.</i>")
+    return "\n".join(lines)
+
+
 def eval_report(event: dict, move_pct: float | None, results: list[dict],
                 closed: list[str], promoted: list[str], cfg) -> str:
     sym = event["symbol"]
@@ -424,7 +550,7 @@ DIGEST_LABELS = {
     "whale_fill": "🐋 büyük işlem", "new_big": "🆕 yeni büyük pozisyon",
     "anomaly": "📡 anomali", "liq": "💥 likidasyon", "liqmap": "🧲 liq duvarı",
     "earnings": "📊 earnings",
-    "eval": "🏁 sonuç",
+    "eval": "🏁 sonuç", "track": "👣 pozisyon takibi",
 }
 
 
@@ -488,6 +614,7 @@ def help_text() -> str:
         "/unignore 0x… — elemeyi kaldır\n"
         "/forget 0x… — adresin sicilini sıfırla + watchlist'ten çıkar\n"
         "/watchlist — sicilli adresler\n"
+        "/takipler — aktif pozisyon takipleri (earnings sonrası balina çıkışı)\n"
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"
         "/bildirimler — bildirim ayarları + son gönderilenler\n"
