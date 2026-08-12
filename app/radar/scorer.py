@@ -311,11 +311,16 @@ async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
                                           p.get("n_open_positions"))
             if entity:
                 async with db() as conn:
+                    # MM/vault olarak etiketle VE varsa yanlış birikmiş sicilini sil
                     await conn.execute(
                         "INSERT INTO addresses(address, first_seen, entity) VALUES(?,?,?)"
-                        " ON CONFLICT(address) DO UPDATE SET entity=excluded.entity",
+                        " ON CONFLICT(address) DO UPDATE SET entity=excluded.entity,"
+                        " hits=0, misses=0, watchlist=0",
                         (p["address"], now(), entity))
-                log.info("otomatik hesap etiketlendi: %s → %s", p["address"], entity)
+                    await conn.execute(
+                        "DELETE FROM address_wins WHERE address=?", (p["address"],))
+                log.info("otomatik hesap etiketlendi: %s → %s (sicil temizlendi)",
+                         p["address"], entity)
         if entity:
             p["entity"] = entity
             p["score"] = 0

@@ -55,9 +55,22 @@ async def _evaluate(cfg: Config, client: HLClient, notifier, ev: dict, est: int)
     if before and after and before["mark_px"]:
         move_pct = (after["mark_px"] - before["mark_px"]) / before["mark_px"] * 100
 
-    # Sadece ANLAMLI pozisyonlar sicile/watchlist'e girer — $27K short "tutturdu"
-    # diye insider sayılmasın. Küçük pozisyonlar tamamen elenir.
-    qual = [s for s in snaps if (s.get("notional") or 0) >= cfg.eval_min_notional]
+    # Market maker / vault'lar asla sicile girmez (insider değil)
+    entity_addrs: set[str] = set()
+    if snaps:
+        addrs = list({s["address"] for s in snaps})
+        q = ",".join("?" * len(addrs))
+        async with db() as conn:
+            cur = await conn.execute(
+                f"SELECT address FROM addresses WHERE COALESCE(entity,'')<>''"
+                f" AND address IN ({q})", addrs)
+            entity_addrs = {r["address"] for r in await cur.fetchall()}
+
+    # Sadece ANLAMLI + insan pozisyonları sicile/watchlist'e girer. $27K short
+    # "tutturdu" diye insider sayılmaz; MM/vault hiç sayılmaz.
+    qual = [s for s in snaps
+            if (s.get("notional") or 0) >= cfg.eval_min_notional
+            and s["address"] not in entity_addrs]
 
     results = []
     promoted = []

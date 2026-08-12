@@ -13,7 +13,7 @@ from .db import db, kv_get, kv_set, now
 log = logging.getLogger("recompute")
 
 # Bu sürümü artırırsan migration bir kez daha çalışır
-RECOMPUTE_VERSION = 2
+RECOMPUTE_VERSION = 3
 
 
 async def recompute_records(cfg: Config, force: bool = False) -> dict:
@@ -41,10 +41,12 @@ async def recompute_records(cfg: Config, force: bool = False) -> dict:
                 continue
             n_events += 1
             direction = "up" if move > 0 else "down"
+            # MM/vault etiketli adresleri sicile hiç dahil etme
             cur = await conn.execute(
-                """SELECT address, side, notional FROM position_snapshots
-                   WHERE event_id=? AND phase IN ('T-1h','pre')
-                     AND notional >= ?""",
+                """SELECT s.address, s.side, s.notional FROM position_snapshots s
+                   LEFT JOIN addresses a ON a.address = s.address
+                   WHERE s.event_id=? AND s.phase IN ('T-1h','pre')
+                     AND s.notional >= ? AND COALESCE(a.entity,'')=''""",
                 (ev["id"], cfg.eval_min_notional))
             for s in await cur.fetchall():
                 hit = (s["side"] == "long" and direction == "up") or \
