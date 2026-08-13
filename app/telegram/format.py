@@ -340,6 +340,36 @@ def _side_badge(side: str) -> str:
     return "🔴SHORT" if side == "short" else "🟢LONG"
 
 
+def lowvol_alert(p: dict) -> str:
+    """Sessiz su devi: düşük hacimli hissede absürt boyutlu yeni pozisyon."""
+    sym = p.get("symbol") or p["coin"].split(":")[-1]
+    lines = [f"🐘 <b>SESSİZ SUDA DEV POZİSYON</b> — {sym}",
+             "Düşük hacimli hissede absürt boyutlu YENİ pozisyon:",
+             f"{_side_badge(p['side'])} <b>{usd(p['notional'])}</b>"
+             f" @ {px(p.get('entry_px'))} · açılış {age_str(p.get('opened_ts'))} önce",
+             f"👤 {alink(p['address'])}"]
+    facts = []
+    if p.get("oi_share") is not None:
+        facts.append(f"OI payı <b>%{p['oi_share']:.0f}</b>")
+    if p.get("day_volume") is not None:
+        facts.append(f"günlük hacim {usd(p['day_volume'])}")
+    if p.get("vol_ratio"):
+        r = p["vol_ratio"]
+        facts.append(f"poz ≈ hacmin <b>{'50+' if r > 50 else f'{r:.1f}'} katı</b>")
+    if facts:
+        lines.append("📊 " + " · ".join(facts))
+    if p.get("score"):
+        lines.append(f"🎯 Şüphe skoru: {score_badge(p['score'])}")
+    hits, misses = p.get("hits") or 0, p.get("misses") or 0
+    if hits or misses:
+        lines.append(f"🎯 Sicil: {hits} doğru / {misses} yanlış")
+    lines.append("<i>Bu boyut bu hacimde kolay kapanmaz — sahibi uzun süre haklı"
+                 " çıkacağından emin görünüyor.</i>")
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    return "\n".join(lines)
+
+
 def track_offer(symbol: str, offers: list[dict], already_closed: list[dict], cfg) -> str:
     """Earnings geçti — "çıkışı takip edelim mi?" teklifi (tıklanabilir /takip_N)."""
     lines = [f"👣 <b>{symbol} earnings geçti — balina çıkışını takip edelim mi?</b>",
@@ -550,7 +580,7 @@ DIGEST_LABELS = {
     "whale_fill": "🐋 büyük işlem", "new_big": "🆕 yeni büyük pozisyon",
     "anomaly": "📡 anomali", "liq": "💥 likidasyon", "liqmap": "🧲 liq duvarı",
     "earnings": "📊 earnings",
-    "eval": "🏁 sonuç", "track": "👣 pozisyon takibi",
+    "eval": "🏁 sonuç", "track": "👣 pozisyon takibi", "lowvol": "🐘 sessiz su devi",
 }
 
 

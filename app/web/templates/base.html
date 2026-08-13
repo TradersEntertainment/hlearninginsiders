@@ -66,6 +66,15 @@ background:rgba(23,19,34,.55);font-size:12.5px;line-height:1.6}
 background:rgba(167,158,196,.12)}
 .ratio .rl{background:var(--green)}
 .ratio .rs{background:var(--red)}
+/* sessiz sular: OI payı çubuğu */
+.oibar{position:relative;min-width:92px;height:18px;border-radius:6px;overflow:hidden;
+background:rgba(255,255,255,.07)}
+.oibar .oifill{position:absolute;inset:0 auto 0 0;border-radius:6px;opacity:.4}
+.oifill.longbg{background:var(--green)}
+.oifill.shortbg{background:var(--red)}
+.oibar span{position:relative;z-index:1;display:block;text-align:center;
+font-size:11px;line-height:18px}
+.dimrow{opacity:.62}
 .verdict{font-weight:800;margin-top:6px}
 .pbadge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:10.5px;
 font-weight:800;background:rgba(139,233,184,.16);color:var(--green);letter-spacing:.02em;
@@ -246,6 +255,8 @@ footer{padding:18px 22px;color:#6f6590;font-size:12px}
     <input type="text" name="q" placeholder="ticker ara: SNDK" autofocus>
     <button type="submit">Ara</button>
   </form>
+  <a href="/devler{{ k }}" title="Düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri">🐘 sessiz sular</a>
+  <a href="/gecmis{{ k }}" title="Geçmiş bilançolar + en iyi biliciler">🗂 geçmiş</a>
   <a href="/settings{{ k }}" title="Ayarlar">⚙️ ayarlar</a>
   {% if has_pw and not is_admin %}<a href="/login{{ k }}" title="Ayarları değiştirmek için giriş">🔐 giriş</a>{% endif %}
 </header>

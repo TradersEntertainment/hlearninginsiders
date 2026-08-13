@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}🐘 Sessiz sular · HL Radar{% endblock %}
+{% block content %}
+<div class="panel">
+  <details class="guide">
+    <summary>❓ Bu sekme ne işe yarıyor?</summary>
+    <div class="body">
+      <p>🐘 <b>Kısaca:</b> Kimsenin trade etmediği, günlük hacmi düşük bir hissede birinin
+      milyonlarca dolarlık pozisyon tutması tuhaftır: o boyut o hacimde <i>kolay kapanmaz</i>.
+      Yani sahibi aylarca haklı çıkacağından emin — ya çok inatçı, ya bir şey biliyor.
+      Burada iki tür "dev" listelenir:</p>
+      <div class="gloss">
+        <b>Sessiz su</b><span>günlük işlem hacmi {{ max_vol|usd }}'nin altındaki hisse — burada büyük poz dikkat çeker</span>
+        <b>OI hakimi</b><span>tüm açık pozisyonların (OI) en az %{{ '%g'|format(min_share) }}'ini TEK BAŞINA tutan cüzdan — hacim yüksek olsa bile ilginç</span>
+        <b>Hacim katı</b><span>pozisyon / günlük hacim. 3x demek: bu poz kapanmak istese 3 günlük TÜM hacmi tek başına yutması gerekir</span>
+        <b>🤖 satırlar</b><span>market maker / vault — piyasa yapıcı envanteri, insider sayılmaz; bilgi için altta ayrı listelenir</span>
+      </div>
+      <p style="margin-bottom:0">📲 <b>Telegram:</b> buradaki her şey bildirim ÜRETMEZ — sadece
+      {{ alert_min|usd }}+ boyutlu <u>yeni açılan</u> devler telefona düşer (Ayarlar → Sessiz su radarı).</p>
+    </div>
+  </details>
+</div>
+
+<div class="panel">
+  <h2>🐘 Sessiz sularda devler <span class="dim" style="text-transform:none">· düşük hacimli hisselerdeki büyük pozisyonlar + OI hakimleri</span></h2>
+  <p class="sub">Hacim {{ max_vol|usd }}/gün altı VEYA tek başına OI'nin %{{ '%g'|format(min_share) }}+'i ·
+  {{ min_ntl|usd }} üstü pozisyonlar · OI payına göre sıralı</p>
+  {% if humans %}
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Yön</th><th>Boyut</th>
+        <th title="Bu pozisyon tüm açık pozisyonların yüzde kaçı">OI payı</th>
+        <th title="Hissenin son 24 saatlik işlem hacmi">24h hacim</th>
+        <th title="Pozisyon, günlük hacmin kaç katı — yüksekse çıkış çok zor">Hacim katı</th>
+        <th>Giriş</th><th>Fiyat</th><th title="Pozisyon ne zaman açıldı">Açılış</th><th>Skor</th></tr>
+    {% for p in humans %}
+    <tr>
+      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
+        {% if p.symbol in propr %}<span class="pbadge" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {% if p.low_volume %}<span class="dim" title="günlük hacim eşiğin altında">🤫</span>{% endif %}</td>
+      <td class="l">{{ m.addr(p.address, k) }}{% if p.watchlist %} ⭐{% endif %}
+        {% if p.hits %}<span class="dim">{{ p.hits }}✓/{{ p.misses }}✗</span>{% endif %}</td>
+      <td class="{{ p.side }}"><b>{{ 'LONG' if p.side=='long' else 'SHORT' }}</b></td>
+      <td><b>{{ p.notional|usd }}</b></td>
+      <td>{% if p.oi_share is not none %}
+        <div class="oibar" title="OI'nin %{{ '%.0f'|format(p.oi_share) }}'i">
+          <div class="oifill {{ p.side }}bg" style="width:{{ '%.0f'|format(p.oi_share) }}%"></div>
+          <span><b>%{{ '%.0f'|format(p.oi_share) }}</b></span>
+        </div>
+      {% else %}<span class="dim">?</span>{% endif %}</td>
+      <td>{{ p.day_volume|usd if p.day_volume is not none else '?' }}</td>
+      <td>{% if p.vol_ratio %}<b class="{{ 'short' if p.vol_ratio >= 1 else '' }}">
+        {{ '50+' if p.vol_ratio > 50 else '%.1f'|format(p.vol_ratio) }}x</b>
+      {% else %}<span class="dim">-</span>{% endif %}</td>
+      <td>{{ p.entry_px|px }}</td>
+      <td>{{ p.mark|px }}</td>
+      <td class="dim">{{ p.opened_ts|age }}</td>
+      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Şu an kriterlere uyan insan pozisyonu yok. Oto-tarayıcı evreni dolaştıkça
+  burası dolar — eşikleri Ayarlar → Sessiz su radarı'ndan gevşetebilirsin.</p>
+  {% endif %}
+</div>
+
+{% if bots %}
+<div class="panel">
+  <h2>🤖 Market maker / vault envanteri <span class="dim" style="text-transform:none">· insider DEĞİL, bilgi amaçlı</span></h2>
+  <p class="sub">Piyasa yapıcılar düşük hacimli hisselerde ister istemez büyük envanter taşır —
+  skorlanmaz, bildirilmez, sicile girmez. Yine de "OI'nin kalanı kimde?" sorusunun cevabı burada.</p>
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Tür</th><th>Yön</th><th>Boyut</th>
+        <th>OI payı</th><th>24h hacim</th></tr>
+    {% for p in bots[:20] %}
+    <tr class="dimrow">
+      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}">{{ p.symbol }}</a></td>
+      <td class="l">{{ m.addr(p.address, k) }}</td>
+      <td>{{ '🤖 MM' if p.entity=='mm' else ('🏦 vault' if p.entity=='vault' else '🚫 elendi') }}</td>
+      <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
+      <td>{{ p.notional|usd }}</td>
+      <td>{% if p.oi_share is not none %}%{{ '%.0f'|format(p.oi_share) }}{% else %}?{% endif %}</td>
+      <td>{{ p.day_volume|usd if p.day_volume is not none else '?' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

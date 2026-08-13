@@ -45,6 +45,16 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "desc": "Takipteki poz, toplam boyutun bu yüzdesi kadar değişmeden bildirim GELMEZ (spam önleyici)"},
     "track_expire_days": {"type": "int", "label": "Takip süresi (gün)", "group": "Bildirimler",
                           "desc": "Takip bu kadar gün sonra kendiliğinden biter (poz hâlâ açıksa haber verir)"},
+    "notify_lowvol": {"type": "bool", "label": "🐘 Sessiz su devi", "group": "Bildirimler",
+                      "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
+    "lowvol_max_day_volume": {"type": "float", "label": "Düşük hacim eşiği ($/gün)", "group": "Sessiz su radarı",
+                              "desc": "Günlük hacmi bunun altındaki hisseler 'sessiz su' sayılır"},
+    "lowvol_min_oi_share": {"type": "float", "label": "OI payı eşiği (%)", "group": "Sessiz su radarı",
+                            "desc": "Pozisyon OI'nin bu yüzdesini tutuyorsa hacme bakılmaksızın listeye girer (tek başına piyasanın yarısı vb.)"},
+    "lowvol_min_notional": {"type": "float", "label": "Listeye giriş tabanı ($)", "group": "Sessiz su radarı",
+                            "desc": "Sekmede gösterilecek en küçük pozisyon — toz görünmesin"},
+    "lowvol_alert_min_usd": {"type": "float", "label": "Telegram alarm tabanı ($)", "group": "Sessiz su radarı",
+                             "desc": "Telegram'a SADECE gerçekten absürt boyutlar düşer — bunun altı sitede görünür ama bildirim üretmez"},
     "min_fill_notional": {"type": "float", "label": "Min fill boyutu ($)",
                           "group": "Skorlama eşikleri", "desc": "Bu boyut üstü işlemler adres havuzuna yazılır"},
     "whale_alert_notional": {"type": "float", "label": "Anlık balina alert eşiği ($)",
@@ -180,6 +190,11 @@ class Config:
         self.track_step_pct = float(os.getenv("TRACK_STEP_PCT", "10"))
         self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
+        self.notify_lowvol = True
+        self.lowvol_max_day_volume = float(os.getenv("LOWVOL_MAX_DAY_VOLUME", "5000000"))
+        self.lowvol_min_oi_share = float(os.getenv("LOWVOL_MIN_OI_SHARE", "20"))
+        self.lowvol_min_notional = float(os.getenv("LOWVOL_MIN_NOTIONAL", "250000"))
+        self.lowvol_alert_min_usd = float(os.getenv("LOWVOL_ALERT_MIN_USD", "2500000"))
 
         # Takvim kaynakları
         self.finnhub_api_key = os.getenv("FINNHUB_API_KEY", "")

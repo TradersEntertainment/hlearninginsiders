@@ -15,7 +15,7 @@ from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
-from ..radar import autoscan, clusters, metrics
+from ..radar import autoscan, clusters, lowvol, metrics
 
 TR = ZoneInfo("Europe/Istanbul")
 
@@ -708,6 +708,24 @@ async def history_page(request: Request):
                ORDER BY hits DESC, misses ASC LIMIT 30""")
         winners = [dict(r) for r in await cur.fetchall()]
     return _render(request, "history.html", {"rows": rows, "winners": winners})
+
+
+@router.get("/devler")
+async def lowvol_page(request: Request):
+    """Sessiz sular: düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    rows = await lowvol.dominants(cfg)
+    humans = [p for p in rows if not p["entity"]]
+    bots = [p for p in rows if p["entity"]]
+    return _render(request, "devler.html", {
+        "humans": humans, "bots": bots,
+        "max_vol": cfg.lowvol_max_day_volume,
+        "min_share": cfg.lowvol_min_oi_share,
+        "min_ntl": cfg.lowvol_min_notional,
+        "alert_min": cfg.lowvol_alert_min_usd,
+        "propr": {p["symbol"] for p in rows if propr_listed(p["symbol"])},
+    })
 
 
 @router.get("/settings")
