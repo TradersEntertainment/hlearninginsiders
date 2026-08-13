@@ -12,7 +12,7 @@
 {% endif %}
 <div class="panel">
   <h2>{{ symbol }} <span class="dim">({{ coin }})</span>
-    {% if propr %}<span class="badge" style="background:rgba(139,233,184,.15);color:var(--green)"
+    {% if propr %}<span class="badge" style="background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)"
       title="propr.xyz'de listeli — trade ettiğin platformda işlem açabilirsin">✅ PROPR'da listeli</span>{% endif %}</h2>
   <span class="stat">Mark <b>{{ summ.mark|px }}</b>
     {% if summ.px_change_pct is not none %}<span class="{{ 'long' if summ.px_change_pct>0 else 'short' }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</span>{% endif %}</span>
@@ -57,24 +57,24 @@
        role="img" aria-label="Pozisyonların entry fiyat haritası">
     {% for t in chart.ticks %}
     <line x1="{{ chart.left }}" x2="{{ chart.W - 16 }}" y1="{{ t.y }}" y2="{{ t.y }}"
-          stroke="rgba(167,158,196,.13)"/>
+          stroke="var(--dim)" stroke-opacity=".15"/>
     <text x="{{ chart.left - 8 }}" y="{{ t.y + 4 }}" text-anchor="end"
-          font-size="11" fill="#a79ec4">{{ t.v }}</text>
+          font-size="11" fill="var(--dim)">{{ t.v }}</text>
     {% endfor %}
     <line x1="{{ chart.cx }}" x2="{{ chart.cx }}" y1="10" y2="{{ chart.H - 18 }}"
-          stroke="rgba(167,158,196,.28)"/>
+          stroke="var(--dim)" stroke-opacity=".3"/>
     {% for b in chart.bars %}
     <rect x="{{ b.x }}" y="{{ b.y - 3 }}" width="{{ b.w }}" height="6" rx="3"
           fill="{{ chart.c_short if b.side == 'short' else chart.c_long }}"
-          stroke="#282138" stroke-width="1"><title>{{ b.tip }}</title></rect>
+          stroke="var(--card-stroke)" stroke-width="1"><title>{{ b.tip }}</title></rect>
     {% endfor %}
     <line x1="{{ chart.left }}" x2="{{ chart.W - 16 }}" y1="{{ chart.mark_y }}" y2="{{ chart.mark_y }}"
-          stroke="#cbbfef" stroke-width="1.5" stroke-dasharray="6 4"/>
+          stroke="var(--head)" stroke-width="1.5" stroke-dasharray="6 4"/>
     <text x="{{ chart.W - 18 }}" y="{{ chart.mark_y - 6 }}" text-anchor="end"
-          font-size="11" font-weight="700" fill="#cbbfef">şimdi {{ chart.mark_txt }}</text>
+          font-size="11" font-weight="700" fill="var(--head)">şimdi {{ chart.mark_txt }}</text>
     {% for l in chart.labels %}
     <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="{{ l.anchor }}"
-          font-size="11" fill="#cbbfef">{{ l.text }}</text>
+          font-size="11" fill="var(--head)">{{ l.text }}</text>
     {% endfor %}
   </svg>
 </div>
@@ -93,21 +93,21 @@
        role="img" aria-label="Likidasyon fiyat haritası">
     {% for t in liqchart.ticks %}
     <line x1="{{ liqchart.left }}" x2="{{ liqchart.W - 16 }}" y1="{{ t.y }}" y2="{{ t.y }}"
-          stroke="rgba(167,158,196,.13)"/>
+          stroke="var(--dim)" stroke-opacity=".15"/>
     <text x="{{ liqchart.left - 8 }}" y="{{ t.y + 4 }}" text-anchor="end"
-          font-size="11" fill="#a79ec4">{{ t.v }}</text>
+          font-size="11" fill="var(--dim)">{{ t.v }}</text>
     {% endfor %}
     {% for b in liqchart.bars %}
     <rect x="{{ liqchart.left }}" y="{{ b.y - 3 }}" width="{{ b.w }}" height="6" rx="3"
           fill="{{ liqchart.c_long if b.side == 'long' else liqchart.c_short }}"
-          stroke="#282138" stroke-width="1"><title>{{ b.tip }}</title></rect>
+          stroke="var(--card-stroke)" stroke-width="1"><title>{{ b.tip }}</title></rect>
     {% endfor %}
     <line x1="{{ liqchart.left }}" x2="{{ liqchart.W - 16 }}" y1="{{ liqchart.mark_y }}" y2="{{ liqchart.mark_y }}"
-          stroke="#cbbfef" stroke-width="1.5" stroke-dasharray="6 4"/>
+          stroke="var(--head)" stroke-width="1.5" stroke-dasharray="6 4"/>
     <text x="{{ liqchart.W - 18 }}" y="{{ liqchart.mark_y - 6 }}" text-anchor="end"
-          font-size="11" font-weight="700" fill="#cbbfef">şimdi {{ liqchart.mark_txt }}</text>
+          font-size="11" font-weight="700" fill="var(--head)">şimdi {{ liqchart.mark_txt }}</text>
     {% for l in liqchart.labels %}
-    <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="start" font-size="11" fill="#cbbfef">{{ l.text }}</text>
+    <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="start" font-size="11" fill="var(--head)">{{ l.text }}</text>
     {% endfor %}
   </svg>
 </div>

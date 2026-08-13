@@ -80,10 +80,12 @@ async def favicon_ico():
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
-CHART_SHORT = "#e5484d"   # validator'dan geçen çift (deutan ΔE 8.6)
-CHART_LONG = "#26997b"
-LIQ_LONG = "#c47216"      # long liq (fiyatın altında) — validator'dan geçen çift
-LIQ_SHORT = "#2b8cbe"     # short liq (fiyatın üstünde)
+# Grafik renklerinin tek kaynağı base.html :root değişkenleri (tema ile uyumlu).
+# Gerçek hex'ler orada: chart #e5484d/#26997b, liq #c47216/#2b8cbe (validator'dan geçen çiftler)
+CHART_SHORT = "var(--chart-short)"
+CHART_LONG = "var(--chart-long)"
+LIQ_LONG = "var(--liq-long)"      # long liq (fiyatın altında)
+LIQ_SHORT = "var(--liq-short)"    # short liq (fiyatın üstünde)
 
 
 def _liq_chart(rows: list[dict], mark: float | None, max_dist_pct: float) -> dict | None:

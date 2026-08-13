@@ -43,7 +43,8 @@
         <b>🐘 Sessiz sular</b><span>üstteki sekme: düşük hacimli hisselerde tek başına OI'nin çoğunu tutan devler — kimse trade etmezken milyonluk poz tutan biri ya inatçıdır ya bir şey biliyordur</span>
       </div>
       <p style="margin-bottom:0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
-      tablolardaki hisse/cüzdan linklerine tıkla. Bot her şeyi Telegram'a da atar.</p>
+      tablolardaki hisse/cüzdan linklerine tıkla. Bot her şeyi Telegram'a da atar.
+      🎨 Sağ üstteki 🌙/🌊 ile tema seçebilirsin — seçimin bu tarayıcıda hatırlanır.</p>
     </div>
   </details>
 </div>
@@ -90,8 +91,8 @@
     <a href="/?liqmin={{ v|int }}{{ '&key=' + k[5:] if k else '' }}" class="{{ 'on' if liqmin == v else '' }}">{{ lbl }}</a>
     {% endfor %}
     <span class="dim" style="font-size:12px;align-self:center">
-      <i class="sw" style="background:#c47216;display:inline-block;width:10px;height:10px;border-radius:2px"></i> long liq — fiyat <b>düşerse</b> patlar ·
-      <i class="sw" style="background:#2b8cbe;display:inline-block;width:10px;height:10px;border-radius:2px"></i> short liq — fiyat <b>çıkarsa</b> patlar</span>
+      <i class="sw" style="background:var(--liq-long);display:inline-block;width:10px;height:10px;border-radius:2px"></i> long liq — fiyat <b>düşerse</b> patlar ·
+      <i class="sw" style="background:var(--liq-short);display:inline-block;width:10px;height:10px;border-radius:2px"></i> short liq — fiyat <b>çıkarsa</b> patlar</span>
   </div>
   {% if liq_walls %}
   <div class="walls">🧲 <b>Duvarlar:</b>
