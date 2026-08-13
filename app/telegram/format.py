@@ -340,6 +340,49 @@ def _side_badge(side: str) -> str:
     return "🔴SHORT" if side == "short" else "🟢LONG"
 
 
+def wall_alert(w: dict, day_volume: float | None) -> str:
+    """Emir defterine konan dev bekleyen emir duvarı (SPCX $202M tarzı)."""
+    sym = w.get("symbol") or (w.get("coin") or "").split(":")[-1]
+    if w["side"] == "ask":
+        where = "fiyatın hemen <b>ÜSTÜNDE</b> SATIŞ duvarı (short/satmak isteyen)"
+    else:
+        where = "fiyatın hemen <b>ALTINDA</b> ALIŞ duvarı (long/almak isteyen)"
+    lines = [f"🧱 <b>DEV EMİR DUVARI</b> — {sym}",
+             where,
+             f"<b>{usd(w['notional'])}</b> · {px(w['px_lo'])}–{px(w['px_hi'])} aralığı"
+             f" (fiyata %{w['dist_pct']:.1f})"]
+    facts = []
+    opp = w.get("opp_notional") or 0
+    if opp > 0 and w["notional"] / opp >= 2:
+        r = w["notional"] / opp
+        facts.append(f"karşı taraf derinliğinin <b>{'50+' if r > 50 else f'{r:.1f}'} katı</b>")
+    if day_volume:
+        facts.append(f"24h hacmin %{w['notional'] / day_volume * 100:.0f}'i kadar")
+    if facts:
+        lines.append("📊 " + " · ".join(facts))
+    addr = w.get("address")
+    if addr:
+        lines.append(f'👤 Sahibi (emirler eşleşti): <a href="https://hypurrscan.io/address/'
+                     f'{addr}#orders">{short(addr)}</a>')
+    else:
+        lines.append("👤 Sahibi bilinmiyor — defter anonim, tanıdığımız balinalarla eşleşmedi")
+    lines.append("<i>Duvar çekilirse (spoof) ya da dolarsa ayrıca haber veririm.</i>")
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    return "\n".join(lines)
+
+
+def wall_gone(w: dict) -> str:
+    sym = w.get("symbol") or (w.get("coin") or "").split(":")[-1]
+    side_txt = "satış" if w["side"] == "ask" else "alış"
+    life = age_str(w.get("first_ts"))
+    return (f"🧱❌ <b>Duvar kalktı</b> — {sym}\n"
+            f"{life} önce beliren {usd(w.get('peak_notional'))} {side_txt} duvarı artık"
+            " defterde yok.\n"
+            "<i>Ya çekildi (spoof/fikir değişimi) ya da doldu — fiyat artık o yönde"
+            " daha rahat hareket edebilir.</i>")
+
+
 def lowvol_alert(p: dict) -> str:
     """Sessiz su devi: düşük hacimli hissede absürt boyutlu yeni pozisyon."""
     sym = p.get("symbol") or p["coin"].split(":")[-1]
@@ -581,6 +624,7 @@ DIGEST_LABELS = {
     "anomaly": "📡 anomali", "liq": "💥 likidasyon", "liqmap": "🧲 liq duvarı",
     "earnings": "📊 earnings",
     "eval": "🏁 sonuç", "track": "👣 pozisyon takibi", "lowvol": "🐘 sessiz su devi",
+    "wall": "🧱 emir duvarı",
 }
 
 

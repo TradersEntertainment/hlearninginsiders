@@ -78,6 +78,17 @@ class HLClient:
     async def recent_trades(self, coin: str):
         return await self.info({"type": "recentTrades", "coin": coin})
 
+    async def l2_book(self, coin: str):
+        """Emir defteri (anonim toplam derinlik) — levels: [bids, asks]."""
+        return await self.info({"type": "l2Book", "coin": coin})
+
+    async def frontend_open_orders(self, user: str, dex: str = ""):
+        """Adresin açık (bekleyen) emirleri — duvar sahipliğini bulmak için."""
+        p = {"type": "frontendOpenOrders", "user": user}
+        if dex:
+            p["dex"] = dex
+        return await self.info(p)
+
     async def vault_details(self, address: str):
         """Adres bir vault ise detay döner, değilse null."""
         return await self.info({"type": "vaultDetails", "vaultAddress": address})

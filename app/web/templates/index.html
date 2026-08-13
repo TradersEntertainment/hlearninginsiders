@@ -41,6 +41,7 @@
         <b>🗂 Geçmiş</b><span>eski bilançoların arşivi: öncesinde kim ne pozisyondaydı, kim doğru bildi</span>
         <b>👣 Takip</b><span>bilanço geçince bot Telegram'dan sorar: "balinanın çıkışını izleyeyim mi?" — /takip_N'e basınca balina pozunun her %10'luk kapanış adımında bildirim gelir (tam kapanış + yön değişimi anında)</span>
         <b>🐘 Sessiz sular</b><span>üstteki sekme: düşük hacimli hisselerde tek başına OI'nin çoğunu tutan devler — kimse trade etmezken milyonluk poz tutan biri ya inatçıdır ya bir şey biliyordur</span>
+        <b>🧱 Duvar</b><span>emir defterine konmuş dev BEKLEYEN emir (henüz pozisyon değil) — fiyatın hemen üstüne satış duvarı diken "yukarı çıkartmam" diyordur; duvar aniden çekilirse blöfmüş (spoof)</span>
       </div>
       <p style="margin-bottom:0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
       tablolardaki hisse/cüzdan linklerine tıkla. Bot her şeyi Telegram'a da atar.
@@ -118,6 +119,28 @@
   </div>
   {% endfor %}
   {% else %}<p class="dim">Bu filtrede likidasyona yakın pozisyon yok — filtreyi düşür ya da taramaların dolmasını bekle.</p>{% endif %}
+</div>
+
+<div class="panel compact">
+  <h2>🧱 Emir defteri duvarları <span class="dim" style="text-transform:none">· deftere konmuş dev bekleyen emirler</span></h2>
+  <p class="sub">Biri fiyatın hemen yanına milyonlarca dolarlık emir dizmiş: fiyatı iter ya da durdurur.
+  Satış duvarı üstte = "buradan yukarı çıkartmam", alış duvarı altta = "buradan aşağı düşürtmem".
+  Sahibi tanıdığımız bir balinaysa yazar; duvar çekilirse (spoof) Telegram'dan haber gelir.</p>
+  {% if book_walls %}
+  {% for x in book_walls %}
+  <div class="lbar">
+    <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
+    <span class="lside {{ 'shortliq-t' if x.side == 'ask' else 'longliq-t' }}"
+          title="{{ 'fiyatın üstünde satış (short) duvarı' if x.side == 'ask' else 'fiyatın altında alış (long) duvarı' }}">{{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }}</span>
+    <div class="ltrack"><div class="lfill {{ 'shortliq' if x.side == 'ask' else 'longliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
+    <span class="lval"><b>{{ x.notional|usd }}</b></span>
+    <span class="lpx">{{ x.px_lo|px }}–{{ x.px_hi|px }}</span>
+    <span class="ldist {{ 'warn' if x.dist_pct < 1 else 'dim' }}">%{{ '%.1f'|format(x.dist_pct) }}</span>
+    {% if x.address %}{{ m.addr(x.address, k, 6) }}{% else %}<span class="dim" title="Defter anonim — tanıdığımız balinaların emirleriyle eşleşmedi">?</span>{% endif %}
+    <span class="dim">{{ x.first_ts|age }}</span>
+  </div>
+  {% endfor %}
+  {% else %}<p class="dim">Şu an eşik üstü duvar yok — defterler düzenli taranıyor, dev bir emir konduğunda burada belirir.</p>{% endif %}
 </div>
 
 <div class="panel third compact">

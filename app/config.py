@@ -47,6 +47,14 @@ EDITABLE_FIELDS: dict[str, dict] = {
                           "desc": "Takip bu kadar gün sonra kendiliğinden biter (poz hâlâ açıksa haber verir)"},
     "notify_lowvol": {"type": "bool", "label": "🐘 Sessiz su devi", "group": "Bildirimler",
                       "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
+    "notify_wall": {"type": "bool", "label": "🧱 Emir defteri duvarı", "group": "Bildirimler",
+                    "desc": "Deftere fiyatın hemen yanına konan dev bekleyen emir duvarları (ve çekilirse/dolarsa haberi)"},
+    "wall_window_pct": {"type": "float", "label": "Duvar penceresi (%)", "group": "Emir defteri radarı",
+                        "desc": "Orta fiyata bu kadar yakın bekleyen emirler duvara sayılır (SPCX örneği %0.3'teydi)"},
+    "wall_min_usd": {"type": "float", "label": "Sitede gösterim tabanı ($)", "group": "Emir defteri radarı",
+                     "desc": "Bu boyutun üstündeki duvarlar ana sayfada listelenir"},
+    "wall_alert_min_usd": {"type": "float", "label": "Telegram alarm tabanı ($)", "group": "Emir defteri radarı",
+                           "desc": "Telegram'a SADECE bu boyut üstü gerçekten absürt duvarlar düşer"},
     "lowvol_max_day_volume": {"type": "float", "label": "Düşük hacim eşiği ($/gün)", "group": "Sessiz su radarı",
                               "desc": "Günlük hacmi bunun altındaki hisseler 'sessiz su' sayılır"},
     "lowvol_min_oi_share": {"type": "float", "label": "OI payı eşiği (%)", "group": "Sessiz su radarı",
@@ -135,6 +143,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "group": "Tarama & performans", "desc": "Coin sayfası açıldığında veri bundan eskiyse otomatik tarama başlar"},
     "track_poll_sec": {"type": "int", "label": "Takip kontrol periyodu (sn)",
                        "group": "Tarama & performans", "desc": "Takipteki balina pozlarının kontrol sıklığı"},
+    "wall_poll_sec": {"type": "int", "label": "Defter tarama periyodu (sn)",
+                      "group": "Tarama & performans", "desc": "Emir defteri duvar radarının tarama sıklığı"},
 }
 
 
@@ -191,6 +201,11 @@ class Config:
         self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
         self.notify_lowvol = True
+        self.notify_wall = True
+        self.wall_window_pct = float(os.getenv("WALL_WINDOW_PCT", "2.0"))
+        self.wall_min_usd = float(os.getenv("WALL_MIN_USD", "1000000"))
+        self.wall_alert_min_usd = float(os.getenv("WALL_ALERT_MIN_USD", "5000000"))
+        self.wall_poll_sec = int(os.getenv("WALL_POLL_SEC", "180"))
         self.lowvol_max_day_volume = float(os.getenv("LOWVOL_MAX_DAY_VOLUME", "5000000"))
         self.lowvol_min_oi_share = float(os.getenv("LOWVOL_MIN_OI_SHARE", "20"))
         self.lowvol_min_notional = float(os.getenv("LOWVOL_MIN_NOTIONAL", "250000"))

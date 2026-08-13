@@ -44,6 +44,21 @@
   </div>
 </div>
 
+{% if bwalls %}
+<div class="panel">
+  <div class="walls">🧱 <b>Emir defteri duvarı:</b>
+    {% for w in bwalls %}
+    <span class="wall {{ 'shortliq-t' if w.side == 'ask' else 'longliq-t' }}"
+          title="{{ 'fiyatın üstünde satış duvarı — yukarı çıkışı zorlaştırır' if w.side == 'ask' else 'fiyatın altında alış duvarı — aşağı inişi zorlaştırır' }}{{ '; çekilirse spoof olabilir' }}">
+      {{ 'SATIŞ' if w.side == 'ask' else 'ALIŞ' }} <b>{{ w.notional|usd }}</b>
+      · {{ w.px_lo|px }}–{{ w.px_hi|px }} (fiyata %{{ '%.1f'|format(w.dist_pct) }})
+      {% if w.address %}· sahibi {{ m.addr(w.address, k, 6) }}{% endif %}
+      · {{ w.first_ts|age }} önce belirdi</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {% if chart %}
 <div class="panel">
   <h2>📍 Nereden açtılar? · entry haritası</h2>

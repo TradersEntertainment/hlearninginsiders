@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS track_offers(
   address TEXT, coin TEXT, symbol TEXT, side TEXT, notional REAL,
   created_ts INTEGER, used INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS book_walls(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  coin TEXT, side TEXT,            -- ask = satış duvarı (fiyatın üstünde) / bid = alış (altında)
+  px_lo REAL, px_hi REAL, sz REAL, notional REAL,
+  dist_pct REAL, mark_px REAL,
+  address TEXT,                    -- eşleşen bilinen balina (NULL = bilinmiyor)
+  first_ts INTEGER, last_ts INTEGER,
+  peak_notional REAL, alerted INTEGER DEFAULT 0, active INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_walls_coin ON book_walls(coin, side, active);
 CREATE TABLE IF NOT EXISTS liq_watch(
   address TEXT, coin TEXT,
   side TEXT, notional REAL, liq_px REAL,

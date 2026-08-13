@@ -408,6 +408,20 @@ async def index(request: Request):
     # Likidasyon duvarları (küme özeti) — tweet'teki heatmap okuması
     from ..radar.liqwatch import find_clusters
     liq_walls = (await find_clusters(cfg))[:4]
+
+    # Emir defteri duvarları (bekleyen dev emirler — SPCX $202M tarzı)
+    async with db() as conn:
+        cur = await conn.execute(
+            """SELECT b.*, t.symbol FROM book_walls b JOIN tickers t ON t.coin=b.coin
+               WHERE b.active=1 AND b.last_ts >= ? AND b.notional >= ?
+               ORDER BY b.notional DESC LIMIT 10""",
+            (ts_now - 900, cfg.wall_min_usd))
+        book_walls = [dict(r) for r in await cur.fetchall()]
+    bw_maxn = max((x["notional"] for x in book_walls), default=1)
+    for x in book_walls:
+        x["wpct"] = max(4, x["notional"] / bw_maxn * 100)
+        x["propr"] = propr_listed(x["symbol"])
+        x["age_ts"] = x["first_ts"]
     liq_maxn = max((x["notional"] for x in liq_map), default=1)
     for x in liq_map:
         x["wpct"] = max(4, x["notional"] / liq_maxn * 100)
@@ -500,6 +514,7 @@ async def index(request: Request):
         "winners": winners, "archive": archive,
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "liq_map": liq_map, "liqmin": liqmin, "liq_walls": liq_walls,
+        "book_walls": book_walls,
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
                       (5_000_000, "5M+"), (30_000_000, "30M+")],
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,
@@ -529,6 +544,10 @@ async def coin_page(request: Request, symbol: str):
             " ORDER BY date_et LIMIT 1", (coin,))
         ev = await cur.fetchone()
         ev = annotate([dict(ev)])[0] if ev else None
+        cur = await conn.execute(
+            "SELECT * FROM book_walls WHERE coin=? AND active=1 AND last_ts>=?"
+            " ORDER BY notional DESC", (coin, now() - 900))
+        bwalls = [dict(r) for r in await cur.fetchall()]
 
     for p in rows:
         p["reasons"] = ", ".join(json.loads(p.get("score_reasons") or "[]"))
@@ -567,6 +586,7 @@ async def coin_page(request: Request, symbol: str):
         "has_bot": request.app.state.bot is not None,
         "chart": _entry_chart(rows, summ.get("mark")),
         "liqchart": _liq_chart(rows, summ.get("mark"), cfg.max_liq_distance_pct),
+        "bwalls": bwalls,
         "propr": propr_listed(t["symbol"]),
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),

@@ -21,7 +21,7 @@ from .hl import universe as uni
 from .hl.client import HLClient
 from .hl.collector import Collector
 from .notify import Notifier, clear_digest_items, pending_digest_items
-from .radar import anomaly, autoscan, liqwatch, lowvol, metrics, report, tracker
+from .radar import anomaly, autoscan, bookwall, liqwatch, lowvol, metrics, report, tracker
 from .telegram.bot import TelegramBot
 from .web.routes import router
 
@@ -231,6 +231,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(supervised("liqwatch", lambda: liqwatch.loop(cfg, client, notifier))),
         asyncio.create_task(supervised("tracker", lambda: tracker_loop(cfg, client, notifier))),
         asyncio.create_task(supervised("lowvol", lambda: lowvol.loop(cfg, notifier))),
+        asyncio.create_task(supervised("bookwall", lambda: bookwall.loop(cfg, client, notifier))),
         asyncio.create_task(supervised("digest", lambda: digest_loop(cfg, notifier))),
         asyncio.create_task(supervised("collector", collector.run)),
     ]
