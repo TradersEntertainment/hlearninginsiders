@@ -8,6 +8,7 @@ uzaklaşırsa (>%1.5) kademeler sıfırlanır; izlenen pozisyon yok olursa
 import asyncio
 import logging
 
+from .. import assets
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
 from ..hl.client import HLClient
@@ -220,7 +221,18 @@ async def find_clusters(cfg: Config) -> list[dict]:
 
 
 async def check_clusters(cfg: Config, notifier) -> None:
-    for c in await find_clusters(cfg):
+    clusters = await find_clusters(cfg)
+    if not clusters:
+        return
+    from .bookwall import big_coin_set  # döngüsel importu kır
+    bigs = await big_coin_set(cfg)
+    for c in clusters:
+        # JPY/GOLD/XYZ100 gibi likit varlıklarda küçük kümeler gürültü —
+        # onlarda alarm için büyük-sınıf tabanı gerekir (ana sayfa etkilenmez)
+        big = assets.kind(c["symbol"]) == "non_equity" or c["coin"] in bigs
+        alert_min = cfg.liq_cluster_big_min_usd if big else cfg.liq_cluster_min_usd
+        if c["total"] < alert_min:
+            continue
         key = f"{c['coin']}:{c['side']}"
         if await alert_recent("liq_cluster", key, CLUSTER_COOLDOWN):
             continue

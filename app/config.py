@@ -96,7 +96,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "liq_cluster_window_pct": {"type": "float", "label": "Duvar penceresi (%)",
                                "group": "Likidasyon radarı", "desc": "Fiyatın bu kadar yakınındaki liq'ler 'duvar' sayılır (tweet'teki heatmap mantığı)"},
     "liq_cluster_min_usd": {"type": "float", "label": "Duvar eşiği ($)",
-                            "group": "Likidasyon radarı", "desc": "Pencere içindeki toplam liq bu boyutu aşarsa bildirim"},
+                            "group": "Likidasyon radarı", "desc": "NORMAL hisselerde pencere içi toplam liq bu boyutu aşarsa bildirim"},
+    "liq_cluster_big_min_usd": {"type": "float", "label": "Endeks/FX/top-10 duvar eşiği ($)",
+                                "group": "Likidasyon radarı", "desc": "JPY, GOLD, XYZ100 gibi likit varlıklarda liq duvarı alarmı için gereken TOPLAM — küçük kümeler oralarda gürültü"},
     "fresh_wallet_days": {"type": "int", "label": "Taze cüzdan eşiği (gün)",
                           "group": "Skorlama eşikleri", "desc": "İlk fonlaması bundan yeni hesaplar 'taze' sayılır (+25 puan)"},
     "recent_deposit_hours": {"type": "int", "label": "Yeni fonlama eşiği (saat)",
@@ -211,6 +213,7 @@ class Config:
         self.wall_alert_min_usd = float(os.getenv("WALL_ALERT_MIN_USD", "12000000"))
         self.wall_alert_big_min_usd = float(os.getenv("WALL_ALERT_BIG_MIN_USD", "50000000"))
         self.wall_big_top_n = int(os.getenv("WALL_BIG_TOP_N", "10"))
+        self.liq_cluster_big_min_usd = float(os.getenv("LIQ_CLUSTER_BIG_MIN_USD", "20000000"))
         self.wall_poll_sec = int(os.getenv("WALL_POLL_SEC", "180"))
         self.lowvol_max_day_volume = float(os.getenv("LOWVOL_MAX_DAY_VOLUME", "5000000"))
         self.lowvol_min_oi_share = float(os.getenv("LOWVOL_MIN_OI_SHARE", "20"))

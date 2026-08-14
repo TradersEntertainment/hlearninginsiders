@@ -137,16 +137,26 @@ async def _attribute(cfg: Config, client: HLClient, coin: str, side: str,
     return None
 
 
+async def big_coin_set(cfg: Config) -> set[str]:
+    """Hacimce top-N hisse — 'büyük sınıf'ın hisse ayağı (endeks/emtia/kripto
+    assets.kind == 'non_equity' ile ayrıca yakalanır). Liq kümesi kademesi de
+    bunu kullanır."""
+    async with db() as conn:
+        cur = await conn.execute("SELECT coin, symbol FROM tickers")
+        coins = [(r["coin"], r["symbol"]) for r in await cur.fetchall()]
+    mets = await latest_metrics_all()
+    eq_by_vol = sorted(
+        (c for c, s in coins if assets.kind(s) != "non_equity"),
+        key=lambda c: (mets.get(c) or {}).get("day_volume") or 0, reverse=True)
+    return set(eq_by_vol[: int(cfg.wall_big_top_n)])
+
+
 async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         coins = [(r["coin"], r["symbol"]) for r in await cur.fetchall()]
     mets = await latest_metrics_all()
-    # hacimce top-N hisse "büyük sınıf" (endeks/emtia/kripto assets.kind ile zaten büyük)
-    eq_by_vol = sorted(
-        (c for c, s in coins if assets.kind(s) != "non_equity"),
-        key=lambda c: (mets.get(c) or {}).get("day_volume") or 0, reverse=True)
-    big_coins = set(eq_by_vol[: int(cfg.wall_big_top_n)])
+    big_coins = await big_coin_set(cfg)
 
     ts = now()
     n_alerts = 0

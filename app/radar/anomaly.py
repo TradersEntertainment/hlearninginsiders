@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
+from ..earnings.calendar import event_ts_estimate
 from ..telegram import format as fmt
 from . import metrics
 
@@ -17,6 +18,9 @@ log = logging.getLogger("radar.anomaly")
 
 ET = ZoneInfo("America/New_York")
 COOLDOWN = 12 * 3600
+# earnings açıklandıktan sonra bu süre boyunca anomali arama — sonrası
+# haber akışıdır, "birileri biliyor olabilir" demek yanlış sinyal olur
+POST_EARNINGS_QUIET = 48 * 3600
 
 
 async def _events_within(hours: int) -> dict[str, dict]:
@@ -43,13 +47,23 @@ async def check_anomalies(cfg: Config, notifier) -> None:
     ts = now()
 
     for coin, sym in coins:
+        # Event var ama SAATİ geçmişse: "yaklaşıyor" deme. Yeni geçtiyse
+        # (48h) coini komple atla — earnings sonrası OI patlaması normaldir.
+        ev = soon.get(coin)
+        if ev:
+            est = event_ts_estimate(ev)
+            if est and est <= ts:
+                if ts - est < POST_EARNINGS_QUIET:
+                    continue
+                ev = None  # eski, değerlendirilememiş kayıt — normal eşik uygula
+
         cur_m = await metrics.latest_metric(coin)
         prev24 = await metrics.metric_at(coin, ts - 86400)
         prev4 = await metrics.metric_at(coin, ts - 4 * 3600)
         if not cur_m or not cur_m.get("mark_px"):
             continue
         oi_ntl = (cur_m["oi"] or 0) * cur_m["mark_px"]
-        has_event = coin in soon
+        has_event = ev is not None
         triggers: list[str] = []
 
         if prev24 and prev24["oi"] and oi_ntl >= cfg.oi_spike_floor_usd:
@@ -75,7 +89,7 @@ async def check_anomalies(cfg: Config, notifier) -> None:
             continue
         if await alert_recent("anomaly", coin, COOLDOWN):
             continue
-        text = fmt.anomaly_alert(sym, coin, triggers, soon.get(coin))
+        text = fmt.anomaly_alert(sym, coin, triggers, ev)
         try:
             prio = "high" if has_event else "normal"
             await notifier.send("anomaly", text, priority=prio, key=coin)
