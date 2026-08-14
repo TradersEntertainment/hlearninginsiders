@@ -54,7 +54,11 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "wall_min_usd": {"type": "float", "label": "Sitede gösterim tabanı ($)", "group": "Emir defteri radarı",
                      "desc": "Bu boyutun üstündeki duvarlar ana sayfada listelenir"},
     "wall_alert_min_usd": {"type": "float", "label": "Telegram alarm tabanı ($)", "group": "Emir defteri radarı",
-                           "desc": "Telegram'a SADECE bu boyut üstü gerçekten absürt duvarlar düşer"},
+                           "desc": "NORMAL hisselerde Telegram'a düşmesi için gereken duvar boyutu (endeks/top-10 için aşağıdaki taban geçerli)"},
+    "wall_alert_big_min_usd": {"type": "float", "label": "Top-10 hisse / endeks alarm tabanı ($)", "group": "Emir defteri radarı",
+                               "desc": "XYZ100, GOLD, BTC gibi endeksler ve en likit N hissede (NVDA vb.) alarm için bu boyut gerekir — defterleri zaten kalın"},
+    "wall_big_top_n": {"type": "int", "label": "Büyük sınıf hisse sayısı", "group": "Emir defteri radarı",
+                       "desc": "24h hacme göre ilk N hisse endeks muamelesi görür (dinamik — likidite değişince liste kendini günceller)"},
     "lowvol_max_day_volume": {"type": "float", "label": "Düşük hacim eşiği ($/gün)", "group": "Sessiz su radarı",
                               "desc": "Günlük hacmi bunun altındaki hisseler 'sessiz su' sayılır"},
     "lowvol_min_oi_share": {"type": "float", "label": "OI payı eşiği (%)", "group": "Sessiz su radarı",
@@ -204,7 +208,9 @@ class Config:
         self.notify_wall = True
         self.wall_window_pct = float(os.getenv("WALL_WINDOW_PCT", "2.0"))
         self.wall_min_usd = float(os.getenv("WALL_MIN_USD", "1000000"))
-        self.wall_alert_min_usd = float(os.getenv("WALL_ALERT_MIN_USD", "5000000"))
+        self.wall_alert_min_usd = float(os.getenv("WALL_ALERT_MIN_USD", "12000000"))
+        self.wall_alert_big_min_usd = float(os.getenv("WALL_ALERT_BIG_MIN_USD", "50000000"))
+        self.wall_big_top_n = int(os.getenv("WALL_BIG_TOP_N", "10"))
         self.wall_poll_sec = int(os.getenv("WALL_POLL_SEC", "180"))
         self.lowvol_max_day_volume = float(os.getenv("LOWVOL_MAX_DAY_VOLUME", "5000000"))
         self.lowvol_min_oi_share = float(os.getenv("LOWVOL_MIN_OI_SHARE", "20"))

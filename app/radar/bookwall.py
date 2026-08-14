@@ -13,10 +13,12 @@ Telegram'a SADECE wall_alert_min_usd üstü "gerçekten absürt" olanlar düşer
 import asyncio
 import logging
 
+from .. import assets
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
 from ..hl.client import HLClient
 from ..telegram import format as fmt
+from .lowvol import latest_metrics_all
 from .report import coin_dex
 
 log = logging.getLogger("radar.bookwall")
@@ -24,6 +26,17 @@ log = logging.getLogger("radar.bookwall")
 WALL_COOLDOWN = 12 * 3600     # aynı coin+side için tekrar alarm aralığı
 ATTRIB_MAX_CANDIDATES = 25    # sahiplik denemesinde en fazla sorgulanacak adres
 GONE_GRACE = 2                # duvar bu kadar tarama üst üste görünmezse "kalktı"
+BIG_REC_MIN = 5_000_000       # büyük sınıfta panel/kayıt tabanı (daimi derinlik gizlensin)
+
+
+def floors(cfg: Config, symbol: str, coin: str, big_coins: set[str]) -> tuple[float, float]:
+    """(kayıt tabanı, alarm tabanı). Endeks/emtia/FX/kripto ya da hacimce top-N
+    hisse 'büyük sınıf'tır: defterleri zaten kalın, ancak absürt boyut sinyaldir.
+    (SPCX gibi takvimsiz pre-IPO'lar 'no_calendar'dır — HİSSE sayılır, normal kademe.)"""
+    big = assets.kind(symbol) == "non_equity" or coin in big_coins
+    if big:
+        return max(cfg.wall_min_usd, BIG_REC_MIN), cfg.wall_alert_big_min_usd
+    return cfg.wall_min_usd, cfg.wall_alert_min_usd
 
 
 def _parse_book(book: dict) -> tuple[list[dict], list[dict]]:
@@ -124,19 +137,17 @@ async def _attribute(cfg: Config, client: HLClient, coin: str, side: str,
     return None
 
 
-async def _day_volume(coin: str) -> float | None:
-    async with db() as conn:
-        cur = await conn.execute(
-            "SELECT day_volume FROM asset_metrics WHERE coin=? ORDER BY ts DESC LIMIT 1",
-            (coin,))
-        row = await cur.fetchone()
-        return row["day_volume"] if row else None
-
-
 async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         coins = [(r["coin"], r["symbol"]) for r in await cur.fetchall()]
+    mets = await latest_metrics_all()
+    # hacimce top-N hisse "büyük sınıf" (endeks/emtia/kripto assets.kind ile zaten büyük)
+    eq_by_vol = sorted(
+        (c for c, s in coins if assets.kind(s) != "non_equity"),
+        key=lambda c: (mets.get(c) or {}).get("day_volume") or 0, reverse=True)
+    big_coins = set(eq_by_vol[: int(cfg.wall_big_top_n)])
+
     ts = now()
     n_alerts = 0
     for coin, symbol in coins:
@@ -145,12 +156,15 @@ async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
         except Exception as e:
             log.debug("l2Book %s: %s", coin, e)
             continue
+        rec_min, alert_min = floors(cfg, symbol, coin, big_coins)
         bids, asks = _parse_book(book)
-        walls = find_wall(bids, asks, cfg.wall_window_pct, cfg.wall_min_usd)
+        walls = find_wall(bids, asks, cfg.wall_window_pct, rec_min)
         found_sides = {w["side"] for w in walls}
+        day_vol = (mets.get(coin) or {}).get("day_volume")
 
         for w in walls:
-            n_alerts += await _upsert_and_alert(cfg, client, notifier, coin, symbol, w, ts)
+            n_alerts += await _upsert_and_alert(cfg, client, notifier, coin, symbol,
+                                                w, ts, alert_min, day_vol)
 
         # görünmeyen aktif duvarlar: last_ts eskidiyse kapat + gerekirse "kalktı" de
         async with db() as conn:
@@ -165,7 +179,7 @@ async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
             async with db() as conn:
                 await conn.execute(
                     "UPDATE book_walls SET active=0 WHERE id=?", (a["id"],))
-            if a.get("alerted") and (a.get("peak_notional") or 0) >= cfg.wall_alert_min_usd:
+            if a.get("alerted") and (a.get("peak_notional") or 0) >= alert_min:
                 await notifier.send("wall", fmt.wall_gone({**a, "symbol": symbol}),
                                     priority="normal", key=f"gone:{coin}:{a['side']}")
             log.info("duvar kalktı: %s %s (tepe %s)", symbol, a["side"],
@@ -174,7 +188,8 @@ async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
 
 
 async def _upsert_and_alert(cfg: Config, client: HLClient, notifier,
-                            coin: str, symbol: str, w: dict, ts: int) -> int:
+                            coin: str, symbol: str, w: dict, ts: int,
+                            alert_min: float, day_vol: float | None) -> int:
     async with db() as conn:
         cur = await conn.execute(
             "SELECT * FROM book_walls WHERE coin=? AND side=? AND active=1",
@@ -197,7 +212,7 @@ async def _upsert_and_alert(cfg: Config, client: HLClient, notifier,
                  w["dist_pct"], w["mark"], ts, ts, w["notional"]))
             wall_id, alerted = cur.lastrowid, 0
 
-    if alerted or not notifier or w["notional"] < cfg.wall_alert_min_usd:
+    if alerted or not notifier or w["notional"] < alert_min:
         return 0
     key = f"{coin}:{w['side']}"
     if await alert_recent("wall", key, WALL_COOLDOWN):
@@ -211,8 +226,7 @@ async def _upsert_and_alert(cfg: Config, client: HLClient, notifier,
                                 w["px_lo"], w["px_hi"], w["notional"])
     except Exception:
         log.exception("duvar sahipliği aranamadı: %s", coin)
-    vol = await _day_volume(coin)
-    text = fmt.wall_alert({**w, "symbol": symbol, "address": addr}, vol)
+    text = fmt.wall_alert({**w, "symbol": symbol, "address": addr}, day_vol)
     async with db() as conn:
         await conn.execute(
             "UPDATE book_walls SET alerted=1, address=? WHERE id=?", (addr, wall_id))
