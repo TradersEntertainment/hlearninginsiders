@@ -126,7 +126,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "oi_spike_pct_normal": {"type": "float", "label": "OI spike eşiği - normal (%)",
                             "group": "Anomali dedektörü", "desc": "Earnings yokken 24h OI artışı alarmı"},
     "oi_spike_floor_usd": {"type": "float", "label": "OI spike tabanı ($)",
-                           "group": "Anomali dedektörü", "desc": "Bu OI'nin altındaki mikro marketlerde alarm verme"},
+                           "group": "Anomali dedektörü", "desc": "HİSSELERDE bu OI'nin altındaki mikro marketlerde alarm verme"},
+    "oi_spike_big_floor_usd": {"type": "float", "label": "OI spike tabanı — endeks/FX ($)",
+                               "group": "Anomali dedektörü", "desc": "GBP, GOLD, XYZ100 gibi FX/endeks/emtia/kripto'da OI bu boyutun altındaysa spike alarmı verme (mikro marketten %175 artış anlamsız)"},
     "funding_extreme": {"type": "float", "label": "Aşırı funding eşiği (saatlik)",
                         "group": "Anomali dedektörü", "desc": "ör: 0.0005 = %0.05/saat"},
     "peers_override": {"type": "str", "label": "Korele hisse override",
@@ -265,6 +267,7 @@ class Config:
         self.oi_spike_pct_event = float(os.getenv("OI_SPIKE_PCT_EVENT", "50"))    # earnings <72h iken
         self.oi_spike_pct_normal = float(os.getenv("OI_SPIKE_PCT_NORMAL", "150"))
         self.oi_spike_floor_usd = float(os.getenv("OI_SPIKE_FLOOR_USD", "200000"))
+        self.oi_spike_big_floor_usd = float(os.getenv("OI_SPIKE_BIG_FLOOR_USD", "20000000"))
         self.funding_extreme = float(os.getenv("FUNDING_EXTREME", "0.0005"))      # saatlik oran (0.05%/h)
 
         # Korele hisseler: "SNDK:WDC|MU;TSLA:RIVN" formatıyla override edilebilir

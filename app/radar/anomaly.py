@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from .. import assets
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
 from ..earnings.calendar import event_ts_estimate
@@ -66,12 +67,16 @@ async def check_anomalies(cfg: Config, notifier) -> None:
         has_event = ev is not None
         triggers: list[str] = []
 
-        if prev24 and prev24["oi"] and oi_ntl >= cfg.oi_spike_floor_usd:
+        # FX/endeks/emtia/kripto'da mikro OI'den %175 artış anlamsız — taban yüksek
+        floor = (cfg.oi_spike_big_floor_usd if assets.kind(sym) == "non_equity"
+                 else cfg.oi_spike_floor_usd)
+
+        if prev24 and prev24["oi"] and oi_ntl >= floor:
             chg24 = (cur_m["oi"] - prev24["oi"]) / prev24["oi"] * 100
             thr = cfg.oi_spike_pct_event if has_event else cfg.oi_spike_pct_normal
             if chg24 >= thr:
                 triggers.append(f"OI 24 saatte +%{chg24:.0f} ({fmt.usd(oi_ntl)})")
-        if (has_event and prev4 and prev4["oi"] and oi_ntl >= cfg.oi_spike_floor_usd):
+        if (has_event and prev4 and prev4["oi"] and oi_ntl >= floor):
             chg4 = (cur_m["oi"] - prev4["oi"]) / prev4["oi"] * 100
             if chg4 >= 30:
                 triggers.append(f"OI son 4 saatte +%{chg4:.0f} (hızlı birikim)")
