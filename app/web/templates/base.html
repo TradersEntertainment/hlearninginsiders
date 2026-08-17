@@ -236,7 +236,11 @@ details.guide[open] summary::before{content:"▾ "}
 details.guide .body{margin-top:10px;font-size:13px;line-height:1.7}
 .gloss{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin-top:10px;font-size:12.5px}
 .gloss b{color:var(--accent);white-space:nowrap}
-th[title]{cursor:help;text-decoration:underline dotted color-mix(in srgb,var(--dim) 40%,transparent);text-underline-offset:3px}
+th[title]{text-decoration:underline dotted color-mix(in srgb,var(--dim) 40%,transparent);text-underline-offset:3px}
+/* sıralanabilir başlıklar */
+main table th{cursor:pointer;user-select:none}
+th.s-desc::after{content:" ▾";color:var(--accent)}
+th.s-asc::after{content:" ▴";color:var(--accent)}
 .tabs{display:flex;gap:8px;margin-bottom:10px}
 .tab{background:transparent;border:1.5px solid var(--border);color:var(--dim);
 padding:4px 14px;border-radius:999px;font-size:12.5px;font-weight:700;box-shadow:none}
@@ -318,6 +322,68 @@ footer{padding:18px 22px;color:var(--faint);font-size:12px}
 <main>{% block content %}{% endblock %}</main>
 <footer>🌙 gözlem aracıdır, yatırım tavsiyesi değildir · veriler hyperliquid'in halka açık api'sinden</footer>
 <script>
+// ---- Tablo sıralama: başlığa tıkla = büyükten küçüğe, tekrar tıkla = tersi ----
+var SORT_STATE = null; // {ti, ci, dir} — yumuşak yenileme sonrası geri uygulanır
+
+// Hücre metnini sayıya çevir: $14.71M, %12, 11g, 10h, 45dk, 10x, 1504, yoksa metin
+function parseCell(raw){
+  var t = (raw || '').replace(/\s+/g, ' ').trim();
+  if(!t || t === '-' || t === '?') return null;
+  var m = t.match(/^[+-]?\$[+-]?([\d.]+)\s*([MK])?/i);
+  if(m){
+    var v = parseFloat(m[1]) * (m[2] ? (m[2].toUpperCase() === 'M' ? 1e6 : 1e3) : 1);
+    if(/^-\$|^\$-/.test(t)) v = -v;
+    return v;
+  }
+  m = t.match(/^([+-]?[\d.]+)\s*%/) || t.match(/^%\s*([+-]?[\d.]+)/);
+  if(m) return parseFloat(m[1]);
+  m = t.match(/^([\d.]+)\s*(dk|sa|h|g)\b/i);
+  if(m){
+    var n = parseFloat(m[1]), u = m[2].toLowerCase();
+    return u === 'g' ? n * 24 : (u === 'dk' ? n / 60 : n);
+  }
+  m = t.match(/^([\d.]+)x$/i);
+  if(m) return parseFloat(m[1]);
+  if(/^[+-]?[\d.]+$/.test(t)) return parseFloat(t);
+  return t;
+}
+
+function sortTable(table, ci, dir){
+  var rows = Array.prototype.filter.call(
+    table.querySelectorAll('tr'), function(r){ return r.querySelector('td'); });
+  if(!rows.length) return;
+  var parent = rows[0].parentNode;
+  function rank(v){ return v === null ? 2 : (typeof v === 'number' ? 0 : 1); }
+  var keyed = rows.map(function(r, i){
+    var td = r.children[ci];
+    return {r: r, i: i, v: parseCell(td ? td.textContent : '')};
+  });
+  keyed.sort(function(a, b){
+    var ra = rank(a.v), rb = rank(b.v);
+    if(ra !== rb) return ra - rb;             // sayılar önce, metin sonra, boş en sonda
+    if(ra === 2) return a.i - b.i;
+    var c = ra === 0 ? a.v - b.v : String(a.v).localeCompare(String(b.v), 'tr');
+    if(c === 0) return a.i - b.i;             // kararlı sıralama
+    return dir === 'desc' ? -c : c;
+  });
+  keyed.forEach(function(k){ parent.appendChild(k.r); });
+}
+
+document.addEventListener('click', function(ev){
+  var th = ev.target.closest('th');
+  if(!th || ev.target.closest('a')) return;
+  var table = th.closest('table');
+  if(!table || !table.closest('main')) return;
+  var headRow = th.parentElement;
+  var ci = Array.prototype.indexOf.call(headRow.children, th);
+  var dir = th.classList.contains('s-desc') ? 'asc' : 'desc';
+  headRow.querySelectorAll('th').forEach(function(x){ x.classList.remove('s-desc', 's-asc'); });
+  th.classList.add(dir === 'desc' ? 's-desc' : 's-asc');
+  sortTable(table, ci, dir);
+  var tables = document.querySelectorAll('main table');
+  SORT_STATE = {ti: Array.prototype.indexOf.call(tables, table), ci: ci, dir: dir};
+});
+
 // Long/Short sekmeleri — delege edilmiş handler (yumuşak yenileme sonrası da çalışır)
 document.addEventListener('click', function(ev){
   var t = ev.target.closest('.tab'); if(!t || !t.dataset.f) return;
@@ -376,6 +442,18 @@ document.addEventListener('click', function(ev){
       if(f && f !== 'all'){
         var b = document.querySelector('.tab[data-f="' + f + '"]');
         if(b) b.click();
+      }
+      if(SORT_STATE){ // tablo sıralaması yenileme sonrası korunur
+        var st = SORT_STATE;
+        var tb = document.querySelectorAll('main table')[st.ti];
+        if(tb){
+          var hr = tb.querySelector('tr');
+          var hth = hr && hr.children[st.ci];
+          if(hth && hth.tagName === 'TH'){
+            hth.classList.add(st.dir === 'desc' ? 's-desc' : 's-asc');
+            sortTable(tb, st.ci, st.dir);
+          }
+        }
       }
       if(!doc.querySelector('.scanbar') && iv < 45){
         clearInterval(timer); iv = 45; timer = setInterval(tick, iv * 1000);
