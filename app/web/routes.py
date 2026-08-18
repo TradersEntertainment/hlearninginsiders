@@ -737,11 +737,20 @@ async def lowvol_page(request: Request):
     """Sessiz sular: düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri."""
     _guard(request)
     cfg = request.app.state.cfg
+    try:
+        minv = float(request.query_params.get("min") or cfg.lowvol_min_notional)
+    except ValueError:
+        minv = cfg.lowvol_min_notional
     rows = await lowvol.dominants(cfg)
+    rows = [p for p in rows if p["notional"] >= minv]
     humans = [p for p in rows if not p["entity"]]
     bots = [p for p in rows if p["entity"]]
     return _render(request, "devler.html", {
-        "humans": humans, "bots": bots,
+        "humans": humans[:400], "bots": bots[:60],
+        "n_humans": len(humans), "n_bots": len(bots),
+        "minv": minv,
+        "min_chips": [(250_000, "250K+"), (1_000_000, "1M+"),
+                      (5_000_000, "5M+"), (10_000_000, "10M+")],
         "max_vol": cfg.lowvol_max_day_volume,
         "min_share": cfg.lowvol_min_oi_share,
         "min_ntl": cfg.lowvol_min_notional,

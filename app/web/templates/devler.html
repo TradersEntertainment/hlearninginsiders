@@ -23,9 +23,15 @@
 </div>
 
 <div class="panel">
-  <h2>🐘 Sessiz sularda devler <span class="dim" style="text-transform:none">· düşük hacimli hisselerdeki büyük pozisyonlar + OI hakimleri</span></h2>
+  <h2>🐘 Sessiz sularda devler <span class="dim" style="text-transform:none">· düşük hacimli hisselerdeki büyük pozisyonlar + OI hakimleri · <b>{{ n_humans }}</b> pozisyon</span></h2>
   <p class="sub">Hacim {{ max_vol|usd }}/gün altı VEYA tek başına OI'nin %{{ '%g'|format(min_share) }}+'i ·
-  {{ min_ntl|usd }} üstü pozisyonlar · OI payına göre sıralı</p>
+  OI payına göre sıralı · kolon başlığına tıkla → sırala</p>
+  <div class="chips">
+    {% for v, lbl in min_chips %}
+    <a href="/devler?min={{ v|int }}{{ '&key=' + k[5:] if k else '' }}" class="{{ 'on' if minv == v else '' }}">{{ lbl }}</a>
+    {% endfor %}
+    <span class="dim" style="font-size:12px;align-self:center">boyut filtresi — kalabalık listede küçükleri gizle</span>
+  </div>
   {% if humans %}
   <div style="overflow-x:auto">
   <table>
@@ -61,22 +67,23 @@
     {% endfor %}
   </table>
   </div>
+  {% if n_humans > 400 %}<p class="dim">İlk 400 gösteriliyor ({{ n_humans }} toplam) — üstteki boyut filtresiyle daralt.</p>{% endif %}
   {% else %}
-  <p class="dim">Şu an kriterlere uyan insan pozisyonu yok. Oto-tarayıcı evreni dolaştıkça
-  burası dolar — eşikleri Ayarlar → Sessiz su radarı'ndan gevşetebilirsin.</p>
+  <p class="dim">Bu filtrede pozisyon yok. Derin keşif süpürmesi evreni dolaştıkça burası dolar —
+  filtreyi düşür ya da eşikleri Ayarlar → Sessiz su radarı'ndan gevşet.</p>
   {% endif %}
 </div>
 
 {% if bots %}
 <div class="panel">
-  <h2>🤖 Market maker / vault envanteri <span class="dim" style="text-transform:none">· insider DEĞİL, bilgi amaçlı</span></h2>
+  <h2>🤖 Market maker / vault envanteri <span class="dim" style="text-transform:none">· insider DEĞİL, bilgi amaçlı · {{ n_bots }} pozisyon</span></h2>
   <p class="sub">Piyasa yapıcılar düşük hacimli hisselerde ister istemez büyük envanter taşır —
   skorlanmaz, bildirilmez, sicile girmez. Yine de "OI'nin kalanı kimde?" sorusunun cevabı burada.</p>
   <div style="overflow-x:auto">
   <table>
     <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Tür</th><th>Yön</th><th>Boyut</th>
         <th>OI payı</th><th>24h hacim</th></tr>
-    {% for p in bots[:20] %}
+    {% for p in bots %}
     <tr class="dimrow">
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}">{{ p.symbol }}</a></td>
       <td class="l">{{ m.addr(p.address, k) }}</td>
