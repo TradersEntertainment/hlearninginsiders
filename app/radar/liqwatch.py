@@ -255,6 +255,8 @@ async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
         try:
             await run_cycle(cfg, client, notifier)
             await check_clusters(cfg, notifier)
+            from ..health import beat
+            await beat("liqwatch")
         except asyncio.CancelledError:
             raise
         except Exception:

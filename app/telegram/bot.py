@@ -83,6 +83,8 @@ class TelegramBot:
                     timeout=aiohttp.ClientTimeout(total=60),
                 ) as r:
                     data = await r.json()
+                from ..health import beat
+                await beat("telegram")
                 for upd in data.get("result", []):
                     offset = upd["update_id"] + 1
                     try:
@@ -179,6 +181,9 @@ class TelegramBot:
             await self.send(fmt.winners_list(rows), chat_id)
         elif cmd == "status":
             await self._cmd_status(chat_id)
+        elif cmd in ("saglik", "sağlık", "health"):
+            from ..health import snapshot
+            await self.send(fmt.health_report(await snapshot(self.cfg)), chat_id)
 
     # ---------- komutlar ----------
 
@@ -214,6 +219,12 @@ class TelegramBot:
         hv = await kv_get("harvest_stats") or {}
         if hv.get("total"):
             st["işlem hasadı"] = f"{hv['total']} fill REST'ten toplandı"
+        from ..health import snapshot
+        snap = await snapshot(self.cfg)
+        n_ok = sum(1 for c in snap["checks"].values() if c["ok"])
+        st["⚕️ sağlık"] = (f"{n_ok}/{len(snap['checks'])} görev ✅"
+                          + ("" if not snap["problems"] else
+                             f" — ⚠️ sorun: {', '.join(snap['problems'])} (/saglik)"))
         await self.send(fmt.status_text(st), chat_id)
 
     async def _cmd_scan(self, args: list[str], chat_id: str) -> None:

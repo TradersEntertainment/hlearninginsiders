@@ -14,6 +14,7 @@ import aiohttp
 from fastapi import FastAPI
 
 from . import db as dbm
+from . import health
 from .config import get_config
 from .earnings import calendar as cal
 from .earnings import evaluator
@@ -32,14 +33,16 @@ log = logging.getLogger("main")
 
 TR = ZoneInfo("Europe/Istanbul")
 STATE: dict = {}
+TASKS: dict[str, dict] = {}  # bekçinin yeniden başlatabilmesi için görev kaydı
 
 
 def _stamp(key: str) -> None:
     STATE[key] = datetime.now(TR).strftime("%d.%m %H:%M")
 
 
-async def supervised(name: str, factory):
-    """Görev çökerse exponential backoff ile yeniden başlat."""
+async def supervised(name: str, factory, notifier=None):
+    """Görev çökerse exponential backoff ile yeniden başlat + kullanıcıya bildir."""
+    from . import health
     delay = 5
     while True:
         try:
@@ -47,10 +50,34 @@ async def supervised(name: str, factory):
             return
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as e:
             logging.getLogger(name).exception("görev çöktü, %ds sonra yeniden", delay)
+            try:
+                if await health.note_crash(name, e) and notifier:
+                    from .telegram import format as fmt
+                    rec = await dbm.kv_get(f"crash:{name}") or {}
+                    await notifier.send("health", fmt.crash_alert(name, e, rec.get("count", 1)),
+                                        priority="high", key=f"crash:{name}")
+            except Exception:
+                pass
             await asyncio.sleep(delay)
             delay = min(delay * 2, 300)
+
+
+def _spawn(name: str, factory, notifier=None) -> None:
+    TASKS[name] = {"factory": factory, "notifier": notifier,
+                   "task": asyncio.create_task(supervised(name, factory, notifier))}
+
+
+def _respawn(name: str) -> bool:
+    """Bekçi: takılan görevi iptal edip aynı fabrikayla yeniden yarat."""
+    info = TASKS.get(name)
+    if not info:
+        return False
+    info["task"].cancel()
+    info["task"] = asyncio.create_task(
+        supervised(name, info["factory"], info.get("notifier")))
+    return True
 
 
 # ---------------- periyodik görevler ----------------
@@ -59,6 +86,7 @@ async def universe_loop(cfg, client):
     while True:
         try:
             coins = await uni.refresh_universe(client, cfg.equity_dexes)
+            await health.beat("universe")
             if coins:
                 _stamp("evren yenileme")
         except Exception as e:
@@ -71,6 +99,7 @@ async def calendar_loop(cfg, session):
     while True:
         try:
             n = await cal.refresh_calendar(cfg, session)
+            await health.beat("calendar")
             STATE["takvimdeki earnings"] = n
             _stamp("takvim yenileme")
         except Exception as e:
@@ -83,6 +112,7 @@ async def metrics_loop(cfg, client):
         try:
             n = await metrics.poll_metrics(cfg, client)
             if n:
+                await health.beat("metrics")
                 _stamp("metrik toplama")
         except Exception as e:
             log.warning("metrik toplanamadı: %s", e)
@@ -123,6 +153,7 @@ async def due_loop(cfg, client, notifier):
             await evaluator.evaluate_due(cfg, client, notifier)
             # earnings saati geçtiyse "çıkışı takip edelim mi?" teklifi
             await tracker.make_offers(cfg, client, notifier)
+            await health.beat("due")
         except Exception:
             log.exception("due check hatası")
         await asyncio.sleep(cfg.due_check_sec)
@@ -134,6 +165,7 @@ async def tracker_loop(cfg, client, notifier):
     while True:
         try:
             await tracker.check_trackers(cfg, client, notifier)
+            await health.beat("tracker")
         except Exception:
             log.exception("takip kontrol hatası")
         await asyncio.sleep(cfg.track_poll_sec)
@@ -144,6 +176,7 @@ async def anomaly_loop(cfg, notifier):
     while True:
         try:
             await anomaly.check_anomalies(cfg, notifier)
+            await health.beat("anomaly")
             _stamp("anomali taraması")
         except Exception:
             log.exception("anomali taraması hatası")
@@ -177,9 +210,26 @@ async def digest_loop(cfg, notifier):
                     if await notifier.send("digest", text, priority="normal"):
                         await clear_digest_items()
                     _stamp("günlük özet")
+            await health.beat("digest")
         except Exception:
             log.exception("özet hatası")
         await asyncio.sleep(600)
+
+
+async def watchdog_loop(cfg, notifier):
+    """Bekçi: kalp atışlarını denetler, takılanı yeniden başlatır, bildirir."""
+    await asyncio.sleep(240)  # açılışta her görev ilk turunu atsın
+    log.info("bekçi başladı (her 120 sn kontrol)")
+    while True:
+        try:
+            res = await health.watchdog_cycle(cfg, notifier, _respawn)
+            if res.get("downs"):
+                STATE["⚠️ sorunlu görevler"] = ", ".join(res["downs"])
+            else:
+                STATE.pop("⚠️ sorunlu görevler", None)
+        except Exception:
+            log.exception("bekçi hatası")
+        await asyncio.sleep(120)
 
 
 # ---------------- uygulama ----------------
@@ -222,32 +272,32 @@ async def lifespan(app: FastAPI):
     app.state.collector = collector
     app.state.state = STATE
 
-    tasks = [
-        asyncio.create_task(supervised("universe", lambda: universe_loop(cfg, client))),
-        asyncio.create_task(supervised("calendar", lambda: calendar_loop(cfg, session))),
-        asyncio.create_task(supervised("metrics", lambda: metrics_loop(cfg, client))),
-        asyncio.create_task(supervised("due", lambda: due_loop(cfg, client, notifier))),
-        asyncio.create_task(supervised("anomaly", lambda: anomaly_loop(cfg, notifier))),
-        asyncio.create_task(supervised("autoscan", lambda: autoscan.loop(cfg, client, notifier))),
-        asyncio.create_task(supervised("liqwatch", lambda: liqwatch.loop(cfg, client, notifier))),
-        asyncio.create_task(supervised("tracker", lambda: tracker_loop(cfg, client, notifier))),
-        asyncio.create_task(supervised("lowvol", lambda: lowvol.loop(cfg, notifier))),
-        asyncio.create_task(supervised("bookwall", lambda: bookwall.loop(cfg, client, notifier))),
-        asyncio.create_task(supervised("sweeper", lambda: sweeper.loop(cfg, client))),
-        asyncio.create_task(supervised("digest", lambda: digest_loop(cfg, notifier))),
-        asyncio.create_task(supervised("collector", collector.run)),
-    ]
+    await dbm.kv_set("boot_ts", dbm.now())  # bekçinin açılış toleransı
+    _spawn("universe", lambda: universe_loop(cfg, client), notifier)
+    _spawn("calendar", lambda: calendar_loop(cfg, session), notifier)
+    _spawn("metrics", lambda: metrics_loop(cfg, client), notifier)
+    _spawn("due", lambda: due_loop(cfg, client, notifier), notifier)
+    _spawn("anomaly", lambda: anomaly_loop(cfg, notifier), notifier)
+    _spawn("autoscan", lambda: autoscan.loop(cfg, client, notifier), notifier)
+    _spawn("liqwatch", lambda: liqwatch.loop(cfg, client, notifier), notifier)
+    _spawn("tracker", lambda: tracker_loop(cfg, client, notifier), notifier)
+    _spawn("lowvol", lambda: lowvol.loop(cfg, notifier), notifier)
+    _spawn("bookwall", lambda: bookwall.loop(cfg, client, notifier), notifier)
+    _spawn("sweeper", lambda: sweeper.loop(cfg, client), notifier)
+    _spawn("digest", lambda: digest_loop(cfg, notifier), notifier)
+    _spawn("collector", collector.run, notifier)
+    _spawn("watchdog", lambda: watchdog_loop(cfg, notifier), notifier)
     if bot:
-        tasks.append(asyncio.create_task(supervised("telegram", bot.run_polling)))
+        _spawn("telegram", bot.run_polling, notifier)
         log.info("Telegram bot aktif")
     else:
         log.warning("TELEGRAM_BOT_TOKEN yok — alert'ler kapalı, sadece dashboard")
 
     yield
 
-    for t in tasks:
-        t.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    for info in TASKS.values():
+        info["task"].cancel()
+    await asyncio.gather(*(i["task"] for i in TASKS.values()), return_exceptions=True)
     await session.close()
 
 
@@ -256,6 +306,15 @@ app.include_router(router)
 
 
 @app.get("/health")
-async def health():
+async def health_endpoint():
     coll = getattr(app.state, "collector", None)
-    return {"ok": True, "ws_connected": bool(coll and coll.connected), "state": STATE}
+    out = {"ok": True, "ws_connected": bool(coll and coll.connected), "state": STATE}
+    try:
+        snap = await health.snapshot(app.state.cfg)
+        out["tasks"] = {n: {"ok": c["ok"], "silent_sec": c["silent"]}
+                        for n, c in snap["checks"].items()}
+        out["problems"] = snap["problems"]
+        out["ok"] = not snap["problems"]
+    except Exception:
+        pass
+    return out

@@ -96,6 +96,8 @@ class Collector:
                     log.info("yeni coin'e abone: %s", coin)
 
     async def _handle(self, raw: str):
+        from ..health import beat
+        await beat("collector")  # WS'ten mesaj akıyor = canlı (30 sn throttle içeride)
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:

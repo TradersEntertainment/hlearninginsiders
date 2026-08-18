@@ -213,6 +213,8 @@ async def loop(cfg: Config, client: HLClient) -> None:
     while True:
         try:
             await sweep_batch(cfg, client)
+            from ..health import beat
+            await beat("sweeper")
         except asyncio.CancelledError:
             raise
         except Exception:

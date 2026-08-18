@@ -47,6 +47,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                           "desc": "Takip bu kadar gün sonra kendiliğinden biter (poz hâlâ açıksa haber verir)"},
     "notify_lowvol": {"type": "bool", "label": "🐘 Sessiz su devi", "group": "Bildirimler",
                       "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
+    "notify_health": {"type": "bool", "label": "⚕️ Sistem sağlığı", "group": "Bildirimler",
+                      "desc": "Bot kendi arızasını fark edince haber verir: görev çöktü/takıldı → yeniden başlattım, düzeldi vb."},
     "notify_wall": {"type": "bool", "label": "🧱 Emir defteri duvarı", "group": "Bildirimler",
                     "desc": "Deftere fiyatın hemen yanına konan dev bekleyen emir duvarları (ve çekilirse/dolarsa haberi)"},
     "wall_window_pct": {"type": "float", "label": "Duvar penceresi (%)", "group": "Emir defteri radarı",
@@ -220,6 +222,7 @@ class Config:
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "60"))
         self.notify_lowvol = True
         self.notify_wall = True
+        self.notify_health = True
         self.wall_window_pct = float(os.getenv("WALL_WINDOW_PCT", "2.0"))
         self.wall_min_usd = float(os.getenv("WALL_MIN_USD", "1000000"))
         self.wall_alert_min_usd = float(os.getenv("WALL_ALERT_MIN_USD", "12000000"))

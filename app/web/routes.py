@@ -509,6 +509,7 @@ async def index(request: Request):
         archive = [dict(r) for r in await cur.fetchall()]
 
     collector = getattr(request.app.state, "collector", None)
+    health_state = await kv_get("health_state") or {}
     return _render(request, "index.html", {
         "universe": universe, "events": events, "strip_days": strip_days, "ecards": ecards,
         "winners": winners, "archive": archive,
@@ -518,7 +519,8 @@ async def index(request: Request):
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
                       (5_000_000, "5M+"), (30_000_000, "30M+")],
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,
-                  "ws": "🟢 bağlı" if collector and collector.connected else "🔴 kopuk"},
+                  "ws": "🟢 bağlı" if collector and collector.connected else "🔴 kopuk",
+                  "health_problems": sorted(health_state.keys())},
     })
 
 

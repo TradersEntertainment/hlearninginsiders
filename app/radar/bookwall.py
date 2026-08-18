@@ -254,6 +254,8 @@ async def loop(cfg: Config, client: HLClient, notifier) -> None:
     while True:
         try:
             await scan_walls(cfg, client, notifier)
+            from ..health import beat
+            await beat("bookwall")
         except asyncio.CancelledError:
             raise
         except Exception:

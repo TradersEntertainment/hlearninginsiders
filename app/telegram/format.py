@@ -340,6 +340,69 @@ def _side_badge(side: str) -> str:
     return "🔴SHORT" if side == "short" else "🟢LONG"
 
 
+TASK_TR = {
+    "universe": "evren keşfi", "calendar": "takvim", "metrics": "metrik toplayıcı",
+    "due": "earnings zamanlayıcı", "anomaly": "anomali dedektörü",
+    "autoscan": "oto-tarayıcı", "liqwatch": "likidasyon radarı",
+    "tracker": "pozisyon takibi", "lowvol": "sessiz su radarı",
+    "bookwall": "duvar radarı", "sweeper": "derin keşif",
+    "digest": "günlük özet", "collector": "canlı işlem akışı (WS)",
+    "telegram": "telegram botu", "watchdog": "bekçi",
+}
+
+
+def _task(name: str) -> str:
+    return TASK_TR.get(name, name)
+
+
+def crash_alert(name: str, err, count: int = 1) -> str:
+    return (f"⚕️🔥 <b>GÖREV ÇÖKTÜ</b> — {_task(name)}\n"
+            f"<code>{str(err)[:200]}</code>\n"
+            f"Otomatik yeniden başlatıldı (toplam {count}. çökme).\n"
+            "<i>Bu mesajı Claude'a yapıştırırsan kalıcı düzeltme yapılır.</i>")
+
+
+def health_down(name: str, silent_min: int, restarted: bool) -> str:
+    tail = "yeniden başlattım, toparlanmasını izliyorum" if restarted \
+        else "yeniden başlatamadım — logları kontrol et"
+    return (f"⚕️ <b>SAĞLIK</b> — {_task(name)} <b>{silent_min} dk</b>dır sessizdi"
+            f" → {tail}.")
+
+
+def health_still_down(name: str, mins: int) -> str:
+    return (f"⚕️🚨 <b>DÜZELMEDİ</b> — {_task(name)} {mins} dakikadır çalışmıyor."
+            " Restart işe yaramadı; Railway loglarına bakmak gerekebilir.")
+
+
+def health_up(name: str, mins: int) -> str:
+    return f"✅ {_task(name)} kendine geldi ({mins} dk kesinti)."
+
+
+def health_bulk(names: list[str]) -> str:
+    lst = ", ".join(_task(n) for n in names)
+    return (f"🌐 <b>GENİŞ KESİNTİ</b> — {len(names)} görev aynı anda sessizleşti:"
+            f" {lst}.\nBüyük ihtimalle Hyperliquid API'ye erişim sorunu —"
+            " görevleri yeniden başlattım, düzelince tek tek haber veririm.")
+
+
+def health_report(snap: dict) -> str:
+    checks, crashes = snap["checks"], snap["crashes"]
+    n_ok = sum(1 for c in checks.values() if c["ok"])
+    lines = [f"⚕️ <b>Sistem sağlığı</b> — {n_ok}/{len(checks)} görev ✅"]
+    for name, c in sorted(checks.items(), key=lambda x: (x[1]["ok"], x[0])):
+        mark = "✅" if c["ok"] else "⚠️"
+        ago = f"{c['silent'] // 60}dk önce" if c["hb"] else "henüz atmadı"
+        lines.append(f"  {mark} {_task(name)} — son atım {ago}")
+    if crashes:
+        lines.append("\n🔥 <b>Çökme geçmişi:</b>")
+        for name, r in sorted(crashes.items(), key=lambda x: -(x[1].get("ts") or 0))[:5]:
+            lines.append(f"  {_task(name)} ×{r.get('count', 1)} — son: "
+                         f"<code>{(r.get('err') or '')[:90]}</code>")
+    lines.append("\n<i>Bekçi 2 dakikada bir kontrol eder; takılan görevi kendisi"
+                 " yeniden başlatır ve sana haber verir.</i>")
+    return "\n".join(lines)
+
+
 def wall_alert(w: dict, day_volume: float | None) -> str:
     """Emir defterine konan dev bekleyen emir duvarı (SPCX $202M tarzı)."""
     sym = w.get("symbol") or (w.get("coin") or "").split(":")[-1]
@@ -624,7 +687,7 @@ DIGEST_LABELS = {
     "anomaly": "📡 anomali", "liq": "💥 likidasyon", "liqmap": "🧲 liq duvarı",
     "earnings": "📊 earnings",
     "eval": "🏁 sonuç", "track": "👣 pozisyon takibi", "lowvol": "🐘 sessiz su devi",
-    "wall": "🧱 emir duvarı",
+    "wall": "🧱 emir duvarı", "health": "⚕️ sağlık",
 }
 
 
@@ -692,6 +755,7 @@ def help_text() -> str:
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"
         "/bildirimler — bildirim ayarları + son gönderilenler\n"
+        "/saglik — sistem sağlığı (bekçi raporu: hangi görev canlı)\n"
         "/status — bot durumu\n"
         "/id — bu sohbetin chat id'si"
     )

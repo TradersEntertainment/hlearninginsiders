@@ -117,6 +117,8 @@ async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
             nxt = await _pick_next(cfg)
             if nxt:
                 await scan_coin(cfg, client, nxt[0], nxt[1], notifier)
+            from ..health import beat
+            await beat("autoscan")
         except asyncio.CancelledError:
             raise
         except Exception:
