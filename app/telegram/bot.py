@@ -204,6 +204,16 @@ class TelegramBot:
         st["fill havuzu"] = n_fills
         st["adres havuzu"] = n_addr
         st["watchlist"] = n_watch
+        sw = await kv_get("sweep_stats") or {}
+        if sw.get("pool"):
+            last_full = await kv_get("sweep_last_full")
+            st["derin keşif"] = (f"{sw['pool']} adres havuzda,"
+                                 f" imleç {sw.get('cursor', 0)}"
+                                 + (f", son tam tur {tr_time(int(last_full))}"
+                                    if last_full else ", ilk tur sürüyor"))
+        hv = await kv_get("harvest_stats") or {}
+        if hv.get("total"):
+            st["işlem hasadı"] = f"{hv['total']} fill REST'ten toplandı"
         await self.send(fmt.status_text(st), chat_id)
 
     async def _cmd_scan(self, args: list[str], chat_id: str) -> None:

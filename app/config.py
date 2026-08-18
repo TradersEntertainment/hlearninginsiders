@@ -153,6 +153,13 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "group": "Tarama & performans", "desc": "Takipteki balina pozlarının kontrol sıklığı"},
     "wall_poll_sec": {"type": "int", "label": "Defter tarama periyodu (sn)",
                       "group": "Tarama & performans", "desc": "Emir defteri duvar radarının tarama sıklığı"},
+    "sweep_leaderboard_top": {"type": "int", "label": "Derin keşif: leaderboard hesap sayısı",
+                              "group": "Tarama & performans",
+                              "desc": "Bu kadar en büyük hesabın TÜM pozisyonları sürekli süpürülür — bot kurulmadan önce açılmış uyuyan dev pozlar böyle bulunur"},
+    "sweep_batch_size": {"type": "int", "label": "Derin keşif: tur başına adres",
+                         "group": "Tarama & performans", "desc": "Her turda bu kadar adresin tüm pozisyonları sorgulanır"},
+    "sweep_interval_sec": {"type": "int", "label": "Derin keşif: tur aralığı (sn)",
+                           "group": "Tarama & performans", "desc": "Süpürme turları arası bekleme — varsayılanla ~1500 adres 13 dakikada bir tam tur döner"},
 }
 
 
@@ -208,6 +215,9 @@ class Config:
         self.track_step_pct = float(os.getenv("TRACK_STEP_PCT", "10"))
         self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
+        self.sweep_leaderboard_top = int(os.getenv("SWEEP_LEADERBOARD_TOP", "1500"))
+        self.sweep_batch_size = int(os.getenv("SWEEP_BATCH_SIZE", "120"))
+        self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "60"))
         self.notify_lowvol = True
         self.notify_wall = True
         self.wall_window_pct = float(os.getenv("WALL_WINDOW_PCT", "2.0"))
