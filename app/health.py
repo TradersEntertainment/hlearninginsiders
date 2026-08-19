@@ -149,10 +149,12 @@ async def watchdog_cycle(cfg: Config, notifier, respawn) -> dict:
         if not st.get("escalated") and ts - st["down_since"] >= ESCALATE_AFTER:
             st["escalated"] = ts
             if notifier:
+                # high (critical DEĞİL): critical tip anahtarını bypass eder,
+                # kullanıcı sağlığı kapattıysa hiçbir sağlık mesajı sızmamalı
                 await notifier.send(
                     "health",
                     fmt.health_still_down(n, (ts - st["down_since"]) // 60),
-                    priority="critical", key=f"health:esc:{n}")
+                    priority="high", key=f"health:esc:{n}")
 
     # 3) Düzelen onaylı sorunlar: yalnız bildirilmiş olanlar "kendine geldi" der
     recovered = sorted(n for n, st in state.items()

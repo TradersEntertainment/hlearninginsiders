@@ -9,7 +9,7 @@
   <span title="Yakalanan büyük alım-satım sayısı">Fill <b>{{ stats.fills }}</b></span>
   <span title="Tanınan cüzdan sayısı">Adres <b>{{ stats.addrs }}</b></span>
   <span title="Daha önce bilanço 'bilmiş' takipteki cüzdanlar">Watchlist <b>{{ stats.watch }}</b></span>
-  {% if stats.health_problems %}<span class="short" title="Bekçi bu görevleri sorunlu görüyor ve kendisi toparlamaya çalışıyor — Telegram'a da bildirdi">⚕️⚠️ <b>{{ stats.health_problems|length }}</b> görev toparlanıyor</span>{% endif %}
+  {% if stats.health_problems %}<span class="short" title="Bekçi şu görevleri sorunlu görüyor ve kendisi toparlıyor: {{ stats.health_problems|join(', ') }}">⚕️⚠️ <b>{{ stats.health_problems|length }}</b> görev toparlanıyor</span>{% endif %}
   {% if strip_days %}<span class="warn" title="Yaklaşan bilanço günleri · ☀️ sabah (açılış öncesi) · 🌙 akşam (kapanış sonrası)">📅
     {%- for d, syms in strip_days.items() %}
     <b>{{ d }}</b>: {% for s in syms %}<a href="/t/{{ s.symbol }}{{ k }}">{{ s.icon }}{{ s.symbol }}</a>{% if not loop.last %} {% endif %}{% endfor %}{% if not loop.last %} · {% endif %}
