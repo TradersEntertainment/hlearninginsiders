@@ -13,13 +13,14 @@ import logging
 import time
 
 from .config import Config
-from .db import kv_get, kv_set, now
+from .db import alert_log, alert_recent, kv_get, kv_set, now
 
 log = logging.getLogger("health")
 
 BEAT_THROTTLE = 30          # aynı görev için kv yazımları arası min sn
 CRASH_NOTIFY_GAP = 6 * 3600  # aynı görevin çökme bildirimi aralığı
 ESCALATE_AFTER = 30 * 60     # bu kadar süredir düzelmeyen sorun critical olur
+DOWN_NOTIFY_GAP = 3 * 3600   # aynı görevin "sessizdi" bildirimi aralığı (churn spam'i önler)
 
 _last_beat: dict[str, float] = {}
 
@@ -85,41 +86,66 @@ async def check(cfg: Config) -> dict[str, dict]:
 
 
 async def watchdog_cycle(cfg: Config, notifier, respawn) -> dict:
-    """Bir bekçi turu. respawn(name) -> bool: görevi yeniden başlatabildi mi."""
+    """Bir bekçi turu. respawn(name) -> bool: görevi yeniden başlatabildi mi.
+
+    İki aşamalı tespit: ilk limit aşımı yalnız 'pending' notu bırakır (uzun
+    ama ilerleyen cycle'lar için tolerans); BİR SONRAKİ turda da sessizse
+    gerçek sorun sayılır → restart + bildirim. Bildirimler görev başına
+    3 saatte bir (restart yine yapılır) — churn telefonu boğmaz.
+    """
     from .telegram import format as fmt
 
     checks = await check(cfg)
     state = await kv_get("health_state") or {}
     ts = now()
-    downs = {n for n, c in checks.items() if not c["ok"]}
-    new_down = sorted(downs - set(state))
-    recovered = sorted(set(state) - downs)
+    silent = {n for n, c in checks.items() if not c["ok"]}
 
-    # 1) Yeni sorunlar: yeniden başlat + bildir (3+ ise tek toplu mesaj)
+    # 0) pending temizliği: bekleme aşamasındayken düzelenler sessizce çıkar
+    for n in [n for n, st in state.items() if st.get("pending") and n not in silent]:
+        del state[n]
+
+    # yeni sessizler: önce pending'e al (aksiyon yok)
+    confirmed_new = []
+    for n in sorted(silent):
+        st = state.get(n)
+        if st is None:
+            state[n] = {"pending": True, "since": ts}
+        elif st.get("pending"):
+            # ikinci turda da sessiz → onaylı sorun
+            state[n] = {"down_since": st["since"], "escalated": 0, "notified": False}
+            confirmed_new.append(n)
+
+    # 1) Onaylı yeni sorunlar: yeniden başlat + (cooldown'lu) bildir
     restarted: dict[str, bool] = {}
-    for n in new_down:
+    for n in confirmed_new:
         try:
             restarted[n] = bool(respawn(n))
         except Exception:
             log.exception("görev yeniden başlatılamadı: %s", n)
             restarted[n] = False
-        state[n] = {"down_since": ts, "escalated": 0}
         log.warning("⚕️ %s %d dk'dır sessiz → restart=%s",
                     n, checks[n]["silent"] // 60, restarted[n])
-    if notifier and new_down:
-        if len(new_down) >= 3:
-            await notifier.send("health", fmt.health_bulk(new_down),
+    if notifier and confirmed_new:
+        speak = [n for n in confirmed_new
+                 if not await alert_recent("healthdown", n, DOWN_NOTIFY_GAP)]
+        for n in speak:
+            await alert_log("healthdown", n)
+            state[n]["notified"] = True
+        if len(speak) >= 3:
+            await notifier.send("health", fmt.health_bulk(speak),
                                 priority="high", key="health:bulk")
         else:
-            for n in new_down:
+            for n in speak:
                 await notifier.send(
                     "health",
                     fmt.health_down(n, checks[n]["silent"] // 60, restarted[n]),
                     priority="high", key=f"health:{n}")
 
     # 2) Uzayan sorunlar: 30+ dk → bir kez critical eskalasyon
-    for n in sorted(downs & set(state)):
+    for n in sorted(silent & set(state)):
         st = state[n]
+        if st.get("pending"):
+            continue
         if not st.get("escalated") and ts - st["down_since"] >= ESCALATE_AFTER:
             st["escalated"] = ts
             if notifier:
@@ -128,17 +154,21 @@ async def watchdog_cycle(cfg: Config, notifier, respawn) -> dict:
                     fmt.health_still_down(n, (ts - st["down_since"]) // 60),
                     priority="critical", key=f"health:esc:{n}")
 
-    # 3) Düzelenler
+    # 3) Düzelen onaylı sorunlar: yalnız bildirilmiş olanlar "kendine geldi" der
+    recovered = sorted(n for n, st in state.items()
+                       if not st.get("pending") and n not in silent)
     for n in recovered:
-        mins = (ts - state[n]["down_since"]) // 60
+        st = state[n]
+        mins = (ts - st["down_since"]) // 60
         del state[n]
-        if notifier:
+        if notifier and st.get("notified"):
             await notifier.send("health", fmt.health_up(n, mins),
                                 priority="normal", key=f"health:up:{n}")
         log.info("✅ %s kendine geldi (%d dk)", n, mins)
 
     await kv_set("health_state", state)
-    return {"downs": sorted(downs), "new": new_down, "recovered": recovered}
+    downs = sorted(n for n, st in state.items() if not st.get("pending"))
+    return {"downs": downs, "new": confirmed_new, "recovered": recovered}
 
 
 async def snapshot(cfg: Config) -> dict:

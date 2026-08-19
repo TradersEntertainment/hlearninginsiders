@@ -17,6 +17,9 @@ log = logging.getLogger("radar.autoscan")
 _inflight: set[str] = set()
 
 NEW_BIG_COOLDOWN = 48 * 3600  # aynı coin+adres için tekrar alert etme
+# Earnings'i yakın coin bu aralıkla yeniden taranır. Daha sık olursa (eski 600)
+# 2 earnings coini tüm tarama slotlarını tekeller, evrenin kalanı hiç sıra alamaz.
+EARNINGS_RESCAN = 1800
 
 
 def is_scanning(coin: str) -> bool:
@@ -85,7 +88,7 @@ def kick(cfg: Config, client: HLClient, coin: str, dex: str, notifier=None) -> N
 async def _pick_next(cfg: Config) -> tuple[str, str] | None:
     ts = now()
     async with db() as conn:
-        # 1) earnings'i yaklaşan (±3 gün) ve 10+ dk'dır taranmamış coin
+        # 1) earnings'i yaklaşan (±3 gün) ve 30+ dk'dır taranmamış coin
         cur = await conn.execute(
             """SELECT t.coin, t.dex FROM tickers t
                LEFT JOIN scans s ON s.coin = t.coin
@@ -94,7 +97,7 @@ async def _pick_next(cfg: Config) -> tuple[str, str] | None:
                             WHERE e.coin = t.coin AND e.evaluated = 0
                               AND e.date_et BETWEEN date('now','-1 day') AND date('now','+3 day'))
                ORDER BY COALESCE(s.ts, 0) ASC LIMIT 1""",
-            (ts - 600,))
+            (ts - EARNINGS_RESCAN,))
         r = await cur.fetchone()
         if r:
             return r["coin"], r["dex"]
@@ -114,10 +117,11 @@ async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
     log.info("oto-tarayıcı başladı (periyot: %ds)", cfg.auto_scan_interval_sec)
     while True:
         try:
+            from ..health import beat
+            await beat("autoscan")  # turbaşı: uzun tarama sahte alarm üretmesin
             nxt = await _pick_next(cfg)
             if nxt:
                 await scan_coin(cfg, client, nxt[0], nxt[1], notifier)
-            from ..health import beat
             await beat("autoscan")
         except asyncio.CancelledError:
             raise

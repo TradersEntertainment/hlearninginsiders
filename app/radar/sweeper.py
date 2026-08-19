@@ -126,6 +126,8 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
 
     async def one(addr: str):
         nonlocal n_pos
+        from ..health import beat
+        await beat("sweeper")  # ilerleme nabzı
         try:
             resp = await client.clearinghouse(addr, "ALL_DEXES")
         except Exception as e:
@@ -212,8 +214,9 @@ async def loop(cfg: Config, client: HLClient) -> None:
              cfg.sweep_interval_sec)
     while True:
         try:
-            await sweep_batch(cfg, client)
             from ..health import beat
+            await beat("sweeper")  # turbaşı: uzun parti sahte alarm üretmesin
+            await sweep_batch(cfg, client)
             await beat("sweeper")
         except asyncio.CancelledError:
             raise

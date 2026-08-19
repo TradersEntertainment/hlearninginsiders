@@ -97,6 +97,8 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
     found: dict[tuple[str, str], dict] = {}
 
     async def one(addr: str):
+        from ..health import beat
+        await beat("liqwatch")  # ilerleme nabzı — uzun cycle'da bile canlı görün
         try:
             resp = await client.clearinghouse(addr, "ALL_DEXES")
         except Exception:
@@ -253,9 +255,10 @@ async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
              cfg.liq_watch_min_notional / 1e6, cfg.liq_watch_poll_sec)
     while True:
         try:
+            from ..health import beat
+            await beat("liqwatch")  # turbaşı: uzun cycle sahte alarm üretmesin
             await run_cycle(cfg, client, notifier)
             await check_clusters(cfg, notifier)
-            from ..health import beat
             await beat("liqwatch")
         except asyncio.CancelledError:
             raise

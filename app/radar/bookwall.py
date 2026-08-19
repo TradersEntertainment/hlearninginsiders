@@ -161,6 +161,8 @@ async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
     ts = now()
     n_alerts = 0
     for coin, symbol in coins:
+        from ..health import beat
+        await beat("bookwall")  # ilerleme nabzı
         try:
             book = await client.l2_book(coin)
         except Exception as e:
@@ -253,8 +255,9 @@ async def loop(cfg: Config, client: HLClient, notifier) -> None:
              cfg.wall_window_pct, cfg.wall_alert_min_usd / 1e6)
     while True:
         try:
-            await scan_walls(cfg, client, notifier)
             from ..health import beat
+            await beat("bookwall")  # turbaşı: uzun tarama sahte alarm üretmesin
+            await scan_walls(cfg, client, notifier)
             await beat("bookwall")
         except asyncio.CancelledError:
             raise

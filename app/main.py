@@ -164,6 +164,7 @@ async def tracker_loop(cfg, client, notifier):
     await asyncio.sleep(90)
     while True:
         try:
+            await health.beat("tracker")  # turbaşı: yavaş API sahte alarm üretmesin
             await tracker.check_trackers(cfg, client, notifier)
             await health.beat("tracker")
         except Exception:
@@ -258,7 +259,7 @@ async def lifespan(app: FastAPI):
 
     session = aiohttp.ClientSession()
     client = HLClient(session, cfg.api_base, cfg.stats_leaderboard_url,
-                      concurrency=cfg.scan_concurrency)
+                      concurrency=cfg.scan_concurrency, max_rpm=cfg.hl_max_rpm)
     bot = TelegramBot(cfg, session, client, STATE) if cfg.telegram_bot_token else None
     notifier = Notifier(cfg, bot)
     collector = Collector(cfg, session, bot, notifier, client)

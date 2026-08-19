@@ -113,8 +113,9 @@ async def loop(cfg: Config, notifier) -> None:
              cfg.lowvol_alert_min_usd / 1e6)
     while True:
         try:
-            await check_alerts(cfg, notifier)
             from ..health import beat
+            await beat("lowvol")
+            await check_alerts(cfg, notifier)
             await beat("lowvol")
         except asyncio.CancelledError:
             raise

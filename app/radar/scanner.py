@@ -128,6 +128,8 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
     log.info("%s taranıyor: %d aday adres", coin, len(addrs))
 
     async def one(addr: str):
+        from ..health import beat
+        await beat("autoscan")  # ilerleme nabzı — uzun taramada bile canlı görün
         try:
             state = await client.clearinghouse(addr, dex)
             return addr, _parse_positions(state or {}, coin)

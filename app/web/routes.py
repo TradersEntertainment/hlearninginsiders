@@ -510,6 +510,8 @@ async def index(request: Request):
 
     collector = getattr(request.app.state, "collector", None)
     health_state = await kv_get("health_state") or {}
+    health_state = {n: st for n, st in health_state.items()
+                    if not (st or {}).get("pending")}
     return _render(request, "index.html", {
         "universe": universe, "events": events, "strip_days": strip_days, "ecards": ecards,
         "winners": winners, "archive": archive,

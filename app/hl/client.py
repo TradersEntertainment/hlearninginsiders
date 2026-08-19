@@ -1,7 +1,9 @@
-"""Hyperliquid info API istemcisi — pacing + retry ile."""
+"""Hyperliquid info API istemcisi — pacing + retry + küresel istek bütçesi."""
 import asyncio
 import logging
 import random
+import time
+from collections import deque
 
 import aiohttp
 
@@ -10,16 +12,36 @@ log = logging.getLogger("hl.client")
 
 class HLClient:
     def __init__(self, session: aiohttp.ClientSession, base: str, leaderboard_url: str,
-                 concurrency: int = 8, min_interval: float = 0.08):
+                 concurrency: int = 8, min_interval: float = 0.08,
+                 max_rpm: int = 350, rpm_window: float = 60.0):
         self.session = session
         self.base = base.rstrip("/")
         self.leaderboard_url = leaderboard_url
         self._sem = asyncio.Semaphore(concurrency)
         self._min_interval = min_interval
+        # Küresel bütçe: TÜM görevlerin paylaştığı istek/dakika tavanı.
+        # 429 fırtınası + exponential backoff cezası yerine kibarca kuyruk.
+        self._max_rpm = max_rpm
+        self._rpm_window = rpm_window
+        self._req_times: deque[float] = deque()
+        self._rl_lock = asyncio.Lock()
+
+    async def _acquire_budget(self) -> None:
+        while True:
+            async with self._rl_lock:
+                t = time.monotonic()
+                while self._req_times and t - self._req_times[0] >= self._rpm_window:
+                    self._req_times.popleft()
+                if len(self._req_times) < self._max_rpm:
+                    self._req_times.append(t)
+                    return
+                wait = self._req_times[0] + self._rpm_window - t
+            await asyncio.sleep(max(wait, 0.01))
 
     async def info(self, payload: dict, retries: int = 4):
         url = f"{self.base}/info"
         delay = 1.0
+        await self._acquire_budget()
         async with self._sem:
             for attempt in range(retries + 1):
                 try:

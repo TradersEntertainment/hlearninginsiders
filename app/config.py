@@ -155,6 +155,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "group": "Tarama & performans", "desc": "Takipteki balina pozlarının kontrol sıklığı"},
     "wall_poll_sec": {"type": "int", "label": "Defter tarama periyodu (sn)",
                       "group": "Tarama & performans", "desc": "Emir defteri duvar radarının tarama sıklığı"},
+    "hl_max_rpm": {"type": "int", "label": "HL API istek bütçesi (istek/dk)",
+                   "group": "Tarama & performans",
+                   "desc": "Tüm görevlerin paylaştığı toplam tavan — aşınca istekler kuyruklanır, böylece rate-limit cezası yenmez"},
     "sweep_leaderboard_top": {"type": "int", "label": "Derin keşif: leaderboard hesap sayısı",
                               "group": "Tarama & performans",
                               "desc": "Bu kadar en büyük hesabın TÜM pozisyonları sürekli süpürülür — bot kurulmadan önce açılmış uyuyan dev pozlar böyle bulunur"},
@@ -217,9 +220,10 @@ class Config:
         self.track_step_pct = float(os.getenv("TRACK_STEP_PCT", "10"))
         self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
+        self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
         self.sweep_leaderboard_top = int(os.getenv("SWEEP_LEADERBOARD_TOP", "1500"))
-        self.sweep_batch_size = int(os.getenv("SWEEP_BATCH_SIZE", "120"))
-        self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "60"))
+        self.sweep_batch_size = int(os.getenv("SWEEP_BATCH_SIZE", "40"))
+        self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))
         self.notify_lowvol = True
         self.notify_wall = True
         self.notify_health = True
@@ -258,7 +262,7 @@ class Config:
         self.mm_max_positions = int(os.getenv("MM_MAX_POSITIONS", "10"))
         self.mm_max_fills_24h = int(os.getenv("MM_MAX_FILLS_24H", "80"))
         self.liq_watch_min_notional = float(os.getenv("LIQ_WATCH_MIN_NOTIONAL", "70000000"))
-        self.liq_watch_poll_sec = int(os.getenv("LIQ_WATCH_POLL_SEC", "120"))
+        self.liq_watch_poll_sec = int(os.getenv("LIQ_WATCH_POLL_SEC", "300"))
         self.liq_watch_top_accounts = int(os.getenv("LIQ_WATCH_TOP_ACCOUNTS", "300"))
         self.liq_cluster_window_pct = float(os.getenv("LIQ_CLUSTER_WINDOW_PCT", "5"))
         self.liq_cluster_min_usd = float(os.getenv("LIQ_CLUSTER_MIN_USD", "1000000"))
