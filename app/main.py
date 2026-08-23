@@ -22,8 +22,8 @@ from .hl import universe as uni
 from .hl.client import HLClient
 from .hl.collector import Collector
 from .notify import Notifier, clear_digest_items, pending_digest_items
-from .radar import (anomaly, autoscan, bookwall, liqwatch, lowvol, metrics,
-                    report, sweeper, tracker)
+from .radar import (anomaly, autoscan, bookwall, hourstats, liqwatch, lowvol,
+                    metrics, report, sweeper, tracker)
 from .telegram.bot import TelegramBot
 from .web.routes import router
 
@@ -285,6 +285,7 @@ async def lifespan(app: FastAPI):
     _spawn("lowvol", lambda: lowvol.loop(cfg, notifier), notifier)
     _spawn("bookwall", lambda: bookwall.loop(cfg, client, notifier), notifier)
     _spawn("sweeper", lambda: sweeper.loop(cfg, client), notifier)
+    _spawn("hourstats", lambda: hourstats.refresh_loop(cfg, client), notifier)
     _spawn("digest", lambda: digest_loop(cfg, notifier), notifier)
     _spawn("collector", collector.run, notifier)
     _spawn("watchdog", lambda: watchdog_loop(cfg, notifier), notifier)

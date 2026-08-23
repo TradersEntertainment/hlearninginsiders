@@ -155,6 +155,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "group": "Tarama & performans", "desc": "Takipteki balina pozlarının kontrol sıklığı"},
     "wall_poll_sec": {"type": "int", "label": "Defter tarama periyodu (sn)",
                       "group": "Tarama & performans", "desc": "Emir defteri duvar radarının tarama sıklığı"},
+    "hourstats_days": {"type": "int", "label": "Saat istatistiği penceresi (gün)",
+                       "group": "Tarama & performans",
+                       "desc": "Saatlik getiri haritası için geriye bakılacak gün sayısı (1h mumlar)"},
     "hl_max_rpm": {"type": "int", "label": "HL API istek bütçesi (istek/dk)",
                    "group": "Tarama & performans",
                    "desc": "Tüm görevlerin paylaştığı toplam tavan — aşınca istekler kuyruklanır, böylece rate-limit cezası yenmez"},
@@ -221,6 +224,7 @@ class Config:
         self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
         self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
+        self.hourstats_days = int(os.getenv("HOURSTATS_DAYS", "90"))
         self.sweep_leaderboard_top = int(os.getenv("SWEEP_LEADERBOARD_TOP", "1500"))
         self.sweep_batch_size = int(os.getenv("SWEEP_BATCH_SIZE", "40"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))

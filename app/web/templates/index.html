@@ -43,6 +43,7 @@
         <b>👣 Takip</b><span>bilanço geçince bot Telegram'dan sorar: "balinanın çıkışını izleyeyim mi?" — /takip_N'e basınca balina pozunun her %10'luk kapanış adımında bildirim gelir (tam kapanış + yön değişimi anında)</span>
         <b>🐘 Sessiz sular</b><span>üstteki sekme: düşük hacimli hisselerde tek başına OI'nin çoğunu tutan devler — kimse trade etmezken milyonluk poz tutan biri ya inatçıdır ya bir şey biliyordur</span>
         <b>🧱 Duvar</b><span>emir defterine konmuş dev BEKLEYEN emir (henüz pozisyon değil) — fiyatın hemen üstüne satış duvarı diken "yukarı çıkartmam" diyordur; duvar aniden çekilirse blöfmüş (spoof)</span>
+        <b>🕐 Saati gelenler</b><span>her hissenin 90 günlük saat haritası çıkarılır (hangi saatte ortalama yükselmiş/düşmüş); ŞU SAATİ tarihsel olarak güçlü olanlar ana sayfada listelenir — MU/NVDA tarzı "yükseliş borsa kapalıyken" desenini de hisse sayfasında görürsün</span>
       </div>
       <p style="margin-bottom:0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
       tablolardaki hisse/cüzdan linklerine tıkla. Bot her şeyi Telegram'a da atar.
@@ -142,6 +143,29 @@
   </div>
   {% endfor %}
   {% else %}<p class="dim">Şu an eşik üstü duvar yok — defterler düzenli taranıyor, dev bir emir konduğunda burada belirir.</p>{% endif %}
+</div>
+
+<div class="panel third compact">
+  <h2>🕐 Saati gelenler <span class="dim" style="text-transform:none">· TSİ {{ '%02d'|format(tsi_now) }}:00</span></h2>
+  <p class="sub">Tarihsel olarak ŞU SAATTE yükselme eğilimi güçlü hisseler (son ~90 gün, 1h mumlar).
+  Geçmiş istatistik — garanti değil. Detaylı saat haritası hisse sayfasında.</p>
+  {% if hot_hours %}
+  <table>
+    <tr><th class="l">Hisse</th><th title="Bu saatin tarihsel ortalama getirisi">Bu saat ort.</th>
+        <th title="Bu saatte kaç kez yükselmiş">Kazanç</th><th title="Kaç örnek gün">Örnek</th></tr>
+    {% for h in hot_hours %}
+    <tr>
+      <td class="l"><a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% if h.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {% if h.closed_heavy %}<span title="Bu hissede getirinin çoğu borsa kapalıyken gelmiş">🌙</span>{% endif %}</td>
+      <td class="long"><b>{{ '%+.2f'|format(h.avg) }}%</b></td>
+      <td>%{{ '%.0f'|format(h.win) }}</td>
+      <td class="dim">{{ h.n }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="dim">Şu saat için eşiği geçen hisse yok{% if n_hstats < 5 %} — istatistikler hazırlanıyor ({{ n_hstats }} hisse hazır), doldukça burası canlanır{% endif %}.</p>
+  {% endif %}
 </div>
 
 <div class="panel third compact">

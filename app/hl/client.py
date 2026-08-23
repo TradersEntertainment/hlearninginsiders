@@ -100,6 +100,12 @@ class HLClient:
     async def recent_trades(self, coin: str):
         return await self.info({"type": "recentTrades", "coin": coin})
 
+    async def candles(self, coin: str, interval: str, start_ms: int, end_ms: int):
+        """Mum verisi — saat istatistiği için (1h, ~90 gün tek istekte)."""
+        return await self.info({"type": "candleSnapshot",
+                                "req": {"coin": coin, "interval": interval,
+                                        "startTime": start_ms, "endTime": end_ms}})
+
     async def l2_book(self, coin: str):
         """Emir defteri (anonim toplam derinlik) — levels: [bids, asks]."""
         return await self.info({"type": "l2Book", "coin": coin})

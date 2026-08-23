@@ -59,6 +59,43 @@
 </div>
 {% endif %}
 
+{% if hchart %}
+<div class="panel">
+  <h2>🕐 Hangi saatte ne yapıyor? <span class="dim" style="text-transform:none">· son {{ hstats.days }} günün 1 saatlik mumları</span></h2>
+  <p class="sub">Her bar o saatin ORTALAMA getirisi: yeşil = o saatte tarihsel olarak yükselmiş,
+  kırmızı = düşmüş. Saatler TSİ. Üzerine gel → kazanç oranı ve örnek sayısı.</p>
+  <div class="legendrow">
+    <span>☀️ ABD borsası AÇIKKEN toplam: <b class="{{ 'long' if hstats.open_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hstats.open_ret) }}%</b></span>
+    <span>🌙 KAPALIYKEN toplam: <b class="{{ 'long' if hstats.closed_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hstats.closed_ret) }}%</b></span>
+    {% if hstats.closed_ret > hstats.open_ret and hstats.closed_ret > 0 %}<span class="warn">→ getirinin çoğu borsa KAPALIYKEN gelmiş 🌙</span>{% endif %}
+    {% if now_verdict %}<span title="ort {{ '%+.2f'|format(now_verdict.b.avg) }}%/saat · %{{ '%.0f'|format(now_verdict.b.win) }} kazanç · {{ now_verdict.b.n }} örnek">ŞU AN (TSİ {{ '%02d'|format(now_verdict.tsi_now) }}):
+      <b class="{{ 'long' if now_verdict.v == 'güçlü' else ('short' if now_verdict.v == 'zayıf' else 'dim') }}">{{ now_verdict.v|upper }}</b> saat</span>{% endif %}
+  </div>
+  <svg viewBox="0 0 {{ hchart.W }} {{ hchart.H }}" style="width:100%;height:auto"
+       role="img" aria-label="Saat bazında ortalama getiri">
+    <line x1="{{ hchart.left }}" x2="{{ hchart.W - 16 }}" y1="{{ hchart.y0 }}" y2="{{ hchart.y0 }}"
+          stroke="var(--dim)" stroke-opacity=".35"/>
+    {% for b in hchart.bars %}
+    <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2"
+          fill="{{ 'var(--chart-long)' if b.pos else 'var(--chart-short)' }}"><title>{{ b.tip }}</title></rect>
+    {% if b.open %}<rect x="{{ b.x }}" y="{{ hchart.H - 24 }}" width="{{ b.w }}" height="2.5" rx="1"
+          fill="var(--amber)" opacity=".55"><title>ABD borsası açık saati (~09:30-16:00 ET)</title></rect>{% endif %}
+    {% if b.label %}<text x="{{ b.cx }}" y="{{ hchart.H - 8 }}" text-anchor="middle"
+          font-size="10" fill="var(--dim)">{{ b.label }}</text>{% endif %}
+    {% endfor %}
+  </svg>
+  <p class="sub" style="margin-top:6px">🟨 alt bantlı saatler ≈ ABD borsası açık ·
+  en iyi saatler: {% for h in hstats.best %}<b>TSİ {{ '%02d'|format(h.tsi) }}</b> ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% endfor %}
+  · en kötü: {% for h in hstats.worst %}TSİ {{ '%02d'|format(h.tsi) }} ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% endfor %}
+  · geçmiş istatistiktir, garanti değildir</p>
+</div>
+{% elif hstats_pending %}
+<div class="panel">
+  <h2>🕐 Hangi saatte ne yapıyor?</h2>
+  <p class="dim">Saat istatistiği hazırlanıyor (90 günlük mumlar çekiliyor) — birazdan burada belirir, sayfa kendini yeniler.</p>
+</div>
+{% endif %}
+
 {% if chart %}
 <div class="panel">
   <h2>📍 Nereden açtılar? · entry haritası</h2>

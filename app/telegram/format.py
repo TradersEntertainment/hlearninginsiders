@@ -346,6 +346,7 @@ TASK_TR = {
     "autoscan": "oto-tarayıcı", "liqwatch": "likidasyon radarı",
     "tracker": "pozisyon takibi", "lowvol": "sessiz su radarı",
     "bookwall": "duvar radarı", "sweeper": "derin keşif",
+    "hourstats": "saat istatistiği",
     "digest": "günlük özet", "collector": "canlı işlem akışı (WS)",
     "telegram": "telegram botu", "watchdog": "bekçi",
 }

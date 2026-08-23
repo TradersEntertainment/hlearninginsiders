@@ -15,7 +15,7 @@ from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
-from ..radar import autoscan, clusters, lowvol, metrics
+from ..radar import autoscan, clusters, hourstats, lowvol, metrics
 
 TR = ZoneInfo("Europe/Istanbul")
 
@@ -86,6 +86,34 @@ CHART_SHORT = "var(--chart-short)"
 CHART_LONG = "var(--chart-long)"
 LIQ_LONG = "var(--liq-long)"      # long liq (fiyatın altında)
 LIQ_SHORT = "var(--liq-short)"    # short liq (fiyatın üstünde)
+
+
+def _hour_chart(stats: dict | None) -> dict | None:
+    """Saatlik getiri barları: sıfır taban çizgisi, + yeşil / − kırmızı (polarite).
+    Eksen TSİ sırasında; ABD borsası açık saatleri amber alt bantla işaretli."""
+    if not stats or stats.get("empty") or not stats.get("hours"):
+        return None
+    hs = sorted(stats["hours"], key=lambda h: h["tsi"])
+    maxabs = max((abs(h["avg"]) for h in hs), default=0) or 0.01
+    W, H, top, bot, left = 820, 220, 16, 34, 46
+    span_h = H - top - bot
+    y0 = top + span_h / 2
+    scale = (span_h / 2 - 6) / maxabs
+    bw = (W - left - 16) / 24
+    bars = []
+    for i, h in enumerate(hs):
+        v = h["avg"]
+        bh = max(min(abs(v) * scale, span_h / 2 - 4), 1.5)
+        bars.append({
+            "x": round(left + i * bw + 2, 1), "w": round(bw - 4, 1),
+            "y": round((y0 - bh) if v >= 0 else y0, 1), "h": round(bh, 1),
+            "cx": round(left + i * bw + bw / 2, 1),
+            "pos": v >= 0, "open": 9 <= h["et"] < 16,
+            "tip": (f"TSİ {h['tsi']:02d}:00 (ET {h['et']:02d}:00) · ort {v:+.2f}%"
+                    f" · %{h['win']:.0f} kazanç · {h['n']} örnek"),
+            "label": f"{h['tsi']:02d}" if h["tsi"] % 3 == 0 else "",
+        })
+    return {"W": W, "H": H, "y0": round(y0, 1), "left": left, "bars": bars}
 
 
 def _liq_chart(rows: list[dict], mark: float | None, max_dist_pct: float) -> dict | None:
@@ -508,6 +536,15 @@ async def index(request: Request):
                ORDER BY date_et DESC LIMIT 6""")
         archive = [dict(r) for r in await cur.fetchall()]
 
+    # 🕐 Saati gelenler: şu saati tarihsel olarak güçlü hisseler
+    hmap = await hourstats.all_stats()
+    et_hour = datetime.now(hourstats.ET).hour
+    hot_hours = hourstats.hot_now(hmap, et_hour)[:8]
+    for h in hot_hours:
+        h["symbol"] = sym_map.get(h["coin"], h["coin"].split(":")[-1])
+        h["propr"] = propr_listed(h["symbol"])
+    n_hstats = sum(1 for s in hmap.values() if s and not s.get("empty"))
+
     collector = getattr(request.app.state, "collector", None)
     health_state = await kv_get("health_state") or {}
     health_state = {n: st for n, st in health_state.items()
@@ -518,6 +555,8 @@ async def index(request: Request):
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "liq_map": liq_map, "liqmin": liqmin, "liq_walls": liq_walls,
         "book_walls": book_walls,
+        "hot_hours": hot_hours, "tsi_now": datetime.now(TR).hour,
+        "n_hstats": n_hstats,
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
                       (5_000_000, "5M+"), (30_000_000, "30M+")],
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,
@@ -581,7 +620,22 @@ async def coin_page(request: Request, symbol: str):
                       request.app.state.bot)
         scanning = True
 
+    # Saat istatistiği: hazırsa göster, yoksa arka planda hazırlat
+    hst = await kv_get(f"hstats:{coin}")
+    hstats_pending = False
+    if not hst or (hst.get("empty") and now() - int(hst.get("ts") or 0) > 86400):
+        hourstats.kick(cfg, request.app.state.client, coin)
+        hstats_pending = hst is None
+    hchart = _hour_chart(hst)
+    now_verdict = None
+    if hchart:
+        et_h = datetime.now(hourstats.ET).hour
+        v, b = hourstats.verdict(hst, et_h)
+        now_verdict = {"v": v, "b": b, "tsi_now": datetime.now(TR).hour}
+
     return _render(request, "coin.html", {
+        "hstats": hst if hchart else None, "hchart": hchart,
+        "hstats_pending": hstats_pending, "now_verdict": now_verdict,
         "ticker": t, "symbol": t["symbol"], "coin": coin, "summ": summ,
         "rows": rows[:50], "liq_rows": liq_rows, "fills": fills, "event": ev,
         "long_total": lo, "short_total": sh, "scanned_ts": scanned_ts,
