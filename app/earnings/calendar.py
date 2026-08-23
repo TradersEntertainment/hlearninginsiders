@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 
-from ..assets import has_earnings
+from ..assets import excluded_set, has_earnings
 from ..config import Config
 from ..db import db, now
 
@@ -249,8 +249,11 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
         rows = await cur.fetchall()
     sym2coin = {r["symbol"]: r["coin"] for r in rows}
     all_symbols = sorted(sym2coin)
-    # Endeks/emtia/FX/ETF/kripto ve pre-IPO'ların bilançosu yok — sorgulama
-    symbols = [s for s in all_symbols if has_earnings(s)]
+    # Endeks/emtia/FX/ETF/kripto ve pre-IPO'ların bilançosu yok — sorgulama.
+    # Takipten çıkarılanlar (exclude_symbols) hiç sorgulanmaz.
+    exc = excluded_set()
+    symbols = [s for s in all_symbols
+               if has_earnings(s) and s.upper() not in exc]
     skipped = len(all_symbols) - len(symbols)
     if not symbols:
         log.info("takvim: sorgulanacak hisse yok (evren %d, hepsi muaf)", len(all_symbols))
@@ -324,6 +327,13 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
             "DELETE FROM earnings_events WHERE evaluated=0"
             " AND (date_et IS NULL OR length(date_et) < 10 OR date_et NOT GLOB"
             " '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')")
+        # Takipten çıkarılan hisselerin BEKLEYEN earnings kayıtları da silinir
+        # (BIRD vakası) — değerlendirilmiş arşiv satırları korunur
+        if exc:
+            qx = ",".join("?" * len(exc))
+            await conn.execute(
+                f"DELETE FROM earnings_events WHERE evaluated=0"
+                f" AND UPPER(symbol) IN ({qx})", tuple(exc))
         for sym, ev in merged.items():
             if not valid_date_et(ev.get("date_et")):
                 continue

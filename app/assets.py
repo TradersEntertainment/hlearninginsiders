@@ -35,6 +35,16 @@ def _extra(name: str) -> set[str]:
     return {s.strip().upper() for s in raw.replace(";", ",").split(",") if s.strip()}
 
 
+def excluded_set() -> set[str]:
+    """Tamamen takip dışı semboller (evren + tarama + takvim yok)."""
+    return _extra("exclude_symbols")
+
+
+def is_excluded(symbol_or_coin: str) -> bool:
+    sym = (symbol_or_coin or "").split(":")[-1].upper()
+    return sym in excluded_set()
+
+
 def kind(symbol_or_coin: str) -> str:
     """'equity' | 'non_equity' | 'no_calendar'"""
     sym = (symbol_or_coin or "").split(":")[-1].upper()

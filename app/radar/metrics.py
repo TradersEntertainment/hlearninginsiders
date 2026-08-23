@@ -1,6 +1,7 @@
 """OI / funding / hacim zaman serisi — anomali tespiti ve raporların temeli."""
 import logging
 
+from ..assets import is_excluded
 from ..config import Config
 from ..db import db, now
 from ..hl.client import HLClient
@@ -23,7 +24,7 @@ async def poll_metrics(cfg: Config, client: HLClient) -> int:
         async with db() as conn:
             for asset, ctx in zip(universe, ctxs):
                 name = asset.get("name") or ""
-                if not name:
+                if not name or is_excluded(name):
                     continue
                 coin = norm_coin(name, dex)
                 try:

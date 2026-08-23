@@ -137,6 +137,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "group": "Takvim & semboller", "desc": "Format: SNDK:WDC|MU;TSLA:RIVN (varsayılan tabloya eklenir)"},
     "yahoo_symbol_map": {"type": "str", "label": "Yahoo sembol eşleme",
                          "group": "Takvim & semboller", "desc": "ABD dışı hisseler için: SMSN:005930.KS;SOFTBANK:9984.T formatı (varsayılan eşlemeye eklenir)"},
+    "exclude_symbols": {"type": "str", "label": "🚫 Takipten çıkarılan hisseler",
+                        "group": "Takvim & semboller",
+                        "desc": "Bu semboller evrene alınmaz, taranmaz, takvimi aranmaz — tamamen görmezden gelinir. Virgülle: BIRD,XYZ"},
     "non_equity_extra": {"type": "str", "label": "Bilançosuz enstrümanlar (ek)",
                          "group": "Takvim & semboller", "desc": "Endeks/emtia/FX/ETF/kripto — takvim aranmaz. Virgülle: GOLD,EUR"},
     "no_calendar_extra": {"type": "str", "label": "Takvimi olmayan hisseler (ek)",
@@ -302,6 +305,8 @@ class Config:
         # Takvim sorgusundan muaf tutulacak ek enstrümanlar
         self.non_equity_extra = os.getenv("NON_EQUITY_EXTRA", "")
         self.no_calendar_extra = os.getenv("NO_CALENDAR_EXTRA", "")
+        # Tamamen takip dışı semboller (evren+tarama+takvim yok)
+        self.exclude_symbols = os.getenv("EXCLUDE_SYMBOLS", "BIRD")
 
         # Periyotlar (saniye)
         self.universe_refresh_sec = int(os.getenv("UNIVERSE_REFRESH_SEC", str(6 * 3600)))

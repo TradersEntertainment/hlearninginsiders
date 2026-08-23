@@ -214,6 +214,7 @@ box-shadow:0 8px 24px rgba(0,0,0,.45);backdrop-filter:blur(8px)}
 /* ---- mobil ---- */
 @media(max-width:700px){
   main{padding:12px}
+  .chips a{padding:6px 14px;font-size:13px}  /* parmakla basılabilir hedef */
   header{padding:10px 12px;gap:10px}
   header h1{font-size:15px}
   input[type=text]{width:130px}
@@ -258,6 +259,8 @@ animation:pop .45s cubic-bezier(.22,1,.36,1) both}
 .panel:nth-of-type(4){animation-delay:.18s}
 .panel:nth-of-type(5){animation-delay:.24s}
 @keyframes pop{from{opacity:0;transform:translateY(14px) scale(.985)}}
+/* yumuşak yenilemede paneller ZIPLAMASIN — giriş animasyonu yalnız ilk yüklemede */
+main.no-pop .panel{animation:none}
 .panel h2{font-size:13.5px;margin:0 0 12px;color:var(--head);font-weight:800;
 letter-spacing:.04em;border-bottom:1px dashed var(--border);padding-bottom:8px}
 table{border-collapse:collapse;width:100%;white-space:nowrap}
@@ -417,9 +420,16 @@ document.addEventListener('click', function(ev){
 (function(){
   var iv = parseInt(document.body.dataset.refresh || '0', 10);
   if(!iv) return;
+  // Kullanıcı dokunuyor/kaydırıyorken İÇERİĞİ DEĞİŞTİRME — tıklamak istediği
+  // buton parmağının altından kaçmasın (mobil chip sorunu)
+  var lastAct = 0;
+  ['touchstart', 'pointerdown', 'wheel', 'scroll', 'keydown'].forEach(function(t){
+    addEventListener(t, function(){ lastAct = Date.now(); }, {passive: true});
+  });
   var timer = setInterval(tick, iv * 1000);
   async function tick(){
     if(document.hidden) return;
+    if(Date.now() - lastAct < 4000) return;  // etkileşimden 4 sn sonrasına ertele
     var ae = document.activeElement;
     if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
     try{
@@ -433,6 +443,7 @@ document.addEventListener('click', function(ev){
       var g = document.querySelector('details.guide');
       var guideOpen = g ? g.open : null;
       var x = scrollX, y = scrollY;
+      nm.classList.add('no-pop');  // yenilemede panel giriş animasyonu oynamasın
       cm.replaceWith(nm);
       scrollTo(x, y);
       if(guideOpen !== null){

@@ -19,6 +19,7 @@ def symbol_of(coin: str) -> str:
 
 
 async def refresh_universe(client: HLClient, equity_dexes: list[str]) -> list[str]:
+    from ..assets import excluded_set, is_excluded
     coins: list[str] = []
     for dex in equity_dexes:
         try:
@@ -34,6 +35,8 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str]) -> list[st
                     continue
                 coin = norm_coin(name, dex)
                 sym = symbol_of(coin)
+                if is_excluded(sym):
+                    continue  # kullanıcı bu hisseyi tamamen takip dışı bıraktı
                 coins.append(coin)
                 await conn.execute(
                     """INSERT INTO tickers(coin,dex,symbol,name,max_leverage,listed_at)
@@ -43,6 +46,14 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str]) -> list[st
                          max_leverage=excluded.max_leverage""",
                     (coin, dex, sym, name, asset.get("maxLeverage"), now()),
                 )
+    # Hariç tutulanların eski kayıtları da düşsün (autoscan/duvar/saat istatistiği
+    # tickers'ı taradığı için buradan silinince her yerden çıkarlar)
+    exc = excluded_set()
+    if exc:
+        q = ",".join("?" * len(exc))
+        async with db() as conn:
+            await conn.execute(
+                f"DELETE FROM tickers WHERE UPPER(symbol) IN ({q})", tuple(exc))
     if coins:
         log.info("evren yenilendi: %d coin (%s)", len(coins), ", ".join(coins[:8]) + ("…" if len(coins) > 8 else ""))
     return coins
