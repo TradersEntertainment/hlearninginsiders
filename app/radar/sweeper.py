@@ -15,6 +15,8 @@ ve o günden beri işlem yapmamış balinalar WS akışına hiç düşmez — PL
 """
 import asyncio
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from ..config import Config
 from ..db import db, kv_get, kv_set, now
@@ -26,27 +28,48 @@ from .scanner import _leaderboard_addrs
 
 log = logging.getLogger("radar.sweeper")
 
+TR = ZoneInfo("Europe/Istanbul")
+
 HARVEST_COINS_PER_CYCLE = 6   # tur başına recentTrades çekilecek coin sayısı
+HOT_PER_BATCH = 30            # parti başına sıcak havuz adedi
+COLD_PER_BATCH = 10           # parti başına soğuk havuz adedi (uzun kuyruk)
+SPEC_INTERVAL = 600           # uzman paneli önbelleği tazeleme aralığı (sn)
+METRICS_RETENTION_D = 45      # asset_metrics emekliliği (evaluator ≤7 gün bakar)
+ALERTS_RETENTION_D = 30       # alerts_log emekliliği (en uzun cooldown 7 gün)
 
 
-async def build_pool(cfg: Config, client: HLClient) -> list[str]:
-    """Süpürülecek adresler: geniş leaderboard + görülen herkes."""
+async def build_pools(cfg: Config, client: HLClient) -> tuple[list[str], list[str]]:
+    """(sıcak, soğuk) havuzlar.
+
+    Sıcak: pozisyon güncelliğinin geldiği yer — watchlist + mevcut pozisyon
+    sahipleri + leaderboard. Küçük kalır, tur ~1 saatte döner.
+    Soğuk: yakın zamanda işlem yapmış ama pozisyonu bilinmeyen adresler —
+    uzun kuyruk, günler içinde döner (yenilerini WS/hasat zaten yakalar).
+    """
     lb = await _leaderboard_addrs(client, cfg.sweep_leaderboard_top)
+    since = now() - cfg.fills_lookback_days * 86400
     async with db() as conn:
-        cur = await conn.execute("SELECT DISTINCT address FROM fills")
+        cur = await conn.execute(
+            "SELECT DISTINCT address FROM fills WHERE ts >= ?", (since,))
         traded = [r["address"] for r in await cur.fetchall()]
         cur = await conn.execute("SELECT DISTINCT address FROM positions_current")
         holders = [r["address"] for r in await cur.fetchall()]
         cur = await conn.execute("SELECT address FROM addresses WHERE watchlist=1")
         watch = [r["address"] for r in await cur.fetchall()]
-    ordered, seen = [], set()
-    for group in (watch, holders, traded, lb):
+    hot, seen = [], set()
+    for group in (watch, holders, lb):
         for a in group:
             a = (a or "").lower()
             if a and a not in seen:
                 seen.add(a)
-                ordered.append(a)
-    return ordered
+                hot.append(a)
+    cold = []
+    for a in traded:
+        a = (a or "").lower()
+        if a and a not in seen:
+            seen.add(a)
+            cold.append(a)
+    return hot, cold
 
 
 def _parse_equity_positions(resp, coin_set: set[str],
@@ -107,20 +130,36 @@ async def _upsert_address(addr: str, positions: dict[str, dict], ts: int) -> Non
                 "DELETE FROM positions_current WHERE address=?", (addr,))
 
 
-async def sweep_batch(cfg: Config, client: HLClient) -> dict:
-    pool = await build_pool(cfg, client)
+def _slice(pool: list[str], cursor: int, count: int) -> tuple[list[str], int, bool]:
+    """Dönüşümlü dilim: (adresler, yeni imleç, tur tamamlandı mı)."""
     if not pool:
-        return {"pool": 0}
+        return [], 0, False
+    cursor %= len(pool)
+    take = min(count, len(pool))
+    batch = [pool[(cursor + i) % len(pool)] for i in range(take)]
+    new_cursor = cursor + take
+    wrapped = new_cursor >= len(pool)
+    return batch, (0 if wrapped else new_cursor), wrapped
+
+
+async def sweep_batch(cfg: Config, client: HLClient) -> dict:
+    hot, cold = await build_pools(cfg, client)
+    if not hot and not cold:
+        return {"hot": 0, "cold": 0}
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         rows = await cur.fetchall()
     coin_set = {r["coin"] for r in rows}
     sym_map = {(r["symbol"] or "").upper(): r["coin"] for r in rows}
     if not coin_set:
-        return {"pool": len(pool)}
+        return {"hot": len(hot), "cold": len(cold)}
 
-    start = int(await kv_get("sweep_cursor") or 0) % len(pool)
-    batch = [pool[(start + i) % len(pool)] for i in range(min(cfg.sweep_batch_size, len(pool)))]
+    # parti bütçesi: sıcak öncelikli, artan slot soğuğa (ve tersi)
+    n_hot = min(HOT_PER_BATCH, cfg.sweep_batch_size)
+    n_cold = max(0, cfg.sweep_batch_size - n_hot)
+    hb, hcur, hot_done = _slice(hot, int(await kv_get("sweep_cursor_hot") or 0), n_hot)
+    cb, ccur, _ = _slice(cold, int(await kv_get("sweep_cursor_cold") or 0), n_cold)
+    batch = hb + cb
     ts = now()
     n_pos = 0
 
@@ -142,16 +181,17 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
 
     await asyncio.gather(*(one(a) for a in batch))
 
-    new_cursor = start + len(batch)
-    if new_cursor >= len(pool):
-        new_cursor = 0
+    await kv_set("sweep_cursor_hot", hcur)
+    await kv_set("sweep_cursor_cold", ccur)
+    if hot_done:
         await kv_set("sweep_last_full", ts)
-        log.info("derin keşif tam tur bitti: %d adres, %d hisse pozisyonu bulundu",
-                 len(pool), n_pos)
-    await kv_set("sweep_cursor", new_cursor)
-    await kv_set("sweep_stats", {"pool": len(pool), "cursor": new_cursor,
+        log.info("derin keşif SICAK tur bitti: %d adres (soğuk kuyruk %d)",
+                 len(hot), len(cold))
+    tour_min = round(len(hot) / max(n_hot, 1) * cfg.sweep_interval_sec / 60)
+    await kv_set("sweep_stats", {"hot": len(hot), "cold": len(cold),
+                                 "tour_min": tour_min, "cursor": hcur,
                                  "batch_positions": n_pos, "ts": ts})
-    return {"pool": len(pool), "positions": n_pos}
+    return {"hot": len(hot), "cold": len(cold), "positions": n_pos}
 
 
 async def harvest_trades(cfg: Config, client: HLClient) -> int:
@@ -207,6 +247,109 @@ async def harvest_trades(cfg: Config, client: HLClient) -> int:
     return added
 
 
+async def compute_specialists(cfg: Config) -> list[dict]:
+    """"Tek hisse uzmanları" panelini arka planda hesaplayıp kv'ye yaz.
+
+    fills GROUP BY milyonlarca satırda saniyeler sürer — istek başına
+    çalıştırılamaz (ana sayfadaki 30-40 sn'lik beyaz ekranın kaynağıydı).
+    Ana sayfa artık yalnız specialists_cache kv'sini okur.
+    """
+    ts_now = now()
+    async with db() as conn:
+        cur = await conn.execute("SELECT coin, symbol FROM tickers")
+        sym_map = {r["coin"]: r["symbol"] for r in await cur.fetchall()}
+        cur = await conn.execute(
+            "SELECT address, coin, COUNT(*) c, SUM(notional) v FROM fills"
+            " WHERE ts >= ? GROUP BY address, coin",
+            (ts_now - cfg.fills_lookback_days * 86400,))
+        fillagg = [dict(r) for r in await cur.fetchall()]
+    by_addr: dict[str, list[dict]] = {}
+    for r in fillagg:
+        by_addr.setdefault(r["address"], []).append(r)
+    specialists = []
+    for addr, lst in by_addr.items():
+        total = sum(r["c"] for r in lst)
+        if total < 5:
+            continue
+        top = max(lst, key=lambda r: r["c"])
+        if top["c"] / total < 0.9:
+            continue
+        specialists.append({"address": addr, "coin": top["coin"],
+                            "symbol": sym_map.get(top["coin"], top["coin"]),
+                            "n": top["c"], "vol": top["v"]})
+    specialists.sort(key=lambda s: -s["vol"])
+    specialists = specialists[:10]
+    if specialists:
+        addrs = [s["address"] for s in specialists]
+        qm = ",".join("?" * len(addrs))
+        async with db() as conn:
+            cur = await conn.execute(
+                f"SELECT address, hits, misses, watchlist, entity FROM addresses"
+                f" WHERE address IN ({qm})", addrs)
+            rec = {r["address"]: dict(r) for r in await cur.fetchall()}
+            cur = await conn.execute(
+                f"SELECT address, coin, side, notional FROM positions_current"
+                f" WHERE address IN ({qm})", addrs)
+            posmap: dict[str, list[dict]] = {}
+            for r in await cur.fetchall():
+                posmap.setdefault(r["address"], []).append(dict(r))
+        for s in specialists:
+            s.update(rec.get(s["address"], {}))
+            open_pos = [p for p in posmap.get(s["address"], []) if p["coin"] == s["coin"]]
+            s["open"] = open_pos[0] if open_pos else None
+        specialists = [s for s in specialists if not s.get("entity")]  # MM/vault hariç
+    await kv_set("specialists_cache", specialists)
+    return specialists
+
+
+async def refresh_fills_count() -> int:
+    """Şerit sayacı için COUNT(*) — istekte değil, arka planda."""
+    async with db() as conn:
+        cur = await conn.execute("SELECT COUNT(*) c FROM fills")
+        n = (await cur.fetchone())["c"]
+    await kv_set("fills_count", n)
+    return n
+
+
+async def maintenance(cfg: Config) -> None:
+    """Günlük veri emekliliği — /data volume'u sınırsız büyümesin.
+
+    fills ~700K satır/gün üretir; emeklilik olmadan aylar içinde GB'lara
+    çıkar. Zaman çizelgesi/uzman paneli en fazla saklama penceresi kadar
+    geriyi görür (taban 7 gün — skorlamanın yakın geçmişi korunur).
+    """
+    ts_now = now()
+    keep = max(int(cfg.fills_retention_days), 7)
+    async with db() as conn:
+        cur = await conn.execute(
+            "DELETE FROM fills WHERE ts < ?", (ts_now - keep * 86400,))
+        n_fills = cur.rowcount or 0
+        cur = await conn.execute(
+            "DELETE FROM asset_metrics WHERE ts < ?",
+            (ts_now - METRICS_RETENTION_D * 86400,))
+        n_met = cur.rowcount or 0
+        cur = await conn.execute(
+            "DELETE FROM alerts_log WHERE ts < ?",
+            (ts_now - ALERTS_RETENTION_D * 86400,))
+        n_al = cur.rowcount or 0
+    n_left = await refresh_fills_count()
+    if n_fills or n_met or n_al:
+        log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı emekli"
+                 " (fills kalan %d)", n_fills, n_met, n_al, n_left)
+
+
+async def housekeeping(cfg: Config) -> None:
+    """Süpürme döngüsünün istek dışı işleri: uzman önbelleği + günlük bakım."""
+    if now() - int(await kv_get("spec_last") or 0) >= SPEC_INTERVAL:
+        await compute_specialists(cfg)
+        await refresh_fills_count()
+        await kv_set("spec_last", now())
+    today = datetime.now(TR).date().isoformat()
+    if await kv_get("maint_last_day") != today:
+        await maintenance(cfg)
+        await kv_set("maint_last_day", today)
+
+
 async def loop(cfg: Config, client: HLClient) -> None:
     await asyncio.sleep(45)  # evren keşfini bekle
     log.info("derin keşif başladı: leaderboard ilk %d + görülen tüm adresler,"
@@ -228,4 +371,10 @@ async def loop(cfg: Config, client: HLClient) -> None:
             raise
         except Exception:
             log.exception("hasat hatası")
+        try:
+            await housekeeping(cfg)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("bakım hatası")
         await asyncio.sleep(cfg.sweep_interval_sec)

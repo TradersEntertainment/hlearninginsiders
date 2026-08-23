@@ -161,6 +161,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "hourstats_days": {"type": "int", "label": "Saat istatistiği penceresi (gün)",
                        "group": "Tarama & performans",
                        "desc": "Saatlik getiri haritası için geriye bakılacak gün sayısı (1h mumlar)"},
+    "fills_retention_days": {"type": "int", "label": "Fill kayıt ömrü (gün)",
+                             "group": "Tarama & performans",
+                             "desc": "Bu kadar günden eski işlem kayıtları her gece silinir (disk + hız). Zaman çizelgesi/uzman analizi en fazla bu kadar geriyi görür"},
     "hl_max_rpm": {"type": "int", "label": "HL API istek bütçesi (istek/dk)",
                    "group": "Tarama & performans",
                    "desc": "Tüm görevlerin paylaştığı toplam tavan — aşınca istekler kuyruklanır, böylece rate-limit cezası yenmez"},
@@ -287,6 +290,7 @@ class Config:
         self.auto_scan_interval_sec = int(os.getenv("AUTO_SCAN_INTERVAL_SEC", "180"))
         self.scan_stale_min = int(os.getenv("SCAN_STALE_MIN", "10"))
         self.fills_lookback_days = int(os.getenv("FILLS_LOOKBACK_DAYS", "30"))
+        self.fills_retention_days = int(os.getenv("FILLS_RETENTION_DAYS", "14"))
 
         # Anomali dedektörü
         self.anomaly_poll_sec = int(os.getenv("ANOMALY_POLL_SEC", "1800"))

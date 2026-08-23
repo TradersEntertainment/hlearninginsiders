@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS fills(
 );
 CREATE INDEX IF NOT EXISTS idx_fills_coin_ts ON fills(coin, ts);
 CREATE INDEX IF NOT EXISTS idx_fills_addr ON fills(address);
+CREATE INDEX IF NOT EXISTS idx_fills_ts ON fills(ts);
 CREATE TABLE IF NOT EXISTS addresses(
   address TEXT PRIMARY KEY,
   first_seen INTEGER, first_deposit_ts INTEGER, last_deposit_ts INTEGER,

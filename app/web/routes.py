@@ -321,8 +321,6 @@ async def index(request: Request):
     events.sort(key=lambda e: (e["passed"], e["report_ts"]))
     ts_now = now()
     async with db() as conn:
-        cur = await conn.execute("SELECT COUNT(*) c FROM fills")
-        fills_n = (await cur.fetchone())["c"]
         cur = await conn.execute("SELECT COUNT(*) c FROM addresses")
         addr_n = (await cur.fetchone())["c"]
         cur = await conn.execute("SELECT COUNT(*) c FROM addresses WHERE watchlist=1")
@@ -345,48 +343,15 @@ async def index(request: Request):
                WHERE COALESCE(p.score, 0) >= 40 AND COALESCE(a.entity, '') = ''
                ORDER BY p.score DESC, p.notional DESC LIMIT 10""")
         suspicious = [dict(r) for r in await cur.fetchall()]
-        # Tek hisse uzmanları: 30 günde >=5 fill, >=%90'ı tek coin'de
-        cur = await conn.execute(
-            "SELECT address, coin, COUNT(*) c, SUM(notional) v FROM fills"
-            " WHERE ts >= ? GROUP BY address, coin", (ts_now - 30 * 86400,))
-        fillagg = [dict(r) for r in await cur.fetchall()]
 
-    by_addr: dict[str, list[dict]] = {}
-    for r in fillagg:
-        by_addr.setdefault(r["address"], []).append(r)
+    # Tek hisse uzmanları + fill sayacı: süpürücü arka planda hesaplayıp kv'ye
+    # yazar (sweeper.compute_specialists) — istek başına milyonlarca satırlık
+    # fills taraması yapılmaz (ilk açılıştaki 30-40 sn'lik beyaz ekranın nedeni).
     sym_map = {t["coin"]: t["symbol"] for t in universe}
-    specialists = []
-    for addr, lst in by_addr.items():
-        total = sum(r["c"] for r in lst)
-        if total < 5:
-            continue
-        top = max(lst, key=lambda r: r["c"])
-        if top["c"] / total < 0.9:
-            continue
-        specialists.append({"address": addr, "coin": top["coin"],
-                            "symbol": sym_map.get(top["coin"], top["coin"]),
-                            "n": top["c"], "vol": top["v"]})
-    specialists.sort(key=lambda s: -s["vol"])
-    specialists = specialists[:10]
-    if specialists:
-        addrs = [s["address"] for s in specialists]
-        qm = ",".join("?" * len(addrs))
-        async with db() as conn:
-            cur = await conn.execute(
-                f"SELECT address, hits, misses, watchlist, entity FROM addresses"
-                f" WHERE address IN ({qm})", addrs)
-            rec = {r["address"]: dict(r) for r in await cur.fetchall()}
-            cur = await conn.execute(
-                f"SELECT address, coin, side, notional FROM positions_current"
-                f" WHERE address IN ({qm})", addrs)
-            posmap: dict[str, list[dict]] = {}
-            for r in await cur.fetchall():
-                posmap.setdefault(r["address"], []).append(dict(r))
-        for s in specialists:
-            s.update(rec.get(s["address"], {}))
-            open_pos = [p for p in posmap.get(s["address"], []) if p["coin"] == s["coin"]]
-            s["open"] = open_pos[0] if open_pos else None
-        specialists = [s for s in specialists if not s.get("entity")]  # MM/vault hariç
+    specialists = await kv_get("specialists_cache") or []
+    fills_n = await kv_get("fills_count")
+    if fills_n is None:
+        fills_n = "…"  # ilk boot: süpürücü daha saymadı
 
     # ---- Likidasyon haritası (tüm coin'ler; equity taraması ∪ dev-poz radarı) ----
     try:

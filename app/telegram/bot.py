@@ -191,8 +191,6 @@ class TelegramBot:
         async with db() as conn:
             cur = await conn.execute("SELECT COUNT(*) c FROM tickers")
             n_tick = (await cur.fetchone())["c"]
-            cur = await conn.execute("SELECT COUNT(*) c FROM fills")
-            n_fills = (await cur.fetchone())["c"]
             cur = await conn.execute("SELECT COUNT(*) c FROM addresses")
             n_addr = (await cur.fetchone())["c"]
             cur = await conn.execute("SELECT COUNT(*) c FROM addresses WHERE watchlist=1")
@@ -206,14 +204,16 @@ class TelegramBot:
                                        f" finnhub:{cstats.get('finnhub', 0)}"
                                        f" nasdaq:{cstats.get('nasdaq', 0)}")
         st["evren"] = f"{n_tick} coin"
-        st["fill havuzu"] = n_fills
+        n_fills = await kv_get("fills_count")
+        st["fill havuzu"] = n_fills if n_fills is not None else "sayılıyor…"
         st["adres havuzu"] = n_addr
         st["watchlist"] = n_watch
         sw = await kv_get("sweep_stats") or {}
-        if sw.get("pool"):
+        if sw.get("hot"):
             last_full = await kv_get("sweep_last_full")
-            st["derin keşif"] = (f"{sw['pool']} adres havuzda,"
-                                 f" imleç {sw.get('cursor', 0)}"
+            st["derin keşif"] = (f"sıcak {sw['hot']} adres"
+                                 f" (tur ~{sw.get('tour_min', '?')} dk)"
+                                 f" · soğuk kuyruk {sw.get('cold', 0)}"
                                  + (f", son tam tur {tr_time(int(last_full))}"
                                     if last_full else ", ilk tur sürüyor"))
         hv = await kv_get("harvest_stats") or {}
