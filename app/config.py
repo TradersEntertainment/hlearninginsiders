@@ -225,6 +225,8 @@ class Config:
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
         self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
         self.hourstats_days = int(os.getenv("HOURSTATS_DAYS", "90"))
+        # "Saati gelenler" yayın kanalı — kişisel chat'ten AYRI (bot kanala admin olmalı)
+        self.telegram_channel_id = os.getenv("TELEGRAM_CHANNEL_ID", "")
         self.sweep_leaderboard_top = int(os.getenv("SWEEP_LEADERBOARD_TOP", "1500"))
         self.sweep_batch_size = int(os.getenv("SWEEP_BATCH_SIZE", "40"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))

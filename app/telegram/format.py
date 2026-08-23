@@ -404,6 +404,22 @@ def health_report(snap: dict) -> str:
     return "\n".join(lines)
 
 
+def hot_hours_channel(entries: list[dict], tsi_now: int) -> str:
+    """Panelden seçilen 'saati gelenler'in kanal yayını."""
+    lines = [f"🕐 <b>SAATİ GELENLER</b> — TSİ {tsi_now:02d}:00",
+             "Tarihsel olarak bu saatte güçlü hisseler:", ""]
+    for h in entries:
+        sym = h.get("symbol") or (h.get("coin") or "").split(":")[-1]
+        moon = " 🌙" if h.get("closed_heavy") else ""
+        propr = " · ✅ PROPR" if is_listed(sym) else ""
+        lines.append(f"<b>{sym}</b>{moon} — bu saat ort <b>{h['avg']:+.2f}%</b>"
+                     f" · %{h['win']:.0f} kazanç · {h['n']} örnek{propr}")
+    lines.append("\n<i>🌙 = getirinin çoğu ABD borsası kapalıyken · son ~90 günün"
+                 " 1 saatlik mumlarından</i>")
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
 def wall_alert(w: dict, day_volume: float | None) -> str:
     """Emir defterine konan dev bekleyen emir duvarı (SPCX $202M tarzı)."""
     sym = w.get("symbol") or (w.get("coin") or "").split(":")[-1]

@@ -557,6 +557,8 @@ async def index(request: Request):
         "book_walls": book_walls,
         "hot_hours": hot_hours, "tsi_now": datetime.now(TR).hour,
         "n_hstats": n_hstats,
+        "has_channel": bool(cfg.telegram_channel_id),
+        "hot_result": request.query_params.get("hot"),
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
                       (5_000_000, "5M+"), (30_000_000, "30M+")],
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,
@@ -788,6 +790,44 @@ async def history_page(request: Request):
                ORDER BY hits DESC, misses ASC LIMIT 30""")
         winners = [dict(r) for r in await cur.fetchall()]
     return _render(request, "history.html", {"rows": rows, "winners": winners})
+
+
+@router.post("/saatler/gonder")
+async def hot_hours_send(request: Request):
+    """Panelden seçilen 'saati gelenler'i yayın kanalına gönder (admin)."""
+    from ..telegram import format as fmt
+    _guard(request)
+    _require_admin(request)
+    cfg = request.app.state.cfg
+    bot = request.app.state.bot
+    form = await request.form()
+    coins = [c for c in form.getlist("coins") if c]
+
+    def back(flag: str):
+        return RedirectResponse(f"/{_keyq(request, f'hot={flag}')}", status_code=303)
+
+    if not cfg.telegram_channel_id or not bot:
+        return back("err_ch")
+    if not coins:
+        return back("err_empty")
+    hmap = await hourstats.all_stats()
+    et_hour = datetime.now(hourstats.ET).hour
+    universe = await get_universe()
+    sym_map = {t["coin"]: t["symbol"] for t in universe}
+    entries = []
+    for coin in coins:
+        s = hmap.get(coin)
+        if not s or s.get("empty"):
+            continue
+        _, b = hourstats.verdict(s, et_hour)
+        entries.append({"coin": coin, "symbol": sym_map.get(coin, coin.split(":")[-1]),
+                        "avg": b["avg"], "win": b["win"], "n": b["n"],
+                        "closed_heavy": s["closed_ret"] > s["open_ret"]})
+    if not entries:
+        return back("err_empty")
+    text = fmt.hot_hours_channel(entries, datetime.now(TR).hour)
+    ok = await bot.send(text, cfg.telegram_channel_id)
+    return back("ok" if ok else "err")
 
 
 @router.get("/devler")
