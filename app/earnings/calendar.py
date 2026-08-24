@@ -122,10 +122,17 @@ async def _fetch_finnhub(session: aiohttp.ClientSession, key: str,
 # ---------------- TradingView (tam saat için) ----------------
 
 TV_URL = "https://scanner.tradingview.com/america/scan"
+# Origin/Referer olmadan datacenter IP'lerden (Railway) gelen çıplak POST'lar
+# TradingView bot korumasınca 4xx'leniyor → kalıcı 'tradingview:0'. Tarayıcı
+# başlıkları ekle. Son HTTP durumu kv calendar_stats'a yazılır (görünürlük).
 TV_HEADERS = {"Content-Type": "application/json",
+              "Origin": "https://www.tradingview.com",
+              "Referer": "https://www.tradingview.com/",
+              "Accept": "application/json",
               "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                              " (KHTML, like Gecko) Chrome/124.0 Safari/537.36")}
 TV_TIME_ENUM = {1: "bmo", 2: "amc"}
+_tv_last_status = {"status": None}
 
 # Tarih çelişkisinde hangi kaynak kazanır (büyük = daha güvenilir)
 SOURCE_RANK = {"tradingview": 4, "yahoo": 3, "nasdaq": 2, "finnhub": 1}
@@ -146,11 +153,14 @@ async def _fetch_tradingview(session: aiohttp.ClientSession, symbols: list[str],
     try:
         async with session.post(TV_URL, json=payload, headers=TV_HEADERS,
                                 timeout=aiohttp.ClientTimeout(total=25)) as r:
+            _tv_last_status["status"] = r.status
             if r.status != 200:
-                log.debug("tradingview HTTP %s", r.status)
+                log.warning("tradingview HTTP %s (Origin/Referer'a rağmen reddedildi?)",
+                            r.status)
                 return out
             data = await r.json(content_type=None)
     except Exception as e:
+        _tv_last_status["status"] = f"err: {type(e).__name__}"
         log.debug("tradingview: %s", e)
         return out
 
@@ -284,13 +294,18 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
         rank = SOURCE_RANK.get(src_name, 0)
         for sym, ev in src.items():
             cur = merged.get(sym)
+            has_hint = ev.get("hour_hint") not in (None, "", "unknown")
             if cur is None:
-                merged[sym] = {**ev, "_rank": rank, "source": src_name}
+                merged[sym] = {**ev, "_rank": rank, "source": src_name,
+                               "_hint_rank": rank if has_hint else 0}
                 continue
             if cur["date_et"] == ev["date_et"]:
-                if cur.get("hour_hint") in (None, "", "unknown") and \
-                        ev.get("hour_hint") not in (None, "", "unknown"):
+                # hour_hint ÇELİŞKİSİNDE en güvenilir kaynak kazanır (yalnız 'boş
+                # ise doldur' değil). Eskiden zayıf kaynağın 'amc'si sonraki
+                # refresh'te güçlü kaynağın 'bmo'sunu geri çeviremiyordu (SHAZ).
+                if has_hint and rank >= cur.get("_hint_rank", 0):
                     cur["hour_hint"] = ev["hour_hint"]
+                    cur["_hint_rank"] = rank
                 if not cur.get("exact_ts") and ev.get("exact_ts"):
                     cur["exact_ts"] = ev["exact_ts"]
                 if cur.get("eps_est") is None:
@@ -300,6 +315,7 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
                 cur["_rank"] = max(cur.get("_rank", 0), rank)
             elif rank > cur.get("_rank", 0):
                 merged[sym] = {**ev, "_rank": rank, "source": src_name,
+                               "_hint_rank": rank if has_hint else 0,
                                "note": f"⚠️ tarih düzeltildi: {cur.get('source')}"
                                        f" {cur['date_et']} diyordu → {src_name} {ev['date_et']}"}
             else:
@@ -311,7 +327,8 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
             m["note"] = (m.get("note") or "") + " ⚠️ saat belirsiz — sabah da olabilir!"
 
     stats = {"yahoo": len(yahoo), "finnhub": len(finnhub), "nasdaq": len(nasdaq),
-             "tradingview": len(tradingview), "merged": len(merged)}
+             "tradingview": len(tradingview), "merged": len(merged),
+             "tv_http": _tv_last_status["status"]}
     if not yahoo:
         log.warning("Yahoo takvimi 0 sonuç döndü (engel olabilir) — diğer kaynaklar taşıyor")
     log.info("takvim kaynakları: yahoo=%d tv=%d finnhub=%d nasdaq=%d → birleşik=%d",
@@ -322,9 +339,13 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
 
     n = 0
     async with db() as conn:
-        # Geçersiz tarihli eski kayıtları temizle (due_loop'u çökertirlerdi)
+        # Geçersiz tarihli eski kayıtları temizle (due_loop'u çökertirlerdi).
+        # Elle girilenleri (manual) İSTİSNA tut — /settime tarih doğrulaması
+        # yapıyor ama eski bozuk manual satır varsa da 'değiştirilmez' vaadini
+        # koru (kullanıcı /settime ile düzeltebilir).
         await conn.execute(
             "DELETE FROM earnings_events WHERE evaluated=0"
+            " AND COALESCE(source,'') NOT LIKE '%manual%'"
             " AND (date_et IS NULL OR length(date_et) < 10 OR date_et NOT GLOB"
             " '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')")
         # Takipten çıkarılan hisselerin BEKLEYEN earnings kayıtları da silinir
@@ -368,15 +389,30 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
         # (snapshot alınmış ya da değerlendirilmiş) ve elle girilenlere dokunma.
         today = datetime.now(ET).strftime("%Y-%m-%d")
         for sym in symbols:
-            if sym in merged:
-                await conn.execute(
-                    """DELETE FROM earnings_events
-                       WHERE symbol=? AND date_et>=? AND date_et<>? AND evaluated=0
-                         AND COALESCE(source,'') NOT LIKE '%manual%'
-                         AND id NOT IN (SELECT event_id FROM position_snapshots
-                                        WHERE event_id IS NOT NULL)""",
-                    (sym, today, merged[sym]["date_et"]),
-                )
+            if sym not in merged:
+                continue
+            new_date = merged[sym]["date_et"]
+            # Tarih düzeltilince eski BEKLEYEN satır çift rapor + çift sicil
+            # üretiyordu. Snapshot'sız eski satırları (geçmiş tarihli DAHİL) sil;
+            # snapshot'lı olanları silme (arşiv değeri var) ama evaluated=1 +
+            # 'tarih düzeltildi' notuyla KAPAT ki tekrar rapor/değerlendirme
+            # üretmesin. Elle girilenlere dokunma.
+            await conn.execute(
+                """DELETE FROM earnings_events
+                   WHERE symbol=? AND date_et<>? AND evaluated=0
+                     AND COALESCE(source,'') NOT LIKE '%manual%'
+                     AND id NOT IN (SELECT event_id FROM position_snapshots
+                                    WHERE event_id IS NOT NULL)""",
+                (sym, new_date))
+            await conn.execute(
+                """UPDATE earnings_events
+                   SET evaluated=1, result_note=COALESCE(result_note,
+                       '↪️ tarih düzeltildi → ' || ?)
+                   WHERE symbol=? AND date_et<>? AND evaluated=0
+                     AND COALESCE(source,'') NOT LIKE '%manual%'
+                     AND id IN (SELECT event_id FROM position_snapshots
+                                WHERE event_id IS NOT NULL)""",
+                (new_date, sym, new_date))
     log.info("takvim yenilendi: %d HL-eşleşen earnings", n)
     return n
 
@@ -404,7 +440,12 @@ def _et_ts(date_str: str, hh: int, mm: int, day_offset: int = 0) -> int:
 def stages(ev: dict) -> list[tuple[str, int]]:
     """Bir event için (aşama, due_ts) listesi. Aşamalar: pre, t1."""
     if ev.get("exact_ts"):
-        return [("t1", int(ev["exact_ts"]) - 3600)]
+        t1 = ("t1", int(ev["exact_ts"]) - 3600)
+        # bmo (sabah) exact'te insider'ın asıl giriş gecesi (önceki akşam) pre
+        # taraması eskiden kayboluyordu — daha iyi veri, daha az gözetim. Koru.
+        if (ev.get("hour_hint") or "") == "bmo" and valid_date_et(ev.get("date_et")):
+            return [("pre", _et_ts(ev["date_et"], 20, 0, day_offset=-1)), t1]
+        return [t1]
     d = ev.get("date_et")
     if not valid_date_et(d):
         return []  # geçersiz tarih → bu event zamanlanamaz, sessizce atla

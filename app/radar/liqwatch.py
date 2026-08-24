@@ -94,7 +94,14 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
     if not addrs:
         return
 
+    ts = now()
+    async with db() as conn:
+        cur = await conn.execute("SELECT * FROM liq_watch")
+        tracked = {(r["address"], r["coin"]): dict(r) for r in await cur.fetchall()}
+    tracked_addrs = {k[0] for k in tracked}
+
     found: dict[tuple[str, str], dict] = {}
+    ok_addrs: set[str] = set()  # yanıtı BAŞARIYLA alınan adresler
 
     async def one(addr: str):
         from ..health import beat
@@ -105,7 +112,8 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
             try:
                 resp = await client.clearinghouse(addr, "")
             except Exception:
-                return
+                return  # API hatası — 'kapandı' SAYMA (ok_addrs'e girmez)
+        ok_addrs.add(addr)
         for state in _iter_states(resp):
             for ap in state.get("assetPositions") or []:
                 pos = ap.get("position") or {}
@@ -115,9 +123,15 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
                 except (TypeError, ValueError):
                     continue
                 liq = pos.get("liquidationPx")
-                if szi == 0 or not liq or ntl < cfg.liq_watch_min_notional:
-                    continue
                 coin = pos.get("coin") or ""
+                if szi == 0 or not liq:
+                    continue
+                # Histerezis: zaten izlenen pozisyonu, notional taban altına indi
+                # diye DÜŞÜRME. Long'un değeri liq'e yaklaşırken (mark düşerken)
+                # matematiksel olarak küçülür — tam doruk anında 'kapandı' deyip
+                # SON UYARI kademelerini atlıyordu.
+                if ntl < cfg.liq_watch_min_notional and (addr, coin) not in tracked:
+                    continue
                 found[(addr, coin)] = {
                     "side": "long" if szi > 0 else "short",
                     "notional": ntl, "liq_px": float(liq),
@@ -126,14 +140,11 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
 
     await asyncio.gather(*(one(a) for a in addrs))
 
-    ts = now()
-    async with db() as conn:
-        cur = await conn.execute("SELECT * FROM liq_watch")
-        tracked = {(r["address"], r["coin"]): dict(r) for r in await cur.fetchall()}
-
-    # 1) Kaybolanlar: kademe başlamışsa kapanış notu
+    # 1) Kaybolanlar: kademe başlamışsa kapanış notu. YALNIZ yanıtı başarıyla alınan
+    #    adresler için — API hatası veren adresi 'kapandı' sanıp satırını silmek +
+    #    sahte '🏁 kapandı' notu + kademe sıfırlama YANLIŞTI.
     for key, row in tracked.items():
-        if key in found:
+        if key in found or key[0] not in ok_addrs:
             continue
         if row["stage"] >= 1 and notifier:
             try:
@@ -153,16 +164,20 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
         stage_sent = tracked.get((addr, coin), {}).get("stage") or 0
         need = needed_stage(dist)
         if need > stage_sent:
+            sent_ok = False
             if notifier:
                 try:
-                    await notifier.send(
+                    sent_ok = await notifier.send(
                         "liq", fmt.liq_alert(coin, addr, p, mark, dist, need),
                         priority="critical" if need >= 3 else "high",
                         key=f"{coin}:{addr}:{need}")
                 except Exception as e:
                     log.warning("liq alerti gönderilemedi: %s", e)
-            log.info("liq kademe %d: %s %s %%%.2f", need, coin, addr, dist)
-            stage_sent = need
+            # Kademe YALNIZ başarılı gönderimde ilerler — 429/400'de SON UYARI
+            # kaybolup pozisyon likide olana dek bir daha bildirim gelmiyordu.
+            if sent_ok:
+                log.info("liq kademe %d: %s %s %%%.2f", need, coin, addr, dist)
+                stage_sent = need
         elif stage_sent and dist > RESET_DIST:
             log.info("liq kademe sıfırlandı: %s %s %%%.2f", coin, addr, dist)
             stage_sent = 0

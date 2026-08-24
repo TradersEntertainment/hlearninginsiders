@@ -28,9 +28,12 @@ def is_scanning(coin: str) -> bool:
 
 async def _upcoming_event(coin: str) -> dict | None:
     async with db() as conn:
+        # date_et New York günüdür; date('now') SQLite'ta UTC. 00:00-04:00 UTC
+        # (=20:00-24:00 ET) arası UTC gün bir ileridedir → o akşamın AMC eventi
+        # bağlamdan düşerdi. '-1 day' tamponu (routes ile tutarlı) bunu kapatır.
         cur = await conn.execute(
             """SELECT * FROM earnings_events WHERE coin=? AND evaluated=0
-               AND date_et>=date('now') ORDER BY date_et LIMIT 1""", (coin,))
+               AND date_et>=date('now','-1 day') ORDER BY date_et LIMIT 1""", (coin,))
         r = await cur.fetchone()
         return dict(r) if r else None
 
@@ -64,13 +67,17 @@ async def _alert_new_big(cfg: Config, notifier, coin: str, rows: list[dict]) -> 
             log.warning("yeni-poz alerti gönderilemedi: %s", e)
 
 
-async def scan_coin(cfg: Config, client: HLClient, coin: str, dex: str, notifier=None) -> None:
+async def scan_coin(cfg: Config, client: HLClient, coin: str, dex: str, notifier=None,
+                    from_loop: bool = False) -> None:
     from .report import build_scan  # döngüsel importu kır
     if coin in _inflight:
         return
     _inflight.add(coin)
     try:
-        _, rows = await build_scan(cfg, client, coin, dex, quick=True)
+        # yalnız oto-tarayıcı DÖNGÜSÜ kendi nabzını (autoscan) tazeler; sayfa
+        # kick'i / /scan / due bu yolu çağırırsa hb:autoscan'ı KİRLETMESİN
+        _, rows = await build_scan(cfg, client, coin, dex, quick=True,
+                                   beat_name="autoscan" if from_loop else None)
         await _alert_new_big(cfg, notifier, coin, rows)
         log.info("oto-tarama tamam: %s (%d pozisyon)", coin, len(rows))
     except Exception as e:
@@ -121,7 +128,7 @@ async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
             await beat("autoscan")  # turbaşı: uzun tarama sahte alarm üretmesin
             nxt = await _pick_next(cfg)
             if nxt:
-                await scan_coin(cfg, client, nxt[0], nxt[1], notifier)
+                await scan_coin(cfg, client, nxt[0], nxt[1], notifier, from_loop=True)
             await beat("autoscan")
         except asyncio.CancelledError:
             raise

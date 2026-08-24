@@ -17,7 +17,8 @@ def coin_dex(coin: str) -> str:
 
 
 async def build_scan(cfg: Config, client: HLClient, coin: str, dex: str,
-                     ref_ts: int | None = None, quick: bool = False):
+                     ref_ts: int | None = None, quick: bool = False,
+                     beat_name: str | None = None):
     """Tarama + skorlama; (summary, rows) döner."""
     summ = await metrics.summary(coin)
     if summ.get("mark") is None:
@@ -27,7 +28,8 @@ async def build_scan(cfg: Config, client: HLClient, coin: str, dex: str,
         except Exception:
             pass
     rows = await scanner.scan(cfg, client, coin, dex,
-                              max_candidates=250 if quick else None)
+                              max_candidates=250 if quick else None,
+                              beat_name=beat_name)
     rows = await scorer.score_rows(
         cfg, client, coin, rows,
         mark=summ.get("mark"), oi_ntl=summ.get("oi_ntl"), funding=summ.get("funding"),

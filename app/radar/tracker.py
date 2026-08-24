@@ -123,7 +123,10 @@ async def _offer_for_event(cfg: Config, client: HLClient, notifier,
         if live is None:
             already_closed.append(c)
         else:
-            offers.append({**c, "live": live})
+            # CANLI yönü kullan — earnings öncesi snapshot'ın side'ı, balina rapor
+            # sonrası flip ettiyse yanlış olur (teklif '🟢LONG … şu an $3.2M' derken
+            # gerçekte SHORT). Kullanıcı takip kararını bu mesajla veriyor.
+            offers.append({**c, "side": live["side"], "live": live})
 
     if offers:
         async with db() as conn:
@@ -162,45 +165,58 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     live = await live_position(client, t["address"], t["coin"])
     base = float(t["base_szi"] or 0)
     last = float(t["last_szi"] if t["last_szi"] is not None else base)
-    step = base * float(cfg.track_step_pct) / 100 if base > 0 else 0
+    # track_step_pct ≤0 girilirse adım bildirimleri sessizce tamamen kapanıyordu
+    # (panelde alt sınır yok) — varsayılan %10'a düş.
+    step_pct = float(cfg.track_step_pct)
+    if step_pct <= 0:
+        step_pct = 10.0
+    step = base * step_pct / 100 if base > 0 else 0
 
     async with db() as conn:
         await conn.execute(
             "UPDATE trackers SET last_check_ts=? WHERE id=?", (ts, t["id"]))
 
+    # NOT: state (active=0 / yön / last_szi) YALNIZ başarılı gönderimden SONRA
+    # yazılır. Eskiden önce yazılıp send sonucu yok sayılıyordu: Telegram anlık
+    # 502/429 verirse tracker kapanıp kritik 'TAMAMEN KAPATTI'/flip KALICI
+    # kayboluyordu (bir daha taranmaz). Şimdi gönderilemezse state korunur,
+    # sonraki turda yeniden denenir.
+
     # 1) Tamamen kapanmış → kritik bildirim, takip biter
     if live is None or (base > 0 and abs(live["szi"]) <= base * CLOSED_EPS):
-        async with db() as conn:
-            await conn.execute(
-                "UPDATE trackers SET active=0, last_szi=0, end_note='kapandı' WHERE id=?",
-                (t["id"],))
-        await notifier.send("track", fmt.track_closed(t, base, last),
-                            priority="critical", key=f"closed:{t['id']}")
-        log.info("takip #%s: %s pozisyonu TAMAMEN kapandı", t["id"], t["symbol"])
+        ok = await notifier.send("track", fmt.track_closed(t, base, last),
+                                 priority="critical", key=f"closed:{t['id']}")
+        if ok:
+            async with db() as conn:
+                await conn.execute(
+                    "UPDATE trackers SET active=0, last_szi=0, end_note='kapandı' WHERE id=?",
+                    (t["id"],))
+            log.info("takip #%s: %s pozisyonu TAMAMEN kapandı", t["id"], t["symbol"])
         return
 
     cur_szi = abs(live["szi"])
 
     # 2) Yön değişimi (long→short / short→long) → kritik, takip yeni yönle sürer
     if live["side"] != t["side"]:
-        async with db() as conn:
-            await conn.execute(
-                """UPDATE trackers SET side=?, base_szi=?, last_szi=?, base_notional=?
-                   WHERE id=?""",
-                (live["side"], cur_szi, cur_szi, live["notional"], t["id"]))
-        await notifier.send("track", fmt.track_flip(t, live), priority="critical",
-                            key=f"flip:{t['id']}:{live['side']}")
+        ok = await notifier.send("track", fmt.track_flip(t, live), priority="critical",
+                                 key=f"flip:{t['id']}:{live['side']}")
+        if ok:
+            async with db() as conn:
+                await conn.execute(
+                    """UPDATE trackers SET side=?, base_szi=?, last_szi=?, base_notional=?
+                       WHERE id=?""",
+                    (live["side"], cur_szi, cur_szi, live["notional"], t["id"]))
         return
 
     # 3) Anlamlı adım: son bildirimden beri TOPLAM boyutun %X'i kadar değişim.
     #    Spam önleyici — her transaction değil, birikmiş anlamlı fark bildirir.
     if step > 0 and abs(cur_szi - last) >= step:
-        # önce state'i güncelle: Telegram düşse bile aynı adım tekrar tekrar gitmesin
-        async with db() as conn:
-            await conn.execute(
-                "UPDATE trackers SET last_szi=? WHERE id=?", (cur_szi, t["id"]))
-        await notifier.send("track", fmt.track_step(t, live, base, last, cur_szi),
-                            key=f"step:{t['id']}:{cur_szi:.4f}")
+        ok = await notifier.send("track", fmt.track_step(t, live, base, last, cur_szi),
+                                 key=f"step:{t['id']}:{cur_szi:.4f}")
+        if ok:  # last_szi yalnız gönderilince ilerler (kaçan adım tekrar denenir)
+            async with db() as conn:
+                await conn.execute(
+                    "UPDATE trackers SET last_szi=? WHERE id=?", (cur_szi, t["id"]))
         return
 
     # 4) Süre doldu (poz hâlâ açık) → bilgilendir, devam için yeni teklif bırak

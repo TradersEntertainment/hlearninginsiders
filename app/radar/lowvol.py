@@ -11,6 +11,7 @@ API çağrısı yapmaz.
 import asyncio
 import logging
 
+from .. import assets
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
 from ..telegram import format as fmt
@@ -53,6 +54,11 @@ async def dominants(cfg: Config) -> list[dict]:
 
     out = []
     for p in rows:
+        # "Sessiz su HİSSESİ" — endeks/emtia/FX/kripto elenir. Bu marketlerde
+        # $2.5M absürt değildir ve enstrüman hisse de değildir (diğer radarlar
+        # da bu sınıfa büyük-sınıf tabanı uyguluyor). no_calendar (pre-IPO) kalır.
+        if assets.kind(p["symbol"]) == "non_equity":
+            continue
         m = mets.get(p["coin"]) or {}
         vol = m.get("day_volume")
         oi_ntl = (m.get("oi") or 0) * (m.get("mark_px") or 0)

@@ -94,18 +94,24 @@ async def _attribute(cfg: Config, client: HLClient, coin: str, side: str,
                      px_lo: float, px_hi: float, wall_ntl: float) -> str | None:
     """Duvarın sahibini tanıdığımız adaylar arasında ara.
     side: 'ask' → satış emirleri (A), 'bid' → alış (B)."""
+    # Adaylar ÖNCELİK sırasıyla: (0) bu coin'de pozisyonu olanlar — duvarın en
+    # olası sahibi, (1) watchlist, (2) geçmiş kazananlar. Eskiden sırasız UNION +
+    # LIMIT 25 vardı; address_wins büyüdükçe alakasız adresler dilimi doldurup
+    # gerçek sahibi dışarıda bırakıyordu (her duvar 'sahibi bilinmiyor' + 25 boş
+    # API isteği). Öncelik + dedup ile gerçek sahip hep ilk 25'e girer.
     async with db() as conn:
         cur = await conn.execute(
-            """SELECT DISTINCT a FROM (
-                 SELECT p.address a FROM positions_current p
+            """SELECT a, MIN(pri) pri FROM (
+                 SELECT p.address a, 0 pri FROM positions_current p
                    LEFT JOIN addresses ad ON ad.address=p.address
                    WHERE p.coin=? AND COALESCE(ad.entity,'')=''
-                 UNION SELECT address a FROM addresses
+                 UNION ALL SELECT address a, 1 pri FROM addresses
                    WHERE watchlist=1 AND COALESCE(entity,'')=''
-                 UNION SELECT DISTINCT w.address a FROM address_wins w
+                 UNION ALL SELECT w.address a, 2 pri FROM address_wins w
                    LEFT JOIN addresses ad ON ad.address=w.address
                    WHERE COALESCE(ad.entity,'')=''
-               ) LIMIT ?""", (coin, ATTRIB_MAX_CANDIDATES))
+               ) GROUP BY a ORDER BY pri LIMIT ?""",
+            (coin, ATTRIB_MAX_CANDIDATES))
         cands = [r["a"] for r in await cur.fetchall()]
     want = "A" if side == "ask" else "B"
     dex = coin_dex(coin)
@@ -227,9 +233,11 @@ async def _upsert_and_alert(cfg: Config, client: HLClient, notifier,
     if alerted or not notifier or w["notional"] < alert_min:
         return 0
     key = f"{coin}:{w['side']}"
+    # Cooldown'da alerted=1 YAZMA: eskiden cooldown'a takılan duvar kalıcı olarak
+    # alerted işaretlenip bir daha değerlendirilmiyor, kalkınca da hiç anons
+    # edilmemiş duvara sahte '🧱❌ Duvar kalktı' gidiyordu (spoof çek-tekrar-koy
+    # paterni kaçıyordu). Cooldown sadece bu turu atlar; duvar aktif kalır.
     if await alert_recent("wall", key, WALL_COOLDOWN):
-        async with db() as conn:
-            await conn.execute("UPDATE book_walls SET alerted=1 WHERE id=?", (wall_id,))
         return 0
 
     addr = None
@@ -239,13 +247,19 @@ async def _upsert_and_alert(cfg: Config, client: HLClient, notifier,
     except Exception:
         log.exception("duvar sahipliği aranamadı: %s", coin)
     text = fmt.wall_alert({**w, "symbol": symbol, "address": addr}, day_vol)
-    async with db() as conn:
-        await conn.execute(
-            "UPDATE book_walls SET alerted=1, address=? WHERE id=?", (addr, wall_id))
+    # alerted=1'i YALNIZ başarılı gönderimden sonra yaz — 429/400'de duvar aktif
+    # kaldığı sürece bir daha bildirilmiyordu (send'den ÖNCE işaretleniyordu).
     if await notifier.send("wall", text, key=key):
+        async with db() as conn:
+            await conn.execute(
+                "UPDATE book_walls SET alerted=1, address=? WHERE id=?", (addr, wall_id))
         await alert_log("wall", key, text)
         log.info("🧱 duvar alarmı: %s %s %s", symbol, w["side"], fmt.usd(w["notional"]))
         return 1
+    # gönderilemedi ama sahibi bulduysak kaydet (bir dahakine tekrar aramayalım)
+    if addr:
+        async with db() as conn:
+            await conn.execute("UPDATE book_walls SET address=? WHERE id=?", (addr, wall_id))
     return 0
 
 
