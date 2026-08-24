@@ -1,4 +1,5 @@
 """Telegram mesaj şablonları (HTML)."""
+import html
 import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -8,6 +9,13 @@ from ..propr import PROPR_NOTE, is_listed
 
 TR = ZoneInfo("Europe/Istanbul")
 ET = ZoneInfo("America/New_York")
+
+
+def esc(s) -> str:
+    """Serbest metni (hata mesajı, coin/sembol adı, not) HTML'e güvenli hale getir.
+    Escape edilmezse '<' içeren bir hata metni Telegram'da 'can't parse entities'
+    (400) döndürür ve mesaj sessizce kaybolur — /saglik'ı bile kalıcı kilitlerdi."""
+    return html.escape(str(s if s is not None else ""), quote=False)
 
 DISCLAIMER = "\n<i>ℹ️ Gözlem aracıdır, yatırım tavsiyesi değildir.</i>"
 
@@ -358,7 +366,7 @@ def _task(name: str) -> str:
 
 def crash_alert(name: str, err, count: int = 1) -> str:
     return (f"⚕️🔥 <b>GÖREV ÇÖKTÜ</b> — {_task(name)}\n"
-            f"<code>{str(err)[:200]}</code>\n"
+            f"<code>{esc(str(err)[:200])}</code>\n"
             f"Otomatik yeniden başlatıldı (toplam {count}. çökme).\n"
             "<i>Bu mesajı Claude'a yapıştırırsan kalıcı düzeltme yapılır.</i>")
 
@@ -398,7 +406,7 @@ def health_report(snap: dict) -> str:
         lines.append("\n🔥 <b>Çökme geçmişi:</b>")
         for name, r in sorted(crashes.items(), key=lambda x: -(x[1].get("ts") or 0))[:5]:
             lines.append(f"  {_task(name)} ×{r.get('count', 1)} — son: "
-                         f"<code>{(r.get('err') or '')[:90]}</code>")
+                         f"<code>{esc((r.get('err') or '')[:90])}</code>")
     lines.append("\n<i>Bekçi 2 dakikada bir kontrol eder; takılan görevi kendisi"
                  " yeniden başlatır ve sana haber verir.</i>")
     return "\n".join(lines)

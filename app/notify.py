@@ -60,7 +60,11 @@ class Notifier:
             return False
         prio = priority or KINDS.get(kind, ("", "", "normal"))[2]
 
-        if not kind_enabled(self.cfg, kind) and prio != "critical":
+        # Tip kapalıysa hiçbir şey gönderilmez — kullanıcının ayarı her zaman
+        # kazanır (critical bile). critical yalnız SESSİZ SAAT'i deler (aşağıda);
+        # tip toggle'ını değil. Önce: notify_earnings/track/liq=0 iken 'critical'
+        # earnings raporu / kapanış / SON UYARI ayarı yok sayıp gidiyordu.
+        if not kind_enabled(self.cfg, kind):
             log.debug("bildirim kapalı, atlandı: %s", kind)
             return False
 

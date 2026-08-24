@@ -1,6 +1,7 @@
 """Telegram bot — long polling + komutlar + mesaj gönderimi."""
 import asyncio
 import logging
+import re
 
 import aiohttp
 
@@ -17,6 +18,14 @@ from .format import tr_time
 log = logging.getLogger("telegram.bot")
 
 MAX_LEN = 4000
+
+
+def _cmd_lower(s: str) -> str:
+    """Komut adını locale-güvenli küçült. Türkçe büyük İ'nin str.lower()'ı
+    'i̇' (i + U+0307 combining dot above) üretir; '/TAKİP_1' → 'taki̇p_1' hiçbir
+    komuta düşmüyordu. Combining dot'u sil — ı/ğ/ş gibi diğer harfler korunur
+    (mevcut 'sağlık', 'bırak_' komutları bozulmasın)."""
+    return s.lower().replace("̇", "")
 
 
 class TelegramBot:
@@ -37,21 +46,57 @@ class TelegramBot:
             return False
         ok = True
         for chunk in self._split(text):
-            try:
-                async with self.session.post(
-                    f"{self.api}/sendMessage",
-                    json={"chat_id": chat, "text": chunk, "parse_mode": "HTML",
-                          "disable_web_page_preview": True},
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as r:
-                    if r.status != 200:
-                        body = (await r.text())[:300]
-                        log.warning("sendMessage %s: %s", r.status, body)
-                        ok = False
-            except Exception as e:
-                log.warning("sendMessage hatası: %s", e)
+            if not await self._send_chunk(chat, chunk):
                 ok = False
         return ok
+
+    async def _send_chunk(self, chat: str, chunk: str, _retry: bool = True) -> bool:
+        try:
+            async with self.session.post(
+                f"{self.api}/sendMessage",
+                json={"chat_id": chat, "text": chunk, "parse_mode": "HTML",
+                      "disable_web_page_preview": True},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as r:
+                if r.status == 200:
+                    return True
+                body = (await r.text())[:300]
+                log.warning("sendMessage %s: %s", r.status, body)
+                # 429: Telegram retry_after kadar bekleyip bir kez daha dene
+                if r.status == 429 and _retry:
+                    try:
+                        wait = int(((await r.json()).get("parameters") or {})
+                                   .get("retry_after") or 1)
+                    except Exception:
+                        wait = 1
+                    await asyncio.sleep(min(wait, 30))
+                    return await self._send_chunk(chat, chunk, _retry=False)
+                # 400 "can't parse entities": HTML bozuksa parse_mode'suz düz metin
+                # gönder — bildirim tamamen kaybolmasın (escape kaçağı son çare)
+                if r.status == 400 and _retry:
+                    return await self._send_plain(chat, chunk)
+                return False
+        except Exception as e:
+            log.warning("sendMessage hatası: %s", e)
+            return False
+
+    async def _send_plain(self, chat: str, chunk: str) -> bool:
+        plain = re.sub(r"<[^>]+>", "", chunk)  # tag'leri sıyır
+        try:
+            async with self.session.post(
+                f"{self.api}/sendMessage",
+                json={"chat_id": chat, "text": plain,
+                      "disable_web_page_preview": True},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as r:
+                if r.status == 200:
+                    log.info("mesaj düz-metin olarak gönderildi (HTML reddedildi)")
+                    return True
+                log.warning("düz-metin sendMessage de başarısız: %s", r.status)
+                return False
+        except Exception as e:
+            log.warning("düz-metin sendMessage hatası: %s", e)
+            return False
 
     @staticmethod
     def _split(text: str) -> list[str]:
@@ -73,6 +118,7 @@ class TelegramBot:
     async def run_polling(self) -> None:
         offset = None
         log.info("Telegram polling başladı")
+        err_wait = 5
         while True:
             try:
                 params = {"timeout": 50}
@@ -82,7 +128,18 @@ class TelegramBot:
                     f"{self.api}/getUpdates", params=params,
                     timeout=aiohttp.ClientTimeout(total=60),
                 ) as r:
+                    status = r.status
                     data = await r.json()
+                # ok:false / HTTP!=200 → beat ATMA (bekçi 'sağlıklı' sanmasın) +
+                # artan bekleme. 409 (ikinci instance) / 401 (kötü token) JSON
+                # döndüğü için exception atmıyordu → sleep'siz sıcak döngü olurdu.
+                if status != 200 or not data.get("ok", True):
+                    desc = data.get("description") or f"HTTP {status}"
+                    log.warning("getUpdates reddedildi: %s — %ds bekle", desc, err_wait)
+                    await asyncio.sleep(err_wait)
+                    err_wait = min(err_wait * 2, 120)
+                    continue
+                err_wait = 5
                 from ..health import beat
                 await beat("telegram")
                 for upd in data.get("result", []):
@@ -95,7 +152,8 @@ class TelegramBot:
                 raise
             except Exception as e:
                 log.warning("polling hatası: %s", e)
-                await asyncio.sleep(5)
+                await asyncio.sleep(err_wait)
+                err_wait = min(err_wait * 2, 120)
 
     async def _handle_update(self, upd: dict) -> None:
         msg = upd.get("message") or upd.get("channel_post") or {}
@@ -104,7 +162,7 @@ class TelegramBot:
         if not text.startswith("/") or not chat_id:
             return
         parts = text.split()
-        cmd = parts[0][1:].split("@")[0].lower()
+        cmd = _cmd_lower(parts[0][1:].split("@")[0])
         args = parts[1:]
 
         # Yapılandırılmış chat dışından sadece /id ve /start'a cevap ver
@@ -136,7 +194,7 @@ class TelegramBot:
                     f"Kaynaklar → {srcs}{warn}\n\n"
                     + fmt.upcoming_list(await upcoming_events(14)), chat_id)
             except Exception as e:
-                await self.send(f"❌ Takvim yenilenemedi: {e}", chat_id)
+                await self.send(f"❌ Takvim yenilenemedi: {fmt.esc(e)}", chat_id)
         elif cmd == "scan":
             await self._cmd_scan(args, chat_id)
         elif cmd == "whale":
@@ -211,11 +269,17 @@ class TelegramBot:
         sw = await kv_get("sweep_stats") or {}
         if sw.get("hot"):
             last_full = await kv_get("sweep_last_full")
+            errnote = ""
+            if sw.get("err") and not sw.get("ok"):
+                errnote = " ⚠️ son parti tamamen hata (ALL_DEXES reddi?)"
+            elif sw.get("err"):
+                errnote = f" ({sw.get('ok', 0)}✓/{sw['err']}✗)"
             st["derin keşif"] = (f"sıcak {sw['hot']} adres"
                                  f" (tur ~{sw.get('tour_min', '?')} dk)"
                                  f" · soğuk kuyruk {sw.get('cold', 0)}"
                                  + (f", son tam tur {tr_time(int(last_full))}"
-                                    if last_full else ", ilk tur sürüyor"))
+                                    if last_full else ", ilk tur sürüyor")
+                                 + errnote)
         hv = await kv_get("harvest_stats") or {}
         if hv.get("total"):
             st["işlem hasadı"] = f"{hv['total']} fill REST'ten toplandı"
@@ -249,7 +313,7 @@ class TelegramBot:
             await self.send(text, chat_id)
         except Exception as e:
             log.exception("scan hatası: %s", t["symbol"])
-            await self.send(f"❌ <b>{t['symbol']}</b> taranamadı: {e}", chat_id)
+            await self.send(f"❌ <b>{t['symbol']}</b> taranamadı: {fmt.esc(e)}", chat_id)
 
     async def _cmd_whale(self, args: list[str], chat_id: str) -> None:
         if not args or not args[0].startswith("0x"):
@@ -350,8 +414,10 @@ class TelegramBot:
             for s in sent:
                 kind = (s["kind"] or "").split(":", 1)
                 mark = "😴" if kind[0] == "quiet" else "✅"
-                first = (s.get("payload") or "").split("\n")[0][:60]
-                lines.append(f"  {mark} {tr_time(s['ts'])} {first}")
+                # Önce HTML tag'lerini sıyır SONRA kes — [:60] </b> gibi bir tag'i
+                # ortadan bölerse tüm /bildirimler mesajı Telegram'dan 400 alırdı.
+                raw = re.sub(r"<[^>]+>", "", (s.get("payload") or "").split("\n")[0])
+                lines.append(f"  {mark} {tr_time(s['ts'])} {fmt.esc(raw[:60])}")
         lines.append("\n<i>Ayarları dashboard → ⚙️ Ayarlar → Bildirimler'den değiştir.</i>")
         await self.send("\n".join(lines), chat_id)
 
@@ -376,6 +442,14 @@ class TelegramBot:
         sym = args[0].upper().lstrip("$")
         spec = args[1].lower()
         want_date = args[2] if len(args) > 2 else None
+
+        # Tarih verildiyse ISO (YYYY-MM-DD) olmalı — Türkçe '12.08.2026' gibi bir
+        # değer geçersiz kayıt yaratıp sonraki refresh'te sessizce siliniyordu.
+        if want_date and not cal.valid_date_et(want_date):
+            await self.send(
+                f"Tarih formatı <b>YYYY-MM-DD</b> olmalı (ör. 2026-08-12).\n"
+                f"'{fmt.esc(want_date)}' anlaşılamadı.", chat_id)
+            return
 
         t = await find_ticker(sym)
         if not t:
@@ -486,7 +560,7 @@ class TelegramBot:
         try:
             live = await live_position(self.client, offer["address"], offer["coin"])
         except Exception as e:
-            await self.send(f"❌ Pozisyon okunamadı, tekrar dene: {e}", chat_id)
+            await self.send(f"❌ Pozisyon okunamadı, tekrar dene: {fmt.esc(e)}", chat_id)
             return
         async with db() as conn:
             await conn.execute("UPDATE track_offers SET used=1 WHERE id=?", (offer_id,))
