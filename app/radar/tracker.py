@@ -56,6 +56,42 @@ async def live_position(client: HLClient, address: str, coin: str) -> dict | Non
     return None
 
 
+async def start_tracker(cfg: Config, address: str, coin: str, symbol: str,
+                        live: dict) -> int:
+    """Canlı pozisyonu baz alarak takip kaydı aç, tracker id döner.
+    Hem teklif yolu (/takip_N) hem manuel komut (/takip 0xADRES SEMBOL) kullanır."""
+    ts = now()
+    async with db() as conn:
+        cur = await conn.execute(
+            """INSERT INTO trackers(address,coin,symbol,side,base_szi,last_szi,
+                 base_notional,created_ts,expires_ts,active,last_check_ts,entry_px)
+               VALUES(?,?,?,?,?,?,?,?,?,1,?,?)""",
+            (address, coin, symbol, live["side"], abs(live["szi"]), abs(live["szi"]),
+             live["notional"], ts, ts + int(cfg.track_expire_days) * 86400, ts,
+             live.get("entry_px")))
+        return cur.lastrowid
+
+
+async def estimate_pnl(t: dict, exit_px: float | None = None) -> dict | None:
+    """Kapanan takip için TAHMİNİ kâr/zarar: (çıkış − giriş) × adet.
+    Çıkış fiyatı bilinmiyorsa son mark kullanılır — bu yüzden 'tahmini'."""
+    entry = t.get("entry_px")
+    base = float(t.get("base_szi") or 0)
+    if not entry or base <= 0:
+        return None
+    if exit_px is None:
+        from . import metrics
+        m = await metrics.latest_metric(t["coin"])
+        exit_px = (m or {}).get("mark_px")
+    if not exit_px:
+        return None
+    sign = 1 if t.get("side") == "long" else -1
+    usd = sign * (float(exit_px) - float(entry)) * base
+    ntl = float(t.get("base_notional") or 0)
+    return {"usd": usd, "pct": (usd / ntl * 100) if ntl else None,
+            "entry": float(entry), "exit": float(exit_px)}
+
+
 # ---------------- teklif: "takip edelim mi?" ----------------
 
 async def make_offers(cfg: Config, client: HLClient, notifier) -> int:
@@ -184,7 +220,8 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
 
     # 1) Tamamen kapanmış → kritik bildirim, takip biter
     if live is None or (base > 0 and abs(live["szi"]) <= base * CLOSED_EPS):
-        ok = await notifier.send("track", fmt.track_closed(t, base, last),
+        pnl = await estimate_pnl(t)
+        ok = await notifier.send("track", fmt.track_closed(t, base, last, pnl),
                                  priority="critical", key=f"closed:{t['id']}")
         if ok:
             async with db() as conn:

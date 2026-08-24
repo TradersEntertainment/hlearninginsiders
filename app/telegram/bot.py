@@ -214,7 +214,10 @@ class TelegramBot:
         elif cmd.startswith("takip_"):
             await self._cmd_track_start(cmd, chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
-            await self._cmd_track_list(chat_id)
+            if cmd == "takip" and args:      # /takip 0xADRES SEMBOL → manuel takip
+                await self._cmd_track_manual(args, chat_id)
+            else:
+                await self._cmd_track_list(chat_id)
         elif cmd.startswith("birak_") or cmd.startswith("bırak_"):
             await self._cmd_track_stop(cmd, chat_id)
         elif cmd in ("bildirimler", "notifications", "notif"):
@@ -569,18 +572,48 @@ class TelegramBot:
                 f"🚪 {fmt.alink(offer['address'])} <b>{offer['symbol']}</b> pozisyonunu"
                 " ZATEN KAPATMIŞ — takip edilecek bir şey kalmadı.", chat_id)
             return
-        expires = now() + int(self.cfg.track_expire_days) * 86400
-        async with db() as conn:
-            cur = await conn.execute(
-                """INSERT INTO trackers(address,coin,symbol,side,base_szi,last_szi,
-                     base_notional,created_ts,expires_ts,active,last_check_ts)
-                   VALUES(?,?,?,?,?,?,?,?,?,1,?)""",
-                (offer["address"], offer["coin"], offer["symbol"], live["side"],
-                 abs(live["szi"]), abs(live["szi"]), live["notional"],
-                 now(), expires, now()))
-            tid = cur.lastrowid
+        from ..radar.tracker import start_tracker
+        tid = await start_tracker(self.cfg, offer["address"], offer["coin"],
+                                  offer["symbol"], live)
         await self.send(fmt.track_started(tid, offer["symbol"], offer["address"],
                                           live, self.cfg), chat_id)
+
+    async def _cmd_track_manual(self, args: list[str], chat_id: str) -> None:
+        """/takip 0xADRES SEMBOL — teklif beklemeden elle takip başlat."""
+        from ..radar.tracker import live_position, start_tracker
+        addr = next((a.lower() for a in args if a.lower().startswith("0x")), "")
+        sym = next((a.upper().lstrip("$") for a in args
+                    if not a.lower().startswith("0x")), "")
+        if not addr or not sym:
+            await self.send(
+                "Kullanım: <code>/takip 0xADRES SEMBOL</code>"
+                " (ör. <code>/takip 0xabc... SNDK</code>)\n"
+                "Sadece <code>/takip</code> yazarsan aktif takipleri listeler.", chat_id)
+            return
+        t = await find_ticker(sym)
+        if not t:
+            await self.send(f"'{sym}' HL evreninde yok.", chat_id)
+            return
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT id FROM trackers WHERE active=1 AND address=? AND coin=?",
+                (addr, t["coin"]))
+            existing = await cur.fetchone()
+        if existing:
+            await self.send(f"Bu balina zaten takipte (#{existing['id']})."
+                            " /takipler ile bakabilirsin.", chat_id)
+            return
+        try:
+            live = await live_position(self.client, addr, t["coin"])
+        except Exception as e:
+            await self.send(f"❌ Pozisyon okunamadı, tekrar dene: {fmt.esc(e)}", chat_id)
+            return
+        if not live:
+            await self.send(f"{fmt.alink(addr)} adresinin <b>{sym}</b> pozisyonu yok"
+                            " — takip edilecek bir şey bulamadım.", chat_id)
+            return
+        tid = await start_tracker(self.cfg, addr, t["coin"], sym, live)
+        await self.send(fmt.track_started(tid, sym, addr, live, self.cfg), chat_id)
 
     async def _cmd_track_list(self, chat_id: str) -> None:
         async with db() as conn:
