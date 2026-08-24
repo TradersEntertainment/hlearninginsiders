@@ -52,7 +52,7 @@ async def note_crash(name: str, exc: Exception) -> bool:
 
 def limits(cfg: Config) -> dict[str, int]:
     """Görev → izin verilen en uzun sessizlik (sn)."""
-    return {
+    lim = {
         "universe": cfg.universe_refresh_sec * 3 + 300,
         "calendar": cfg.calendar_refresh_sec * 2 + 600,
         "metrics": cfg.metrics_poll_sec * 3 + 120,
@@ -67,8 +67,14 @@ def limits(cfg: Config) -> dict[str, int]:
         "hourstats": 7200,
         "digest": 2400,
         "collector": 900,
-        "telegram": 600,
     }
+    # telegram görevi YALNIZ bot token'ı varken spawn edilir (main.lifespan);
+    # token'sız 'sadece dashboard' kurulumunda beklenirse kalp atışı hiç
+    # gelmez → kalıcı sahte 'telegram sorunlu' rozeti + /health ok:false +
+    # var olmayan görevi respawn denemesi. Yoksa listeye hiç koyma.
+    if cfg.telegram_bot_token:
+        lim["telegram"] = 600
+    return lim
 
 
 async def check(cfg: Config) -> dict[str, dict]:

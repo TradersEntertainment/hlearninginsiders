@@ -21,11 +21,13 @@ def symbol_of(coin: str) -> str:
 async def refresh_universe(client: HLClient, equity_dexes: list[str]) -> list[str]:
     from ..assets import excluded_set, is_excluded
     coins: list[str] = []
+    all_ok = True  # tüm dex meta'ları alındı mı (kısmi hata varsa silme yapma)
     for dex in equity_dexes:
         try:
             meta = await client.meta(dex)
         except Exception as e:
             log.warning("meta(%s) alınamadı: %s", dex, e)
+            all_ok = False
             continue
         universe = (meta or {}).get("universe") or []
         async with db() as conn:
@@ -54,6 +56,18 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str]) -> list[st
         async with db() as conn:
             await conn.execute(
                 f"DELETE FROM tickers WHERE UPPER(symbol) IN ({q})", tuple(exc))
+    # Delist olan / meta'dan tamamen düşen coin'leri de temizle — eskiden yalnız
+    # INSERT'te atlanıyor, tickers satırı kalıyordu → autoscan ölü marketi
+    # taramaya, bookwall boş l2Book çağırmaya, dashboard hayalet coin göstermeye
+    # devam ediyordu. YALNIZ tüm dex'ler başarıyla alındıysa sil (kısmi hatada
+    # canlı coin'i yanlışlıkla düşürme).
+    if all_ok and coins:
+        placeholders = ",".join("?" * len(coins))
+        async with db() as conn:
+            cur = await conn.execute(
+                f"DELETE FROM tickers WHERE coin NOT IN ({placeholders})", tuple(coins))
+            if cur.rowcount:
+                log.info("evrenden düşen %d coin tickers'tan silindi", cur.rowcount)
     if coins:
         log.info("evren yenilendi: %d coin (%s)", len(coins), ", ".join(coins[:8]) + ("…" if len(coins) > 8 else ""))
     return coins

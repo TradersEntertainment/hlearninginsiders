@@ -6,10 +6,10 @@ ve o günden beri işlem yapmamış balinalar WS akışına hiç düşmez — PL
 "en büyük poz $1.26M" yanılgısı buradan çıktı.
 
 İki sürekli akışla kapatılır:
-1) Adres süpürmesi: geniş leaderboard dilimi (+ görülen tüm adresler)
+1) Adres süpürmesi: sıcak havuz (watchlist + pozisyon sahipleri + leaderboard)
    dönüşümlü olarak ALL_DEXES ile sorgulanır; TÜM hisse pozisyonları
-   positions_current'a işlenir, kapananlar silinir. ~2 istek/sn — bir tam
-   tur ~13 dk; tablo coin bağımsız, kapsamlı ve güncel kalır.
+   positions_current'a işlenir, kapananlar silinir. Sıcak tam tur ~75-80 dk;
+   soğuk kuyruk (yalnız fill'de görülen adresler) günler içinde döner.
 2) recentTrades hasadı: WS kopukluklarının kaçırdığı işlemler REST'ten
    toplanır (users alanı) → adres havuzu ve zaman çizelgeleri beslenir.
 """
@@ -78,12 +78,14 @@ def _parse_equity_positions(resp, coin_set: set[str],
     """ALL_DEXES yanıtından hisse pozisyonları: (coin -> pozisyon, yanıt geçerli mi).
     Yanıtta hiç state yoksa 'geçersiz' döner — bozuk yanıtla kayıt SİLİNMEZ."""
     out: dict[str, dict] = {}
+    exact: set[str] = set()  # doğrudan coin_set eşleşmesiyle yazılanlar
     states = list(_iter_states(resp))
     for state in states:
         for ap in state.get("assetPositions") or []:
             pos = ap.get("position") or {}
             pcoin = pos.get("coin") or ""
-            coin = pcoin if pcoin in coin_set else sym_map.get(symbol_of(pcoin), "")
+            is_exact = pcoin in coin_set
+            coin = pcoin if is_exact else sym_map.get(symbol_of(pcoin), "")
             if not coin:
                 continue
             try:
@@ -93,6 +95,17 @@ def _parse_equity_positions(resp, coin_set: set[str],
                 continue
             if szi == 0 or ntl < min_ntl:
                 continue
+            # İki dex aynı sembolü tutuyorsa (ör. xyz:TSLA + abc:TSLA) sym_map ikisini
+            # de aynı coin'e eşliyor → son gelen üsttekini eziyordu (yön/boyut
+            # yanlış). Doğrudan coin eşleşmesi (exact) korunur; sembol eşleşmeleri
+            # arasında EN BÜYÜK notional kazanır (deterministik, dict sırasına bağlı değil).
+            if coin in out:
+                if coin in exact and not is_exact:
+                    continue  # exact kaydı sembol-eşleşmesi ezemez
+                if is_exact and coin not in exact:
+                    pass       # exact, önceki sembol-eşleşmesini ezer
+                elif ntl <= out[coin]["notional"]:
+                    continue   # aynı sınıf → büyük olan kalır
             liq = pos.get("liquidationPx")
             out[coin] = {
                 "szi": szi, "side": "long" if szi > 0 else "short",
@@ -102,6 +115,8 @@ def _parse_equity_positions(resp, coin_set: set[str],
                 "upnl": float(pos.get("unrealizedPnl") or 0),
                 "notional": ntl,
             }
+            if is_exact:
+                exact.add(coin)
     return out, bool(states)
 
 
@@ -154,28 +169,39 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     if not coin_set:
         return {"hot": len(hot), "cold": len(cold)}
 
-    # parti bütçesi: sıcak öncelikli, artan slot soğuğa (ve tersi)
-    n_hot = min(HOT_PER_BATCH, cfg.sweep_batch_size)
-    n_cold = max(0, cfg.sweep_batch_size - n_hot)
+    # Parti bütçesi: sıcak öncelikli, soğuk kısa bir kuyruk. Sıcak dilim
+    # sweep_batch_size ile ÖLÇEKLENİR (30'da sabitlenmez — batch>30 ölü koldu);
+    # soğuğa en fazla COLD_PER_BATCH ve bütçenin yarısı ayrılır (bs≤30'da soğuk
+    # havuz artık sessizce ölmez); bir havuz tükenince artan slot diğerine geçer.
+    bs = max(1, int(cfg.sweep_batch_size))
+    n_cold = min(COLD_PER_BATCH, len(cold), bs // 2)
+    n_hot = min(len(hot), bs - n_cold)
+    if n_hot < bs - n_cold:            # sıcak havuz tükendi → artan soğuğa
+        n_cold = min(len(cold), bs - n_hot)
     hb, hcur, hot_done = _slice(hot, int(await kv_get("sweep_cursor_hot") or 0), n_hot)
     cb, ccur, _ = _slice(cold, int(await kv_get("sweep_cursor_cold") or 0), n_cold)
     batch = hb + cb
     ts = now()
     n_pos = 0
+    n_ok = 0
+    n_err = 0
 
     async def one(addr: str):
-        nonlocal n_pos
+        nonlocal n_pos, n_ok, n_err
         from ..health import beat
         await beat("sweeper")  # ilerleme nabzı
         try:
             resp = await client.clearinghouse(addr, "ALL_DEXES")
         except Exception as e:
+            n_err += 1
             log.debug("sweep %s: %s", addr, e)
             return
         positions, valid = _parse_equity_positions(resp, coin_set, sym_map,
                                                    cfg.min_position_notional)
         if not valid:
+            n_err += 1
             return  # bozuk yanıt — mevcut kayıtlara dokunma
+        n_ok += 1
         await _upsert_address(addr, positions, ts)
         n_pos += len(positions)
 
@@ -183,15 +209,25 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
 
     await kv_set("sweep_cursor_hot", hcur)
     await kv_set("sweep_cursor_cold", ccur)
-    if hot_done:
+    # Parti tamamen başarısızsa (ALL_DEXES reddi vb.) tur muhasebesini damgalama:
+    # eskiden %100 hatada bile 'son tam tur şimdi' yazılıp tablo donmuşken
+    # 'derin keşif çalışıyor' sanılıyordu (PLTR $1.26M yanılgısının dönüşü).
+    total_calls = n_ok + n_err
+    all_failed = total_calls > 0 and n_ok == 0
+    if all_failed:
+        log.warning("derin keşif partisi tamamen başarısız (%d/%d hata) —"
+                    " ALL_DEXES reddi olabilir, tur damgalanmadı", n_err, total_calls)
+    elif hot_done:
         await kv_set("sweep_last_full", ts)
         log.info("derin keşif SICAK tur bitti: %d adres (soğuk kuyruk %d)",
                  len(hot), len(cold))
     tour_min = round(len(hot) / max(n_hot, 1) * cfg.sweep_interval_sec / 60)
     await kv_set("sweep_stats", {"hot": len(hot), "cold": len(cold),
                                  "tour_min": tour_min, "cursor": hcur,
-                                 "batch_positions": n_pos, "ts": ts})
-    return {"hot": len(hot), "cold": len(cold), "positions": n_pos}
+                                 "batch_positions": n_pos,
+                                 "ok": n_ok, "err": n_err, "ts": ts})
+    return {"hot": len(hot), "cold": len(cold), "positions": n_pos,
+            "ok": n_ok, "err": n_err}
 
 
 async def harvest_trades(cfg: Config, client: HLClient) -> int:
@@ -311,6 +347,27 @@ async def refresh_fills_count() -> int:
     return n
 
 
+async def _chunked_delete(table: str, cutoff: int, chunk: int = 50000) -> int:
+    """Eski satırları PARÇA PARÇA sil — her parça ayrı transaction + arada nefes.
+    Tek dev DELETE (4M satırda ~37 sn) WAL yazma kilidini onlarca saniye tutup
+    busy_timeout(5s) yüzünden collector'ı 'database is locked' ile düşürüyor,
+    WS reconnect fırtınası + bekçi-cancel-rollback döngüsü yaratıyordu."""
+    total = 0
+    while True:
+        async with db() as conn:
+            cur = await conn.execute(
+                f"DELETE FROM {table} WHERE rowid IN "
+                f"(SELECT rowid FROM {table} WHERE ts < ? LIMIT ?)", (cutoff, chunk))
+            n = cur.rowcount or 0
+        total += n
+        if n < chunk:
+            break
+        from ..health import beat
+        await beat("sweeper")           # uzun bakımda bekçi sahte alarm üretmesin
+        await asyncio.sleep(0.2)        # diğer yazarlara (collector) yol ver
+    return total
+
+
 async def maintenance(cfg: Config) -> None:
     """Günlük veri emekliliği — /data volume'u sınırsız büyümesin.
 
@@ -320,18 +377,9 @@ async def maintenance(cfg: Config) -> None:
     """
     ts_now = now()
     keep = max(int(cfg.fills_retention_days), 7)
-    async with db() as conn:
-        cur = await conn.execute(
-            "DELETE FROM fills WHERE ts < ?", (ts_now - keep * 86400,))
-        n_fills = cur.rowcount or 0
-        cur = await conn.execute(
-            "DELETE FROM asset_metrics WHERE ts < ?",
-            (ts_now - METRICS_RETENTION_D * 86400,))
-        n_met = cur.rowcount or 0
-        cur = await conn.execute(
-            "DELETE FROM alerts_log WHERE ts < ?",
-            (ts_now - ALERTS_RETENTION_D * 86400,))
-        n_al = cur.rowcount or 0
+    n_fills = await _chunked_delete("fills", ts_now - keep * 86400)
+    n_met = await _chunked_delete("asset_metrics", ts_now - METRICS_RETENTION_D * 86400)
+    n_al = await _chunked_delete("alerts_log", ts_now - ALERTS_RETENTION_D * 86400)
     n_left = await refresh_fills_count()
     if n_fills or n_met or n_al:
         log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı emekli"
@@ -339,15 +387,23 @@ async def maintenance(cfg: Config) -> None:
 
 
 async def housekeeping(cfg: Config) -> None:
-    """Süpürme döngüsünün istek dışı işleri: uzman önbelleği + günlük bakım."""
+    """Süpürme döngüsünün istek dışı işleri: uzman önbelleği + günlük bakım.
+    İki iş BAĞIMSIZ try bloğunda — uzman hesabı (fills GROUP BY) kalıcı
+    patlarsa günlük emeklilik yine de koşsun (yoksa /data sonsuz büyürdü)."""
     if now() - int(await kv_get("spec_last") or 0) >= SPEC_INTERVAL:
-        await compute_specialists(cfg)
-        await refresh_fills_count()
-        await kv_set("spec_last", now())
+        try:
+            await compute_specialists(cfg)
+            await refresh_fills_count()
+            await kv_set("spec_last", now())
+        except Exception:
+            log.exception("uzman önbelleği hesaplanamadı")
     today = datetime.now(TR).date().isoformat()
     if await kv_get("maint_last_day") != today:
-        await maintenance(cfg)
-        await kv_set("maint_last_day", today)
+        try:
+            await maintenance(cfg)
+            await kv_set("maint_last_day", today)
+        except Exception:
+            log.exception("günlük bakım başarısız")
 
 
 async def loop(cfg: Config, client: HLClient) -> None:

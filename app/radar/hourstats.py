@@ -121,14 +121,24 @@ def hot_now(stats_map: dict[str, dict], et_hour: int) -> list[dict]:
     return out
 
 
-async def all_stats() -> dict[str, dict]:
-    """kv'deki tüm hazır istatistikler: coin -> stats."""
+async def all_stats(only_universe: bool = True) -> dict[str, dict]:
+    """kv'deki hazır istatistikler: coin -> stats. only_universe=True iken
+    evrende OLMAYAN (exclude/delist) coin'lerin hayalet kaydını eler — yoksa
+    exclude edilen hisse aylarca 'Saati gelenler'de donmuş rakamla kalıyor,
+    linki 'bulunamadı'ya gidiyor, kanala bile yayınlanabiliyordu."""
     out = {}
     async with db() as conn:
+        valid = None
+        if only_universe:
+            cur = await conn.execute("SELECT coin FROM tickers")
+            valid = {r["coin"] for r in await cur.fetchall()}
         cur = await conn.execute("SELECT k, v FROM kv WHERE k LIKE 'hstats:%'")
         for r in await cur.fetchall():
+            coin = r["k"][7:]
+            if valid is not None and coin not in valid:
+                continue
             try:
-                out[r["k"][7:]] = json.loads(r["v"])
+                out[coin] = json.loads(r["v"])
             except (ValueError, TypeError):
                 continue
     return out
@@ -136,11 +146,17 @@ async def all_stats() -> dict[str, dict]:
 
 async def refresh_coin(cfg: Config, client: HLClient, coin: str) -> dict | None:
     end_ms = now() * 1000
-    start_ms = end_ms - int(cfg.hourstats_days) * 86400 * 1000
+    # hourstats_days panelden MIN_CANDLES/20 günün altına çekilirse özellik
+    # sessizce ölüyordu (compute_stats None döner). En az 20 güne kelepçele.
+    days = max(int(cfg.hourstats_days), MIN_CANDLES // 24)
+    start_ms = end_ms - days * 86400 * 1000
     try:
         raw = await client.candles(coin, "1h", start_ms, end_ms)
     except Exception as e:
         log.debug("candles %s: %s", coin, e)
+        # Hata da olsa kv'ye taze ts yaz — yoksa alfabetik baştaki 2 bozuk coin
+        # (ör. delist) her turda yeniden denenip TÜM rotasyonu kilitliyordu.
+        await kv_set(f"hstats:{coin}", {"empty": True, "error": True, "ts": now()})
         return None
     stats = compute_stats(parse_candles(raw))
     await kv_set(f"hstats:{coin}", stats or {"empty": True, "ts": now()})

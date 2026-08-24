@@ -173,7 +173,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "sweep_batch_size": {"type": "int", "label": "Derin keşif: tur başına adres",
                          "group": "Tarama & performans", "desc": "Her turda bu kadar adresin tüm pozisyonları sorgulanır"},
     "sweep_interval_sec": {"type": "int", "label": "Derin keşif: tur aralığı (sn)",
-                           "group": "Tarama & performans", "desc": "Süpürme turları arası bekleme — varsayılanla ~1500 adres 13 dakikada bir tam tur döner"},
+                           "group": "Tarama & performans", "desc": "Süpürme turları arası bekleme — sıcak havuz (~1500 adres) varsayılanla ~75-80 dakikada bir tam tur döner"},
 }
 
 

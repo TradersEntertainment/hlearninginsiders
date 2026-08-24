@@ -289,7 +289,10 @@ async def login_submit(request: Request):
     form = await request.form()
     secret = _admin_secret(request)
     nxt = (form.get("nxt") or "/").strip()
-    if not nxt.startswith("/"):
+    # Açık yönlendirme + token sızıntısını engelle: '//evil' ve '/\evil' gibi
+    # protokol-göreli hedefler startswith('/')'i geçip başka origin'e (URL'de
+    # key=DASHBOARD_TOKEN ile) gidiyordu. Yalnız tek '/' ile başlayan yol kabul.
+    if not nxt.startswith("/") or nxt.startswith("//") or nxt.startswith("/\\"):
         nxt = "/"
     if not secret or not hmac.compare_digest((form.get("password") or "").strip(), secret):
         return RedirectResponse(f"/login{_keyq(request, 'err=1')}", status_code=303)
@@ -402,13 +405,16 @@ async def index(request: Request):
     from ..radar.liqwatch import find_clusters
     liq_walls = (await find_clusters(cfg))[:4]
 
-    # Emir defteri duvarları (bekleyen dev emirler — SPCX $202M tarzı)
+    # Emir defteri duvarları (bekleyen dev emirler — SPCX $202M tarzı). Tazelik
+    # penceresi tarama periyoduna göre ölçeklenir (sabit 900 değil): wall_poll_sec
+    # 900'ün üstüne çıkarılınca panel her taramadan 15 dk sonra boşalmasın.
+    wall_window = max(900, int(cfg.wall_poll_sec) * 3)
     async with db() as conn:
         cur = await conn.execute(
             """SELECT b.*, t.symbol FROM book_walls b JOIN tickers t ON t.coin=b.coin
                WHERE b.active=1 AND b.last_ts >= ? AND b.notional >= ?
                ORDER BY b.notional DESC LIMIT 10""",
-            (ts_now - 900, cfg.wall_min_usd))
+            (ts_now - wall_window, cfg.wall_min_usd))
         book_walls = [dict(r) for r in await cur.fetchall()]
     bw_maxn = max((x["notional"] for x in book_walls), default=1)
     for x in book_walls:
@@ -522,7 +528,7 @@ async def index(request: Request):
         "book_walls": book_walls,
         "hot_hours": hot_hours, "tsi_now": datetime.now(TR).hour,
         "n_hstats": n_hstats,
-        "has_channel": bool(cfg.telegram_channel_id),
+        "has_channel": bool(cfg.telegram_channel_id) and request.app.state.bot is not None,
         "hot_result": request.query_params.get("hot"),
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
                       (5_000_000, "5M+"), (30_000_000, "30M+")],
@@ -583,8 +589,11 @@ async def coin_page(request: Request, symbol: str):
     stale = scanned_ts is None or (now() - scanned_ts) > cfg.scan_stale_min * 60
     if stale and not scanning:
         from ..radar.report import coin_dex
+        # notifier geç (bot DEĞİL): _alert_new_big notifier.send(kind, priority=,
+        # key=) çağırır; bot geçilince TypeError yutulup sayfa-tetikli 'yeni büyük
+        # poz' alarmı hiç gitmiyordu (arka plan autoscan doğru notifier alıyor).
         autoscan.kick(cfg, request.app.state.client, coin, coin_dex(coin),
-                      request.app.state.bot)
+                      request.app.state.notifier)
         scanning = True
 
     # Saat istatistiği: hazırsa göster, yoksa arka planda hazırlat
@@ -771,8 +780,10 @@ async def hot_hours_send(request: Request):
     def back(flag: str):
         return RedirectResponse(f"/{_keyq(request, f'hot={flag}')}", status_code=303)
 
-    if not cfg.telegram_channel_id or not bot:
+    if not cfg.telegram_channel_id:
         return back("err_ch")
+    if not bot:
+        return back("err_bot")
     if not coins:
         return back("err_empty")
     hmap = await hourstats.all_stats()
@@ -784,7 +795,12 @@ async def hot_hours_send(request: Request):
         s = hmap.get(coin)
         if not s or s.get("empty"):
             continue
-        _, b = hourstats.verdict(s, et_hour)
+        # Verdict'i GÖNDERİM ANINDA yeniden kontrol et: sayfa ET 13:5x'te render
+        # edilip 14:0x'te gönderilirse saat değişmiş olur; 'bu saatte güçlü'
+        # başlığıyla nötr/negatif rakam yayınlanmasın.
+        v, b = hourstats.verdict(s, et_hour)
+        if v != "güçlü":
+            continue
         entries.append({"coin": coin, "symbol": sym_map.get(coin, coin.split(":")[-1]),
                         "avg": b["avg"], "win": b["win"], "n": b["n"],
                         "closed_heavy": s["closed_ret"] > s["open_ret"]})
@@ -839,8 +855,11 @@ async def settings_page(request: Request, saved: int = 0):
             "default": display_value(spec["type"], cfg.env_default(name)),
             "overridden": name in overrides,
         })
+    bad_raw = request.query_params.get("bad") or ""
+    bad_labels = [EDITABLE_FIELDS[n]["label"] for n in bad_raw.split(",")
+                  if n in EDITABLE_FIELDS]
     return _render(request, "settings.html", {
-        "groups": groups, "saved": saved,
+        "groups": groups, "saved": saved, "bad": bad_labels,
         "tg": request.query_params.get("tg"),
         "has_bot": request.app.state.bot is not None,
     })
@@ -853,25 +872,36 @@ async def settings_save(request: Request):
     cfg = request.app.state.cfg
     form = await request.form()
     overrides = await kv_get("settings_overrides") or {}
+    invalid: list[str] = []
     for name, spec in EDITABLE_FIELDS.items():
+        is_str = spec["type"] == "str"
         if spec["type"] == "bool":
-            # işaretsiz checkbox form'a gelmez → "0"
             raw = "1" if form.get(name) else "0"
+        elif is_str:
+            # str alanlar boş da OLABİLİR (ör. exclude_symbols'ı boşaltıp BIRD'ü
+            # geri almak). form'da varsa (None değil) değeri — boş dahil — geçerli.
+            if name not in form:
+                continue
+            raw = (form.get(name) or "").strip()
         else:
             raw = (form.get(name) or "").strip()
         try:
-            conv = convert_value(spec["type"], raw) if raw else None
+            conv = convert_value(spec["type"], raw) if (raw or is_str) else None
         except (TypeError, ValueError):
-            continue  # bozuk değer — sessizce atla
-        if conv is None or conv == cfg.env_default(name):
-            # boş bırakıldı ya da varsayılana döndü → override'ı kaldır
+            invalid.append(name)  # bozuk değer — 'kaydedildi' deme, kullanıcıya söyle
+            continue
+        default = cfg.env_default(name)
+        # str: boş '' geçerli bir değerdir (default'a EŞİT değilse override tut).
+        # sayısal/bool: boş → varsayılana dön.
+        if (conv is None) or (conv == default):
             if name in overrides:
                 del overrides[name]
-                setattr(cfg, name, cfg.env_default(name))
+                setattr(cfg, name, default)
                 cfg.overrides.pop(name, None)
             continue
         overrides[name] = raw
     await kv_set("settings_overrides", overrides)
     cfg.apply_overrides(overrides)
-    return RedirectResponse(f"/settings?saved=1" + (f"&key={key}" if key else ""),
+    flag = "saved=1" if not invalid else "saved=1&bad=" + ",".join(invalid)
+    return RedirectResponse(f"/settings?{flag}" + (f"&key={key}" if key else ""),
                             status_code=303)

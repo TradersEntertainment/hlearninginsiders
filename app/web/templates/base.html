@@ -310,7 +310,7 @@ footer{padding:18px 22px;color:var(--faint);font-size:12px}
   <h1><a href="/{{ k }}"><img src="/favicon.svg" alt="" class="wig logo"> HL Insider Radar</a></h1>
   <form action="/{{ k }}" method="get">
     {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
-    <input type="text" name="q" placeholder="ticker ara: SNDK" autofocus>
+    <input type="text" name="q" placeholder="ticker ara: SNDK">
     <button type="submit">Ara</button>
   </form>
   <a href="/devler{{ k }}" title="Düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri">🐘 sessiz sular</a>
@@ -328,13 +328,15 @@ footer{padding:18px 22px;color:var(--faint);font-size:12px}
 // ---- Tablo sıralama: başlığa tıkla = büyükten küçüğe, tekrar tıkla = tersi ----
 var SORT_STATE = null; // {ti, ci, dir} — yumuşak yenileme sonrası geri uygulanır
 
-// Hücre metnini sayıya çevir: $14.71M, %12, 11g, 10h, 45dk, 10x, 1504, yoksa metin
+// Hücre metnini sayıya çevir: $14.71M, %12, 11g, 10h, 45dk, 10x, 50+x,
+// 3✓/1✗, "21.08 14:30" (tarih), 1504, yoksa metin
 function parseCell(raw){
   var t = (raw || '').replace(/\s+/g, ' ').trim();
   if(!t || t === '-' || t === '?') return null;
-  var m = t.match(/^[+-]?\$[+-]?([\d.]+)\s*([MK])?/i);
+  // Öncelik ham değer varsa (data-v) — şablonlar sıralama için basabilir
+  var m = t.match(/^[+-]?\$[+-]?([\d.,]+)\s*([MK])?/i);
   if(m){
-    var v = parseFloat(m[1]) * (m[2] ? (m[2].toUpperCase() === 'M' ? 1e6 : 1e3) : 1);
+    var v = parseFloat(m[1].replace(/,/g, '')) * (m[2] ? (m[2].toUpperCase() === 'M' ? 1e6 : 1e3) : 1);
     if(/^-\$|^\$-/.test(t)) v = -v;
     return v;
   }
@@ -345,9 +347,24 @@ function parseCell(raw){
     var n = parseFloat(m[1]), u = m[2].toLowerCase();
     return u === 'g' ? n * 24 : (u === 'dk' ? n / 60 : n);
   }
+  // "50+x" (hacim katı üst sınırı) → 50 sayılır ama gerçek sayılardan büyük
+  // görünsün diye + işaretlisi hafif üste alınır
+  m = t.match(/^([\d.]+)\+?x$/i);
+  if(m) return parseFloat(m[1]) + (/\+x$/i.test(t) ? 0.5 : 0);
+  // Sicil "N✓/M✗" → doğru sayısı - yanlış sayısı (net isabet)
+  m = t.match(/^(\d+)\s*✓\s*\/\s*(\d+)\s*✗$/);
+  if(m) return parseInt(m[1], 10) - parseInt(m[2], 10);
+  // Tarih "dd.mm HH:MM" veya "dd.mm" → ay*100000 + gün*1000 + saat*60 + dk
+  // (yıl yok; aynı takvim penceresinde ay sınırı doğru sıralanır)
+  m = t.match(/^(\d{1,2})\.(\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?$/);
+  if(m){
+    var mo = parseInt(m[2], 10), da = parseInt(m[1], 10);
+    var hh = m[3] ? parseInt(m[3], 10) : 0, mi = m[4] ? parseInt(m[4], 10) : 0;
+    return mo * 1e5 + da * 1e3 + hh * 60 + mi;
+  }
   m = t.match(/^([\d.]+)x$/i);
   if(m) return parseFloat(m[1]);
-  if(/^[+-]?[\d.]+$/.test(t)) return parseFloat(t);
+  if(/^[+-]?[\d.]+$/.test(t.replace(/,/g, ''))) return parseFloat(t.replace(/,/g, ''));
   return t;
 }
 
@@ -383,8 +400,10 @@ document.addEventListener('click', function(ev){
   headRow.querySelectorAll('th').forEach(function(x){ x.classList.remove('s-desc', 's-asc'); });
   th.classList.add(dir === 'desc' ? 's-desc' : 's-asc');
   sortTable(table, ci, dir);
-  var tables = document.querySelectorAll('main table');
-  SORT_STATE = {ti: Array.prototype.indexOf.call(tables, table), ci: ci, dir: dir};
+  // Tabloyu İNDEKSLE değil başlık imzasıyla sakla: koşullu bir panel (ör. 'Saati
+  // gelenler') kaybolunca indeksler kayıp sıralama yanlış tabloya uygulanıyordu.
+  var hr0 = table.querySelector('tr');
+  SORT_STATE = {sig: hr0 ? hr0.textContent.trim() : '', ci: ci, dir: dir};
 });
 
 // Long/Short sekmeleri — delege edilmiş handler (yumuşak yenileme sonrası da çalışır)
@@ -430,8 +449,11 @@ document.addEventListener('click', function(ev){
   async function tick(){
     if(document.hidden) return;
     if(Date.now() - lastAct < 4000) return;  // etkileşimden 4 sn sonrasına ertele
+    // Yalnız İÇİNE bir şey yazılmış input/checkbox işaretliyken bekle — boş
+    // odaklı arama kutusu (eskiden autofocus) yenilemeyi süresiz bloke ediyordu.
     var ae = document.activeElement;
-    if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+    if(ae && (ae.tagName === 'TEXTAREA' ||
+              (ae.tagName === 'INPUT' && ae.type !== 'checkbox' && ae.value))) return;
     try{
       var r = await fetch(location.href, {cache: 'no-store'});
       if(!r.ok) return;
@@ -454,9 +476,13 @@ document.addEventListener('click', function(ev){
         var b = document.querySelector('.tab[data-f="' + f + '"]');
         if(b) b.click();
       }
-      if(SORT_STATE){ // tablo sıralaması yenileme sonrası korunur
+      if(SORT_STATE){ // tablo sıralaması yenileme sonrası korunur (başlık imzasıyla)
         var st = SORT_STATE;
-        var tb = document.querySelectorAll('main table')[st.ti];
+        var tb = null;
+        document.querySelectorAll('main table').forEach(function(cand){
+          var h = cand.querySelector('tr');
+          if(!tb && h && h.textContent.trim() === st.sig) tb = cand;
+        });
         if(tb){
           var hr = tb.querySelector('tr');
           var hth = hr && hr.children[st.ci];

@@ -151,6 +151,7 @@
   Geçmiş istatistik — garanti değil. Detaylı saat haritası hisse sayfasında.</p>
   {% if hot_result == 'ok' %}<p class="okline">✓ Seçtiklerin kanala gitti!</p>
   {% elif hot_result == 'err_ch' %}<p class="short">Kanal tanımlı değil — Railway'e <code>TELEGRAM_CHANNEL_ID</code> ekle (botu kanala admin yap).</p>
+  {% elif hot_result == 'err_bot' %}<p class="short">Bot aktif değil — Railway'e <code>TELEGRAM_BOT_TOKEN</code> ekle (kanal tanımlı ama bot yok).</p>
   {% elif hot_result == 'err_empty' %}<p class="warn">Göndermek için en az bir hisse seç.</p>
   {% elif hot_result == 'err' %}<p class="short">✗ Gönderilemedi — kanal id'sini ve botun kanal yetkisini kontrol et.</p>{% endif %}
   {% if hot_hours %}
@@ -293,8 +294,8 @@
   {% if specialists %}
   <table>
     <tr><th class="l">Adres</th><th class="l">Hisse</th>
-        <th title="30 günde kaç büyük işlem yaptı">İşlem</th>
-        <th title="30 günlük toplam işlem hacmi">Hacim</th>
+        <th title="Son kayıtlı dönemde kaç büyük işlem yaptı">İşlem</th>
+        <th title="Son kayıtlı dönemin toplam işlem hacmi">Hacim</th>
         <th title="Kaç bilançoyu doğru/yanlış bildi">Sicil</th><th class="l">Açık poz</th></tr>
     {% for s in specialists %}
     <tr>

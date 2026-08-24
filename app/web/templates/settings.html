@@ -4,6 +4,7 @@
 <div class="panel">
   <h2>⚙️ Ayarlar</h2>
   {% if saved %}<p class="okline"><b>✓ Kaydedildi</b> — değişiklikler anında geçerli, deploy gerekmez.</p>{% endif %}
+  {% if bad %}<p class="warn"><b>⚠️ Kaydedilmeyen alan(lar):</b> {{ bad|join(', ') }} — değer anlaşılamadı (sayı alanına harf/nokta mı girdin?). Eski değer korundu.</p>{% endif %}
   {% if not is_admin %}
   <p class="warn"><b>🔒 Salt okunur</b> — değişiklik için
     <a href="/login{{ '?nxt=/settings' if not k else k + '&nxt=/settings' }}">yönetici girişi</a> gerekir.</p>
