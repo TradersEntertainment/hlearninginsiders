@@ -82,13 +82,21 @@ def _respawn(name: str) -> bool:
 
 # ---------------- periyodik görevler ----------------
 
-async def universe_loop(cfg, client):
+async def universe_loop(cfg, client, notifier=None):
     while True:
         try:
-            coins = await uni.refresh_universe(client, cfg.equity_dexes)
+            fresh: list[dict] = []
+            coins = await uni.refresh_universe(client, cfg.equity_dexes, fresh)
             await health.beat("universe")
             if coins:
                 _stamp("evren yenileme")
+            if fresh and notifier:
+                # HL yeni hisse listeledi — radar kapsamı büyüdü, haber ver
+                from .telegram import format as fmt
+                log.info("yeni listeleme: %s", ", ".join(x["symbol"] for x in fresh))
+                await notifier.send("listing", fmt.new_listing_alert(fresh),
+                                    key="listing:" + ",".join(sorted(
+                                        x["coin"] for x in fresh))[:80])
         except Exception as e:
             log.warning("evren yenilenemedi: %s", e)
         await asyncio.sleep(cfg.universe_refresh_sec)
@@ -222,6 +230,41 @@ async def digest_loop(cfg, notifier):
         await asyncio.sleep(600)
 
 
+async def channel_loop(cfg, bot):
+    """Otomatik 'saati gelenler' yayını — kullanıcının seçtiği TSİ saatlerinde
+    yayın kanalına gönderilir (channel_auto_hours boşsa sadece nabız atar)."""
+    await asyncio.sleep(300)
+    while True:
+        try:
+            hours = {int(x) for x in str(cfg.channel_auto_hours or "").replace(" ", "").split(",")
+                     if x.strip().isdigit()}
+            now_tr = datetime.now(TR)
+            slot = f"{now_tr.strftime('%Y-%m-%d')}:{now_tr.hour}"
+            if hours and bot and cfg.telegram_channel_id and now_tr.hour in hours \
+                    and await dbm.kv_get("channel_last") != slot:
+                await dbm.kv_set("channel_last", slot)  # önce damgala (çift gönderim yok)
+                from .radar import hourstats
+                from .telegram import format as fmt
+                universe = await uni.get_universe()
+                sym_map = {t["coin"]: t["symbol"] for t in universe}
+                et_hour = datetime.now(hourstats.ET).hour
+                entries = await hourstats.channel_entries(sym_map, et_hour)
+                if entries:
+                    ok = await bot.send(fmt.hot_hours_channel(entries, now_tr.hour),
+                                        cfg.telegram_channel_id)
+                    log.info("otomatik kanal yayını: %d hisse (gönderim %s)",
+                             len(entries), "ok" if ok else "başarısız")
+                    _stamp("kanal yayını")
+                else:
+                    log.info("otomatik kanal yayını: bu saatte güçlü hisse yok, atlandı")
+            await health.beat("channel")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("kanal yayını hatası")
+        await asyncio.sleep(600)
+
+
 async def watchdog_loop(cfg, notifier):
     """Bekçi: kalp atışlarını denetler, takılanı yeniden başlatır, bildirir."""
     await asyncio.sleep(240)  # açılışta her görev ilk turunu atsın
@@ -279,7 +322,7 @@ async def lifespan(app: FastAPI):
     app.state.state = STATE
 
     await dbm.kv_set("boot_ts", dbm.now())  # bekçinin açılış toleransı
-    _spawn("universe", lambda: universe_loop(cfg, client), notifier)
+    _spawn("universe", lambda: universe_loop(cfg, client, notifier), notifier)
     _spawn("calendar", lambda: calendar_loop(cfg, session), notifier)
     _spawn("metrics", lambda: metrics_loop(cfg, client), notifier)
     _spawn("due", lambda: due_loop(cfg, client, notifier), notifier)
@@ -292,6 +335,7 @@ async def lifespan(app: FastAPI):
     _spawn("sweeper", lambda: sweeper.loop(cfg, client), notifier)
     _spawn("hourstats", lambda: hourstats.refresh_loop(cfg, client), notifier)
     _spawn("digest", lambda: digest_loop(cfg, notifier), notifier)
+    _spawn("channel", lambda: channel_loop(cfg, bot), notifier)
     _spawn("collector", collector.run, notifier)
     _spawn("watchdog", lambda: watchdog_loop(cfg, notifier), notifier)
     if bot:
@@ -321,6 +365,7 @@ async def health_endpoint():
         out["tasks"] = {n: {"ok": c["ok"], "silent_sec": c["silent"]}
                         for n, c in snap["checks"].items()}
         out["problems"] = snap["problems"]
+        out["silent_coins"] = [q["symbol"] for q in (snap.get("silent_coins") or [])]
         out["ok"] = not snap["problems"]
     except Exception:
         pass

@@ -121,6 +121,29 @@ def hot_now(stats_map: dict[str, dict], et_hour: int) -> list[dict]:
     return out
 
 
+async def channel_entries(sym_map: dict[str, str], et_hour: int,
+                          coins: list[str] | None = None,
+                          limit: int = 8) -> list[dict]:
+    """Kanala yayınlanacak "şu saat güçlü" satırları. Hem panelden elle gönderim
+    hem otomatik yayın bunu kullanır — verdict GÖNDERİM ANINDA yeniden kontrol
+    edilir (sayfa 13:5x'te açılıp 14:0x'te gönderilirse eski saat yayınlanmasın)."""
+    hmap = await all_stats()
+    want = coins if coins is not None else list(hmap)
+    out = []
+    for coin in want:
+        st = hmap.get(coin)
+        if not st or st.get("empty"):
+            continue
+        v, b = verdict(st, et_hour)
+        if v != "güçlü":
+            continue
+        out.append({"coin": coin, "symbol": sym_map.get(coin, coin.split(":")[-1]),
+                    "avg": b["avg"], "win": b["win"], "n": b["n"],
+                    "closed_heavy": st["closed_ret"] > st["open_ret"]})
+    out.sort(key=lambda x: -x["avg"])
+    return out[:limit]
+
+
 async def all_stats(only_universe: bool = True) -> dict[str, dict]:
     """kv'deki hazır istatistikler: coin -> stats. only_universe=True iken
     evrende OLMAYAN (exclude/delist) coin'lerin hayalet kaydını eler — yoksa

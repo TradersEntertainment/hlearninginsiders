@@ -77,6 +77,34 @@ def limits(cfg: Config) -> dict[str, int]:
     return lim
 
 
+async def silent_coins(cfg: Config) -> list[dict]:
+    """Canlı akıştan uzun süredir hiç işlem GELMEYEN coin'ler.
+
+    Abone olunduğu sanılan ama veri akmayan market (reddedilen subscribe, sessiz
+    kopma, ölü/delist edilmiş coin) başka hiçbir yerde görünmüyordu. Yalnız
+    BİLGİ — Telegram alarmı üretmez (sağlık sitede konuşur)."""
+    from .db import db
+    limit_h = max(1, int(getattr(cfg, "zombie_silent_hours", 12)))
+    boot = int(await kv_get("boot_ts") or now())
+    ts = now()
+    if ts - boot < limit_h * 3600:
+        return []                      # açılış toleransı: henüz yeterli süre geçmedi
+    seen = await kv_get("coin_last_trade") or {}
+    async with db() as conn:
+        cur = await conn.execute("SELECT coin, symbol FROM tickers ORDER BY symbol")
+        rows = [(r["coin"], r["symbol"]) for r in await cur.fetchall()]
+    out = []
+    for coin, sym in rows:
+        last = int(seen.get(coin) or 0)
+        age_h = (ts - last) / 3600 if last else None
+        if last and age_h >= limit_h:
+            out.append({"coin": coin, "symbol": sym, "hours": age_h})
+        elif not last and ts - boot >= limit_h * 3600:
+            out.append({"coin": coin, "symbol": sym, "hours": None})
+    out.sort(key=lambda x: -(x["hours"] or 1e9))
+    return out
+
+
 async def check(cfg: Config) -> dict[str, dict]:
     """Her görev için {hb, silent, limit, ok} — boot'tan beri hiç atmamışsa
     boot zamanına göre ölçülür (açılış toleransı)."""
@@ -188,5 +216,9 @@ async def snapshot(cfg: Config) -> dict:
         rec = await kv_get(f"crash:{name}")
         if rec:
             crashes[name] = rec
-    return {"checks": checks, "crashes": crashes,
+    try:
+        quiet = await silent_coins(cfg)
+    except Exception:
+        quiet = []
+    return {"checks": checks, "crashes": crashes, "silent_coins": quiet,
             "problems": sorted(n for n, c in checks.items() if not c["ok"])}

@@ -18,10 +18,17 @@ def symbol_of(coin: str) -> str:
     return coin.split(":")[-1].upper()
 
 
-async def refresh_universe(client: HLClient, equity_dexes: list[str]) -> list[str]:
+async def refresh_universe(client: HLClient, equity_dexes: list[str],
+                           new_out: list[dict] | None = None) -> list[str]:
+    """Evreni yenile. new_out verilirse YENİ listelenen coin'ler oraya eklenir
+    (tickers boşken — ilk açılış — hiçbir şey eklenmez, 100 coin spam olmasın)."""
     from ..assets import excluded_set, is_excluded
     coins: list[str] = []
     all_ok = True  # tüm dex meta'ları alındı mı (kısmi hata varsa silme yapma)
+    async with db() as conn:
+        cur = await conn.execute("SELECT coin FROM tickers")
+        known = {r["coin"] for r in await cur.fetchall()}
+    first_boot = not known
     for dex in equity_dexes:
         try:
             meta = await client.meta(dex)
@@ -40,6 +47,9 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str]) -> list[st
                 if is_excluded(sym):
                     continue  # kullanıcı bu hisseyi tamamen takip dışı bıraktı
                 coins.append(coin)
+                if new_out is not None and not first_boot and coin not in known:
+                    new_out.append({"coin": coin, "symbol": sym,
+                                    "max_leverage": asset.get("maxLeverage")})
                 await conn.execute(
                     """INSERT INTO tickers(coin,dex,symbol,name,max_leverage,listed_at)
                        VALUES(?,?,?,?,?,?)
