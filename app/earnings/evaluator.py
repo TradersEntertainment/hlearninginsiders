@@ -20,10 +20,14 @@ log = logging.getLogger("earnings.evaluator")
 async def evaluate_due(cfg: Config, client: HLClient, notifier) -> None:
     cutoff = now()
     async with db() as conn:
+        # Pencere 6 gün değil 30 gün: bot birkaç gün kapalı kaldıysa (Railway
+        # restart) o dönemin event'leri 6 günü aşınca sonsuza dek evaluated=0
+        # 'zombi' kalıyordu — sicile hiç işlenmez, /gecmis'te görünmez, check_due
+        # her 60 sn hepsini yeniden tarardı. _evaluate metrik olmasa bile kapatır.
         cur = await conn.execute(
             """SELECT * FROM earnings_events
                WHERE evaluated=0 AND (alerted_t1=1 OR alerted_pre=1)
-               AND date_et >= date('now','-6 day')""")
+               AND date_et >= date('now','-30 day')""")
         events = [dict(r) for r in await cur.fetchall()]
     for ev in events:
         est = event_ts_estimate(ev)
@@ -38,7 +42,15 @@ async def evaluate_due(cfg: Config, client: HLClient, notifier) -> None:
 async def _evaluate(cfg: Config, client: HLClient, notifier, ev: dict, est: int) -> None:
     coin = ev["coin"]
     before = await metrics.metric_at(coin, est - 300)
-    after = await metrics.latest_metric(coin)
+    # 'Sonra' fiyatı T+24h olmalı — 'en güncel' değil. Değerlendirme geç koşarsa
+    # (bot kapalıydı) latest_metric T+2..6 günün fiyatını alıp yanlış hüküm
+    # arşivliyordu (gap sonrası dönüş → doğru isabetçiler 'yanıldı' sayılır).
+    after = await metrics.metric_at(coin, est + 24 * 3600)
+    # T+24h civarında ölçüm yoksa (veri boşluğu) 'sonra' fiyatı earnings ÖNCESİNE
+    # düşebilir → geçersiz. En az 12h sonrası olmalı; yoksa latest'e düş.
+    if not after or (after.get("ts") or 0) < est + 12 * 3600:
+        latest = await metrics.latest_metric(coin)
+        after = latest if latest and (latest.get("ts") or 0) >= est + 12 * 3600 else None
 
     async with db() as conn:
         cur = await conn.execute(
@@ -81,6 +93,12 @@ async def _evaluate(cfg: Config, client: HLClient, notifier, ev: dict, est: int)
                 hit = (s["side"] == "long" and direction == "up") or \
                       (s["side"] == "short" and direction == "down")
                 col = "hits" if hit else "misses"
+                # Adres satırı yoksa oluştur — leaderboard/sweeper yoluyla (fill'siz)
+                # gelen balinaların addresses satırı olmadığından UPDATE no-op'tu:
+                # tam da 'uyuyan dev' insider'ların sicili hiç oluşmuyordu.
+                await conn.execute(
+                    "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
+                    " ON CONFLICT(address) DO NOTHING", (s["address"], now()))
                 await conn.execute(
                     f"UPDATE addresses SET {col}={col}+1 WHERE address=?", (s["address"],))
                 cur = await conn.execute(

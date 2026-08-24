@@ -15,6 +15,11 @@ from ..hl.universe import symbol_of
 log = logging.getLogger("radar.scanner")
 
 LEADERBOARD_TTL = 86400
+# Önbellek SABİT büyük boyutta saklanır — hangi görev (liq 300 / scanner 500 /
+# sweeper 1500) önce yenilerse yenilesin, en büyük tüketici (derin keşif) hep
+# tam listeyi alsın. Eskiden ilk çağıranın top_n*2'siyle boyutlanıp sweeper'ın
+# 1500'ü 600-1000'e kırpılıyordu → uyuyan dev poz kaçırma riski geri geliyordu.
+LEADERBOARD_CACHE_SIZE = 3000
 
 
 async def _leaderboard_addrs(client: HLClient, top_n: int) -> list[str]:
@@ -29,7 +34,8 @@ async def _leaderboard_addrs(client: HLClient, top_n: int) -> list[str]:
         rows.sort(key=lambda r: float(r.get("accountValue") or 0), reverse=True)
     except Exception:
         pass
-    addrs = [r.get("ethAddress", "").lower() for r in rows[: top_n * 2] if r.get("ethAddress")]
+    addrs = [r.get("ethAddress", "").lower()
+             for r in rows[:LEADERBOARD_CACHE_SIZE] if r.get("ethAddress")]
     await kv_set("leaderboard", {"ts": now(), "addrs": addrs})
     log.info("leaderboard yenilendi: %d adres", len(addrs))
     return addrs[:top_n]
@@ -91,9 +97,15 @@ def _parse_positions(state: dict, coin: str) -> list[dict]:
 
 
 async def timeline_from_fills(coin: str, address: str, side: str,
-                              lookback_days: int) -> dict:
+                              lookback_days: int,
+                              retention_days: int | None = None) -> dict:
     """Yerel fill kayıtlarından yaklaşık zaman çizelgesi:
-    opened (ilk açılış), last_add (son ekleme), last_trim (son kırpma)."""
+    opened (ilk açılış), last_add (son ekleme), last_trim (son kırpma).
+
+    UYARI: fill'ler retention_days'ten eski silindiği için, penceredeki EN ESKİ
+    add fill 'açılış' DEĞİLDİR — pozisyon pencereden önce açılmış olabilir. Bu
+    yüzden opened veri ufkuna (retention sınırı) yapışıksa 'bilinmiyor' (None)
+    döneriz; 'az önce açıldı' demeyiz (eski poz + küçük ekleme = sahte taze alarm)."""
     want_add = "buy" if side == "long" else "sell"
     want_trim = "sell" if side == "long" else "buy"
     since = now() - lookback_days * 86400
@@ -111,12 +123,24 @@ async def timeline_from_fills(coin: str, address: str, side: str,
             (coin, address, want_trim, trim_since))
         row = await cur.fetchone()
         last_trim = row["t"] if row else None
+    # Veri ufku sınırına yapışık açılış = büyük olasılıkla pencere-öncesinden taşıyor
+    if opened is not None and retention_days:
+        horizon = now() - (int(retention_days) - 1) * 86400
+        if opened <= horizon:
+            opened = None  # bilinmiyor — taze sanılmasın
     return {"opened": opened, "last_add": last_add, "last_trim": last_trim}
 
 
 async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
-               max_candidates: int | None = None) -> list[dict]:
-    """Coin'deki pozisyonları bul, positions_current'ı güncelle, notional'a göre sırala."""
+               max_candidates: int | None = None,
+               beat_name: str | None = None) -> list[dict]:
+    """Coin'deki pozisyonları bul, positions_current'ı güncelle, notional'a göre sırala.
+
+    beat_name: ilerleme nabzının HANGİ göreve yazılacağı. Eskiden koşulsuz
+    'autoscan'dı — web 'şimdi tara', /scan, due raporları da hb:autoscan'ı
+    tazeliyor, oto-tarayıcı görevi ölmüşken bile bekçiye 'canlı' gösteriyordu.
+    Sadece autoscan.loop 'autoscan' geçsin; diğer çağıranlar None geçip
+    hiçbir görevin nabzını yanlış tazelemesin."""
     addrs = await candidates(cfg, client, coin)
     if max_candidates:
         addrs = addrs[:max_candidates]
@@ -128,8 +152,9 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
     log.info("%s taranıyor: %d aday adres", coin, len(addrs))
 
     async def one(addr: str):
-        from ..health import beat
-        await beat("autoscan")  # ilerleme nabzı — uzun taramada bile canlı görün
+        if beat_name:
+            from ..health import beat
+            await beat(beat_name)  # ilerleme nabzı — yalnız gerçek çağıran görevine
         try:
             state = await client.clearinghouse(addr, dex)
             return addr, _parse_positions(state or {}, coin)
@@ -159,7 +184,8 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
     # zaman çizelgesi (yerel fill'lerden, yaklaşık; derin taramada API ile netleşir)
     for p in found:
         tl = await timeline_from_fills(coin, p["address"], p["side"],
-                                       cfg.fills_lookback_days)
+                                       cfg.fills_lookback_days,
+                                       cfg.fills_retention_days)
         p["opened_ts"] = tl["opened"]
         p["last_add_ts"] = tl["last_add"]
         p["last_trim_ts"] = tl["last_trim"]
@@ -175,7 +201,10 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
                      ts=excluded.ts, side=excluded.side, szi=excluded.szi,
                      entry_px=excluded.entry_px, leverage=excluded.leverage,
                      liq_px=excluded.liq_px, upnl=excluded.upnl, notional=excluded.notional,
-                     opened_ts=COALESCE(excluded.opened_ts, positions_current.opened_ts),
+                     opened_ts=CASE
+                       WHEN positions_current.opened_ts IS NULL THEN excluded.opened_ts
+                       WHEN excluded.opened_ts IS NULL THEN positions_current.opened_ts
+                       ELSE MIN(positions_current.opened_ts, excluded.opened_ts) END,
                      score=COALESCE(excluded.score, positions_current.score),
                      score_reasons=COALESCE(excluded.score_reasons, positions_current.score_reasons),
                      last_add_ts=COALESCE(excluded.last_add_ts, positions_current.last_add_ts),

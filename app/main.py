@@ -127,12 +127,17 @@ async def check_due(cfg, client, notifier):
     for ev in events:
         # Tek bozuk earnings satırı tüm döngüyü kilitlemesin
         try:
+            est = cal.event_ts_estimate(ev)
             for stage, due in cal.stages(ev):
                 flag = "alerted_t1" if stage == "t1" else "alerted_pre"
                 if ev.get(flag) or ts < due:
                     continue
-                if ts - due > 7200:
-                    # pencere kaçmış (ör. bot kapalıymış) — sessizce işaretle
+                # T-1h raporu AÇIKLAMA ANINI aşmamalı: restart penceredeyken
+                # (est, due+2h] arasına denk gelirse 'T-1h' snapshot'ı açıklama
+                # SONRASI pozları kaydedip haber-sonrası takipçileri insider
+                # sanıyordu. Açıklama geçtiyse sessizce işaretle, rapor koşma.
+                stale = ts - due > 7200 or (stage == "t1" and est and ts >= est)
+                if stale:
                     async with dbm.db() as conn:
                         await conn.execute(
                             f"UPDATE earnings_events SET {flag}=1 WHERE id=?", (ev["id"],))

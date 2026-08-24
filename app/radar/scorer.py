@@ -28,8 +28,8 @@ async def _position_timeline(client: HLClient, coin: str, address: str) -> dict 
     """userFillsByTime ile pozisyon zaman çizelgesi:
     opened (serinin başladığı an), last_add (son ekleme), last_trim (son kırpma)."""
     try:
-        start_ms = (now() - 14 * 86400) * 1000
-        fills = await client.user_fills_by_time(address, start_ms)
+        start_sec = now() - 14 * 86400
+        fills = await client.user_fills_by_time(address, start_sec * 1000)
     except Exception as e:
         log.debug("userFills %s: %s", address, e)
         return None
@@ -49,14 +49,22 @@ async def _position_timeline(client: HLClient, coin: str, address: str) -> dict 
     evs.sort()
     net = 0.0
     opened = None
+    observed_close = False               # pencerede gerçek bir kapanış GÖRDÜK mü
     for t, delta in evs:
         prev = net
         net += delta
         if abs(net) < 1e-9:
-            net, opened = 0.0, None      # pozisyon kapandı, seri sıfırlandı
+            net, opened = 0.0, None       # pozisyon kapandı, seri sıfırlandı
+            observed_close = True
         elif prev == 0.0 or (prev > 0 > net) or (prev < 0 < net):
-            opened = t                   # yeni seri başladı
+            opened = t                    # yeni seri başladı
     if not opened or net == 0:
+        return {"opened": None, "last_add": None, "last_trim": None}
+    # Pencerede hiç kapanış görmediysek ve 'açılış' ilk fill'e + pencere sınırına
+    # yapışıksa, pozisyon 14 günden önce açılmış olabilir (net=0 varsayımı yanlış)
+    # → 'bilinmiyor'. Gerçek bir kapanış-açılış gördüysek opened güvenilir.
+    if not observed_close and evs and opened == evs[0][0] \
+            and opened <= start_sec + 86400:
         return {"opened": None, "last_add": None, "last_trim": None}
     sign = 1 if net > 0 else -1
     adds = [t for t, d in evs if t >= opened and (d > 0) == (sign > 0)]
@@ -226,7 +234,7 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
 
     if coin_focus:
         pts += 8
-        reasons.append("30 gündür sadece bu hisseyi trade ediyor")
+        reasons.append("son dönemde sadece bu hisseyi trade ediyor")
 
     # Mutlak boyut: zengin balina liq'i uzak tutar ama BOYUT yalan söylemez
     ntl = pos["notional"]
