@@ -126,14 +126,16 @@ async def _upsert_address(addr: str, positions: dict[str, dict], ts: int) -> Non
             await conn.execute(
                 """INSERT INTO positions_current
                    (coin,address,ts,side,szi,entry_px,leverage,liq_px,upnl,notional,
-                    opened_ts,score,score_reasons,last_add_ts,last_trim_ts)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    opened_ts,score,score_reasons,last_add_ts,last_trim_ts,first_seen_ts)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(coin,address) DO UPDATE SET
                      ts=excluded.ts, side=excluded.side, szi=excluded.szi,
                      entry_px=excluded.entry_px, leverage=excluded.leverage,
-                     liq_px=excluded.liq_px, upnl=excluded.upnl, notional=excluded.notional""",
+                     liq_px=excluded.liq_px, upnl=excluded.upnl, notional=excluded.notional,
+                     first_seen_ts=MIN(COALESCE(positions_current.first_seen_ts, excluded.first_seen_ts),
+                                       excluded.first_seen_ts)""",
                 (coin, addr, ts, p["side"], p["szi"], p["entry_px"], p["leverage"],
-                 p["liq_px"], p["upnl"], p["notional"], None, None, None, None, None))
+                 p["liq_px"], p["upnl"], p["notional"], None, None, None, None, None, ts))
         # yanıtın otoritesi: adresin artık tutmadığı pozisyonları sil
         if positions:
             q = ",".join("?" * len(positions))
@@ -259,15 +261,20 @@ async def harvest_trades(cfg: Config, client: HLClient) -> int:
             notional = px * sz
             if not tid or len(users) < 2 or notional < cfg.min_fill_notional:
                 continue
-            rows.append((coin, tid, (users[0] or "").lower(), "buy", px, sz, notional, tts))
-            rows.append((coin, tid, (users[1] or "").lower(), "sell", px, sz, notional, tts))
+            # `side` agresörü söyler: "B" = alıcı süpürdü, "A" = satıcı (collector ile aynı)
+            aggr = str(t.get("side") or "").upper()
+            tk_buy = tk_sell = None
+            if aggr in ("A", "B"):
+                tk_buy, tk_sell = (1, 0) if aggr == "B" else (0, 1)
+            rows.append((coin, tid, (users[0] or "").lower(), "buy", px, sz, notional, tts, tk_buy))
+            rows.append((coin, tid, (users[1] or "").lower(), "sell", px, sz, notional, tts, tk_sell))
         if not rows:
             continue
         async with db() as conn:
             for r in rows:
                 cur = await conn.execute(
-                    "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,notional,ts)"
-                    " VALUES(?,?,?,?,?,?,?,?)", r)
+                    "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,notional,ts,taker)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)", r)
                 added += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
                 await conn.execute(
                     "INSERT INTO addresses(address, first_seen) VALUES(?,?)"

@@ -322,7 +322,8 @@ def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg,
 
 
 def whale_fill_alert(coin: str, addr: str, side: str, price: float,
-                     notional: float, is_watch: bool, record: tuple) -> str:
+                     notional: float, is_watch: bool, record: tuple,
+                     taker_ratio: float | None = None, n_parts: int = 1) -> str:
     sym = coin.split(":")[-1]
     act = "🟢 ALIŞ" if side == "buy" else "🔴 SATIŞ"
     hits, misses = record
@@ -337,6 +338,14 @@ def whale_fill_alert(coin: str, addr: str, side: str, price: float,
         lines.append(note)
     lines += [f"{act} pozisyon <b>{usd(notional)}</b> @ {px(price)}",
               f"👤 {alink(addr)}"]
+    # Agresör mü (fiyatı süpürdü) yoksa pasif emirle mi doldu — insider aceleci olur
+    if taker_ratio is not None:
+        if taker_ratio >= 0.7:
+            lines.append(f"🧹 <b>Piyasadan süpürdü</b> (agresif alım, %{taker_ratio * 100:.0f} taker)")
+        elif taker_ratio <= 0.3:
+            lines.append(f"⏳ Limit emirle bekledi (pasif, %{(1 - taker_ratio) * 100:.0f} maker)")
+    if n_parts > 1:
+        lines.append(f"🧩 Tek emir {n_parts} parçaya bölünmüş (toplam yukarıda)")
     if hits or misses:
         lines.append(f"🎯 Sicil: {hits} doğru / {misses} yanlış")
     if is_listed(sym):
@@ -357,6 +366,7 @@ TASK_TR = {
     "hourstats": "saat istatistiği",
     "digest": "günlük özet", "collector": "canlı işlem akışı (WS)",
     "telegram": "telegram botu", "watchdog": "bekçi",
+    "channel": "kanal yayını",
 }
 
 
@@ -407,6 +417,16 @@ def health_report(snap: dict) -> str:
         for name, r in sorted(crashes.items(), key=lambda x: -(x[1].get("ts") or 0))[:5]:
             lines.append(f"  {_task(name)} ×{r.get('count', 1)} — son: "
                          f"<code>{esc((r.get('err') or '')[:90])}</code>")
+    quiet = snap.get("silent_coins") or []
+    if quiet:
+        head = ", ".join(
+            f"{esc(q['symbol'])}"
+            + (f" ({q['hours']:.0f}h)" if q.get("hours") else " (hiç)")
+            for q in quiet[:8])
+        more = f" +{len(quiet) - 8}" if len(quiet) > 8 else ""
+        lines.append(f"\n🔇 <b>Canlı akışta sessiz:</b> {head}{more}")
+        lines.append("<i>Bu marketlerden uzun süredir işlem gelmiyor — düşük hacim"
+                     " normal olabilir; hepsi birden sessizse abonelik sorunudur.</i>")
     lines.append("\n<i>Bekçi 2 dakikada bir kontrol eder; takılan görevi kendisi"
                  " yeniden başlatır ve sana haber verir.</i>")
     return "\n".join(lines)
@@ -425,6 +445,26 @@ def hot_hours_channel(entries: list[dict], tsi_now: int) -> str:
     lines.append("\n<i>🌙 = getirinin çoğu ABD borsası kapalıyken · son ~90 günün"
                  " 1 saatlik mumlarından</i>")
     lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
+def new_listing_alert(items: list[dict]) -> str:
+    """HL yeni hisse perp'i listeledi — radar kapsamı büyüdü."""
+    n = len(items)
+    head = ("🆕 <b>YENİ HİSSE LİSTELENDİ</b>" if n == 1
+            else f"🆕 <b>{n} YENİ HİSSE LİSTELENDİ</b>")
+    lines = [head, "Hyperliquid'de kaldıraçlı işlem görmeye başladı — radar bunları"
+                   " taramaya şimdi başladı:", ""]
+    for it in items[:12]:
+        sym = esc(it.get("symbol") or "")
+        lev = it.get("max_leverage")
+        extra = f" · max {int(lev)}x" if lev else ""
+        propr = f" · {PROPR_NOTE}" if is_listed(sym) else ""
+        lines.append(f"• <b>{sym}</b>{extra}{propr}")
+    if n > 12:
+        lines.append(f"…ve {n - 12} tane daha")
+    lines.append("\n<i>Yeni listelemelerde ilk günler oynaklık ve ince defter"
+                 " olur — dikkatli ol.</i>")
     return "\n".join(lines)
 
 
@@ -567,12 +607,19 @@ def track_step(t: dict, live: dict, base: float, last: float, cur: float) -> str
     return "\n".join(lines)
 
 
-def track_closed(t: dict, base: float, last: float) -> str:
+def track_closed(t: dict, base: float, last: float, pnl: dict | None = None) -> str:
     sym = t["symbol"]
     lines = [f"🚨🚪 <b>BALİNA TAMAMEN KAPATTI</b> — {sym}",
              f"👤 {alink(t['address'])} {_side_badge(t['side'])}"
-             f" <b>{usd(t.get('base_notional'))}</b> pozisyonunu kapattı.",
-             f"Takip #{t['id']} sona erdi."]
+             f" <b>{usd(t.get('base_notional'))}</b> pozisyonunu kapattı."]
+    if pnl:
+        emoji = "💰" if pnl["usd"] >= 0 else "🩸"
+        pct = f" ({pnl['pct']:+.1f}%)" if pnl.get("pct") is not None else ""
+        lines.append(f"{emoji} Tahmini sonuç: <b>{usd(abs(pnl['usd']))}</b>"
+                     f" {'kâr' if pnl['usd'] >= 0 else 'zarar'}{pct}"
+                     f"\n<i>giriş {px(pnl['entry'])} → çıkış ~{px(pnl['exit'])}"
+                     " (son fiyattan tahmin)</i>")
+    lines.append(f"Takip #{t['id']} sona erdi.")
     if is_listed(sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
@@ -777,6 +824,7 @@ def help_text() -> str:
         "/forget 0x… — adresin sicilini sıfırla + watchlist'ten çıkar\n"
         "/watchlist — sicilli adresler\n"
         "/takipler — aktif pozisyon takipleri (earnings sonrası balina çıkışı)\n"
+        "/takip 0x… SNDK — herhangi bir balinayı ELLE takibe al (teklif beklemeden)\n"
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"
         "/bildirimler — bildirim ayarları + son gönderilenler\n"

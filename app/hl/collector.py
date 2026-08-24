@@ -32,6 +32,7 @@ class Collector:
         self.connected = False
         self.subscribed: set[str] = set()
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
+        self.last_trade: dict[str, int] = {}  # coin -> son işlem ts (zombi nöbetçisi)
         self.fills_seen = 0
 
     async def _current_coins(self) -> list[str]:
@@ -101,9 +102,26 @@ class Collector:
                 resub_task.cancel()
 
     async def _pinger(self, ws):
+        n = 0
         while True:
             await asyncio.sleep(45)
             await ws.send_json({"method": "ping"})
+            n += 1
+            if n % 7 == 0:      # ~5 dakikada bir: coin bazlı son işlem zamanını sakla
+                await self._flush_last_trade()
+
+    async def _flush_last_trade(self) -> None:
+        """coin -> son işlem ts haritasını kv'ye yaz (zombi abonelik nöbetçisi).
+        Abone olunduğu SANILAN ama veri gelmeyen market böyle görünür hale gelir."""
+        if not self.last_trade:
+            return
+        try:
+            from ..db import kv_get, kv_set
+            stored = await kv_get("coin_last_trade") or {}
+            stored.update({c: int(t) for c, t in self.last_trade.items()})
+            await kv_set("coin_last_trade", stored)
+        except Exception as e:
+            log.debug("coin_last_trade yazılamadı: %s", e)
 
     async def _resubscriber(self, ws):
         """Evren yenilenince yeni coin'lere canlı sokette abone ol + geçerli
@@ -129,8 +147,8 @@ class Collector:
         if msg.get("channel") != "trades":
             return
         trades = msg.get("data") or []
-        rows = []
-        alerts = []
+        rows = []                                  # fills'e yazılacak satırlar
+        agg: dict[tuple, dict] = {}                # (coin, adres, yön) -> parti toplamı
         for t in trades:
             try:
                 coin = t["coin"]
@@ -146,15 +164,49 @@ class Collector:
             # abonelik öncesi) süzme — aksi halde tickers'ta olmayanı at.
             if self.valid_coins and coin not in self.valid_coins:
                 continue
-            notional = px * sz
-            if notional < self.cfg.min_fill_notional or len(users) < 2:
+            if len(users) < 2 or not tid:
                 continue
-            buyer, seller = users[0], users[1]
-            rows.append((coin, tid, buyer.lower(), "buy", px, sz, notional, ts))
-            rows.append((coin, tid, seller.lower(), "sell", px, sz, notional, ts))
-            if notional >= self.cfg.whale_alert_notional:
-                alerts.append((coin, buyer.lower(), "buy", px, notional))
-                alerts.append((coin, seller.lower(), "sell", px, notional))
+            notional = px * sz
+            self.last_trade[coin] = max(self.last_trade.get(coin, 0), ts)
+            # HL trade'inde `side` AGRESÖRÜ söyler: "B" = alıcı süpürdü, "A" = satıcı.
+            # İnsider sinyalinde bilgi taşıyan taraf pasif maker değil, fiyatı
+            # süpüren taker'dır — bu yüzden adres perspektifinden kaydediyoruz.
+            aggr = str(t.get("side") or "").upper()
+            buyer, seller = (users[0] or "").lower(), (users[1] or "").lower()
+            for addr, side in ((buyer, "buy"), (seller, "sell")):
+                if not addr:
+                    continue
+                taker = None
+                if aggr in ("A", "B"):
+                    taker = 1 if ((side == "buy" and aggr == "B")
+                                  or (side == "sell" and aggr == "A")) else 0
+                a = agg.setdefault((coin, addr, side), {
+                    "ntl": 0.0, "sz": 0.0, "pxsz": 0.0, "tids": [],
+                    "tk": 0.0, "known": 0.0, "ts": ts, "wrote": False})
+                a["ntl"] += notional
+                a["sz"] += sz
+                a["pxsz"] += px * sz
+                a["tids"].append(tid)
+                a["ts"] = max(a["ts"], ts)
+                if taker is not None:
+                    a["known"] += notional
+                    if taker:
+                        a["tk"] += notional
+                if notional >= self.cfg.min_fill_notional:
+                    rows.append((coin, tid, addr, side, px, sz, notional, ts, taker))
+                    a["wrote"] = True
+
+        # Büyük bir market emri aynı blokta onlarca küçük match'e bölünür: tek tek
+        # hiçbiri eşiği geçmez ama TOPLAMI $500K olabilir. Böyle bir süpürme için
+        # tek sentetik satır yaz (tid deterministik → tekrar teslimde dedupe olur).
+        for (coin, addr, side), a in agg.items():
+            if a["wrote"] or a["ntl"] < self.cfg.min_fill_notional or not a["sz"]:
+                continue
+            taker = None
+            if a["known"] > 0:
+                taker = 1 if a["tk"] >= a["known"] / 2 else 0
+            rows.append((coin, f"agg{min(a['tids'])}", addr, side,
+                         a["pxsz"] / a["sz"], a["sz"], a["ntl"], a["ts"], taker))
 
         if not rows:
             return
@@ -162,8 +214,8 @@ class Collector:
         async with db() as conn:
             for r in rows:
                 await conn.execute(
-                    "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,notional,ts)"
-                    " VALUES(?,?,?,?,?,?,?,?)", r)
+                    "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,notional,ts,taker)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)", r)
                 await conn.execute(
                     "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
                     " ON CONFLICT(address) DO NOTHING", (r[2], r[7]))
@@ -180,19 +232,17 @@ class Collector:
         if watch:
             from ..recompute import winner_coins_map
             win_map = await winner_coins_map(list(watch))
-            for r in rows:
-                coin, _, addr, side, px, _, notional, _ = r
-                if addr in watch and coin in win_map.get(addr, set()) \
-                        and (coin, addr, side, px, notional) not in alerts:
-                    alerts.append((coin, addr, side, px, notional))
 
-        # is_watch yalnız adresin BU coin'i kazandığı durumda True olmalı — yoksa
-        # sicilli adresin hiç kazanmadığı bir coindeki fill'i sahte "🎯 SİCİLLİ
-        # BALİNA X'E DÖNDÜ" alarmı üretiyor VE eval_min altı pozisyonda generic
-        # 🐋 alarmını tamamen susturuyordu.
-        for coin, addr, side, px, notional in alerts:
+        # Alarm kararı PARTİ TOPLAMI üzerinden verilir (bölünmüş emirler kaçmasın)
+        for (coin, addr, side), a in agg.items():
             is_watch = addr in watch and coin in win_map.get(addr, set())
-            await self._maybe_alert(coin, addr, side, px, notional, is_watch)
+            if a["ntl"] < self.cfg.whale_alert_notional and not is_watch:
+                continue
+            avg_px = a["pxsz"] / a["sz"] if a["sz"] else 0.0
+            ratio = (a["tk"] / a["known"]) if a["known"] > 0 else None
+            n_parts = len(set(a["tids"]))
+            await self._maybe_alert(coin, addr, side, avg_px, a["ntl"], is_watch,
+                                    taker_ratio=ratio, n_parts=n_parts)
 
     async def _position_notional(self, addr, coin, dex):
         """Adresin bu coindeki güncel pozisyon büyüklüğü ($). Client yoksa None."""
@@ -213,7 +263,8 @@ class Collector:
                     return 0.0
         return 0.0
 
-    async def _maybe_alert(self, coin, addr, side, px, notional, is_watch):
+    async def _maybe_alert(self, coin, addr, side, px, notional, is_watch,
+                           taker_ratio=None, n_parts=1):
         if not self.bot:
             return
         key = f"{coin}:{addr}"
@@ -243,7 +294,8 @@ class Collector:
                 return  # küçük poz/probe — bildirme (cooldown zaten kuruldu)
 
         record = (row["hits"], row["misses"]) if row else (0, 0)
-        text = fmt.whale_fill_alert(coin, addr, side, px, pos_ntl, is_watch, record)
+        text = fmt.whale_fill_alert(coin, addr, side, px, pos_ntl, is_watch, record,
+                                    taker_ratio=taker_ratio, n_parts=n_parts)
         try:
             prio = "high" if is_watch else "normal"
             await self.notifier.send("whale_fill", text, priority=prio, key=key)

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS fills(
   coin TEXT, tid TEXT, address TEXT,
   side TEXT,                       -- buy / sell (adres perspektifi)
   px REAL, sz REAL, notional REAL, ts INTEGER,
+  taker INTEGER,                   -- 1 = agresördü (fiyatı süpürdü) | 0 = pasif | NULL bilinmiyor
   PRIMARY KEY(coin, tid, address)
 );
 CREATE INDEX IF NOT EXISTS idx_fills_coin_ts ON fills(coin, ts);
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS positions_current(
   liq_px REAL, upnl REAL, notional REAL,
   opened_ts INTEGER, score INTEGER, score_reasons TEXT,
   last_add_ts INTEGER, last_trim_ts INTEGER,
+  first_seen_ts INTEGER,           -- pozisyonu ilk görüşümüz ("en az bu kadar eski")
   PRIMARY KEY(coin, address)
 );
 CREATE TABLE IF NOT EXISTS position_snapshots(
@@ -94,7 +96,8 @@ CREATE TABLE IF NOT EXISTS trackers(
   last_szi REAL,                   -- son bildirimdeki boyut
   base_notional REAL,              -- takip başındaki $ (gösterim için)
   created_ts INTEGER, expires_ts INTEGER,
-  active INTEGER DEFAULT 1, last_check_ts INTEGER, end_note TEXT
+  active INTEGER DEFAULT 1, last_check_ts INTEGER, end_note TEXT,
+  entry_px REAL                    -- takip başındaki giriş fiyatı (kapanış P&L tahmini)
 );
 CREATE TABLE IF NOT EXISTS track_offers(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,6 +153,14 @@ MIGRATIONS = [
     "ALTER TABLE earnings_events ADD COLUMN move_pct REAL",
     "ALTER TABLE earnings_events ADD COLUMN result_note TEXT",
     "ALTER TABLE earnings_events ADD COLUMN offer_sent INTEGER DEFAULT 0",
+    # taker: bu adres bu işlemde AGRESÖR müydü (1) yoksa pasif emirle mi doldu (0)?
+    # Fiyatı süpüren taraf bilgi taşır — insider sinyalinde maker değil taker önemlidir.
+    "ALTER TABLE fills ADD COLUMN taker INTEGER",
+    # first_seen_ts: bu pozisyonu İLK gördüğümüz an. opened_ts bilinmese bile
+    # "en az şu tarihten beri açık" alt sınırını verir (fill emekliliğinden bağımsız).
+    "ALTER TABLE positions_current ADD COLUMN first_seen_ts INTEGER",
+    # entry_px: takip başlarkenki giriş fiyatı — kapanışta tahmini kâr/zarar için
+    "ALTER TABLE trackers ADD COLUMN entry_px REAL",
 ]
 
 

@@ -175,10 +175,34 @@ async def _twap_fills(coin: str, address: str, side: str) -> int:
     return len(rows) if (cv_gap < 0.35 and cv_size < 0.35) else 0
 
 
+TAKER_MIN_FILLS = 4   # bu kadar "taker'ı bilinen" fill yoksa oran hesaplanmaz
+
+
+async def _taker_ratio(coin: str, address: str, side: str) -> float | None:
+    """Son 48 saatte pozisyon YÖNÜNDEKİ fill'lerin ne kadarı agresördü (0-1).
+
+    Agresör = fiyatı süpüren taraf. İnsider aceleci olur: haberi bilen limit
+    emirle beklemez, deftere vurup alır. None = yeterli bilgi yok (taker kolonu
+    yeni; eski kayıtlarda NULL)."""
+    want = "buy" if side == "long" else "sell"
+    since = now() - 48 * 3600
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) n, SUM(CASE WHEN taker=1 THEN 1 ELSE 0 END) tk FROM fills"
+            " WHERE coin=? AND address=? AND side=? AND ts>=? AND taker IS NOT NULL",
+            (coin, address, want, since))
+        r = await cur.fetchone()
+    n = (r["n"] or 0) if r else 0
+    if n < TAKER_MIN_FILLS:
+        return None
+    return (r["tk"] or 0) / n
+
+
 def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             addr_row: dict | None, fresh: bool | None, last_deposit_ts: int | None,
             ref_ts: int, twap_n: int = 0, funded_by_watch: bool = False,
-            coin_focus: bool = False) -> tuple[int, list[str]]:
+            coin_focus: bool = False,
+            taker_ratio: float | None = None) -> tuple[int, list[str]]:
     pts = 0
     reasons: list[str] = []
 
@@ -206,6 +230,20 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             # çaktırmadan açıp bekleyebilir
             pts += 6
             reasons.append(f"sabırlı açılış ({age_txt} önce) — erken kuş")
+
+    if not opened:
+        # Açılış bilinmiyor (fill'ler emekli olmuş olabilir) ama pozisyonu NE
+        # ZAMANDIR GÖRDÜĞÜMÜZÜ biliyoruz → "en az şu kadar eski" alt sınırı.
+        # CBRS dersi: 2 hafta önce sessizce açıp bekleyen insider bu yolla görünür.
+        seen = pos.get("first_seen_ts")
+        if seen:
+            seen_d = max(0.0, (ref_ts - seen) / 86400)
+            if seen_d >= 14:
+                pts += 6
+                reasons.append(f"🦉 en az {seen_d:.0f} gündür açık — sabırlı/erken kuş")
+            elif seen_d >= 3:
+                pts += 4
+                reasons.append(f"en az {seen_d:.0f} gündür açık")
 
     # Eski pozisyona earnings'ten hemen önce EKLEME yapmak da şüpheli
     last_add = pos.get("last_add_ts")
@@ -279,6 +317,12 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
     if twap_n:
         pts += 5
         reasons.append(f"TWAP paterni ({twap_n} fill/48h)")
+
+    # Agresif toplama: pozisyon yönünde fill'lerin çoğu deftere VURARAK alınmışsa
+    # sahibi acele ediyor demektir (limit emirle bekleyen bir şey bilmiyordur)
+    if taker_ratio is not None and taker_ratio >= 0.7:
+        pts += 8
+        reasons.append(f"🧹 piyasadan agresif topladı (%{taker_ratio * 100:.0f} taker)")
 
     hits = (addr_row or {}).get("hits") or 0
     misses = (addr_row or {}).get("misses") or 0
@@ -375,9 +419,11 @@ async def score_rows(cfg: Config, client: HLClient, coin: str, rows: list[dict],
 
         twap_n = await _twap_fills(coin, p["address"], p["side"])
         focus = await _coin_focus(coin, p["address"])
+        tk_ratio = await _taker_ratio(coin, p["address"], p["side"])
+        p["taker_ratio"] = tk_ratio
         score, reasons = compute(cfg, p, oi_ntl, funding, arow, fresh, last_dep, ref,
                                  twap_n=twap_n, funded_by_watch=funded_by_watch,
-                                 coin_focus=focus)
+                                 coin_focus=focus, taker_ratio=tk_ratio)
         p["score"] = score
         p["score_reasons"] = json.dumps(reasons, ensure_ascii=False)
         p["watch_record"] = (arow.get("hits") or 0, arow.get("misses") or 0)
