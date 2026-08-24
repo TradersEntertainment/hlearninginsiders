@@ -47,6 +47,11 @@ EDITABLE_FIELDS: dict[str, dict] = {
                           "desc": "Takip bu kadar gün sonra kendiliğinden biter (poz hâlâ açıksa haber verir)"},
     "notify_lowvol": {"type": "bool", "label": "🐘 Sessiz su devi", "group": "Bildirimler",
                       "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
+    "notify_listing": {"type": "bool", "label": "🆕 Yeni hisse listelendi", "group": "Bildirimler",
+                       "desc": "HL yeni bir hisse perp'i listelediğinde haber ver (ilk açılışta susar)"},
+    "channel_auto_hours": {"type": "str", "label": "📣 Otomatik kanal yayını saatleri (TSİ)",
+                           "group": "Bildirimler",
+                           "desc": "Bu saatlerde 'saati gelenler' otomatik olarak yayın kanalına gönderilir. Virgülle: 10,14,17 · boş = kapalı (TELEGRAM_CHANNEL_ID gerekir)"},
     "notify_health": {"type": "bool", "label": "⚕️ Sistem sağlığı", "group": "Bildirimler",
                       "desc": "VARSAYILAN KAPALI — sağlık olayları zaten ana sayfa rozetinde + /saglik + /health'te görünür; Telegram'a da istersen aç"},
     "notify_wall": {"type": "bool", "label": "🧱 Emir defteri duvarı", "group": "Bildirimler",
@@ -131,6 +136,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "group": "Anomali dedektörü", "desc": "HİSSELERDE bu OI'nin altındaki mikro marketlerde alarm verme"},
     "oi_spike_big_floor_usd": {"type": "float", "label": "OI spike tabanı — endeks/FX ($)",
                                "group": "Anomali dedektörü", "desc": "GBP, GOLD, XYZ100 gibi FX/endeks/emtia/kripto'da OI bu boyutun altındaysa spike alarmı verme (mikro marketten %175 artış anlamsız)"},
+    "vol_spike_mult": {"type": "float", "label": "Hacim patlaması katsayısı (×)",
+                       "group": "Anomali dedektörü",
+                       "desc": "24 saatlik hacim bir gün öncesine göre bu KAT'a çıkarsa alarm (fiyat kıpırdamadan hacmin patlaması = sessiz birikim)"},
+    "vol_spike_min_usd": {"type": "float", "label": "Hacim alarmı tabanı ($)",
+                          "group": "Anomali dedektörü",
+                          "desc": "Bu günlük hacmin altındaki marketlerde hacim patlaması alarm üretmez (mikro hacimde 5x anlamsız)"},
     "funding_extreme": {"type": "float", "label": "Aşırı funding eşiği (saatlik)",
                         "group": "Anomali dedektörü", "desc": "ör: 0.0005 = %0.05/saat"},
     "peers_override": {"type": "str", "label": "Korele hisse override",
@@ -161,6 +172,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "hourstats_days": {"type": "int", "label": "Saat istatistiği penceresi (gün)",
                        "group": "Tarama & performans",
                        "desc": "Saatlik getiri haritası için geriye bakılacak gün sayısı (1h mumlar)"},
+    "zombie_silent_hours": {"type": "int", "label": "Sessiz coin uyarı eşiği (saat)",
+                            "group": "Tarama & performans",
+                            "desc": "Canlı akıştan bu kadar saattir hiç işlem gelmeyen coin'ler /saglik raporunda 'sessiz' olarak listelenir (abone olunduğu sanılan ama veri gelmeyen marketler)"},
     "fills_retention_days": {"type": "int", "label": "Fill kayıt ömrü (gün)",
                              "group": "Tarama & performans",
                              "desc": "Bu kadar günden eski işlem kayıtları her gece silinir (disk + hız). Zaman çizelgesi/uzman analizi en fazla bu kadar geriyi görür"},
@@ -239,6 +253,9 @@ class Config:
         self.notify_lowvol = True
         self.notify_wall = True
         self.notify_health = False  # bekçi sitede konuşur; Telegram istenirse açılır
+        self.notify_listing = True
+        self.channel_auto_hours = os.getenv("CHANNEL_AUTO_HOURS", "")
+        self.zombie_silent_hours = int(os.getenv("ZOMBIE_SILENT_HOURS", "12"))
         self.wall_window_pct = float(os.getenv("WALL_WINDOW_PCT", "2.0"))
         self.wall_min_usd = float(os.getenv("WALL_MIN_USD", "1000000"))
         self.wall_alert_min_usd = float(os.getenv("WALL_ALERT_MIN_USD", "12000000"))
@@ -299,6 +316,8 @@ class Config:
         self.oi_spike_floor_usd = float(os.getenv("OI_SPIKE_FLOOR_USD", "200000"))
         self.oi_spike_big_floor_usd = float(os.getenv("OI_SPIKE_BIG_FLOOR_USD", "20000000"))
         self.funding_extreme = float(os.getenv("FUNDING_EXTREME", "0.0005"))      # saatlik oran (0.05%/h)
+        self.vol_spike_mult = float(os.getenv("VOL_SPIKE_MULT", "3.0"))
+        self.vol_spike_min_usd = float(os.getenv("VOL_SPIKE_MIN_USD", "500000"))
 
         # Korele hisseler: "SNDK:WDC|MU;TSLA:RIVN" formatıyla override edilebilir
         self.peers_override = os.getenv("PEERS", "")

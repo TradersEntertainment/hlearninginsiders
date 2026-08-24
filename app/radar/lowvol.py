@@ -98,6 +98,9 @@ async def check_alerts(cfg: Config, notifier) -> int:
         # Telegram'ı doldurmaz
         if not opened or ts - opened > cfg.fresh_big_alert_hours * 3600:
             continue
+        seen = p.get("first_seen_ts")  # uzun süredir görülen poz "yeni" değil
+        if seen and ts - seen > cfg.fresh_big_alert_hours * 3600:
+            continue
         key = f"{p['coin']}:{p['address']}"
         if await alert_recent("lowvol", key, LOWVOL_COOLDOWN):
             continue

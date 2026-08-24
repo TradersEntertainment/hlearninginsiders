@@ -181,6 +181,17 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
             p["address"] = addr
             p["coin"] = coin
             found.append(p)
+    # mevcut first_seen_ts'leri oku (yeni satırlarda ts, eskilerde ilk görülme)
+    if found:
+        addrs2 = [p["address"] for p in found]
+        qm = ",".join("?" * len(addrs2))
+        async with db() as conn:
+            cur = await conn.execute(
+                f"SELECT address, first_seen_ts FROM positions_current"
+                f" WHERE coin=? AND address IN ({qm})", (coin, *addrs2))
+            seen_map = {r["address"]: r["first_seen_ts"] for r in await cur.fetchall()}
+        for p in found:
+            p["first_seen_ts"] = seen_map.get(p["address"]) or ts
     # zaman çizelgesi (yerel fill'lerden, yaklaşık; derin taramada API ile netleşir)
     for p in found:
         tl = await timeline_from_fills(coin, p["address"], p["side"],
@@ -195,8 +206,8 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
             await conn.execute(
                 """INSERT INTO positions_current
                    (coin,address,ts,side,szi,entry_px,leverage,liq_px,upnl,notional,
-                    opened_ts,score,score_reasons,last_add_ts,last_trim_ts)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    opened_ts,score,score_reasons,last_add_ts,last_trim_ts,first_seen_ts)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(coin,address) DO UPDATE SET
                      ts=excluded.ts, side=excluded.side, szi=excluded.szi,
                      entry_px=excluded.entry_px, leverage=excluded.leverage,
@@ -208,10 +219,12 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
                      score=COALESCE(excluded.score, positions_current.score),
                      score_reasons=COALESCE(excluded.score_reasons, positions_current.score_reasons),
                      last_add_ts=COALESCE(excluded.last_add_ts, positions_current.last_add_ts),
-                     last_trim_ts=COALESCE(excluded.last_trim_ts, positions_current.last_trim_ts)""",
+                     last_trim_ts=COALESCE(excluded.last_trim_ts, positions_current.last_trim_ts),
+                     first_seen_ts=MIN(COALESCE(positions_current.first_seen_ts, excluded.first_seen_ts),
+                                       excluded.first_seen_ts)""",
                 (coin, p["address"], ts, p["side"], p["szi"], p["entry_px"], p["leverage"],
                  p["liq_px"], p["upnl"], p["notional"], p.get("opened_ts"), None, None,
-                 p.get("last_add_ts"), p.get("last_trim_ts")))
+                 p.get("last_add_ts"), p.get("last_trim_ts"), ts))
 
     found.sort(key=lambda p: p["notional"], reverse=True)
     log.info("%s: %d pozisyon bulundu (en büyük: $%.0f)",

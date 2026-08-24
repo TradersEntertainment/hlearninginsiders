@@ -54,6 +54,11 @@ async def _alert_new_big(cfg: Config, notifier, coin: str, rows: list[dict]) -> 
         opened = p.get("opened_ts")
         if not opened or ts - opened > cfg.fresh_big_alert_hours * 3600:
             continue
+        # Uzun süredir GÖRDÜĞÜMÜZ pozisyon "yeni" değildir: opened_ts fill
+        # penceresinden kayabilir, first_seen_ts bağımsız alt sınırdır.
+        seen = p.get("first_seen_ts")
+        if seen and ts - seen > cfg.fresh_big_alert_hours * 3600:
+            continue
         key = f"{coin}:{p['address']}"
         if await alert_recent("new_big_pos", key, NEW_BIG_COOLDOWN):
             continue

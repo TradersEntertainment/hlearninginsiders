@@ -1,7 +1,8 @@
-"""OI / funding anomali dedektörü.
+"""OI / funding / hacim anomali dedektörü.
 
 Pozisyon sahibini bulamasak bile "birileri birikiyor" erken alarmı:
 - OI'de anormal artış (earnings yaklaşırken eşik düşer)
+- Hacmin katlanması (fiyat kıpırdamadan patlayan hacim = sessiz birikim)
 - Funding'in aşırıya kayması (yön beklentisinin bedeli ödeniyor demek)
 """
 import logging
@@ -107,6 +108,17 @@ async def check_anomalies(cfg: Config, notifier) -> None:
             if chg4 >= 30:
                 triggers.append(f"OI son 4 saatte +%{chg4:.0f} (hızlı birikim)")
                 cats.append("oi4")
+
+        # Hacim patlaması: fiyat/OI kıpırdamadan hacmin katlanması sessiz birikimin
+        # (parça parça toplama, hedge'li kurulum) izidir. day_volume zaten her
+        # turda toplanıyordu ama hiçbir tetikte kullanılmıyordu.
+        vol_now = cur_m.get("day_volume") or 0
+        vol_prev = (prev24 or {}).get("day_volume") or 0
+        if vol_now >= cfg.vol_spike_min_usd and vol_prev > 0:
+            mult = vol_now / vol_prev
+            if mult >= cfg.vol_spike_mult:
+                triggers.append(f"hacim 24 saatte {mult:.1f}× ({fmt.usd(vol_now)})")
+                cats.append("vol")
 
         funding = cur_m.get("funding")
         if funding is not None and abs(funding) >= cfg.funding_extreme:
