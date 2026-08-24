@@ -41,7 +41,7 @@
         <th title="Pozisyon, günlük hacmin kaç katı — yüksekse çıkış çok zor">Hacim katı</th>
         <th>Giriş</th><th>Fiyat</th><th title="Pozisyon ne zaman açıldı">Açılış</th><th>Skor</th></tr>
     {% for p in humans %}
-    <tr>
+    <tr data-propr="{{ 1 if p.symbol in propr else 0 }}">
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
         {% if p.symbol in propr %}<span class="pbadge" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
         {% if p.low_volume %}<span class="dim" title="günlük hacim eşiğin altında">🤫</span>{% endif %}</td>
@@ -61,7 +61,7 @@
       {% else %}<span class="dim">-</span>{% endif %}</td>
       <td>{{ p.entry_px|px }}</td>
       <td>{{ p.mark|px }}</td>
-      <td class="dim">{{ p.opened_ts|age }}</td>
+      <td class="dim">{{ p|posage }}</td>
       <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
     </tr>
     {% endfor %}
@@ -84,7 +84,7 @@
     <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Tür</th><th>Yön</th><th>Boyut</th>
         <th>OI payı</th><th>24h hacim</th></tr>
     {% for p in bots %}
-    <tr class="dimrow">
+    <tr class="dimrow" data-propr="{{ 1 if p.symbol in propr else 0 }}">
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}">{{ p.symbol }}</a></td>
       <td class="l">{{ m.addr(p.address, k) }}</td>
       <td>{{ '🤖 MM' if p.entity=='mm' else ('🏦 vault' if p.entity=='vault' else '🚫 elendi') }}</td>

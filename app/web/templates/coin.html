@@ -77,7 +77,8 @@
           stroke="var(--dim)" stroke-opacity=".35"/>
     {% for b in hchart.bars %}
     <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2"
-          fill="{{ 'var(--chart-long)' if b.pos else 'var(--chart-short)' }}"><title>{{ b.tip }}</title></rect>
+          fill="{{ 'var(--chart-long)' if b.pos else 'var(--chart-short)' }}"
+          fill-opacity="{{ b.op }}"><title>{{ b.tip }}</title></rect>
     {% if b.open %}<rect x="{{ b.x }}" y="{{ hchart.H - 24 }}" width="{{ b.w }}" height="2.5" rx="1"
           fill="var(--amber)" opacity=".55"><title>ABD borsası açık saati (~09:30-16:00 ET)</title></rect>{% endif %}
     {% if b.label %}<text x="{{ b.cx }}" y="{{ hchart.H - 8 }}" text-anchor="middle"
@@ -85,6 +86,7 @@
     {% endfor %}
   </svg>
   <p class="sub" style="margin-top:6px">🟨 alt bantlı saatler ≈ ABD borsası açık ·
+  soluk barlar = az örnek (güven düşük) ·
   en iyi saatler: {% for h in hstats.best %}<b>TSİ {{ '%02d'|format(h.tsi) }}</b> ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% endfor %}
   · en kötü: {% for h in hstats.worst %}TSİ {{ '%02d'|format(h.tsi) }} ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% endfor %}
   · geçmiş istatistiktir, garanti değildir</p>
@@ -193,7 +195,7 @@
       <td>{{ p.leverage|int }}x</td>
       <td>{{ p.liq_px|px }}</td>
       <td class="{{ 'long' if p.upnl>0 else 'short' }}">{{ p.upnl|usd }}</td>
-      <td>{{ p.opened_ts|age }}</td>
+      <td>{{ p|posage }}</td>
       <td class="long">{{ p.last_add_ts|age if p.last_add_ts else '-' }}</td>
       <td class="short">{{ p.last_trim_ts|age if p.last_trim_ts else '-' }}</td>
       <td class="l reasons">{{ p.reasons }}</td>

@@ -110,7 +110,7 @@
   {% endif %}
   {% if liq_map %}
   {% for x in liq_map %}
-  <div class="lbar">
+  <div class="lbar" data-propr="{{ 1 if x.propr else 0 }}">
     <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
     <span class="lside {{ 'longliq-t' if x.side == 'long' else 'shortliq-t' }}">{{ 'L-LIQ' if x.side == 'long' else 'S-LIQ' }}</span>
     <div class="ltrack"><div class="lfill {{ 'longliq' if x.side == 'long' else 'shortliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
@@ -130,7 +130,7 @@
   Sahibi tanıdığımız bir balinaysa yazar; duvar çekilirse (spoof) Telegram'dan haber gelir.</p>
   {% if book_walls %}
   {% for x in book_walls %}
-  <div class="lbar">
+  <div class="lbar" data-propr="{{ 1 if x.propr else 0 }}">
     <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
     <span class="lside {{ 'shortliq-t' if x.side == 'ask' else 'longliq-t' }}"
           title="{{ 'fiyatın üstünde satış (short) duvarı' if x.side == 'ask' else 'fiyatın altında alış (long) duvarı' }}">{{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }}</span>
@@ -143,6 +143,36 @@
   </div>
   {% endfor %}
   {% else %}<p class="dim">Şu an eşik üstü duvar yok — defterler düzenli taranıyor, dev bir emir konduğunda burada belirir.</p>{% endif %}
+</div>
+
+<div class="panel third compact">
+  <h2>👣 Aktif takipler{% if trackers %} <span class="dim" style="text-transform:none">· {{ trackers|length }} balina izleniyor</span>{% endif %}</h2>
+  <p class="sub">İzlemeye aldığın balinalar: pozu kapattıkça/büyüttükçe Telegram'a haber gelir.
+  Tam kapanış ve yön değişimi anında bildirilir.</p>
+  {% if trackers %}
+  <table>
+    <tr><th class="l">Hisse</th><th class="l">Balina</th><th>Yön</th>
+        <th title="Takibe alındığındaki pozisyon büyüklüğü">Başlangıç</th>
+        <th title="Başlangıca göre ne kadarı kapandı">Durum</th>
+        <th title="Takibin bitmesine kalan gün">Kalan</th></tr>
+    {% for t in trackers %}
+    <tr data-propr="{{ 1 if t.propr else 0 }}">
+      <td class="l"><a href="/t/{{ t.symbol }}{{ k }}"><b>{{ t.symbol }}</b></a>{% if t.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>
+      <td class="l">{{ m.addr(t.address, k, 6) }}</td>
+      <td><span class="{{ t.side }}">{{ 'L' if t.side == 'long' else 'S' }}</span></td>
+      <td>{{ t.base_notional|usd }}</td>
+      <td class="{{ 'short' if t.closed_pct > 1 else ('long' if t.closed_pct < -1 else 'dim') }}">{{ t.prog }}</td>
+      <td class="dim">{{ t.days_left }}g</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="sub" style="margin-top:6px">Telegram'dan yönet: <code>/takipler</code> ·
+  elle başlat: <code>/takip 0xADRES SEMBOL</code></p>
+  {% else %}
+  <p class="dim">Şu an takip edilen balina yok. Bilanço geçince bot "çıkışını izleyeyim mi?"
+  diye sorar (<code>/takip_N</code>), ya da Telegram'dan <code>/takip 0xADRES SEMBOL</code>
+  ile istediğin balinayı elle takibe alabilirsin.</p>
+  {% endif %}
 </div>
 
 <div class="panel third compact">
@@ -161,7 +191,7 @@
         <th class="l">Hisse</th><th title="Bu saatin tarihsel ortalama getirisi">Bu saat ort.</th>
         <th title="Bu saatte kaç kez yükselmiş">Kazanç</th><th title="Kaç örnek gün">Örnek</th></tr>
     {% for h in hot_hours %}
-    <tr>
+    <tr data-propr="{{ 1 if h.propr else 0 }}">
       {% if is_admin %}<td><input type="checkbox" name="coins" value="{{ h.coin }}"></td>{% endif %}
       <td class="l"><a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% if h.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
         {% if h.closed_heavy %}<span title="Bu hissede getirinin çoğu borsa kapalıyken gelmiş">🌙</span>{% endif %}</td>
@@ -193,13 +223,13 @@
         <th title="Pozisyonun dolar değeri">Boyut</th>
         <th title="Pozisyon ne zaman açıldı">Açılış</th></tr>
     {% for p in suspicious %}
-    <tr>
+    <tr data-propr="{{ 1 if p.propr else 0 }}">
       <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else 'b-mid' }}">{{ p.score }}</span></td>
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
           {{ m.addr(p.address, k, 6) }}</td>
       <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
-      <td>{{ p.opened_ts|age }}</td>
+      <td>{{ p|posage }}</td>
     </tr>
     {% endfor %}
   </table>
@@ -216,12 +246,12 @@
         <th title="Pozisyon ne zaman açıldı">Açılış</th>
         <th title="0-100 insider şüphe puanı">Skor</th></tr>
     {% for p in recent_big %}
-    <tr>
+    <tr data-propr="{{ 1 if p.propr else 0 }}">
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
           {{ m.addr(p.address, k, 6) }}</td>
       <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
-      <td>{{ p.opened_ts|age }}</td>
+      <td>{{ p|posage }}</td>
       <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
     </tr>
     {% endfor %}
@@ -238,7 +268,7 @@
         <th class="l" title="AMC = borsa kapanınca, BMO = borsa açılmadan">Saat</th>
         <th class="l" title="⏳ bekliyor · 🕐 erken rapor gitti · ✅ raporlandı">Durum</th></tr>
     {% for e in events %}
-    <tr>
+    <tr data-propr="{{ 1 if e.propr else 0 }}">
       <td class="l {{ 'dim' if e.passed else '' }}">{{ e.date_et[5:] }}</td>
       <td class="l"><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a>{% if e.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>
       <td class="l" title="{{ e.when_txt }}{% if not e.exact %} (yaklaşık){% endif %}">{{ e.icon }} {{ e.tsi[6:] }}</td>
@@ -298,7 +328,7 @@
         <th title="Son kayıtlı dönemin toplam işlem hacmi">Hacim</th>
         <th title="Kaç bilançoyu doğru/yanlış bildi">Sicil</th><th class="l">Açık poz</th></tr>
     {% for s in specialists %}
-    <tr>
+    <tr data-propr="{{ 1 if s.propr else 0 }}">
       <td class="l">{{ m.addr(s.address, k) }}{% if s.watchlist %} ⭐{% endif %}</td>
       <td class="l"><a href="/t/{{ s.symbol }}{{ k }}"><b>{{ s.symbol }}</b></a></td>
       <td>{{ s.n }}</td>

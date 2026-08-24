@@ -54,7 +54,22 @@ def _dt(ts):
     return datetime.fromtimestamp(ts, TR).strftime("%d.%m %H:%M")
 
 
-templates.env.filters.update(usd=_usd, px=_px, age=_age, dt=_dt)
+def _posage(p):
+    """Pozisyon yaşı: açılış biliniyorsa yaşı, bilinmiyorsa 'en az' alt sınırı.
+
+    Fill kayıtları emekli olunca açılış anı kaybolabiliyor; pozisyonu İLK
+    gördüğümüz an (first_seen_ts) yine de 'en az bu kadar eski' der."""
+    opened = (p or {}).get("opened_ts")
+    if opened:
+        return _age(opened)
+    seen = (p or {}).get("first_seen_ts")
+    if seen:
+        h = (now() - seen) / 3600
+        return f"≥{h:.0f}h" if h < 48 else f"≥{h / 24:.0f}g"
+    return "?"
+
+
+templates.env.filters.update(usd=_usd, px=_px, age=_age, dt=_dt, posage=_posage)
 
 router = APIRouter()
 
@@ -109,6 +124,9 @@ def _hour_chart(stats: dict | None) -> dict | None:
             "y": round((y0 - bh) if v >= 0 else y0, 1), "h": round(bh, 1),
             "cx": round(left + i * bw + bw / 2, 1),
             "pos": v >= 0, "open": 9 <= h["et"] < 16,
+            # örneklem güveni: az örnekli saat barı soluk çizilir (aynı görsel
+            # ağırlıkta gösterip 12 örnekli barı 90 örnekli gibi okutmayalım)
+            "op": round(min(1.0, max(0.35, (h["n"] or 0) / hourstats.MIN_N)), 2),
             "tip": (f"TSİ {h['tsi']:02d}:00 (ET {h['et']:02d}:00) · ort {v:+.2f}%"
                     f" · %{h['win']:.0f} kazanç · {h['n']} örnek"),
             "label": f"{h['tsi']:02d}" if h["tsi"] % 3 == 0 else "",
@@ -507,6 +525,21 @@ async def index(request: Request):
                ORDER BY date_et DESC LIMIT 6""")
         archive = [dict(r) for r in await cur.fetchall()]
 
+    # 👣 Aktif takipler: kullanıcının izlediği balina pozları (ilerleme ile)
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT * FROM trackers WHERE active=1 ORDER BY id DESC LIMIT 8")
+        trackers = [dict(r) for r in await cur.fetchall()]
+    for t in trackers:
+        base = float(t.get("base_szi") or 0)
+        last = float(t["last_szi"] if t.get("last_szi") is not None else base)
+        closed = ((base - last) / base * 100) if base > 0 else 0
+        t["closed_pct"] = closed
+        t["prog"] = (f"%{closed:.0f} kapandı" if closed > 1
+                     else (f"%{abs(closed):.0f} büyüttü" if closed < -1 else "değişim yok"))
+        t["days_left"] = max(0, (int(t.get("expires_ts") or 0) - ts_now) // 86400)
+        t["propr"] = propr_listed(t.get("symbol") or "")
+
     # 🕐 Saati gelenler: şu saati tarihsel olarak güçlü hisseler
     hmap = await hourstats.all_stats()
     et_hour = datetime.now(hourstats.ET).hour
@@ -526,6 +559,7 @@ async def index(request: Request):
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "liq_map": liq_map, "liqmin": liqmin, "liq_walls": liq_walls,
         "book_walls": book_walls,
+        "trackers": trackers,
         "hot_hours": hot_hours, "tsi_now": datetime.now(TR).hour,
         "n_hstats": n_hstats,
         "has_channel": bool(cfg.telegram_channel_id) and request.app.state.bot is not None,
@@ -786,24 +820,12 @@ async def hot_hours_send(request: Request):
         return back("err_bot")
     if not coins:
         return back("err_empty")
-    hmap = await hourstats.all_stats()
     et_hour = datetime.now(hourstats.ET).hour
     universe = await get_universe()
     sym_map = {t["coin"]: t["symbol"] for t in universe}
-    entries = []
-    for coin in coins:
-        s = hmap.get(coin)
-        if not s or s.get("empty"):
-            continue
-        # Verdict'i GÖNDERİM ANINDA yeniden kontrol et: sayfa ET 13:5x'te render
-        # edilip 14:0x'te gönderilirse saat değişmiş olur; 'bu saatte güçlü'
-        # başlığıyla nötr/negatif rakam yayınlanmasın.
-        v, b = hourstats.verdict(s, et_hour)
-        if v != "güçlü":
-            continue
-        entries.append({"coin": coin, "symbol": sym_map.get(coin, coin.split(":")[-1]),
-                        "avg": b["avg"], "win": b["win"], "n": b["n"],
-                        "closed_heavy": s["closed_ret"] > s["open_ret"]})
+    # Verdict GÖNDERİM ANINDA yeniden kontrol edilir (ortak yardımcı; otomatik
+    # yayın döngüsü de aynı mantığı kullanıyor)
+    entries = await hourstats.channel_entries(sym_map, et_hour, coins, limit=len(coins))
     if not entries:
         return back("err_empty")
     text = fmt.hot_hours_channel(entries, datetime.now(TR).hour)
