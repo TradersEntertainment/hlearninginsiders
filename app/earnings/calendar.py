@@ -297,7 +297,8 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
             has_hint = ev.get("hour_hint") not in (None, "", "unknown")
             if cur is None:
                 merged[sym] = {**ev, "_rank": rank, "source": src_name,
-                               "_hint_rank": rank if has_hint else 0}
+                               "_hint_rank": rank if has_hint else 0,
+                               "_exact_rank": rank if ev.get("exact_ts") else 0}
                 continue
             if cur["date_et"] == ev["date_et"]:
                 # hour_hint ÇELİŞKİSİNDE en güvenilir kaynak kazanır (yalnız 'boş
@@ -306,8 +307,11 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
                 if has_hint and rank >= cur.get("_hint_rank", 0):
                     cur["hour_hint"] = ev["hour_hint"]
                     cur["_hint_rank"] = rank
-                if not cur.get("exact_ts") and ev.get("exact_ts"):
+                # exact_ts de RÜTBEYE göre (eskiden 'ilk gelen kazanır'dı): etiket
+                # bir kaynaktan, saat başka kaynaktan gelince kart çelişiyordu
+                if ev.get("exact_ts") and rank >= cur.get("_exact_rank", 0):
                     cur["exact_ts"] = ev["exact_ts"]
+                    cur["_exact_rank"] = rank
                 if cur.get("eps_est") is None:
                     cur["eps_est"] = ev.get("eps_est")
                 if src_name not in (cur.get("source") or ""):
@@ -316,10 +320,29 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
             elif rank > cur.get("_rank", 0):
                 merged[sym] = {**ev, "_rank": rank, "source": src_name,
                                "_hint_rank": rank if has_hint else 0,
+                               "_exact_rank": rank if ev.get("exact_ts") else 0,
                                "note": f"⚠️ tarih düzeltildi: {cur.get('source')}"
                                        f" {cur['date_et']} diyordu → {src_name} {ev['date_et']}"}
             else:
                 cur["note"] = f"⚠️ kaynak çelişkisi: {src_name} {ev['date_et']} diyor"
+
+    # hour_hint ile exact_ts ÇELİŞİRSE güvenilir kaynak kazanır — çelişki DB'ye
+    # hiç yazılmasın (kart etiketi ile saati her zaman uyumlu kalsın)
+    for sym, m in merged.items():
+        ex, hint = m.get("exact_ts"), (m.get("hour_hint") or "unknown")
+        if not ex or hint == "unknown":
+            continue
+        derived = when_bucket(datetime.fromtimestamp(int(ex), ET).time())
+        if derived in (hint, "intraday"):
+            continue
+        if m.get("_exact_rank", 0) >= m.get("_hint_rank", 0):
+            m["hour_hint"] = derived           # tam saat daha güvenilir → etiketi düzelt
+            m["note"] = ((m.get("note") or "")
+                         + f" ⚠️ saat etiketi düzeltildi ({hint}→{derived})").strip()
+        else:
+            m["exact_ts"] = None               # etiket daha güvenilir → çelişen saati at
+            m["note"] = ((m.get("note") or "")
+                         + " ⚠️ çelişen tam saat yok sayıldı").strip()
 
     # Saati hâlâ bilinmeyenleri işaretle — "bugün" diye gösterip sabah geçmiş olmasın
     for sym, m in merged.items():
@@ -355,6 +378,23 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
             await conn.execute(
                 f"DELETE FROM earnings_events WHERE evaluated=0"
                 f" AND UPPER(symbol) IN ({qx})", tuple(exc))
+        # Artık UYGUN OLMAYAN sembollerin kalıntı kayıtları: temizlik döngüsü
+        # yalnız sorgulanan (uygun) semboller üzerinde döndüğü için endeks/emtia/
+        # FX/ETF ya da evrenden düşmüş bir sembolün eski bekleyen satırı sonsuza
+        # dek kalıyordu — GOLD (emtia) earnings radarında böyle görünüyordu.
+        cur = await conn.execute(
+            "SELECT DISTINCT symbol FROM earnings_events WHERE evaluated=0"
+            " AND COALESCE(source,'') NOT LIKE '%manual%'")
+        stale = [r["symbol"] for r in await cur.fetchall()
+                 if (r["symbol"] or "").upper() not in eligible]
+        if stale:
+            qs = ",".join("?" * len(stale))
+            await conn.execute(
+                f"DELETE FROM earnings_events WHERE evaluated=0"
+                f" AND COALESCE(source,'') NOT LIKE '%manual%'"
+                f" AND symbol IN ({qs})", tuple(stale))
+            log.info("takvim temizliği: %d uygun olmayan sembolün bekleyen kaydı"
+                     " silindi (%s)", len(stale), ", ".join(stale[:6]))
         for sym, ev in merged.items():
             if not valid_date_et(ev.get("date_et")):
                 continue
@@ -443,8 +483,13 @@ def stages(ev: dict) -> list[tuple[str, int]]:
         t1 = ("t1", int(ev["exact_ts"]) - 3600)
         # bmo (sabah) exact'te insider'ın asıl giriş gecesi (önceki akşam) pre
         # taraması eskiden kayboluyordu — daha iyi veri, daha az gözetim. Koru.
-        if (ev.get("hour_hint") or "") == "bmo" and valid_date_et(ev.get("date_et")):
-            return [("pre", _et_ts(ev["date_et"], 20, 0, day_offset=-1)), t1]
+        if resolve_when(ev)[0] == "bmo" and valid_date_et(ev.get("date_et")):
+            pre = _et_ts(ev["date_et"], 20, 0, day_offset=-1)
+            # Kronoloji güvencesi: date_et ile exact_ts farklı günlere düşerse
+            # (kaynak çelişkisi) 'pre' raporun SONRASINA kayabiliyordu — o zaman
+            # pre'yi hiç kurma, yalnız t1 kalsın.
+            if pre < t1[1]:
+                return [("pre", pre), t1]
         return [t1]
     d = ev.get("date_et")
     if not valid_date_et(d):
@@ -485,13 +530,43 @@ def countdown_str(mins: int) -> str:
 # Saati doğrulanmış sayılan kaynaklar — bunlar demiyorsa "kesin" deme
 STRONG_SOURCES = ("manual", "tradingview", "yahoo")
 
+WHEN_ICON = {"bmo": "☀️", "amc": "🌙", "intraday": "🕐"}
+WHEN_TXT = {"bmo": "sabah, açılış öncesi", "amc": "akşam, kapanış sonrası",
+            "intraday": "gün içi (piyasa açıkken)"}
+
+
+def when_bucket(et_time) -> str:
+    """ET saatinden pencere: açılış öncesi / kapanış sonrası / gün içi.
+    Eşikler yahoo & tradingview ayrıştırıcılarıyla birebir aynı."""
+    if et_time <= time(9, 30):
+        return "bmo"
+    if et_time >= time(15, 0):
+        return "amc"
+    return "intraday"
+
+
+def resolve_when(ev: dict) -> tuple[str, int]:
+    """(pencere, rapor_ts) — TEK DOĞRULUK KAYNAĞI.
+
+    exact_ts varsa etiket GÖSTERİLEN saatten türetilir. Eskiden ikon/metin ham
+    hour_hint'ten, saat ise exact_ts'ten geliyordu; bu iki alan birleştirmede
+    farklı kaynaklardan dolabildiği için kart kendi içinde çelişiyordu:
+    "☀️ 23:00 TSİ · sabah, açılış öncesi" (23:00 TSİ = 16:00 ET = kapanış SONRASI).
+    """
+    rts = event_ts_estimate(ev)
+    hint = ev.get("hour_hint") or "unknown"
+    if not rts:
+        return hint, 0
+    if ev.get("exact_ts"):
+        return when_bucket(datetime.fromtimestamp(int(ev["exact_ts"]), ET).time()), rts
+    return hint, rts
+
 
 def annotate(events: list[dict]) -> list[dict]:
     """Her event'e rapor zamanı, geçti mi, geri sayım, ☀️/🌙 ve belirsizlik uyarısı ekle."""
     ts = now()
     for e in events:
-        rts = event_ts_estimate(e)
-        hint = e.get("hour_hint") or "unknown"
+        bucket, rts = resolve_when(e)
         src = (e.get("source") or "").lower()
         bad_date = rts == 0  # geçersiz tarih
         e["report_ts"] = rts
@@ -500,11 +575,13 @@ def annotate(events: list[dict]) -> list[dict]:
         e["mins_left"] = 0 if bad_date else int((rts - ts) / 60)
         e["countdown"] = "?" if bad_date else countdown_str(e["mins_left"])
         e["exact"] = bool(e.get("exact_ts"))
-        e["icon"] = {"bmo": "☀️", "amc": "🌙"}.get(hint, "❓")
-        e["when_txt"] = {"bmo": "sabah, açılış öncesi",
-                         "amc": "akşam, kapanış sonrası"}.get(hint, "saati belirsiz")
+        e["icon"] = WHEN_ICON.get(bucket, "❓")
+        e["when_txt"] = WHEN_TXT.get(bucket, "saati belirsiz")
         e["tsi"] = (e.get("date_et") or "?") if bad_date \
             else datetime.fromtimestamp(rts, TR).strftime("%d.%m %H:%M")
+        # ET saati de gösterilir: "23:00 TSİ" tek başına "sabah" etiketiyle
+        # çelişiyormuş gibi okunuyordu; 16:00 ET yazınca ilişki nettir.
+        e["et"] = "" if bad_date else datetime.fromtimestamp(rts, ET).strftime("%H:%M")
 
         # SHAZ dersi: zayıf kaynak "akşam" derken hisse sabah açıklamış olabilir.
         # Saat güçlü bir kaynakla doğrulanmadıysa ve sabah penceresi geçtiyse uyar.

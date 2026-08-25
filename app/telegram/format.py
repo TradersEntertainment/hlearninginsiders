@@ -296,7 +296,9 @@ def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg,
         ann = annotate([dict(event)])[0]
         stage_txt = "⏰ ~1 saat kaldı" if stage == "t1" else "🕐 erken pencere"
         head = (f"{ann['icon']} <b>{sym}</b> earnings — {stage_txt}\n"
-                f"📅 {event['date_et']} · <b>{ann['tsi']} TSİ</b> ({ann['when_txt']}"
+                f"📅 {event['date_et']} · <b>{ann['tsi']} TSİ</b>"
+                + (f" ({ann['et']} ET)" if ann.get("et") else "")
+                + f" ({ann['when_txt']}"
                 + ("" if ann["exact"] else ", yaklaşık") + ")"
                 + (f" │ EPS beklentisi {event['eps_est']}" if event.get("eps_est") else ""))
         if event.get("note"):
@@ -717,7 +719,9 @@ def upcoming_list(events: list[dict]) -> str:
             risk = " ⚠️<b>SABAH AÇIKLANMIŞ OLABİLİR</b>"
             warned = True
         lines.append(f"  {e['icon']} <b>{e['symbol']}</b> {e['tsi']}"
-                     + ("" if e["exact"] else "~") + f" · {tail}{risk}"
+                     + ("" if e["exact"] else "~")
+                     + (f" ({e['et']} ET)" if e.get("et") else "")
+                     + f" · {tail}{risk}"
                      + (" 📝" if e.get("note") else ""))
     if warned:
         lines.append("\n⚠️ <i>Saati zayıf kaynaktan gelen bilançolar sabah açıklanmış olabilir."

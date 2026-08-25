@@ -63,8 +63,8 @@
       <h3><a href="/t/{{ c.symbol }}{{ k }}">{{ c.symbol }}</a>
         {% if c.propr %}<span class="pbadge" title="propr.xyz'de listeli — işlem açabilirsin">✅ PROPR</span>{% endif %}
         <span class="cd {{ 'short' if c.passed else '' }}">{{ c.countdown }}</span></h3>
-      <div title="{{ c.when_txt }}">{{ c.icon }} <b>{{ c.tsi }}</b> TSİ
-        <span class="dim">· {{ c.when_txt }}{% if not c.exact %} (yaklaşık){% endif %}</span></div>
+      <div title="{{ c.when_txt }}{% if c.et %} · ABD borsası saatiyle {{ c.et }} ET{% endif %}">{{ c.icon }} <b>{{ c.tsi }}</b> TSİ
+        <span class="dim">{% if c.et %}· {{ c.et }} ET {% endif %}· {{ c.when_txt }}{% if not c.exact %} (yaklaşık){% endif %}</span></div>
       {% if c.passed %}<div class="short"><b>⚠️ AÇIKLANDI — bu bilanço geçti!</b></div>
       {% elif c.maybe_passed %}<div class="short"><b>⚠️ SABAH AÇIKLANMIŞ OLABİLİR</b>
         <span class="dim">— saat zayıf kaynaktan; {{ c.alt_tsi }} TSİ ihtimali var. İşlem açmadan doğrula.</span></div>{% endif %}

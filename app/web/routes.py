@@ -491,6 +491,7 @@ async def index(request: Request):
         ecards.append({"symbol": e["symbol"], "date_et": e["date_et"],
                        "propr": propr_listed(e["symbol"]),
                        "icon": e["icon"], "when_txt": e["when_txt"], "tsi": e["tsi"],
+                       "et": e.get("et"),
                        "exact": e["exact"], "countdown": e["countdown"],
                        "passed": e["passed"], "note": e.get("note"),
                        "maybe_passed": e["maybe_passed"], "alt_tsi": e["alt_tsi"],
