@@ -299,8 +299,37 @@ color:var(--green);padding:10px 16px;border-radius:14px;margin-bottom:14px;font-
 @keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 footer{padding:18px 22px;color:var(--faint);font-size:12px}
 .cursor{display:none}
+/* ---- Anlık grafik ipucu: tarayıcının <title> ipucu ~1sn gecikiyor, işletim
+   sistemi görünümünde, imleci takip etmiyor ve dokunmatikte hiç çalışmıyordu.
+   Kutu body'ye asılır: .panel{overflow-x:auto} mutlak konumluyu kırpıyor. ---- */
+#itip{position:fixed;z-index:90;pointer-events:none;opacity:0;visibility:hidden;
+  max-width:320px;padding:8px 11px;border-radius:12px;font-size:12px;line-height:1.45;
+  background:rgba(var(--panel-solid),.97);border:1px solid var(--border);color:var(--fg);
+  box-shadow:0 8px 24px rgba(0,0,0,.45);backdrop-filter:blur(8px);
+  font-variant-numeric:tabular-nums;transition:opacity .09s ease}
+#itip.on{opacity:1;visibility:visible}
+#itip b{display:block;color:var(--head);font-size:12.5px;margin-bottom:2px}
+#itip .r{color:var(--dim)}
+#itip.long{border-left:3px solid var(--liq-long-t)}
+#itip.short{border-left:3px solid var(--liq-short-t)}
+#itip.up{border-left:3px solid var(--green)}
+#itip.down{border-left:3px solid var(--red-fg)}
+.ichart .ihit{cursor:crosshair;outline:none}
+.ichart .ihit:focus-visible{fill:var(--accent);fill-opacity:.12}
+.ichart .ihit.hot{fill:var(--fg);fill-opacity:.07}
+.ichart .iguide{pointer-events:none}
+/* Yaklaşan bilanço rozeti — mum grafiğinin sağ üstünde */
+.pxbadge{position:absolute;top:6px;right:74px;z-index:3;pointer-events:none;
+  background:rgba(var(--panel-solid),.9);border:1px solid var(--border);
+  color:var(--head);border-radius:999px;padding:4px 10px;font-size:11.5px;
+  font-variant-numeric:tabular-nums}
+.pxbadge b{color:var(--amber)}
+details.guidetv summary::marker{color:var(--accent)}
+details.guidetv[open] summary{margin-bottom:2px}
+.tvbox{margin-top:8px;border-radius:12px;overflow:hidden}
 @media (prefers-reduced-motion: reduce){
-  .blob,.spark,.whale,.wig,.b-hi,.panel,.scanbar .swimmer{animation:none!important}}
+  .blob,.spark,.whale,.wig,.b-hi,.panel,.scanbar .swimmer{animation:none!important}
+  #itip{transition:none}}
 </style>
 </head>
 <body{% block bodyattrs %}{% endblock %}>
@@ -438,6 +467,9 @@ document.addEventListener('click', function(ev){
   var m = document.querySelector('meta[name=theme-color]');
   if(m && typeof THEME_META !== 'undefined') m.setAttribute('content', THEME_META[t] || THEME_META['']);
   document.querySelectorAll('.tswitch').forEach(function(x){x.classList.toggle('on', x === b)});
+  // Mum grafiği renkleri CSS token'larından ONE-SHOT okunur (canvas, var()
+  // çözmez) — tema değişince elle yeniden uygulanmalı.
+  if(typeof pxRetheme === 'function') pxRetheme();
 });
 // "✅ sadece PROPR" filtresi — seçim bu tarayıcıda hatırlanır, yenilemede korunur
 document.addEventListener('click', function(ev){
@@ -457,6 +489,384 @@ document.addEventListener('click', function(ev){
   var t = document.documentElement.dataset.theme || '';
   document.querySelectorAll('.tswitch').forEach(function(x){x.classList.toggle('on', (x.dataset.t||'') === t)});
 })();
+
+// ---- Grafik ipucu + fiyat/saat kılavuzu ----
+// Delegasyon şart: yumuşak yenileme <main>'i komple değiştiriyor, düğüme
+// doğrudan bağlanan dinleyici ölür. Kutu <main>'in DIŞINDA, body'de durur.
+var ITIP = null, IHOT = null, IPX = 0, IPY = 0;
+
+function itipBox(){
+  if(!ITIP){ ITIP = document.createElement('div'); ITIP.id = 'itip';
+             document.body.appendChild(ITIP); }
+  return ITIP;
+}
+
+function itipShow(el, ev){
+  var raw = el.getAttribute('data-tip'); if(!raw) return;
+  var box = itipBox();
+  // "0x12ab..cdef · LONG $1.2M → liq 34.56 (mesafe %8.3)" → başlık + satırlar
+  var parts = raw.split(' · ');
+  var html = '<b>' + parts[0] + '</b>';
+  for(var i = 1; i < parts.length; i++) html += '<span class="r">' + parts[i] + '</span><br>';
+  box.innerHTML = html;
+  var side = el.getAttribute('data-side');
+  var pos = el.getAttribute('data-pos');
+  box.className = 'on' + (side ? ' ' + side : (pos === '1' ? ' up' : (pos === '0' ? ' down' : '')));
+  if(IHOT && IHOT !== el) IHOT.classList.remove('hot');
+  el.classList.add('hot'); IHOT = el;
+  itipMove(ev);
+}
+
+function itipMove(ev){
+  if(ev && ev.clientX != null){ IPX = ev.clientX; IPY = ev.clientY; }
+  if(!ITIP || !ITIP.classList.contains('on')) return;
+  var x = IPX, y = IPY;
+  var r = ITIP.getBoundingClientRect();
+  var left = x + 14, top = y + 16;
+  if(left + r.width > innerWidth - 8) left = x - r.width - 14;   // sağ kenar
+  if(left < 8) left = 8;
+  if(top + r.height > innerHeight - 8) top = y - r.height - 12;  // alt kenar
+  if(top < 8) top = 8;
+  ITIP.style.left = left + 'px'; ITIP.style.top = top + 'px';
+}
+
+function itipHide(){
+  if(ITIP) ITIP.className = '';
+  if(IHOT){ IHOT.classList.remove('hot'); IHOT = null; }
+  document.querySelectorAll('.ichart .iguide').forEach(function(g){ g.remove(); });
+}
+
+function itipOpen(){ return !!(ITIP && ITIP.classList.contains('on')); }
+
+// İmlecin durduğu seviyenin FİYATI (dikey eksenli haritalar) ya da SAATİ
+// (saat grafiği) — kullanıcının asıl istediği "fiyatı görebilmek" bu.
+function iguide(svg, ev){
+  svg.querySelectorAll('.iguide').forEach(function(g){ g.remove(); });
+  var box = svg.getBoundingClientRect();
+  if(!box.width || !box.height) return;
+  var vb = (svg.getAttribute('viewBox') || '').split(/[ ,]+/).map(Number);
+  if(vb.length < 4) return;
+  var NS = 'http://www.w3.org/2000/svg';
+  var g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'iguide');
+  var mode = svg.getAttribute('data-guide');
+
+  if(mode === 'h'){
+    var sc = (svg.getAttribute('data-scale') || '').split(',').map(Number);
+    if(sc.length < 4 || !(sc[1] > sc[0])) return;
+    var uy = vb[1] + (ev.clientY - box.top) / box.height * vb[3];
+    if(uy < sc[2] || uy > sc[3]) return;                 // çizim alanı dışı
+    var px = sc[1] - (uy - sc[2]) / (sc[3] - sc[2]) * (sc[1] - sc[0]);
+    var ln = document.createElementNS(NS, 'line');
+    ln.setAttribute('x1', vb[0]); ln.setAttribute('x2', vb[0] + vb[2]);
+    ln.setAttribute('y1', uy); ln.setAttribute('y2', uy);
+    ln.setAttribute('stroke', 'var(--accent)'); ln.setAttribute('stroke-opacity', '.5');
+    ln.setAttribute('stroke-dasharray', '4 3'); g.appendChild(ln);
+    // Etiket SOL eksende: sağ kenarda 'şimdi X' yazısı ve bar etiketleri var,
+    // kılavuz fiyatı oraya yazılınca üst üste biniyordu. Fiyatlar zaten solda.
+    var txt = px >= 1000 ? px.toFixed(0) : (px >= 10 ? px.toFixed(2) : px.toFixed(4));
+    var bg = document.createElementNS(NS, 'rect');
+    bg.setAttribute('x', vb[0] + 2); bg.setAttribute('y', uy - 8);
+    bg.setAttribute('width', Math.max(34, txt.length * 7 + 8)); bg.setAttribute('height', 16);
+    bg.setAttribute('rx', 4); bg.setAttribute('fill', 'var(--accent)');
+    g.appendChild(bg);
+    var t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', vb[0] + 6 + Math.max(34, txt.length * 7 + 8) / 2);
+    t.setAttribute('y', uy + 4);
+    t.setAttribute('text-anchor', 'middle'); t.setAttribute('font-size', '11');
+    t.setAttribute('font-weight', '800'); t.setAttribute('fill', 'var(--bg1)');
+    t.textContent = txt;
+    g.appendChild(t);
+  }else if(mode === 'v'){
+    var hit = ev.target.closest ? ev.target.closest('.ihit') : null;
+    if(!hit) return;
+    var hx = +hit.getAttribute('x'), hw = +hit.getAttribute('width');
+    var r2 = document.createElementNS(NS, 'rect');
+    r2.setAttribute('x', hx); r2.setAttribute('y', vb[1]);
+    r2.setAttribute('width', hw); r2.setAttribute('height', vb[3]);
+    r2.setAttribute('fill', 'var(--accent)'); r2.setAttribute('fill-opacity', '.10');
+    g.appendChild(r2);
+  }else return;
+  svg.appendChild(g);
+}
+
+document.addEventListener('mouseover', function(ev){
+  var h = ev.target.closest && ev.target.closest('.ihit');
+  if(h) itipShow(h, ev);
+});
+document.addEventListener('mousemove', function(ev){
+  IPX = ev.clientX; IPY = ev.clientY;
+  var h = ev.target.closest && ev.target.closest('.ihit');
+  if(!h){ if(itipOpen() && !(ev.target.closest && ev.target.closest('.ichart'))) itipHide(); return; }
+  itipMove(ev);
+  var svg = h.closest('svg.ichart');
+  if(svg) iguide(svg, ev);
+});
+document.addEventListener('mouseout', function(ev){
+  var h = ev.target.closest && ev.target.closest('.ihit');
+  if(h && !(ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest('.ihit'))) itipHide();
+});
+// Dokunmatik: native <title> hiç çalışmıyordu — dokun/aç, dışarı dokun/kapat
+document.addEventListener('pointerdown', function(ev){
+  if(ev.pointerType === 'mouse') return;
+  var h = ev.target.closest && ev.target.closest('.ihit');
+  if(h){ itipShow(h, ev); } else if(itipOpen()) itipHide();
+}, {passive: true});
+// Klavye: hedefler tabindex'li — sekme ile gezilince de ipucu açılır
+document.addEventListener('focusin', function(ev){
+  var h = ev.target.closest && ev.target.closest('.ihit');
+  if(!h) return;
+  var r = h.getBoundingClientRect();
+  itipShow(h, {clientX: r.left + r.width / 2, clientY: r.top + r.height / 2});
+});
+document.addEventListener('focusout', function(ev){
+  if(ev.target.closest && ev.target.closest('.ihit')) itipHide();
+});
+// Kaydırmada KÖRÜ KÖRÜNE kapatma: grafik canvas'ı yerleşirken sayfa birkaç
+// piksel kayıyor ve imleç hâlâ bar'ın üstündeyken ipucu kayboluyordu. İmlecin
+// altında hâlâ bir hedef varsa açık kalır (gerekirse yenisine geçer).
+addEventListener('scroll', function(){
+  if(!itipOpen()) return;
+  var el = document.elementFromPoint(IPX, IPY);
+  var h = el && el.closest ? el.closest('.ihit') : null;
+  if(!h) itipHide();
+  else if(h !== IHOT) itipShow(h, {clientX: IPX, clientY: IPY});
+}, {passive: true});
+
+// ---- Mum grafiği (TradingView Lightweight Charts, depoya gömülü) ----
+// Kütüphane 'defer' yüklenir; panel <main>'de ama [data-keep] sayesinde
+// yumuşak yenilemede NAKLEDİLİR — grafik yeniden kurulmaz, zoom kaybolmaz.
+var PXCHART = null;
+
+function cssv(n, fb){
+  var v = getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  return v || fb;
+}
+
+function hexa(c, a){
+  var m = /^#([0-9a-f]{6})$/i.exec((c || '').trim());
+  if(!m) return c;
+  var n = parseInt(m[1], 16);
+  return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')';
+}
+
+function pxTheme(){
+  return {
+    layout: {background: {color: 'transparent'}, textColor: cssv('--dim', '#a79ec4'),
+             fontFamily: getComputedStyle(document.body).fontFamily},
+    grid: {vertLines: {color: cssv('--card-stroke', '#282138')},
+           horzLines: {color: cssv('--card-stroke', '#282138')}},
+    rightPriceScale: {borderColor: cssv('--border', '#3a3153')},
+    timeScale: {borderColor: cssv('--border', '#3a3153'), timeVisible: true},
+    crosshair: {mode: 0,
+      vertLine: {color: cssv('--accent', '#c3b3ff'), labelBackgroundColor: cssv('--accent', '#c3b3ff')},
+      horzLine: {color: cssv('--accent', '#c3b3ff'), labelBackgroundColor: cssv('--accent', '#c3b3ff')}}
+  };
+}
+
+function pxDestroy(){
+  if(PXCHART && PXCHART.chart){ try{ PXCHART.chart.remove(); }catch(e){} }
+  PXCHART = null;
+}
+
+async function initPriceChart(){
+  var box = document.getElementById('pxchart');
+  if(!box) { pxDestroy(); return; }
+  if(PXCHART && PXCHART.box === box) return;   // nakledilmiş, canlı — dokunma
+  pxDestroy();
+  if(typeof LightweightCharts === 'undefined') return;  // defer henüz gelmedi
+  var sym = box.dataset.sym || '';
+  var msg = document.getElementById('pxmsg');
+  var d;
+  try{
+    var r = await fetch('/t/' + sym.split('?')[0] + '/chart.json' + (sym.split('?')[1] ? '?' + sym.split('?')[1] : ''),
+                        {cache: 'no-store'});
+    if(!r.ok) throw 0;
+    d = await r.json();
+  }catch(e){
+    if(msg) msg.textContent = 'Mum verisi alınamadı.';
+    return;
+  }
+  if(!d.candles || !d.candles.length){
+    if(msg) msg.textContent = d.pending
+      ? 'Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.'
+      : 'Bu coin için mum verisi yok.';
+    return;
+  }
+  if(msg) msg.remove();
+
+  var chart = LightweightCharts.createChart(box, Object.assign({
+    width: box.clientWidth, height: box.clientHeight, autoSize: true
+  }, pxTheme()));
+  var s = chart.addCandlestickSeries({
+    upColor: cssv('--chart-long', '#26997b'), downColor: cssv('--chart-short', '#e5484d'),
+    wickUpColor: cssv('--chart-long', '#26997b'), wickDownColor: cssv('--chart-short', '#e5484d'),
+    borderVisible: false
+  });
+  s.setData(d.candles.map(function(c){
+    return {time: c.t, open: c.o, high: c.h, low: c.l, close: c.c};
+  }));
+
+  // --- Likidasyon duvarları + balina giriş seviyeleri (yatay çizgiler) ---
+  // Fiyat ekseni varsayılan olarak YALNIZ mumlara göre ölçeklenir; en büyük
+  // duvar çoğu zaman fiyattan en uzak olandır ve ekranın dışında kalıyordu —
+  // yani tam da işaretlenmesi istenen çizgi görünmüyordu. Eksen çizgileri de
+  // kapsayacak biçimde genişletilir; mumlar ezilmesin diye genişleme mum
+  // aralığının 1 katıyla sınırlı, dışarıda kalan varsa altta söylenir.
+  var LS = LightweightCharts.LineStyle;
+  var pxLo = Infinity, pxHi = -Infinity;
+  d.candles.forEach(function(c){ if(c.l < pxLo) pxLo = c.l; if(c.h > pxHi) pxHi = c.h; });
+  var rng = (pxHi - pxLo) || (pxHi * 0.02) || 1;
+  var limLo = pxLo - rng, limHi = pxHi + rng;
+  var lnLo = pxLo, lnHi = pxHi, skipped = 0;
+
+  function priceLine(o){
+    if(o.price < limLo || o.price > limHi){ skipped++; return; }
+    if(o.price < lnLo) lnLo = o.price;
+    if(o.price > lnHi) lnHi = o.price;
+    s.createPriceLine(o);
+  }
+  (d.walls || []).forEach(function(w){
+    priceLine({
+      price: w.price, lineWidth: 2, lineStyle: LS.Dashed, axisLabelVisible: true,
+      color: cssv(w.side === 'long' ? '--liq-long-t' : '--liq-short-t', '#e09b4e'),
+      title: '💥 ' + (w.side === 'long' ? 'LONG' : 'SHORT') + ' ' + w.label +
+             (w.count > 1 ? ' ×' + w.count : '')
+    });
+  });
+  (d.entries || []).forEach(function(e){
+    priceLine({
+      price: e.price, lineWidth: 1, lineStyle: LS.Dotted, axisLabelVisible: false,
+      color: cssv(e.side === 'long' ? '--chart-long' : '--chart-short', '#26997b'),
+      title: '📍 ' + (e.side === 'long' ? 'LONG' : 'SHORT') + ' ' + e.label
+    });
+  });
+  if(lnLo < pxLo || lnHi > pxHi){
+    var pad = (lnHi - lnLo) * 0.03;
+    s.applyOptions({autoscaleInfoProvider: function(){
+      return {priceRange: {minValue: lnLo - pad, maxValue: lnHi + pad}};
+    }});
+  }
+  if(skipped){
+    var note = document.createElement('p');
+    note.className = 'sub';
+    note.style.margin = '8px 0 0';
+    note.textContent = '· ' + skipped + ' seviye fiyattan çok uzak olduğu için ' +
+      'grafiğe sığmadı (mumlar okunmaz hâle gelmesin) — hepsi aşağıdaki ' +
+      'likidasyon haritasında.';
+    box.parentNode.appendChild(note);
+  }
+
+  // --- Güçlü/zayıf saat şeridi: mumun ET saatinin tarihsel karnesi ---
+  if(d.hours && d.hours.length === 24){
+    var vmap = {};
+    d.hours.forEach(function(h){ vmap[h.et] = h.v; });
+    var ribbon = chart.addHistogramSeries({
+      priceScaleId: '', priceLineVisible: false, lastValueVisible: false
+    });
+    ribbon.priceScale().applyOptions({scaleMargins: {top: 0.955, bottom: 0}});
+    ribbon.setData(d.candles.map(function(c){
+      // ET saati: UTC damgasından New York ofsetiyle (yaz saati dahil)
+      var et = new Date(c.t * 1000).toLocaleString('en-US',
+        {timeZone: 'America/New_York', hour: '2-digit', hour12: false});
+      var v = vmap[parseInt(et, 10) % 24];
+      return {time: c.t, value: 1,
+              color: v === 'güçlü' ? hexa(cssv('--chart-long', '#26997b'), .6)
+                   : (v === 'zayıf' ? hexa(cssv('--chart-short', '#e5484d'), .6)
+                                    : 'rgba(160,160,180,.10)')};
+    }));
+  }
+
+  // --- Geçmiş bilanço günleri: mum üstü 📊 işareti ---
+  if(d.past_earnings && d.past_earnings.length){
+    var times = d.candles.map(function(c){ return c.t; });
+    var marks = [];
+    d.past_earnings.forEach(function(ts){
+      // en yakın mumun damgasına oturt (işaret ancak var olan mumda durur)
+      var best = null, bd = Infinity;
+      for(var i = 0; i < times.length; i++){
+        var dd = Math.abs(times[i] - ts);
+        if(dd < bd){ bd = dd; best = times[i]; }
+      }
+      if(best !== null && bd <= 6 * 3600)
+        marks.push({time: best, position: 'aboveBar', shape: 'circle',
+                    color: cssv('--amber', '#ffce8a'), text: '📊'});
+    });
+    marks.sort(function(a, b){ return a.time - b.time; });
+    if(marks.length) s.setMarkers(marks);
+  }
+
+  // --- Yaklaşan bilanço: v4 veri aralığı DIŞINA işaret koyamaz.
+  //     Uydurma bir dikey çizgi yerine dürüst bir geri sayım rozeti. ---
+  if(d.earnings && !d.earnings.passed){
+    var b = document.createElement('div');
+    b.className = 'pxbadge';
+    b.innerHTML = (d.earnings.icon || '📅') + ' bilanço <b>' + d.earnings.countdown +
+                  '</b> · ' + d.earnings.tsi + ' TSİ' +
+                  (d.earnings.et ? ' (' + d.earnings.et + ' ET)' : '');
+    box.appendChild(b);
+  }
+
+  chart.timeScale().fitContent();
+  PXCHART = {chart: chart, series: s, box: box};
+}
+
+function pxRetheme(){
+  if(PXCHART && PXCHART.chart){
+    PXCHART.chart.applyOptions(pxTheme());
+    PXCHART.series.applyOptions({
+      upColor: cssv('--chart-long', '#26997b'), downColor: cssv('--chart-short', '#e5484d'),
+      wickUpColor: cssv('--chart-long', '#26997b'), wickDownColor: cssv('--chart-short', '#e5484d')
+    });
+  }
+}
+
+// Kütüphane 'defer' — DOM hazır olduğunda o da yüklenmiş olur
+if(document.readyState === 'loading')
+  addEventListener('DOMContentLoaded', initPriceChart);
+else initPriceChart();
+
+// ---- TradingView gömülüsü: yalnız panel AÇILDIĞINDA yüklenir ----
+// Kapalıyken s3.tradingview.com'a hiçbir istek gitmez (site kendi kendine yeterli kalır).
+function tvLoad(det){
+  var box = det.querySelector('.tvbox');
+  if(!box || box.dataset.loaded) return;
+  box.dataset.loaded = '1';
+  var id = 'tvw' + Math.abs(Date.now() % 100000);
+  box.innerHTML = '<div id="' + id + '" style="height:100%"></div>';
+  var sc = document.createElement('script');
+  sc.src = 'https://s3.tradingview.com/tv.js';
+  sc.onload = function(){
+    try{
+      new TradingView.widget({
+        container_id: id, symbol: box.dataset.tv, interval: '60',
+        timezone: 'Europe/Istanbul', theme: 'dark', style: '1', locale: 'tr',
+        autosize: true, hide_side_toolbar: true, allow_symbol_change: false,
+        withdateranges: true
+      });
+    }catch(e){ box.innerHTML = '<p class="dim">TradingView yüklenemedi.</p>'; }
+  };
+  sc.onerror = function(){
+    box.innerHTML = '<p class="dim">TradingView\'e ulaşılamadı (ağ engeli olabilir).</p>';
+  };
+  document.head.appendChild(sc);
+}
+
+document.addEventListener('toggle', function(ev){
+  var det = ev.target;
+  if(!det || !det.classList || !det.classList.contains('guidetv')) return;
+  try{ localStorage.setItem('hlr_tv', det.open ? '1' : '0'); }catch(e){}
+  if(det.open) tvLoad(det);
+}, true);
+
+function initTv(){
+  var det = document.querySelector('details.guidetv');
+  if(!det) return;
+  var pref = null;
+  try{ pref = localStorage.getItem('hlr_tv'); }catch(e){}
+  if(pref === '1' && !det.open){ det.open = true; tvLoad(det); }
+}
+if(document.readyState === 'loading') addEventListener('DOMContentLoaded', initTv);
+else initTv();
 
 // Yumuşak veri yenileme: sayfayı komple yenilemek yerine sadece içerik değişir.
 // Scroll konumu, açık sekme ve rehberin açık/kapalı durumu korunur.
@@ -478,6 +888,7 @@ document.addEventListener('click', function(ev){
     var ae = document.activeElement;
     if(ae && (ae.tagName === 'TEXTAREA' ||
               (ae.tagName === 'INPUT' && ae.type !== 'checkbox' && ae.value))) return;
+    if(itipOpen()) return;   // grafik ipucu açıkken içeriği değiştirme
     try{
       var r = await fetch(location.href, {cache: 'no-store'});
       if(!r.ok) return;
@@ -490,6 +901,13 @@ document.addEventListener('click', function(ev){
       var guideOpen = g ? g.open : null;
       var x = scrollX, y = scrollY;
       nm.classList.add('no-pop');  // yenilemede panel giriş animasyonu oynamasın
+      // Canlı düğümleri NAKLET: mum grafiği ve TradingView gömülüsü her turda
+      // yok edilip yeniden kurulursa titrer, iframe yeniden yüklenir, grafik
+      // durumu (zoom/kaydırma) sıfırlanır. Yer tutucusuyla yer değiştirir.
+      cm.querySelectorAll('[data-keep]').forEach(function(live){
+        var slot = nm.querySelector('[data-keep="' + live.dataset.keep + '"]');
+        if(slot) slot.replaceWith(live);
+      });
       cm.replaceWith(nm);
       scrollTo(x, y);
       if(guideOpen !== null){
@@ -516,6 +934,8 @@ document.addEventListener('click', function(ev){
           }
         }
       }
+      initPriceChart();   // nakledilmiş grafik varsa erken döner
+      initTv();
       if(!doc.querySelector('.scanbar') && iv < 45){
         clearInterval(timer); iv = 45; timer = setInterval(tick, iv * 1000);
       }

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from . import db as dbm
 from . import health
@@ -353,6 +354,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="HL Insider Radar", lifespan=lifespan)
+# Mum grafiği kütüphanesi depoya gömülüdür (CDN yok — site kendi kendine
+# yeterli kalsın). Uzun cache: dosya sürümle birlikte donuk.
+app.mount("/static",
+          StaticFiles(directory=os.path.join(os.path.dirname(__file__), "web", "static")),
+          name="static")
 app.include_router(router)
 
 

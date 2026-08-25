@@ -7,7 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from ..config import EDITABLE_FIELDS, convert_value, display_value
@@ -15,7 +15,9 @@ from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
-from ..radar import autoscan, clusters, hourstats, lowvol, metrics
+from ..tvsymbols import tv_symbol
+from ..radar import (autoscan, clusters, hourstats, lowvol, metrics,
+                     pricechart)
 
 TR = ZoneInfo("Europe/Istanbul")
 
@@ -127,11 +129,18 @@ def _hour_chart(stats: dict | None) -> dict | None:
             # örneklem güveni: az örnekli saat barı soluk çizilir (aynı görsel
             # ağırlıkta gösterip 12 örnekli barı 90 örnekli gibi okutmayalım)
             "op": round(min(1.0, max(0.35, (h["n"] or 0) / hourstats.MIN_N)), 2),
+            # ham değerler: eskiden yalnız hazır 'tip' metni geçiyordu, tarayıcı
+            # tooltip'i onu okuyordu. Anlık tooltip/kılavuz bunları ayrı ayrı
+            # biçimlendirebilsin diye sayılar da taşınır.
+            "tsi": h["tsi"], "et": h["et"], "avg": round(v, 4),
+            "win": round(h["win"], 1), "n": h["n"],
             "tip": (f"TSİ {h['tsi']:02d}:00 (ET {h['et']:02d}:00) · ort {v:+.2f}%"
                     f" · %{h['win']:.0f} kazanç · {h['n']} örnek"),
             "label": f"{h['tsi']:02d}" if h["tsi"] % 3 == 0 else "",
         })
-    return {"W": W, "H": H, "y0": round(y0, 1), "left": left, "bars": bars}
+    return {"W": W, "H": H, "y0": round(y0, 1), "left": left, "bars": bars,
+            # imleç kılavuzu için eksen ölçeği (JS x → saat çevirir)
+            "top": top, "bot": bot, "bw": round(bw, 3)}
 
 
 def _liq_chart(rows: list[dict], mark: float | None, max_dist_pct: float) -> dict | None:
@@ -167,6 +176,10 @@ def _liq_chart(rows: list[dict], mark: float | None, max_dist_pct: float) -> dic
         w = max(6.0, p["notional"] / maxn * span)
         bars.append({"y": round(yf(p["liq_px"]), 1), "w": round(w, 1),
                      "side": p["side"], "addr": p["address"],
+                     # ham fiyat/büyüklük: 'y' aşağıdaki üst üste binme
+                     # ayıklamasında kaydırıldığı için ondan geri hesaplanamaz
+                     "price": p["liq_px"], "notional": p["notional"],
+                     "dist": round(p["_dist"], 2),
                      "tip": f"{p['address'][:8]}..{p['address'][-4:]} · "
                             f"{'LONG' if p['side'] == 'long' else 'SHORT'} "
                             f"{_usd(p['notional'])} → liq {_px(p['liq_px'])}"
@@ -177,15 +190,92 @@ def _liq_chart(rows: list[dict], mark: float | None, max_dist_pct: float) -> dic
             if prev is not None and b["y"] - prev < 7:
                 b["y"] = round(prev + 7, 1)
             prev = b["y"]
-    labels = [{"y": b["y"] + 3.5, "x": left + b["w"] + 6, "text": b["tip"].split(" · ")[1].split(" → ")[0]}
-              for b in bars[:3]]
+    _hit_bands(bars)   # hepsi 'left'ten başlıyor → hedefler tek eksende ayrışmalı
+    labels = []
+    taken = [yf(mark) - 6]      # 'şimdi X' yazısının TABANI da yer kaplıyor
+    for b in bars[:3]:
+        base = _label_base(b["y"] + 3.5, taken)
+        if base is None:
+            continue
+        taken.append(base)
+        txt = b["tip"].split(" · ")[1].split(" → ")[0]
+        x = left + b["w"] + 6
+        if x + len(txt) * 6.2 > W - 6:          # sığmıyor → bar'ın içine
+            labels.append({"y": base, "x": left + b["w"] - 6,
+                           "anchor": "end", "text": txt})
+        else:
+            labels.append({"y": base, "x": x, "anchor": "start", "text": txt})
     ticks = [{"v": _px(lo + (hi - lo) * i / 4), "y": round(yf(lo + (hi - lo) * i / 4), 1)}
              for i in range(5)]
     return {"W": W, "H": H, "left": left, "bars": bars, "ticks": ticks, "labels": labels,
             "mark_y": round(yf(mark), 1), "mark_txt": _px(mark),
+            "lo": lo, "hi": hi, "top": top, "bot": bot,
             "c_long": LIQ_LONG, "c_short": LIQ_SHORT,
             "n_long": sum(1 for b in bars if b["side"] == "long"),
             "n_short": sum(1 for b in bars if b["side"] == "short")}
+
+
+def _label_base(base: float, taken: list[float], gap: float = 13.0) -> float | None:
+    """Çakışmayan yazı tabanı: önce olduğu yer, sonra küçük kaydırmalar.
+
+    Eskiden en büyük pozisyonun etiketi 'şimdi X' yazısının üstüne biniyor ve
+    ikisi de okunmuyordu. Kaydırma da tutmazsa etiket hiç yazılmaz — ipucu
+    zaten üzerine gelince tam bilgiyi veriyor.
+    """
+    for cand in (base, base - gap + 4, base + gap - 4, base - gap, base + gap):
+        if all(abs(cand - t) >= gap for t in taken):
+            return cand
+    return None
+
+
+def _hit_bands(bars: list[dict], pad: float = 8.0) -> None:
+    """Her bar'a çakışmayan bir fare hedefi (hy/hh) ver.
+
+    Bar'lar 6 birim ince; sabit 16 birimlik hedef koyunca üst üste binen
+    hedefler birbirini KAPATIYOR ve sıkışık kümenin üstteki bar'ı hiç
+    yakalanamıyordu. Hedef, komşuya olan boşluğun yarısı kadar büyür
+    (en çok `pad`), böylece hem geniş hem çakışmasız olur.
+    """
+    if not bars:
+        return
+    ys = sorted(bars, key=lambda b: b["y"])
+    for i, b in enumerate(ys):
+        up = (b["y"] - ys[i - 1]["y"]) / 2 if i else pad
+        dn = (ys[i + 1]["y"] - b["y"]) / 2 if i + 1 < len(ys) else pad
+        up, dn = min(pad, max(3.0, up)), min(pad, max(3.0, dn))
+        b["hy"] = round(b["y"] - up, 1)
+        b["hh"] = round(up + dn, 1)
+
+
+def _levels(rows: list[dict], mark: float | None, field: str,
+            band_pct: float = 0.5, top: int = 5) -> list[dict]:
+    """Fiyat bandına göre kümelenmiş seviyeler — mum grafiğine yatay çizgi.
+
+    liqwatch.find_clusters GLOBAL ve yön başına TEK kova (duvar alarmı için
+    doğru); grafikte "hangi FİYATTA yığılma var" gerekiyor, o yüzden liq/entry
+    fiyatları mark'ın %band_pct'i genişliğinde bantlara yuvarlanıp toplanır.
+    """
+    if not mark or mark <= 0:
+        return []
+    band = mark * band_pct / 100 or 1e-9
+    buckets: dict[tuple[str, int], dict] = {}
+    for p in rows:
+        v = p.get(field)
+        if not v or (p.get("notional") or 0) <= 0:
+            continue
+        key = (p["side"], round(v / band))
+        b = buckets.setdefault(key, {"side": p["side"], "total": 0.0,
+                                     "count": 0, "_pxsz": 0.0})
+        b["total"] += p["notional"]
+        b["count"] += 1
+        b["_pxsz"] += v * p["notional"]        # büyüklükle ağırlıklı fiyat
+    out = []
+    for b in buckets.values():
+        out.append({"price": round(b["_pxsz"] / b["total"], 6),
+                    "side": b["side"], "total": round(b["total"], 2),
+                    "count": b["count"], "label": _usd(b["total"])})
+    out.sort(key=lambda x: -x["total"])
+    return out[:top]
 
 
 def _entry_chart(rows: list[dict], mark: float | None) -> dict | None:
@@ -213,6 +303,7 @@ def _entry_chart(rows: list[dict], mark: float | None) -> dict | None:
         bars.append({"y": round(y, 1), "w": round(w, 1), "side": p["side"],
                      "x": round(cx - w, 1) if p["side"] == "short" else round(cx, 1),
                      "addr": p["address"],
+                     "price": p["entry_px"], "notional": p["notional"],
                      "tip": f"{p['address'][:8]}..{p['address'][-4:]} · "
                             f"{'SHORT' if p['side'] == 'short' else 'LONG'} "
                             f"{_usd(p['notional'])} @{_px(p['entry_px'])}"})
@@ -223,18 +314,33 @@ def _entry_chart(rows: list[dict], mark: float | None) -> dict | None:
             if prev is not None and b["y"] - prev < 7:
                 b["y"] = round(prev + 7, 1)
             prev = b["y"]
+    for side in ("short", "long"):
+        _hit_bands([b for b in bars if b["side"] == side])
     # en büyük 3 pozisyona seçici doğrudan etiket
     labels = []
+    taken = [yf(mark) - 6]      # 'şimdi X' yazısının TABANI da yer kaplıyor
     for b in bars[:3]:
+        base = _label_base(b["y"] + 3.5, taken)
+        if base is None:
+            continue
+        taken.append(base)
         short_side = b["side"] == "short"
-        labels.append({"y": b["y"] + 3.5,
-                       "x": b["x"] - 6 if short_side else b["x"] + b["w"] + 6,
-                       "anchor": "end" if short_side else "start",
-                       "text": b["tip"].split(" · ")[1]})
+        txt = b["tip"].split(" · ")[1]
+        wpx = len(txt) * 6.2
+        if short_side:
+            x, anchor = b["x"] - 6, "end"
+            if x - wpx < 6:                     # solda sığmıyor → bar'ın içine
+                x, anchor = b["x"] + 6, "start"
+        else:
+            x, anchor = b["x"] + b["w"] + 6, "start"
+            if x + wpx > W - 6:                 # sağda sığmıyor → bar'ın içine
+                x, anchor = b["x"] + b["w"] - 6, "end"
+        labels.append({"y": base, "x": x, "anchor": anchor, "text": txt})
     ticks = [{"v": _px(lo + (hi - lo) * i / 4), "y": round(yf(lo + (hi - lo) * i / 4), 1)}
              for i in range(5)]
     return {"W": W, "H": H, "cx": cx, "left": left, "bars": bars, "ticks": ticks,
             "labels": labels, "mark_y": round(yf(mark), 1), "mark_txt": _px(mark),
+            "lo": lo, "hi": hi, "top": top, "bot": bot,
             "c_short": CHART_SHORT, "c_long": CHART_LONG,
             "n_short": sum(1 for b in bars if b["side"] == "short"),
             "n_long": sum(1 for b in bars if b["side"] == "long")}
@@ -638,6 +744,11 @@ async def coin_page(request: Request, symbol: str):
         hourstats.kick(cfg, request.app.state.client, coin)
         hstats_pending = hst is None
     hchart = _hour_chart(hst)
+    # Mum grafiği: hazır değilse arka planda hazırlat (hourstats ile aynı akış)
+    pxrec = await pricechart.get(coin)
+    if not pricechart.fresh(pxrec):
+        pricechart.kick(cfg, request.app.state.client, coin)
+    pxchart = bool((pxrec or {}).get("candles"))
     now_verdict = None
     if hchart:
         et_h = datetime.now(hourstats.ET).hour
@@ -656,9 +767,78 @@ async def coin_page(request: Request, symbol: str):
         "chart": _entry_chart(rows, summ.get("mark")),
         "liqchart": _liq_chart(rows, summ.get("mark"), cfg.max_liq_distance_pct),
         "bwalls": bwalls,
+        "pxchart": pxchart,
+        "tv_sym": tv_symbol(t["symbol"]) if cfg.show_tradingview else None,
         "propr": propr_listed(t["symbol"]),
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
+    })
+
+
+@router.get("/t/{symbol}/chart.json")
+async def coin_chart_json(request: Request, symbol: str):
+    """Mum grafiği verisi. Sayfa HTML'ine 720 mum gömmek ilk yüklemeyi
+    şişirirdi — grafik kendi verisini ayrı çeker."""
+    _guard(request)
+    t = await find_ticker(symbol)
+    if not t:
+        raise HTTPException(404, "coin yok")
+    cfg = request.app.state.cfg
+    coin = t["coin"]
+    summ = await metrics.summary(coin)
+    mark = summ.get("mark")
+
+    rec = await pricechart.get(coin)
+    if not pricechart.fresh(rec):
+        client = getattr(request.app.state, "client", None)
+        if client:
+            pricechart.kick(cfg, client, coin)
+    candles = (rec or {}).get("candles") or []
+    if not candles:
+        return JSONResponse({"pending": not (rec or {}).get("error"),
+                             "candles": [], "walls": [], "entries": [],
+                             "hours": [], "earnings": None, "mark": mark})
+
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT * FROM positions_current WHERE coin=? ORDER BY notional DESC LIMIT 100",
+            (coin,))
+        rows = [dict(r) for r in await cur.fetchall()]
+        # Grafiğin kapsadığı aralıktaki AÇIKLANMIŞ bilançolar → mum üstü işareti
+        first_day = datetime.fromtimestamp(candles[0]["t"], hourstats.ET).strftime("%Y-%m-%d")
+        cur = await conn.execute(
+            "SELECT date_et, hour_hint, exact_ts FROM earnings_events"
+            " WHERE coin=? AND evaluated=1 AND date_et>=? ORDER BY date_et",
+            (coin, first_day))
+        past = [dict(r) for r in await cur.fetchall()]
+        cur = await conn.execute(
+            "SELECT * FROM earnings_events WHERE coin=? AND date_et>=date('now','-1 day')"
+            " ORDER BY date_et LIMIT 1", (coin,))
+        nxt = await cur.fetchone()
+
+    from ..earnings.calendar import event_ts_estimate
+    past_ts = [ts for ts in (event_ts_estimate(e) for e in past) if ts]
+    ev = annotate([dict(nxt)])[0] if nxt else None
+
+    # Güçlü/zayıf saat şeridi: mumun ET saatinin tarihsel karnesi
+    hst = await kv_get(f"hstats:{coin}")
+    hours = []
+    if hst and not hst.get("empty") and hst.get("hours"):
+        for h in range(24):
+            v, _b = hourstats.verdict(hst, h)
+            hours.append({"et": h, "v": v})
+
+    return JSONResponse({
+        "pending": False,
+        "candles": candles,
+        "mark": mark,
+        "walls": _levels(rows, mark, "liq_px"),
+        "entries": _levels(rows, mark, "entry_px"),
+        "hours": hours,
+        "earnings": ({"tsi": ev["tsi"], "et": ev.get("et"), "icon": ev["icon"],
+                      "when": ev["when_txt"], "countdown": ev["countdown"],
+                      "passed": ev["passed"], "ts": ev["report_ts"]} if ev else None),
+        "past_earnings": past_ts,
     })
 
 

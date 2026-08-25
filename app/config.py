@@ -169,6 +169,15 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "group": "Tarama & performans", "desc": "Takipteki balina pozlarının kontrol sıklığı"},
     "wall_poll_sec": {"type": "int", "label": "Defter tarama periyodu (sn)",
                       "group": "Tarama & performans", "desc": "Emir defteri duvar radarının tarama sıklığı"},
+    "pricechart_days": {"type": "int", "label": "Fiyat grafiği penceresi (gün)",
+                        "group": "Tarama & performans",
+                        "desc": "Coin sayfasındaki mum grafiğinde kaç günlük 1h mum gösterilsin"},
+    "show_tradingview": {"type": "bool", "label": "📈 TradingView gömülüsü",
+                         "group": "Tarama & performans",
+                         "desc": "Coin sayfasında katlanabilir TradingView grafiği (HİSSE senedi, perp değil). Sitenin TEK üçüncü taraf isteğidir — yalnız sen paneli açarsan yüklenir. Kapatırsan panel hiç basılmaz"},
+    "tv_symbol_map": {"type": "str", "label": "TradingView sembol eşlemesi",
+                      "group": "Takvim & semboller",
+                      "desc": "HL sembolü → TradingView sembolü, ör: 'SMSN:KRX:005930;X:NYSE:X'. Bir sembolde gömülüyü kapatmak için karşılığını boş bırak (ör: 'CXMT:')"},
     "hourstats_days": {"type": "int", "label": "Saat istatistiği penceresi (gün)",
                        "group": "Tarama & performans",
                        "desc": "Saatlik getiri haritası için geriye bakılacak gün sayısı (1h mumlar)"},
@@ -245,6 +254,8 @@ class Config:
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
         self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
         self.hourstats_days = int(os.getenv("HOURSTATS_DAYS", "90"))
+        self.pricechart_days = int(os.getenv("PRICECHART_DAYS", "30"))
+        self.show_tradingview = True
         # "Saati gelenler" yayın kanalı — kişisel chat'ten AYRI (bot kanala admin olmalı)
         self.telegram_channel_id = os.getenv("TELEGRAM_CHANNEL_ID", "")
         self.sweep_leaderboard_top = int(os.getenv("SWEEP_LEADERBOARD_TOP", "1500"))
@@ -325,6 +336,7 @@ class Config:
         self.yahoo_symbol_map = os.getenv("YAHOO_SYMBOL_MAP", "")
         # propr.xyz'de listeli ek semboller (varsayılan listeye eklenir)
         self.propr_symbols = os.getenv("PROPR_SYMBOLS", "")
+        self.tv_symbol_map = os.getenv("TV_SYMBOL_MAP", "")
         # Takvim sorgusundan muaf tutulacak ek enstrümanlar
         self.non_equity_extra = os.getenv("NON_EQUITY_EXTRA", "")
         self.no_calendar_extra = os.getenv("NO_CALENDAR_EXTRA", "")

@@ -2,6 +2,7 @@
 {% import "_macros.html" as m %}
 {% block title %}{% if rows and (rows[0].score or 0) >= 50 %}🚨{% elif ticker %}🐋{% endif %}{{ symbol }}{% if summ and summ.mark %} {{ summ.mark|px }}{% endif %}{% if event and not event.passed %} · 📅{% endif %} · HL Radar{% endblock %}
 {% block bodyattrs %} data-refresh="{{ 10 if scanning else 45 }}"{% endblock %}
+{% block head %}<script src="/static/lightweight-charts.js" defer></script>{% endblock %}
 {% block content %}
 {% if not ticker %}
 <div class="panel"><p><b>{{ symbol }}</b> HL hisse evreninde bulunamadı.
@@ -71,18 +72,26 @@
     {% if now_verdict %}<span title="ort {{ '%+.2f'|format(now_verdict.b.avg) }}%/saat · %{{ '%.0f'|format(now_verdict.b.win) }} kazanç · {{ now_verdict.b.n }} örnek">ŞU AN (TSİ {{ '%02d'|format(now_verdict.tsi_now) }}):
       <b class="{{ 'long' if now_verdict.v == 'güçlü' else ('short' if now_verdict.v == 'zayıf' else 'dim') }}">{{ now_verdict.v|upper }}</b> saat</span>{% endif %}
   </div>
-  <svg viewBox="0 0 {{ hchart.W }} {{ hchart.H }}" style="width:100%;height:auto"
+  <svg class="ichart" data-guide="v" viewBox="0 0 {{ hchart.W }} {{ hchart.H }}" style="width:100%;height:auto"
        role="img" aria-label="Saat bazında ortalama getiri">
     <line x1="{{ hchart.left }}" x2="{{ hchart.W - 16 }}" y1="{{ hchart.y0 }}" y2="{{ hchart.y0 }}"
           stroke="var(--dim)" stroke-opacity=".35"/>
     {% for b in hchart.bars %}
     <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="2"
           fill="{{ 'var(--chart-long)' if b.pos else 'var(--chart-short)' }}"
-          fill-opacity="{{ b.op }}"><title>{{ b.tip }}</title></rect>
+          fill-opacity="{{ b.op }}"/>
     {% if b.open %}<rect x="{{ b.x }}" y="{{ hchart.H - 24 }}" width="{{ b.w }}" height="2.5" rx="1"
-          fill="var(--amber)" opacity=".55"><title>ABD borsası açık saati (~09:30-16:00 ET)</title></rect>{% endif %}
+          fill="var(--amber)" opacity=".55"/>{% endif %}
     {% if b.label %}<text x="{{ b.cx }}" y="{{ hchart.H - 8 }}" text-anchor="middle"
           font-size="10" fill="var(--dim)">{{ b.label }}</text>{% endif %}
+    {% endfor %}
+    {# Görünmez sütun hedefleri: sıfıra yakın barlar 1.5 birim yüksekliğinde,
+       üzerlerine gelmek imkânsızdı. Artık tüm sütun yüksekliği hedeftir. #}
+    {% for b in hchart.bars %}
+    <rect class="ihit" x="{{ b.x }}" y="{{ hchart.top }}" width="{{ b.w }}"
+          height="{{ hchart.H - hchart.bot - hchart.top }}" fill="transparent"
+          data-tip="{{ b.tip }}" data-pos="{{ 1 if b.pos else 0 }}"
+          tabindex="0" role="img" aria-label="{{ b.tip }}"/>
     {% endfor %}
   </svg>
   <p class="sub" style="margin-top:6px">🟨 alt bantlı saatler ≈ ABD borsası açık ·
@@ -98,6 +107,32 @@
 </div>
 {% endif %}
 
+<div class="panel" data-keep="pxchart">
+  <h2>📈 Fiyat grafiği <span style="text-transform:none">· liq duvarları ve balina girişleri işaretli</span></h2>
+  <p class="sub">Hyperliquid perp mumları (1 saatlik). Yatay çizgiler balinaların
+  <b>likidasyon duvarları</b> ve <b>giriş seviyeleri</b> — fiyat oraya değerse ne olacağını burada görürsün.
+  Alttaki ince şerit o saatin tarihsel karnesi (yeşil = güçlü saat, kırmızı = zayıf).
+  📊 işaretli mumlar geçmiş bilanço günleri.</p>
+  <div id="pxchart" data-sym="{{ symbol }}{{ k }}"
+       data-pending="{{ 0 if pxchart else 1 }}"
+       style="position:relative;height:360px">
+    <p class="dim" id="pxmsg">{% if pxchart %}Grafik çiziliyor…{% else %}Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.{% endif %}</p>
+  </div>
+</div>
+
+{% if tv_sym %}
+<details class="panel guidetv" data-keep="tvembed">
+  <summary style="cursor:pointer;color:var(--head);font-weight:800;font-size:13.5px;letter-spacing:.04em">
+    📊 TradingView — {{ tv_sym }} <span class="dim" style="font-weight:400;letter-spacing:0">· hisse senedinin grafiği (aç/kapat)</span>
+  </summary>
+  <p class="sub" style="margin-top:10px">Bu <b>hisse senedinin</b> grafiği; yukarıdaki mumlar ise
+  balinaların işlem gördüğü <b>HL perp'i</b>. Seansları ve fiyatları birebir aynı değildir —
+  liq/entry seviyeleri yukarıdaki grafiğe aittir. Sitenin tek dış kaynaklı parçasıdır:
+  yalnız bu paneli açtığında TradingView'den yüklenir.</p>
+  <div class="tvbox" data-tv="{{ tv_sym }}" style="height:420px"></div>
+</details>
+{% endif %}
+
 {% if chart %}
 <div class="panel">
   <h2>📍 Nereden açtılar? · entry haritası</h2>
@@ -107,7 +142,8 @@
     <span><i class="sw" style="background:{{ chart.c_long }}"></i> Long ({{ chart.n_long }}) — sağda</span>
     <span class="dim">bar boyu = pozisyon büyüklüğü · kesikli çizgi = güncel fiyat</span>
   </div>
-  <svg viewBox="0 0 {{ chart.W }} {{ chart.H }}" style="width:100%;height:auto"
+  <svg class="ichart" data-guide="h" data-scale="{{ chart.lo }},{{ chart.hi }},{{ chart.top }},{{ chart.H - chart.bot }}"
+       viewBox="0 0 {{ chart.W }} {{ chart.H }}" style="width:100%;height:auto"
        role="img" aria-label="Pozisyonların entry fiyat haritası">
     {% for t in chart.ticks %}
     <line x1="{{ chart.left }}" x2="{{ chart.W - 16 }}" y1="{{ t.y }}" y2="{{ t.y }}"
@@ -120,7 +156,7 @@
     {% for b in chart.bars %}
     <rect x="{{ b.x }}" y="{{ b.y - 3 }}" width="{{ b.w }}" height="6" rx="3"
           fill="{{ chart.c_short if b.side == 'short' else chart.c_long }}"
-          stroke="var(--card-stroke)" stroke-width="1"><title>{{ b.tip }}</title></rect>
+          stroke="var(--card-stroke)" stroke-width="1"/>
     {% endfor %}
     <line x1="{{ chart.left }}" x2="{{ chart.W - 16 }}" y1="{{ chart.mark_y }}" y2="{{ chart.mark_y }}"
           stroke="var(--head)" stroke-width="1.5" stroke-dasharray="6 4"/>
@@ -129,6 +165,12 @@
     {% for l in chart.labels %}
     <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="{{ l.anchor }}"
           font-size="11" fill="var(--head)">{{ l.text }}</text>
+    {% endfor %}
+    {# 6 birimlik barı yakalamak zordu — üstüne 16 birimlik şeffaf hedef #}
+    {% for b in chart.bars %}
+    <rect class="ihit" x="{{ b.x }}" y="{{ b.hy }}" width="{{ b.w }}" height="{{ b.hh }}"
+          fill="transparent" data-tip="{{ b.tip }}" data-side="{{ b.side }}"
+          data-addr="{{ b.addr }}" tabindex="0" role="img" aria-label="{{ b.tip }}"/>
     {% endfor %}
   </svg>
 </div>
@@ -143,7 +185,8 @@
     <span><i class="sw" style="background:{{ liqchart.c_short }}"></i> Short liq ({{ liqchart.n_short }}) — fiyat çıkarsa</span>
     <span class="dim">bar boyu = pozisyon büyüklüğü · kesikli çizgi = güncel fiyat</span>
   </div>
-  <svg viewBox="0 0 {{ liqchart.W }} {{ liqchart.H }}" style="width:100%;height:auto"
+  <svg class="ichart" data-guide="h" data-scale="{{ liqchart.lo }},{{ liqchart.hi }},{{ liqchart.top }},{{ liqchart.H - liqchart.bot }}"
+       viewBox="0 0 {{ liqchart.W }} {{ liqchart.H }}" style="width:100%;height:auto"
        role="img" aria-label="Likidasyon fiyat haritası">
     {% for t in liqchart.ticks %}
     <line x1="{{ liqchart.left }}" x2="{{ liqchart.W - 16 }}" y1="{{ t.y }}" y2="{{ t.y }}"
@@ -154,14 +197,19 @@
     {% for b in liqchart.bars %}
     <rect x="{{ liqchart.left }}" y="{{ b.y - 3 }}" width="{{ b.w }}" height="6" rx="3"
           fill="{{ liqchart.c_long if b.side == 'long' else liqchart.c_short }}"
-          stroke="var(--card-stroke)" stroke-width="1"><title>{{ b.tip }}</title></rect>
+          stroke="var(--card-stroke)" stroke-width="1"/>
     {% endfor %}
     <line x1="{{ liqchart.left }}" x2="{{ liqchart.W - 16 }}" y1="{{ liqchart.mark_y }}" y2="{{ liqchart.mark_y }}"
           stroke="var(--head)" stroke-width="1.5" stroke-dasharray="6 4"/>
     <text x="{{ liqchart.W - 18 }}" y="{{ liqchart.mark_y - 6 }}" text-anchor="end"
           font-size="11" font-weight="700" fill="var(--head)">şimdi {{ liqchart.mark_txt }}</text>
     {% for l in liqchart.labels %}
-    <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="start" font-size="11" fill="var(--head)">{{ l.text }}</text>
+    <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="{{ l.anchor }}" font-size="11" fill="var(--head)">{{ l.text }}</text>
+    {% endfor %}
+    {% for b in liqchart.bars %}
+    <rect class="ihit" x="{{ liqchart.left }}" y="{{ b.hy }}" width="{{ b.w }}" height="{{ b.hh }}"
+          fill="transparent" data-tip="{{ b.tip }}" data-side="{{ b.side }}"
+          data-addr="{{ b.addr }}" tabindex="0" role="img" aria-label="{{ b.tip }}"/>
     {% endfor %}
   </svg>
 </div>
