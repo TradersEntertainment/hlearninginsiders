@@ -512,6 +512,10 @@ async def index(request: Request):
         seen_keys.add((r["address"], r["coin"]))
         liq_map.append({"symbol": r["symbol"], "coin": r["coin"], "address": r["address"],
                         "side": r["side"], "notional": r["notional"],
+                        # güncel fiyat yalnız 'dist' hesabında kullanılıp
+                        # düşüyordu; ipucunda "şimdi X → liq Y" diyebilmek için
+                        # satırda da dursun (ek sorgu yok)
+                        "mark": mark,
                         "liq_px": r["liq_px"], "dist": dist})
     for r in lw_rows:
         if (r["address"], r["coin"]) in seen_keys or r["last_dist"] is None:
@@ -521,6 +525,7 @@ async def index(request: Request):
         liq_map.append({"symbol": r["coin"].split(":")[-1], "coin": r["coin"],
                         "address": r["address"], "side": r["side"],
                         "notional": r["notional"], "liq_px": r["liq_px"],
+                        "mark": marks.get(r["coin"]),
                         "dist": r["last_dist"]})
     liq_map.sort(key=lambda x: x["dist"])
     liq_map = liq_map[:20]
@@ -828,10 +833,16 @@ async def coin_chart_json(request: Request, symbol: str):
             v, _b = hourstats.verdict(hst, h)
             hours.append({"et": h, "v": v})
 
+    # HL'ye ulaşılamadığında eski mumlar korunuyor (pricechart._keep_or_mark).
+    # Bunu SÖYLEMEZSEK kullanıcı bayat grafiği taze sanır — son mumun yaşını geç.
+    last_ts = candles[-1]["t"] if candles else 0
     return JSONResponse({
         "pending": False,
         "candles": candles,
         "mark": mark,
+        "stale": bool((rec or {}).get("stale")),
+        "last_ts": last_ts,
+        "age_min": max(0, (now() - last_ts) // 60) if last_ts else None,
         "walls": _levels(rows, mark, "liq_px"),
         "entries": _levels(rows, mark, "entry_px"),
         "hours": hours,
@@ -944,9 +955,15 @@ async def whale_page(request: Request, address: str):
                          "upnl": float(p.get("unrealizedPnl") or 0)})
     live.sort(key=lambda p: p["notional"], reverse=True)
     linked = await clusters.linked_addresses(addr)
+    # coin → sembol: balina sayfası ÇIKMAZ SOKAKTI (coin hücreleri düz metin).
+    # Ama burada ANA dex de taranıyor (BTC/ETH…) — onları /t/'ye bağlarsak
+    # "evrende yok" ölü sayfasına düşer. Yalnız tickers'ta olan bağlanır.
+    async with db() as conn:
+        cur = await conn.execute("SELECT coin, symbol FROM tickers")
+        sym_map = {r["coin"]: r["symbol"] for r in await cur.fetchall()}
     return _render(request, "whale.html", {
         "address": addr, "arow": arow, "live": live, "fills": fills, "snaps": snaps,
-        "linked": linked,
+        "linked": linked, "sym_map": sym_map,
     })
 
 

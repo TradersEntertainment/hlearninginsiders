@@ -375,6 +375,34 @@ async def _chunked_delete(table: str, cutoff: int, chunk: int = 50000) -> int:
     return total
 
 
+async def prune_coin_cache() -> int:
+    """Evrenden düşmüş coin'lerin önbellek anahtarlarını sil.
+
+    Mum önbelleği (`pxc:`) coin başına ~52 KB tutuyor ve YALNIZ yazılıyordu —
+    bakım kv'ye hiç dokunmadığı için delist/kapatılmış bir coin'in kaydı
+    sonsuza dek kalıyordu. Sadece bu iki önek budanır; kalan kv anahtarları
+    (hb:, crash:, health_state, spec_*, boot_ts…) durum verisidir, elle
+    girilenler gibi korunur.
+    """
+    async with db() as conn:
+        cur = await conn.execute("SELECT coin FROM tickers")
+        live = {r["coin"] for r in await cur.fetchall()}
+        if not live:
+            return 0                     # evren henüz keşfedilmedi → hiçbir şeyi silme
+        cur = await conn.execute(
+            "SELECT k FROM kv WHERE k LIKE 'pxc:%' OR k LIKE 'hstats:%'")
+        keys = [r["k"] for r in await cur.fetchall()]
+        dead = [k for k in keys if k.split(":", 1)[1] not in live]
+        for i in range(0, len(dead), 200):
+            part = dead[i:i + 200]
+            await conn.execute(
+                f"DELETE FROM kv WHERE k IN ({','.join('?' * len(part))})", part)
+    if dead:
+        log.info("önbellek budandı: %d evrende olmayan coin anahtarı silindi (%s)",
+                 len(dead), ", ".join(k.split(":")[-1] for k in dead[:6]))
+    return len(dead)
+
+
 async def maintenance(cfg: Config) -> None:
     """Günlük veri emekliliği — /data volume'u sınırsız büyümesin.
 
@@ -388,9 +416,16 @@ async def maintenance(cfg: Config) -> None:
     n_met = await _chunked_delete("asset_metrics", ts_now - METRICS_RETENTION_D * 86400)
     n_al = await _chunked_delete("alerts_log", ts_now - ALERTS_RETENTION_D * 86400)
     n_left = await refresh_fills_count()
-    if n_fills or n_met or n_al:
-        log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı emekli"
-                 " (fills kalan %d)", n_fills, n_met, n_al, n_left)
+    try:
+        # ayrı try: kv budaması patlarsa satır emekliliği yine de yapılmış olsun
+        n_kv = await prune_coin_cache()
+    except Exception:
+        log.exception("önbellek budaması başarısız")
+        n_kv = 0
+    if n_fills or n_met or n_al or n_kv:
+        log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı, %d önbellek"
+                 " anahtarı emekli (fills kalan %d)",
+                 n_fills, n_met, n_al, n_kv, n_left)
 
 
 async def housekeeping(cfg: Config) -> None:

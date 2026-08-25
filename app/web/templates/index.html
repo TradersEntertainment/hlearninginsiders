@@ -73,7 +73,8 @@
         <span class="{{ 'long' if c.px_change > 0 else 'short' }}">{{ '%+.1f'|format(c.px_change) }}%</span>{% endif %}
         · OI <b>{{ c.oi_ntl|usd }}</b>{% if c.oi_change is not none %} ({{ '%+.0f'|format(c.oi_change) }}%){% endif %}</div>
       {% if c.shp is not none %}
-      <div class="ratio"><div class="rl" style="width:{{ '%.0f'|format(100 - c.shp) }}%"></div><div class="rs" style="width:{{ '%.0f'|format(c.shp) }}%"></div></div>
+      <div class="ratio ihit" data-pos="{{ 1 if c.shp < 50 else 0 }}"
+           data-tip="{{ c.symbol }} balina duruşu · 🐂 yükseliş {{ c.lo|usd }} (%{{ '%.0f'|format(100 - c.shp) }}) · 🐻 düşüş {{ c.sh|usd }} (%{{ '%.0f'|format(c.shp) }}){% if c.oi_ntl %} · toplam OI {{ c.oi_ntl|usd }}{% endif %}{% if c.top %} · en yüksek skor: {{ c.top.score }} puanlık {{ 'LONG' if c.top.side == 'long' else 'SHORT' }} {{ c.top.notional|usd }}{% endif %}"><div class="rl" style="width:{{ '%.0f'|format(100 - c.shp) }}%"></div><div class="rs" style="width:{{ '%.0f'|format(c.shp) }}%"></div></div>
       <div class="dim">🐂 {{ c.lo|usd }} yükseliş · 🐻 {{ c.sh|usd }} düşüş</div>
       {% endif %}
       <div class="verdict">{{ c.verdict[0] }} {{ c.verdict[1] }}</div>
@@ -100,8 +101,8 @@
   {% if liq_walls %}
   <div class="walls">🧲 <b>Duvarlar:</b>
     {% for w in liq_walls %}
-    <span class="wall {{ 'shortliq-t' if w.side == 'short' else 'longliq-t' }}"
-          title="{{ w.count }} pozisyon, ortalama mesafe %{{ '%.1f'|format(w.avg_dist) }} — fiyat o bölgeye {{ 'çekilirse zorunlu alışlar yukarı' if w.side == 'short' else 'inerse zorunlu satışlar aşağı' }} süpürebilir">
+    <span class="wall ihit {{ 'shortliq-t' if w.side == 'short' else 'longliq-t' }}" data-side="{{ w.side }}"
+          data-tip="{{ w.symbol }} {{ 'SHORT' if w.side == 'short' else 'LONG' }} liq duvarı {{ w.total|usd }} · {{ w.count }} pozisyon, ortalama mesafe %{{ '%.1f'|format(w.avg_dist) }}{% if w.mark %} · şimdi {{ w.mark|px }}{% endif %} · fiyat o bölgeye {{ 'çekilirse zorunlu alışlar yukarı' if w.side == 'short' else 'inerse zorunlu satışlar aşağı' }} süpürebilir{% if w.other_total %} · ters yönde {{ w.other_total|usd }} var{% endif %}{% for m in w.members[:3] %} · {{ m.address[:6] }}..{{ m.address[-4:] }} {{ m.notional|usd }} @{{ m.liq_px|px }}{% endfor %}">
       <a href="/t/{{ w.symbol }}{{ k }}">{{ w.symbol }}</a>
       {{ 'S' if w.side == 'short' else 'L' }}-duvar <b>{{ w.total|usd }}</b>×{{ w.count }}
       (%{{ '%.1f'|format(w.avg_dist) }})</span>{% if not loop.last %} · {% endif %}
@@ -113,7 +114,8 @@
   <div class="lbar" data-propr="{{ 1 if x.propr else 0 }}">
     <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
     <span class="lside {{ 'longliq-t' if x.side == 'long' else 'shortliq-t' }}">{{ 'L-LIQ' if x.side == 'long' else 'S-LIQ' }}</span>
-    <div class="ltrack"><div class="lfill {{ 'longliq' if x.side == 'long' else 'shortliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
+    <div class="ltrack ihit" data-side="{{ x.side }}"
+         data-tip="{{ x.symbol }} {{ 'LONG' if x.side == 'long' else 'SHORT' }} {{ x.notional|usd }} · liq {{ x.liq_px|px }}{% if x.mark %} · şimdi {{ x.mark|px }}{% endif %} · mesafe %{{ '%.2f'|format(x.dist) }} · {{ x.address[:8] }}..{{ x.address[-4:] }}"><div class="lfill {{ 'longliq' if x.side == 'long' else 'shortliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
     <span class="lval">{{ x.notional|usd }}</span>
     <span class="lpx">liq {{ x.liq_px|px }}</span>
     <span class="ldist {{ 'warn' if x.dist < 5 else 'dim' }}">%{{ '%.1f'|format(x.dist) }}</span>
@@ -132,9 +134,10 @@
   {% for x in book_walls %}
   <div class="lbar" data-propr="{{ 1 if x.propr else 0 }}">
     <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
-    <span class="lside {{ 'shortliq-t' if x.side == 'ask' else 'longliq-t' }}"
-          title="{{ 'fiyatın üstünde satış (short) duvarı' if x.side == 'ask' else 'fiyatın altında alış (long) duvarı' }}">{{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }}</span>
-    <div class="ltrack"><div class="lfill {{ 'shortliq' if x.side == 'ask' else 'longliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
+    <span class="lside ihit {{ 'shortliq-t' if x.side == 'ask' else 'longliq-t' }}" data-side="{{ 'short' if x.side == 'ask' else 'long' }}"
+          data-tip="{{ 'fiyatın ÜSTÜNDE satış (short) duvarı' if x.side == 'ask' else 'fiyatın ALTINDA alış (long) duvarı' }} · {{ 'yukarı çıkışı zorlaştırır' if x.side == 'ask' else 'aşağı inişi zorlaştırır' }}">{{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }}</span>
+    <div class="ltrack ihit" data-side="{{ 'short' if x.side == 'ask' else 'long' }}"
+         data-tip="{{ x.symbol }} {{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }} duvarı {{ x.notional|usd }} ({{ '%.0f'|format(x.sz) }} adet) · {{ x.px_lo|px }}–{{ x.px_hi|px }}{% if x.mark_px %} · şimdi {{ x.mark_px|px }}{% endif %} · mesafe %{{ '%.2f'|format(x.dist_pct) }} · zirvesi {{ x.peak_notional|usd }}{% if x.peak_notional and x.notional < x.peak_notional * 0.7 %} ⚠️ zirveden çekilmiş (spoof olabilir){% endif %} · {{ x.first_ts|age }} önce belirdi"><div class="lfill {{ 'shortliq' if x.side == 'ask' else 'longliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
     <span class="lval"><b>{{ x.notional|usd }}</b></span>
     <span class="lpx">{{ x.px_lo|px }}–{{ x.px_hi|px }}</span>
     <span class="ldist {{ 'warn' if x.dist_pct < 1 else 'dim' }}">%{{ '%.1f'|format(x.dist_pct) }}</span>

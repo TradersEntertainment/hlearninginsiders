@@ -4,3 +4,11 @@
    title="Hyperliquid'de aç (hypurrscan) ↗">{{ a[:chars] }}..{{ a[-4:] }}</a><a
    href="/whale/{{ a }}{{ k }}" class="wl" title="Bizim balina karnesi (skor, sicil, geçmiş)">🐋</a>
 {%- endmacro %}
+
+{# Coin hücresi: YALNIZ evrende (tickers) olan coin bağlanır. Balina sayfası ana
+   dex'i de tarıyor; BTC/ETH'yi /t/'ye bağlarsak "evrende yok" ölü sayfasına
+   düşer, o yüzden bilinmeyen coin düz metin kalır. #}
+{% macro coin(c, sym_map, k) -%}
+{% set s = sym_map.get(c) -%}
+{% if s %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% else %}{{ c }}{% endif %}
+{%- endmacro %}

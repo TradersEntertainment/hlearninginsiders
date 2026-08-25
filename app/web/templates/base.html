@@ -228,13 +228,24 @@ box-shadow:0 8px 24px rgba(0,0,0,.45);backdrop-filter:blur(8px)}
   input[type=text]{width:130px}
   .panel{padding:12px;border-radius:14px}
   .strip{gap:10px;font-size:12px}
-  .lbar{font-size:11.5px;gap:6px}
+  .lbar{font-size:11.5px;gap:6px;flex-wrap:wrap}
   .lbar .lsym{width:52px}
   .lbar .lside{width:44px}
   .lbar .lpx{display:none}
+  /* Bar 'flex:1' idi ve sabit sütunlar 390px'i tamamen yiyordu: telefonda
+     GENİŞLİĞİ SIFIRA düşüyor, yani görsel hiç çizilmiyordu (ipucu da
+     yakalanamıyordu). Telefonda kendi satırına alınır. */
+  .lbar .ltrack{order:9;flex:1 0 100%;height:8px;margin-top:1px}
   .ecards{grid-template-columns:1fr}
   .togglegrid,.valgrid{grid-template-columns:1fr}
   .savebar{width:auto}
+  /* Yeni paneller: 360px'lik telefonda mum grafiği ekranın yarısından fazlasını
+     kaplıyordu, ipucu neredeyse tam genişlikti. */
+  #pxchart{height:230px!important}
+  .tvbox{height:300px}
+  #itip{max-width:min(280px,calc(100vw - 24px));font-size:11.5px;padding:7px 9px}
+  .pxbadge{right:56px;font-size:10.5px;padding:3px 8px;max-width:calc(100% - 64px)}
+  .pxbadge.stale{left:6px;right:auto;max-width:calc(100% - 12px)}
 }
 .sub{font-size:12.5px;color:var(--dim);margin:-4px 0 10px;line-height:1.5}
 details.guide{cursor:default}
@@ -314,16 +325,25 @@ footer{padding:18px 22px;color:var(--faint);font-size:12px}
 #itip.short{border-left:3px solid var(--liq-short-t)}
 #itip.up{border-left:3px solid var(--green)}
 #itip.down{border-left:3px solid var(--red-fg)}
-.ichart .ihit{cursor:crosshair;outline:none}
-.ichart .ihit:focus-visible{fill:var(--accent);fill-opacity:.12}
-.ichart .ihit.hot{fill:var(--fg);fill-opacity:.07}
+/* Hedefler HTML de olabilir (ana sayfadaki barlar): 'fill' yalnız SVG'de
+   çalışır, o yüzden taban kural HTML'e göre, SVG'ye özel olanlar .ichart altında */
+.ihit{cursor:help;outline:none;border-radius:6px}
+.ihit.hot{background:color-mix(in srgb,var(--fg) 9%,transparent)}
+.ihit:focus-visible{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.ichart .ihit{cursor:crosshair;background:none}
+.ichart .ihit:focus-visible{background:none;fill:var(--accent);fill-opacity:.12}
+.ichart .ihit.hot{background:none;fill:var(--fg);fill-opacity:.07}
 .ichart .iguide{pointer-events:none}
+/* Bar'ın kendisi hedefse tıklanabilir hissi vermesin diye yalnız imleç değişir */
+.ltrack.ihit,.ratio.ihit,.oibar.ihit{cursor:help}
 /* Yaklaşan bilanço rozeti — mum grafiğinin sağ üstünde */
 .pxbadge{position:absolute;top:6px;right:74px;z-index:3;pointer-events:none;
   background:rgba(var(--panel-solid),.9);border:1px solid var(--border);
   color:var(--head);border-radius:999px;padding:4px 10px;font-size:11.5px;
   font-variant-numeric:tabular-nums}
 .pxbadge b{color:var(--amber)}
+.pxbadge.stale{top:auto;bottom:8px;right:auto;left:8px;color:var(--amber);
+  border-color:color-mix(in srgb,var(--amber) 45%,transparent)}
 details.guidetv summary::marker{color:var(--accent)}
 details.guidetv[open] summary{margin-bottom:2px}
 .tvbox{margin-top:8px;border-radius:12px;overflow:hidden}
@@ -804,6 +824,17 @@ async function initPriceChart(){
                   '</b> · ' + d.earnings.tsi + ' TSİ' +
                   (d.earnings.et ? ' (' + d.earnings.et + ' ET)' : '');
     box.appendChild(b);
+  }
+
+  // --- Bayat veri uyarısı: HL'ye ulaşılamadıysa eski mumlar korunuyor (doğru
+  //     davranış) ama bunu SÖYLEMEZSEK kullanıcı grafiği canlı sanar. ---
+  if(d.stale || (d.age_min != null && d.age_min > 180)){
+    var w = document.createElement('div');
+    w.className = 'pxbadge stale';
+    var h = Math.floor((d.age_min || 0) / 60), m = (d.age_min || 0) % 60;
+    w.textContent = '⏳ son mum ' + (h ? h + ' sa ' : '') + m + ' dk önce' +
+                    (d.stale ? ' · HL\'ye ulaşılamadı, eski veri gösteriliyor' : '');
+    box.appendChild(w);
   }
 
   chart.timeScale().fitContent();

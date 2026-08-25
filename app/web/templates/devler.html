@@ -50,7 +50,8 @@
       <td class="{{ p.side }}"><b>{{ 'LONG' if p.side=='long' else 'SHORT' }}</b></td>
       <td><b>{{ p.notional|usd }}</b></td>
       <td>{% if p.oi_share is not none %}
-        <div class="oibar" title="OI'nin %{{ '%.0f'|format(p.oi_share) }}'i">
+        <div class="oibar ihit" data-side="{{ p.side }}"
+             data-tip="{{ p.symbol }} · bu pozisyon {{ p.notional|usd }}{% if p.oi_ntl %} / toplam OI {{ p.oi_ntl|usd }}{% endif %} = açık pozisyonun %{{ '%.1f'|format(p.oi_share) }}'i{% if p.szi %} · {{ '%.0f'|format(p.szi|abs) }} adet{% endif %}{% if p.liq_px %} · liq {{ p.liq_px|px }}{% endif %}{% if p.upnl %} · uPnL {{ p.upnl|usd }}{% endif %}">
           <div class="oifill {{ p.side }}bg" style="width:{{ '%.0f'|format(p.oi_share) }}%"></div>
           <span><b>%{{ '%.0f'|format(p.oi_share) }}</b></span>
         </div>

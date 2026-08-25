@@ -21,7 +21,7 @@
     <tr><th class="l">Coin</th><th>Yön</th><th>Notional</th><th>Entry</th><th>Kald.</th><th>Liq</th><th>uPnL</th></tr>
     {% for p in live %}
     <tr>
-      <td class="l"><b>{{ p.coin }}</b></td>
+      <td class="l"><b>{{ m.coin(p.coin, sym_map, k) }}</b></td>
       <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
       <td>{{ p.entry_px|px }}</td>
@@ -60,7 +60,7 @@
     <tr>
       <td class="l dim">{{ s.ts|dt }}</td>
       <td class="l">{{ s.phase }}</td>
-      <td class="l">{{ s.coin }}</td>
+      <td class="l">{{ m.coin(s.coin, sym_map, k) }}</td>
       <td class="l dim">{{ s.ev_symbol or '-' }} {{ s.ev_date or '' }}</td>
       <td class="{{ s.side }}">{{ 'LONG' if s.side=='long' else 'SHORT' }}</td>
       <td>{{ s.notional|usd }}</td>
@@ -79,7 +79,7 @@
     {% for f in fills %}
     <tr>
       <td class="l dim">{{ f.ts|dt }}</td>
-      <td class="l">{{ f.coin }}</td>
+      <td class="l">{{ m.coin(f.coin, sym_map, k) }}</td>
       <td class="{{ 'long' if f.side=='buy' else 'short' }}">{{ 'ALIŞ' if f.side=='buy' else 'SATIŞ' }}</td>
       <td>{{ f.px|px }}</td>
       <td>{{ f.notional|usd }}</td>

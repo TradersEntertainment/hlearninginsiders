@@ -49,8 +49,8 @@
 <div class="panel">
   <div class="walls">🧱 <b>Emir defteri duvarı:</b>
     {% for w in bwalls %}
-    <span class="wall {{ 'shortliq-t' if w.side == 'ask' else 'longliq-t' }}"
-          title="{{ 'fiyatın üstünde satış duvarı — yukarı çıkışı zorlaştırır' if w.side == 'ask' else 'fiyatın altında alış duvarı — aşağı inişi zorlaştırır' }}{{ '; çekilirse spoof olabilir' }}">
+    <span class="wall ihit {{ 'shortliq-t' if w.side == 'ask' else 'longliq-t' }}" data-side="{{ 'short' if w.side == 'ask' else 'long' }}"
+          data-tip="{{ 'fiyatın ÜSTÜNDE satış duvarı — yukarı çıkışı zorlaştırır' if w.side == 'ask' else 'fiyatın ALTINDA alış duvarı — aşağı inişi zorlaştırır' }} · {{ w.notional|usd }}{% if w.sz %} ({{ '%.0f'|format(w.sz) }} adet){% endif %} · {{ w.px_lo|px }}–{{ w.px_hi|px }}{% if w.peak_notional %} · zirvesi {{ w.peak_notional|usd }}{% if w.notional < w.peak_notional * 0.7 %} ⚠️ zirveden çekilmiş (spoof olabilir){% endif %}{% endif %} · çekilirse spoof olabilir">
       {{ 'SATIŞ' if w.side == 'ask' else 'ALIŞ' }} <b>{{ w.notional|usd }}</b>
       · {{ w.px_lo|px }}–{{ w.px_hi|px }} (fiyata %{{ '%.1f'|format(w.dist_pct) }})
       {% if w.address %}· sahibi {{ m.addr(w.address, k, 6) }}{% endif %}
@@ -69,7 +69,8 @@
     <span>☀️ ABD borsası AÇIKKEN toplam: <b class="{{ 'long' if hstats.open_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hstats.open_ret) }}%</b></span>
     <span>🌙 KAPALIYKEN toplam: <b class="{{ 'long' if hstats.closed_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hstats.closed_ret) }}%</b></span>
     {% if hstats.closed_ret > hstats.open_ret and hstats.closed_ret > 0 %}<span class="warn">→ getirinin çoğu borsa KAPALIYKEN gelmiş 🌙</span>{% endif %}
-    {% if now_verdict %}<span title="ort {{ '%+.2f'|format(now_verdict.b.avg) }}%/saat · %{{ '%.0f'|format(now_verdict.b.win) }} kazanç · {{ now_verdict.b.n }} örnek">ŞU AN (TSİ {{ '%02d'|format(now_verdict.tsi_now) }}):
+    {% if now_verdict %}<span class="ihit" data-pos="{{ 1 if now_verdict.b.avg >= 0 else 0 }}"
+      data-tip="TSİ {{ '%02d'|format(now_verdict.tsi_now) }}:00 tarihsel karnesi · ort {{ '%+.2f'|format(now_verdict.b.avg) }}%/saat · %{{ '%.0f'|format(now_verdict.b.win) }} kazanç · {{ now_verdict.b.n }} örnek">ŞU AN (TSİ {{ '%02d'|format(now_verdict.tsi_now) }}):
       <b class="{{ 'long' if now_verdict.v == 'güçlü' else ('short' if now_verdict.v == 'zayıf' else 'dim') }}">{{ now_verdict.v|upper }}</b> saat</span>{% endif %}
   </div>
   <svg class="ichart" data-guide="v" viewBox="0 0 {{ hchart.W }} {{ hchart.H }}" style="width:100%;height:auto"
