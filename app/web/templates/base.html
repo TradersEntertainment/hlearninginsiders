@@ -468,13 +468,40 @@ document.addEventListener('click', function(ev){
 // Long/Short sekmeleri — delege edilmiş handler (yumuşak yenileme sonrası da çalışır)
 document.addEventListener('click', function(ev){
   var t = ev.target.closest('.tab'); if(!t || !t.dataset.f) return;
-  t.parentElement.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
+  var box = t.parentElement;
+  box.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
   t.classList.add('active');
-  var f = t.dataset.f;
-  document.querySelectorAll('#postable tr[data-side]').forEach(function(r){
-    r.style.display = (f === 'all' || r.dataset.side === f) ? '' : 'none';
-  });
+  // Eskiden '#postable tr[data-side]'a SABİT kodluydu. Sekme kabı hedefini
+  // kendisi söyler (data-target/data-attr) ve AYNI tabloyu hedefleyen birden
+  // çok grup birlikte uygulanır (ör. Kripto/Hisse + Canlı/Rekorlar).
+  // Varsayılanlar eski değerler → coin sayfası birebir aynı davranır.
+  applyTabs(box.dataset.target || '#postable');
 });
+
+function initTabs(){
+  var seen = {};
+  document.querySelectorAll('.tabs').forEach(function(b){
+    var sel = b.dataset.target || '#postable';
+    if(seen[sel]) return;
+    seen[sel] = 1;
+    applyTabs(sel);
+  });
+}
+
+function applyTabs(sel){
+  var flt = [];
+  document.querySelectorAll('.tabs').forEach(function(b){
+    if((b.dataset.target || '#postable') !== sel) return;
+    var on = b.querySelector('.tab.active');
+    if(on && on.dataset.f && on.dataset.f !== 'all')
+      flt.push([b.dataset.attr || 'side', on.dataset.f]);
+  });
+  document.querySelectorAll(sel + ' tr').forEach(function(r){
+    if(r.querySelector('th')) return;          // başlık satırına dokunma
+    var ok = flt.every(function(p){ return r.dataset[p[0]] === p[1]; });
+    r.style.display = ok ? '' : 'none';
+  });
+}
 
 // Tema seçici — 🌙/🌊; seçim bu tarayıcıda hatırlanır, yenilemede korunur
 document.addEventListener('click', function(ev){
@@ -501,6 +528,8 @@ document.addEventListener('click', function(ev){
   try{ localStorage.setItem('hlr_propr', on ? '0' : '1'); }catch(e){}
   b.classList.toggle('on', !on);
 });
+initTabs();   // açılışta seçili sekmeleri uygula (yalnız tıklamada değil)
+
 (function(){ // filtre düğmesinin açık/kapalı görünümünü kur
   var pb = document.getElementById('prswitch');
   if(pb) pb.classList.toggle('on', document.documentElement.dataset.propronly === '1');
@@ -926,8 +955,13 @@ else initTv();
       var doc = new DOMParser().parseFromString(await r.text(), 'text/html');
       var nm = doc.querySelector('main'), cm = document.querySelector('main');
       if(!nm || !cm) return;
-      var activeTab = document.querySelector('.tab.active');
-      var f = activeTab ? activeTab.dataset.f : null;
+      // Sayfada birden çok sekme grubu olabiliyor (ör. /devler: Kripto/Hisse
+      // + Canlı/Rekorlar); eskiden yalnız İLK grubun seçimi geri yükleniyordu.
+      var tabSel = [];
+      document.querySelectorAll('.tabs').forEach(function(b, i){
+        var on = b.querySelector('.tab.active');
+        if(on && on.dataset.f) tabSel.push([i, on.dataset.f]);
+      });
       var g = document.querySelector('details.guide');
       var guideOpen = g ? g.open : null;
       var x = scrollX, y = scrollY;
@@ -945,10 +979,16 @@ else initTv();
         var ng = document.querySelector('details.guide');
         if(ng) ng.open = guideOpen;
       }
-      if(f && f !== 'all'){
-        var b = document.querySelector('.tab[data-f="' + f + '"]');
-        if(b) b.click();
-      }
+      var boxes = document.querySelectorAll('.tabs');
+      tabSel.forEach(function(p){
+        var box = boxes[p[0]]; if(!box) return;
+        var b = box.querySelector('.tab[data-f="' + p[1] + '"]');
+        if(b){
+          box.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
+          b.classList.add('active');
+        }
+      });
+      initTabs();
       if(SORT_STATE){ // tablo sıralaması yenileme sonrası korunur (başlık imzasıyla)
         var st = SORT_STATE;
         var tb = null;

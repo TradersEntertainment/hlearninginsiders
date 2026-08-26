@@ -16,7 +16,7 @@ from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, clusters, hourstats, lowvol, metrics,
+from ..radar import (autoscan, bigpos, clusters, hourstats, lowvol, metrics,
                      pricechart)
 
 TR = ZoneInfo("Europe/Istanbul")
@@ -1044,8 +1044,17 @@ async def lowvol_page(request: Request):
     rows = [p for p in rows if p["notional"] >= minv]
     humans = [p for p in rows if not p["entity"]]
     bots = [p for p in rows if p["entity"]]
+    # Tüm Hyperliquid'in en büyükleri (derinlik/hacim filtresi YOK)
+    big_live = await bigpos.live_big(150, minv)
+    big_rec = await bigpos.record_big(150, minv)
+    big_stats = await bigpos.stats()
+    async with db() as conn:
+        cur = await conn.execute("SELECT coin, symbol FROM tickers")
+        sym_map = {r["coin"]: r["symbol"] for r in await cur.fetchall()}
     return _render(request, "devler.html", {
+        "sym_map": sym_map,
         "humans": humans[:400], "bots": bots[:60],
+        "big_live": big_live, "big_rec": big_rec, "big_stats": big_stats,
         "n_humans": len(humans), "n_bots": len(bots),
         "minv": minv,
         "min_chips": [(250_000, "250K+"), (1_000_000, "1M+"),

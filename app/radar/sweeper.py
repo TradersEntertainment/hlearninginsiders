@@ -120,6 +120,86 @@ def _parse_equity_positions(resp, coin_set: set[str],
     return out, bool(states)
 
 
+def _parse_all_positions(resp, min_ntl: float) -> dict[str, dict]:
+    """ALL_DEXES yanıtından TÜM pozisyonlar — hisse filtresi YOK.
+
+    `_parse_equity_positions` hisse evreninde olmayan her coin'i eliyor; yani
+    BTC/ETH gibi ana dex pozisyonları her taramada elimize gelip ÇÖPE gidiyordu.
+    Burada eşiği aşan hepsi tutulur — ek API isteği yok, aynı yanıt.
+    Anahtar ham coin (ör. "BTC", "xyz:NVDA"); sembol eşlemesi yapılmaz, çünkü
+    burada amaç "hangi hisse" değil "hangi pozisyon".
+    """
+    out: dict[str, dict] = {}
+    for state in _iter_states(resp):
+        for ap in state.get("assetPositions") or []:
+            pos = ap.get("position") or {}
+            coin = pos.get("coin") or ""
+            if not coin:
+                continue
+            try:
+                szi = float(pos.get("szi") or 0)
+                ntl = float(pos.get("positionValue") or 0)
+            except (TypeError, ValueError):
+                continue
+            if szi == 0 or ntl < min_ntl:
+                continue
+            if coin in out and ntl <= out[coin]["notional"]:
+                continue                      # aynı coin iki state'te → büyük olan
+            liq = pos.get("liquidationPx")
+            out[coin] = {
+                "dex": coin.split(":")[0] if ":" in coin else "",
+                "szi": szi, "side": "long" if szi > 0 else "short",
+                "entry_px": float(pos.get("entryPx") or 0),
+                "leverage": float((pos.get("leverage") or {}).get("value") or 0),
+                "liq_px": float(liq) if liq else None,
+                "upnl": float(pos.get("unrealizedPnl") or 0),
+                "notional": ntl,
+            }
+    return out
+
+
+async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int) -> None:
+    """hl_positions'a yaz: zirve YALNIZ büyürse güncellenir, kapanan SİLİNMEZ.
+
+    Rekor arşivi ("gördüğümüz en büyükler") bu yüzden var: positions_current
+    kapanınca satırı siliyor, oradan geçmiş geri getirilemiyor.
+    """
+    async with db() as conn:
+        for coin, p in positions.items():
+            await conn.execute(
+                """INSERT INTO hl_positions
+                   (coin,address,dex,side,szi,entry_px,leverage,liq_px,upnl,notional,
+                    ts,first_seen_ts,peak_notional,peak_ts,closed_ts)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+                   ON CONFLICT(coin,address) DO UPDATE SET
+                     ts=excluded.ts, side=excluded.side, szi=excluded.szi,
+                     entry_px=excluded.entry_px, leverage=excluded.leverage,
+                     liq_px=excluded.liq_px, upnl=excluded.upnl,
+                     notional=excluded.notional, dex=excluded.dex,
+                     closed_ts=NULL,
+                     first_seen_ts=MIN(COALESCE(hl_positions.first_seen_ts,
+                                                excluded.first_seen_ts),
+                                       excluded.first_seen_ts),
+                     peak_ts=CASE WHEN excluded.notional >
+                                       COALESCE(hl_positions.peak_notional, 0)
+                                  THEN excluded.peak_ts ELSE hl_positions.peak_ts END,
+                     peak_notional=MAX(COALESCE(hl_positions.peak_notional, 0),
+                                       excluded.notional)""",
+                (coin, addr, p["dex"], p["side"], p["szi"], p["entry_px"],
+                 p["leverage"], p["liq_px"], p["upnl"], p["notional"],
+                 ts, ts, p["notional"], ts))
+        # Adresin artık tutmadıkları: SİLME, kapandı damgası vur (rekor kalsın)
+        if positions:
+            q = ",".join("?" * len(positions))
+            await conn.execute(
+                f"UPDATE hl_positions SET closed_ts=? WHERE address=? AND closed_ts IS NULL"
+                f" AND coin NOT IN ({q})", (ts, addr, *positions.keys()))
+        else:
+            await conn.execute(
+                "UPDATE hl_positions SET closed_ts=? WHERE address=? AND closed_ts IS NULL",
+                (ts, addr))
+
+
 async def _upsert_address(addr: str, positions: dict[str, dict], ts: int) -> None:
     async with db() as conn:
         for coin, p in positions.items():
@@ -206,6 +286,12 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
         n_ok += 1
         await _upsert_address(addr, positions, ts)
         n_pos += len(positions)
+        # Aynı yanıttan TÜM Hyperliquid pozisyonları (ana dex dahil) — ek
+        # istek yok, yalnız şimdiye kadar atılan kısmı saklıyoruz.
+        try:
+            await _upsert_hl(addr, _parse_all_positions(resp, cfg.hl_big_min_usd), ts)
+        except Exception:
+            log.exception("hl_positions yazılamadı: %s", addr)
 
     await asyncio.gather(*(one(a) for a in batch))
 
@@ -403,6 +489,27 @@ async def prune_coin_cache() -> int:
     return len(dead)
 
 
+async def prune_hl_records(keep: int) -> int:
+    """Kapanmış HL pozisyonlarından rekor listesine girmeyenleri sil.
+
+    Açık pozisyonlara ve zirveye göre ilk `keep` kayda DOKUNULMAZ — arşivin
+    tamamı o. Kalanı (kapanmış ve rekor olmayan) tablo şişmesin diye gider.
+    """
+    keep = max(50, int(keep))
+    async with db() as conn:
+        cur = await conn.execute(
+            """DELETE FROM hl_positions
+               WHERE closed_ts IS NOT NULL
+                 AND rowid NOT IN (SELECT rowid FROM hl_positions
+                                   ORDER BY peak_notional DESC LIMIT ?)""",
+            (keep,))
+        n = cur.rowcount or 0
+    if n:
+        log.info("HL rekor arşivi budandı: %d kapanmış kayıt silindi (ilk %d korundu)",
+                 n, keep)
+    return n
+
+
 async def maintenance(cfg: Config) -> None:
     """Günlük veri emekliliği — /data volume'u sınırsız büyümesin.
 
@@ -422,6 +529,10 @@ async def maintenance(cfg: Config) -> None:
     except Exception:
         log.exception("önbellek budaması başarısız")
         n_kv = 0
+    try:
+        n_kv += await prune_hl_records(cfg.hl_records_keep)
+    except Exception:
+        log.exception("HL rekor budaması başarısız")
     if n_fills or n_met or n_al or n_kv:
         log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı, %d önbellek"
                  " anahtarı emekli (fills kalan %d)",

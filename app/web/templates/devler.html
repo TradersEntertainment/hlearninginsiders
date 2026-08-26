@@ -2,6 +2,27 @@
 {% import "_macros.html" as m %}
 {% block title %}🐘 Sessiz sular · HL Radar{% endblock %}
 {% block content %}
+{% macro bigrow(p, view) -%}
+<tr data-view="{{ view }}" data-kind="{{ p.kind }}" data-propr="1" class="ihit{{ ' dimrow' if p.closed }}"
+    data-side="{{ p.side }}"
+    data-tip="{{ p.symbol }} {{ 'LONG' if p.side == 'long' else 'SHORT' }} {{ p.notional|usd }}{% if p.peak_notional and p.peak_notional > p.notional %} · zirvesi {{ p.peak_notional|usd }}{% if p.off_peak %} (şu an %{{ '%.0f'|format(100 - p.off_peak) }}'i){% endif %}{% endif %} · giriş {{ p.entry_px|px }} · {{ '%.0f'|format(p.leverage or 0) }}x{% if p.liq_px %} · liq {{ p.liq_px|px }}{% endif %} · uPnL {{ p.upnl|usd }} · {{ p.first_seen_ts|age }} önce görüldü{% if p.closed %} · KAPANDI ({{ p.closed_ts|dt }}){% endif %} · {{ p.address }}">
+  <td class="l"><b>{% if sym_map.get(p.coin) %}<a href="/t/{{ p.symbol }}{{ k }}">{{ p.symbol }}</a>{% else %}{{ p.symbol }}{% endif %}</b>
+    {% if p.kind == 'crypto' %}<span class="dim" style="font-size:10.5px">ana dex</span>
+    {% elif not sym_map.get(p.coin) %}<span class="dim" style="font-size:10.5px" title="evrenimizde yok — {{ p.coin }}">{{ p.dex or 'hip-3' }}</span>{% endif %}</td>
+  <td class="l">{{ m.addr(p.address, k, 6) }}</td>
+  <td class="{{ p.side }}"><b>{{ 'LONG' if p.side == 'long' else 'SHORT' }}</b></td>
+  <td><b>{{ '—' if p.closed else p.notional|usd }}</b></td>
+  <td class="{{ 'warn' if p.peak_notional and p.peak_notional > (p.notional or 0) * 1.2 else 'dim' }}">{{ p.peak_notional|usd }}</td>
+  <td>{{ p.entry_px|px }}</td>
+  <td>{{ '%.0f'|format(p.leverage or 0) }}x</td>
+  <td>{{ p.liq_px|px }}</td>
+  <td class="{{ 'long' if (p.upnl or 0) > 0 else 'short' }}">{{ p.upnl|usd }}</td>
+  <td class="dim">{{ p.first_seen_ts|age }}</td>
+  <td>{% if p.closed %}<span class="dim">kapandı {{ p.closed_ts|age }}</span>
+      {% else %}<span class="long">açık</span>{% endif %}</td>
+</tr>
+{%- endmacro %}
+
 <div class="panel">
   <details class="guide">
     <summary>❓ Bu sekme ne işe yarıyor?</summary>
@@ -20,6 +41,41 @@
       {{ alert_min|usd }}+ boyutlu <u>yeni açılan</u> devler telefona düşer (Ayarlar → Sessiz su radarı).</p>
     </div>
   </details>
+</div>
+
+<div class="panel">
+  <h2>🌍 Hyperliquid'in en büyükleri <span class="dim" style="text-transform:none">·
+    derinlikten bağımsız · ana dex + tüm HIP-3 · <b>{{ big_stats.open }}</b> açık kayıt</span></h2>
+  <p class="sub">Hacim/OI filtresi <b>yok</b> — ham büyüklük sıralaması.
+  <b>Canlı</b> şu an açık olanlar; <b>Rekorlar</b> şimdiye kadar gördüğümüz en büyük hâlleri
+  (kapanmış olsa bile arşivde kalır).
+  <span class="warn">Kapsam: HL'de "bu coindeki tüm pozisyonlar" diye bir API yok — liste
+  izlediğimiz {{ big_stats.addrs }} adres arasından. Havuz en zengin hesaplarla tohumlandığı için
+  devleri büyük olasılıkla yakalar, ama "kesin en büyüğü" diye okuma.</span></p>
+  {% if big_live or big_rec %}
+  <div class="tabs" data-target="#bigtable" data-attr="view">
+    <button type="button" class="tab active" data-f="live">📌 Şu an açık</button>
+    <button type="button" class="tab" data-f="rec">🏆 Rekorlar</button>
+  </div>
+  <div class="tabs" data-target="#bigtable" data-attr="kind">
+    <button type="button" class="tab active" data-f="all">Hepsi</button>
+    <button type="button" class="tab" data-f="crypto">₿ Kripto</button>
+    <button type="button" class="tab" data-f="equity">📈 Hisse/emtia</button>
+  </div>
+  <div style="overflow-x:auto">
+  <table id="bigtable">
+    <tr><th class="l">Coin</th><th class="l">Adres</th><th>Yön</th><th>Boyut</th>
+        <th title="Gördüğümüz en büyük hâli">Zirve</th>
+        <th>Giriş</th><th>Kald.</th><th>Liq</th><th>uPnL</th>
+        <th title="Bu pozisyonu ilk gördüğümüz an">Görülme</th><th>Durum</th></tr>
+    {% for p in big_live %}{{ bigrow(p, 'live') }}{% endfor %}
+    {% for p in big_rec %}{{ bigrow(p, 'rec') }}{% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Henüz kayıt yok — derin keşif havuzu tur tur geziyor, ilk turlardan sonra
+  burası dolar. (Eşik: ayarlardaki "HL en büyükler eşiği".)</p>
+  {% endif %}
 </div>
 
 <div class="panel">

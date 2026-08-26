@@ -121,6 +121,22 @@ CREATE TABLE IF NOT EXISTS liq_watch(
   last_dist REAL, updated_ts INTEGER,
   PRIMARY KEY(address, coin)
 );
+-- TÜM Hyperliquid'in büyük pozisyonları (ana dex + HIP-3 hepsi).
+-- positions_current'a KARIŞTIRILMAZ: orası hisse skorlama/earnings hattının
+-- sahibi ve neredeyse her sorgusu tickers ile JOIN'li — BTC satırı oraya
+-- girerse sessizce davranış değişir. Süpürücü zaten ALL_DEXES ile sorguluyor,
+-- yani bu veri ek istek OLMADAN geliyordu ve atılıyordu.
+CREATE TABLE IF NOT EXISTS hl_positions(
+  coin TEXT, address TEXT, dex TEXT,
+  side TEXT, szi REAL, entry_px REAL, leverage REAL,
+  liq_px REAL, upnl REAL, notional REAL,
+  ts INTEGER, first_seen_ts INTEGER,
+  peak_notional REAL, peak_ts INTEGER,  -- gördüğümüz en büyük hâli (rekor arşivi)
+  closed_ts INTEGER,                    -- kapandıysa damga; satır SİLİNMEZ
+  PRIMARY KEY(coin, address)
+);
+CREATE INDEX IF NOT EXISTS idx_hlpos_peak ON hl_positions(peak_notional DESC);
+CREATE INDEX IF NOT EXISTS idx_hlpos_open ON hl_positions(closed_ts, notional DESC);
 """
 
 
