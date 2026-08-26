@@ -38,6 +38,21 @@ class HLClient:
                 wait = self._req_times[0] + self._rpm_window - t
             await asyncio.sleep(max(wait, 0.01))
 
+    def usage(self) -> dict:
+        """Son pencerede kaç istek yapıldı — süpürücü BOŞTAKİ bütçeyi kullansın.
+
+        Sayaç zaten `_acquire_budget` için tutuluyor; burada yalnız okunuyor.
+        Süresi dolmuş damgalar temizlenir (await yok — tek iş parçacıklı
+        döngüde bölünmez).
+        """
+        t = time.monotonic()
+        while self._req_times and t - self._req_times[0] >= self._rpm_window:
+            self._req_times.popleft()
+        used = len(self._req_times)
+        return {"rpm": used, "max": self._max_rpm,
+                "free": max(0, self._max_rpm - used),
+                "window": self._rpm_window}
+
     async def info(self, payload: dict, retries: int = 4):
         url = f"{self.base}/info"
         delay = 1.0

@@ -406,6 +406,18 @@ def health_bulk(names: list[str]) -> str:
             " görevleri yeniden başlattım, düzelince tek tek haber veririm.")
 
 
+def _every(sec: int) -> str:
+    """'30dk'da bir' / '6sa'te bir' — atım yaşının anlamı periyodu yanında."""
+    if not sec:
+        return "sürekli"
+    if sec >= 3600:
+        h = sec / 3600
+        return f"{h:g}sa'te bir"
+    if sec >= 60:
+        return f"{sec // 60}dk'da bir"
+    return f"{sec}sn'de bir"
+
+
 def health_report(snap: dict) -> str:
     checks, crashes = snap["checks"], snap["crashes"]
     n_ok = sum(1 for c in checks.values() if c["ok"])
@@ -413,7 +425,10 @@ def health_report(snap: dict) -> str:
     for name, c in sorted(checks.items(), key=lambda x: (x[1]["ok"], x[0])):
         mark = "✅" if c["ok"] else "⚠️"
         ago = f"{c['silent'] // 60}dk önce" if c["hb"] else "henüz atmadı"
-        lines.append(f"  {mark} {_task(name)} — son atım {ago}")
+        # Periyodu YANINA yaz: 30dk'da bir koşan görevin '22dk önce' atması
+        # normaldir, ama yanında '0dk' yazanlarla kıyaslanınca bozuk görünüyordu.
+        lines.append(f"  {mark} {_task(name)} — son atım {ago}"
+                     f" <i>({_every(c.get('period') or 0)})</i>")
     if crashes:
         lines.append("\n🔥 <b>Çökme geçmişi:</b>")
         for name, r in sorted(crashes.items(), key=lambda x: -(x[1].get("ts") or 0))[:5]:
@@ -811,6 +826,41 @@ def status_text(state: dict) -> str:
     return "\n".join(lines)
 
 
+def big_positions(rows: list[dict], st: dict, tiers: list) -> str:
+    """/devler — Hyperliquid'de gördüğümüz en büyük AÇIK pozisyonlar."""
+    tier_txt = " · ".join(f"{what} {amount}" for what, amount in (tiers or []))
+    lines = ["🌍 <b>HYPERLIQUID'İN EN BÜYÜKLERİ</b> — şu an açık"]
+    if not rows:
+        if not st.get("started"):
+            lines.append("\n⏳ Derin keşif henüz başlamadı (açılıştan ~45 sn sonra).")
+        elif st.get("err_msg"):
+            lines.append(f"\n⛔ Derin keşif isteği reddediliyor: <code>{esc(st['err_msg'])}</code>")
+        else:
+            lines.append(f"\n⏳ Henüz kademeyi aşan pozisyon görülmedi."
+                         f"\nHavuzun %{st.get('swept_pct', 0)}'si tarandı"
+                         f" · tam tur ~{st.get('tour_min', '?')} dk.")
+        if tier_txt:
+            lines.append(f"<i>Kayıt eşiği: {tier_txt}</i>")
+        return "\n".join(lines)
+    for p in rows[:15]:
+        arrow = "🟢" if p.get("side") == "long" else "🔴"
+        sym = p.get("symbol") or (p.get("coin") or "").split(":")[-1]
+        tag = "" if p.get("kind") == "crypto" else " 📈"
+        line = f"{arrow} <b>{esc(sym)}</b>{tag} {usd(p.get('notional'))}"
+        lev = p.get("leverage")
+        if lev:
+            line += f" ×{lev:g}"
+        if p.get("liq_px"):
+            line += f" · liq {px(p['liq_px'])}"
+        lines.append(line)
+        lines.append(f"   👤 {alink(p.get('address') or '')}")
+    lines.append(f"\n<i>{st.get('open', 0)} açık kayıt · izlediğimiz"
+                 f" {st.get('watched', '…')} adres arasından</i>")
+    if tier_txt:
+        lines.append(f"<i>Kayıt eşiği: {tier_txt}</i>")
+    return "\n".join(lines)
+
+
 def help_text() -> str:
     return (
         "🕵️ <b>HL Insider Radar</b>\n"
@@ -832,6 +882,7 @@ def help_text() -> str:
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"
         "/bildirimler — bildirim ayarları + son gönderilenler\n"
+        "/devler — Hyperliquid'in en büyük açık pozisyonları\n"
         "/saglik — sistem sağlığı (bekçi raporu: hangi görev canlı)\n"
         "/status — bot durumu\n"
         "/id — bu sohbetin chat id'si"

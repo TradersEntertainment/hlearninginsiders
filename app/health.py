@@ -77,6 +77,35 @@ def limits(cfg: Config) -> dict[str, int]:
     return lim
 
 
+def periods(cfg: Config) -> dict[str, int]:
+    """Görev → NORMAL çalışma aralığı (sn). `limits()` bunun toleranslı katıdır.
+
+    Sağlık raporunda gösterilir: 30 dakikada bir koşan anomali dedektörünün
+    "22dk önce" atması normaldir, ama yanında "0dk önce" yazan görevlerle yan
+    yana gelince bozuk görünüyordu. Sayının anlamı ancak periyodu yanında
+    yazınca okunabiliyor.
+    """
+    per = {
+        "universe": cfg.universe_refresh_sec,
+        "calendar": cfg.calendar_refresh_sec,
+        "metrics": cfg.metrics_poll_sec,
+        "due": cfg.due_check_sec,
+        "anomaly": cfg.anomaly_poll_sec,
+        "autoscan": cfg.auto_scan_interval_sec,
+        "liqwatch": cfg.liq_watch_poll_sec,
+        "tracker": cfg.track_poll_sec,
+        "lowvol": 300,
+        "bookwall": cfg.wall_poll_sec,
+        "sweeper": cfg.sweep_interval_sec,
+        "hourstats": 600,
+        "digest": 600,
+        "collector": 0,        # olay güdümlü: her WS mesajında atar
+    }
+    if cfg.telegram_bot_token:
+        per["telegram"] = 0    # olay güdümlü: uzun yoklama
+    return per
+
+
 async def silent_coins(cfg: Config) -> list[dict]:
     """Canlı akıştan uzun süredir hiç işlem GELMEYEN coin'ler.
 
@@ -220,5 +249,8 @@ async def snapshot(cfg: Config) -> dict:
         quiet = await silent_coins(cfg)
     except Exception:
         quiet = []
+    per = periods(cfg)
+    for name, c in checks.items():
+        c["period"] = int(per.get(name) or 0)
     return {"checks": checks, "crashes": crashes, "silent_coins": quiet,
             "problems": sorted(n for n, c in checks.items() if not c["ok"])}

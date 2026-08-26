@@ -245,6 +245,18 @@ class TelegramBot:
         elif cmd in ("saglik", "sağlık", "health"):
             from ..health import snapshot
             await self.send(fmt.health_report(await snapshot(self.cfg)), chat_id)
+        elif cmd in ("devler", "big", "biggest"):
+            from ..radar import bigpos
+            await self.send(
+                fmt.big_positions(await bigpos.live_big(15),
+                                  await bigpos.stats(self.cfg),
+                                  bigpos.tiers(self.cfg)), chat_id)
+        else:
+            # Eskiden bilinmeyen komut SESSİZCE yutuluyordu: yazdığın şey
+            # cevapsız kalınca bot ölü mü, komut mu yok anlaşılmıyordu.
+            await self.send(
+                f"❓ <code>/{fmt.esc(cmd)}</code> diye bir komut yok.\n\n"
+                + fmt.help_text(), chat_id)
 
     # ---------- komutlar ----------
 
@@ -281,9 +293,18 @@ class TelegramBot:
                     errnote += f": {sw['err_msg']}"
             elif sw.get("err"):
                 errnote = f" ({sw.get('ok', 0)}✓/{sw['err']}✗)"
+            pace = ""
+            if sw.get("batch"):
+                pace = (f" · parti {sw['batch']} adres"
+                        f" ({sw.get('batch_hot', 0)} sıcak/{sw.get('batch_cold', 0)} soğuk)")
+                if sw.get("rpm_max"):
+                    pct = round(sw.get("rpm", 0) / sw["rpm_max"] * 100)
+                    pace += f", istek bütçesi %{pct}"
             st["derin keşif"] = (f"sıcak {sw['hot']} adres"
                                  f" (tur ~{sw.get('tour_min', '?')} dk)"
                                  f" · soğuk kuyruk {sw.get('cold', 0)}"
+                                 + (f" (tur ~{sw['cold_min']} dk)" if sw.get("cold_min") else "")
+                                 + pace
                                  + (f", son tam tur {tr_time(int(last_full))}"
                                     if last_full else ", ilk tur sürüyor")
                                  + errnote)

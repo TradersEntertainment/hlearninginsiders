@@ -44,7 +44,8 @@ Detaylı mimari için: [PLAN.md](PLAN.md)
 | `/whale 0x…` | Adres karnesi + canlı pozisyonları |
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
 | `/watchlist` | Sicilli adresler |
-| `/status` | Bot durumu (WS, havuz boyutları, son yenilemeler) |
+| `/devler` | Hyperliquid'in en büyük açık pozisyonları |
+| `/status` | Bot durumu (WS, havuz boyutları, tarama hızı, son yenilemeler) |
 | `/bildirimler` | Bildirim ayarları + son gönderilenler |
 | `/gecmis` · `/winners` | Bilanço arşivi · en iyi biliciler |
 | `/settime SHAZ bmo` | Bilanço saatini elle düzelt |
@@ -89,8 +90,13 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
   Havuz, WS collector çalıştıkça günden güne büyür (ilk günlerde leaderboard tohumu taşır).
   Pozisyonlar iki yoldan tazelenir: (a) **anlık sonda** — canlı akışta eşik üstü
   (varsayılan $100K) bir işlem görülen adresin TÜM defteri hemen çekilir; (b) **rotasyon** —
-  süpürücü havuzu tur tur gezer (sıcak tur ~1.5 sa). Yani hiç işlem yapmayan sessiz bir
-  balinanın verisi rotasyon kadar tazedir; işlem yapan anında güncellenir.
+  süpürücü havuzu tur tur gezer. Yani hiç işlem yapmayan sessiz bir balinanın verisi
+  rotasyon kadar tazedir; işlem yapan anında güncellenir.
+- **Yetişme modu** (varsayılan açık): süpürücü sabit parti yerine diğer görevlerden
+  ARTAN istek bütçesini kullanır — ortam sakinken parti 40'tan ~190 adrese çıkar,
+  yoğunken kendiliğinden tabana iner. Sıcak tur ~2.5 saatten ~35-60 dakikaya,
+  soğuk kuyruk ~37 saatten ~6-10 saate düşer. `SWEEP_CATCHUP=0` ile kapatılır;
+  `SWEEP_RPM_HEADROOM` bütçenin ne kadarının doldurulacağını belirler.
 - "HL'nin en büyükleri" panelindeki eşikler **kademelidir** (HIP-3 $1M · kripto $20M ·
   BTC/ETH $50M): altında kalan pozisyon hiç kaydedilmez, eşik yükseltilirse eski
   kayıtlar günlük bakımda budanır. Kapsam yine adres havuzu kadardır — "kesin en

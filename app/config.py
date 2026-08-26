@@ -178,6 +178,15 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "probe_cooldown_sec": {"type": "int", "label": "Anlık sonda bekleme (sn)",
                            "group": "Tarama & performans",
                            "desc": "Aynı adres için iki sonda arası en az bu kadar süre — sürekli işlem yapan bir hesap REST'i boğmasın"},
+    "sweep_catchup": {"type": "bool", "label": "Yetişme modu (boş bütçeyi kullan)",
+                      "group": "Tarama & performans",
+                      "desc": "Derin keşif, diğer görevlerden ARTAN istek bütçesini kullanarak parti boyunu kendisi büyütsün. Kapalıysa hep sabit parti boyu taranır (havuz 17K adresken ilk tam tur saatler sürer)"},
+    "sweep_batch_max": {"type": "int", "label": "Yetişme: parti tavanı (adres)",
+                        "group": "Tarama & performans",
+                        "desc": "Yetişme modunda bir partide en fazla kaç adres taransın. Tavan olmasa tek parti diğer görevleri aç bırakabilir"},
+    "sweep_rpm_headroom": {"type": "float", "label": "Yetişme: bütçe tavanı (oran)",
+                           "group": "Tarama & performans",
+                           "desc": "Küresel istek bütçesinin en fazla bu kadarı doldurulsun (0.85 = %85, kalanı ani işler için pay). Yükseltmek turu hızlandırır ama diğer görevleri geciktirir"},
     "hl_prime_top": {"type": "int", "label": "HL en büyükler: ön tarama hesabı",
                      "group": "Tarama & performans",
                      "desc": "Açılışta (ve günde bir) leaderboard'ın ilk kaç hesabı öncelikli taransın — panel hemen ve EN BÜYÜKTEN dolsun. 0 = kapalı, normal rotasyonu bekle"},
@@ -296,6 +305,9 @@ class Config:
         self.telegram_channel_id = os.getenv("TELEGRAM_CHANNEL_ID", "")
         self.sweep_leaderboard_top = int(os.getenv("SWEEP_LEADERBOARD_TOP", "1500"))
         self.sweep_batch_size = int(os.getenv("SWEEP_BATCH_SIZE", "40"))
+        self.sweep_catchup = convert_value("bool", os.getenv("SWEEP_CATCHUP", "1"))
+        self.sweep_batch_max = int(os.getenv("SWEEP_BATCH_MAX", "250"))
+        self.sweep_rpm_headroom = float(os.getenv("SWEEP_RPM_HEADROOM", "0.85"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))
         self.notify_lowvol = True
         self.notify_wall = True

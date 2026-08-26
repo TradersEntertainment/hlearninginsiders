@@ -125,6 +125,42 @@ def _dexes(cfg: Config) -> list[str]:
     return ["", *cfg.equity_dexes]
 
 
+def _adaptive_batch(cfg: Config, client) -> tuple[int, dict]:
+    """Bu partide kaç adres taransın — BOŞTAKİ istek bütçesine göre.
+
+    Sabit parti (varsayılan 40 adres) bütçenin ancak ~%15'ini kullanıyordu;
+    havuz 2900 sıcak + 14700 soğuk adresken ilk tam tur saatler sürüyor,
+    "veride çok gerideyiz" hissi buradan geliyordu.
+
+    Yetişme modunda süpürücü artan bütçeyi alır: diğer görevler sessizken
+    hızlanır, likidasyon radarı gibi ağır bir görev koşarken KENDİLİĞİNDEN
+    yavaşlar. İstemcinin küresel bütçesi zaten istekleri sıraya koyuyor, yani
+    burada aşırıya kaçmak 429 üretmez — sadece partiyi uzatır; yine de tavan
+    koyuyoruz ki bir parti diğer görevleri aç bırakmasın.
+
+    Ölçüm penceresi (60 sn) parti aralığından (90 sn) kısa olduğu için, ölçüm
+    anındaki kullanım pratikte DİĞER görevlerin kullanımıdır — kendi önceki
+    partimiz pencereden çıkmış olur. Aralık pencereden kısaysa bu varsayım
+    bozulur, o yüzden yetişme kapanır.
+    """
+    base = max(1, int(cfg.sweep_batch_size))
+    if not getattr(cfg, "sweep_catchup", True) or client is None:
+        return base, {}
+    try:
+        u = client.usage()
+    except Exception:
+        return base, {}          # istemci bütçe bildirmiyorsa sabit partiye dön
+    if cfg.sweep_interval_sec < u.get("window", 60):
+        return base, {}
+    headroom = float(getattr(cfg, "sweep_rpm_headroom", 0.85))
+    ceiling = u["max"] * max(0.1, min(headroom, 1.0))
+    allow_rpm = max(0.0, ceiling - u["rpm"])          # bize kalan istek/dk
+    per_addr = max(1, len(_dexes(cfg)))               # adres başına istek
+    n = int(allow_rpm * (cfg.sweep_interval_sec / 60.0) / per_addr)
+    cap = max(base, int(getattr(cfg, "sweep_batch_max", 250)))
+    return max(base, min(n, cap)), {"rpm": u["rpm"], "rpm_max": u["max"]}
+
+
 def _hl_floor(cfg: Config):
     """coin -> alt sınır çözücüsü (kademeli: HIP-3 / BTC-ETH / diğer kripto)."""
     from .bigpos import threshold
@@ -386,8 +422,11 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     # sweep_batch_size ile ÖLÇEKLENİR (30'da sabitlenmez — batch>30 ölü koldu);
     # soğuğa en fazla COLD_PER_BATCH ve bütçenin yarısı ayrılır (bs≤30'da soğuk
     # havuz artık sessizce ölmez); bir havuz tükenince artan slot diğerine geçer.
-    bs = max(1, int(cfg.sweep_batch_size))
-    n_cold = min(COLD_PER_BATCH, len(cold), bs // 2)
+    bs, budget = _adaptive_batch(cfg, client)
+    # Soğuk kuyruk da partiyle ÖLÇEKLENİR: COLD_PER_BATCH tabanda kalır ama
+    # yetişme modunda partinin üçte birine kadar çıkar — 14.7K adreslik uzun
+    # kuyruk sabit 10'ar 10'ar gezilirken günler sürüyordu.
+    n_cold = min(max(COLD_PER_BATCH, bs // 3), len(cold), bs // 2)
     n_hot = min(len(hot), bs - n_cold)
     if n_hot < bs - n_cold:            # sıcak havuz tükendi → artan soğuğa
         n_cold = min(len(cold), bs - n_hot)
@@ -452,12 +491,15 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
         log.info("derin keşif SICAK tur bitti: %d adres (soğuk kuyruk %d)",
                  len(hot), len(cold))
     tour_min = round(len(hot) / max(n_hot, 1) * cfg.sweep_interval_sec / 60)
+    cold_min = round(len(cold) / max(n_cold, 1) * cfg.sweep_interval_sec / 60)
     await kv_set("sweep_stats", {"hot": len(hot), "cold": len(cold),
-                                 "tour_min": tour_min, "cursor": hcur,
+                                 "tour_min": tour_min, "cold_min": cold_min,
+                                 "cursor": hcur,
+                                 "batch": bs, "batch_hot": n_hot, "batch_cold": n_cold,
                                  "batch_positions": n_pos,
                                  "ok": n_ok, "err": n_err, "hl_err": n_hlerr,
                                  "err_msg": last_err[0] if last_err else "",
-                                 "ts": ts})
+                                 **budget, "ts": ts})
     return {"hot": len(hot), "cold": len(cold), "positions": n_pos,
             "ok": n_ok, "err": n_err}
 
