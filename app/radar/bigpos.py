@@ -1,8 +1,8 @@
 """Hyperliquid'in en büyük pozisyonları — canlı tablo + rekor arşivi.
 
-Kaynak `hl_positions`: süpürücü zaten her adresi `ALL_DEXES` ile sorguluyordu,
-ana dex (BTC/ETH…) pozisyonları elimize gelip atılıyordu; artık saklanıyor.
-Ek API isteği yok.
+Kaynak `hl_positions`: süpürücü her adresi zaten tüm dex'lerde sorguluyor
+(ana dex + HIP-3), ana dex pozisyonları elimize gelip atılıyordu; artık
+saklanıyor. Aynı yanıt, ek ayrıştırma — bu tablo için ek istek yok.
 
 DÜRÜSTLÜK SINIRI: HL'de "şu coindeki tüm pozisyonlar" endpoint'i yok. Kapsam
 adres havuzu kadardır — havuz leaderboard'ı accountValue'ya göre tohumladığı
@@ -130,6 +130,8 @@ async def stats(cfg=None) -> dict:
         "tour_min": int(sw.get("tour_min") or 0),
         "last_sweep": sw.get("ts"),
         "hl_err": int(sw.get("hl_err") or 0),
+        # partinin tamamı patladıysa NEDENİ — teşhis log'a gömülü kalmasın
+        "err_msg": (sw.get("err_msg") or "") if (sw.get("err") and not sw.get("ok")) else "",
         "started": bool(sw),
         # eşik artık tek sayı değil: coin türüne göre kademeli
         "tiers": tiers(cfg) if cfg is not None else [],

@@ -107,12 +107,13 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
         from ..health import beat
         await beat("liqwatch")  # ilerleme nabzı — uzun cycle'da bile canlı görün
         try:
-            resp = await client.clearinghouse(addr, "ALL_DEXES")
+            # ESKİDEN: ALL_DEXES dene, patlarsa dex="" ile devam. ALL_DEXES HER
+            # ZAMAN patladığı için likidasyon radarı fiilen YALNIZ ana dex'i
+            # görüyordu — asıl işi olan HIP-3 hisse pozisyonlarını hiç değil.
+            resp = await client.clearinghouse_all(addr, ["", *cfg.equity_dexes])
         except Exception:
-            try:
-                resp = await client.clearinghouse(addr, "")
-            except Exception:
-                return  # API hatası — 'kapandı' SAYMA (ok_addrs'e girmez)
+            # API hatası ya da eksik dex — 'kapandı' SAYMA (ok_addrs'e girmez)
+            return
         ok_addrs.add(addr)
         for state in _iter_states(resp):
             for ap in state.get("assetPositions") or []:

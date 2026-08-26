@@ -276,7 +276,9 @@ class TelegramBot:
             last_full = await kv_get("sweep_last_full")
             errnote = ""
             if sw.get("err") and not sw.get("ok"):
-                errnote = " ⚠️ son parti tamamen hata (ALL_DEXES reddi?)"
+                errnote = " ⚠️ son parti TAMAMEN hata"
+                if sw.get("err_msg"):
+                    errnote += f": {sw['err_msg']}"
             elif sw.get("err"):
                 errnote = f" ({sw.get('ok', 0)}✓/{sw['err']}✗)"
             st["derin keşif"] = (f"sıcak {sw['hot']} adres"

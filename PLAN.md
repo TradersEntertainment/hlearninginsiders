@@ -40,7 +40,7 @@ Leaderboard + Watchlist ──► aday adresler ──────────�
 | `{"type":"perpDexs"}` | Tüm HIP-3 builder dex'leri | Hisse perp dex'lerini otomatik keşif (bugün `xyz` = TradeXYZ; yenisi çıkarsa otomatik yakalarız) |
 | `{"type":"meta","dex":"xyz"}` | Dex'teki coin listesi | HL hisse evreni: `xyz:SNDK`, `xyz:NVDA`… (HIP-3 coin adları `dex:TICKER` formatında) |
 | `{"type":"metaAndAssetCtxs","dex":"xyz"}` | Mark price, funding, **open interest**, günlük hacim | OI/funding/hacim anomali tespiti + rapor başlığı |
-| `{"type":"clearinghouseState","user":"0x…","dex":"xyz"}` | Adresin pozisyonları: size, entry, leverage, **likidasyon fiyatı**, uPnL, margin | Balina taraması. `"dex":"ALL_DEXES"` ile tek istekte tüm dex'ler |
+| `{"type":"clearinghouseState","user":"0x…","dex":"xyz"}` | Adresin pozisyonları: size, entry, leverage, **likidasyon fiyatı**, uPnL, margin | Balina taraması. Her dex AYRI sorgulanır — `"ALL_DEXES"` diye bir kestirme yok, HL reddediyor |
 | `{"type":"userFillsByTime","user":"0x…"}` | Adresin fill geçmişi | Pozisyon **ne zaman** açıldı (zamanlama skoru) |
 | `{"type":"userNonFundingLedgerUpdates","user":"0x…"}` | Depozit/transfer geçmişi | **Taze cüzdan** tespiti (ilk depozit ne zaman, nereden) |
 | `{"type":"recentTrades","coin":"xyz:SNDK"}` | Son trade'ler | WS kopması sonrası boşluk doldurma |

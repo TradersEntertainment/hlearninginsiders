@@ -95,6 +95,9 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
   BTC/ETH $50M): altında kalan pozisyon hiç kaydedilmez, eşik yükseltilirse eski
   kayıtlar günlük bakımda budanır. Kapsam yine adres havuzu kadardır — "kesin en
   büyüğü" değil, "gördüklerimizin en büyüğü".
+- Bir adresin defteri her dex için AYRI sorgulanır (ana dex + her HIP-3 dex'i).
+  Tek istekte hepsini veren bir kestirme yok; dex'lerden biri hata verirse o adres
+  o tur atlanır — eksik yanıtla "pozisyonu kapatmış" saymak kayıt silerdi.
 - Leaderboard endpoint'i resmi değildir; düşerse bot fills+watchlist ile çalışmaya devam eder.
 - Yahoo takvimi resmi API değildir; nadiren datacenter IP engeli görülebilir → Finnhub key'i eklemek sağlamlaştırır.
 - Fiyat grafiği HL **perp** mumlarını çizer (balinaların gerçekten işlem gördüğü fiyat);

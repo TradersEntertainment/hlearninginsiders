@@ -87,6 +87,32 @@ class HLClient:
             p["dex"] = dex
         return await self.info(p)
 
+    async def clearinghouse_all(self, user: str, dexes: list[str]) -> dict:
+        """Adresin BÜTÜN dex'lerdeki defteri — {dex: state} sözlüğü.
+
+        `dex="ALL_DEXES"` diye bir kestirme YOK: canlıda partinin %100'ü hata
+        dönüyordu (HL o değeri kabul etmiyor), bu yüzden derin keşif hiçbir şey
+        yazamıyor ve "HL'nin en büyükleri" paneli hiç dolmuyordu. Artık her dex
+        tek tek ve GERÇEK adıyla sorgulanıyor — earnings tarayıcısının yıllardır
+        sorunsuz kullandığı yol.
+
+        Dex'lerden HERHANGİ biri patlarsa HATA YÜKSELİR — sessizce boş/None
+        dönmez. Eksik yanıtla devam etmek "adres artık o pozisyonu tutmuyor"
+        demektir ve kayıtları SİLERDİ; eksik veri, veri olmamasından daha
+        tehlikelidir. Çağıranların hepsi zaten hatayı yakalayıp o adresi bu tur
+        atlıyor.
+        """
+        out: dict[str, dict] = {}
+        for dex in dexes:
+            resp = await self.clearinghouse(user, dex)
+            if not isinstance(resp, dict):
+                raise RuntimeError(
+                    f"clearinghouseState(dex={dex!r}) beklenmeyen yanıt: {type(resp).__name__}")
+            out[dex or "main"] = resp
+        if not out:
+            raise RuntimeError("clearinghouse_all: sorgulanacak dex yok")
+        return out
+
     async def user_fills_by_time(self, user: str, start_ms: int, end_ms: int | None = None):
         p = {"type": "userFillsByTime", "user": user, "startTime": start_ms}
         if end_ms:

@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS liq_watch(
 -- TÜM Hyperliquid'in büyük pozisyonları (ana dex + HIP-3 hepsi).
 -- positions_current'a KARIŞTIRILMAZ: orası hisse skorlama/earnings hattının
 -- sahibi ve neredeyse her sorgusu tickers ile JOIN'li — BTC satırı oraya
--- girerse sessizce davranış değişir. Süpürücü zaten ALL_DEXES ile sorguluyor,
+-- girerse sessizce davranış değişir. Süpürücü zaten tüm dex'leri sorguluyor,
 -- yani bu veri ek istek OLMADAN geliyordu ve atılıyordu.
 CREATE TABLE IF NOT EXISTS hl_positions(
   coin TEXT, address TEXT, dex TEXT,

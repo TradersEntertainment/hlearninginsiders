@@ -55,6 +55,11 @@
   <span class="warn">Kapsam: HL'de "bu coindeki tüm pozisyonlar" diye bir API yok — liste
   izlediğimiz {{ big_stats.watched or '…' }} adres arasından. Havuz en zengin hesaplarla
   tohumlandığı için devleri büyük olasılıkla yakalar, ama "kesin en büyüğü" diye okuma.</span></p>
+  {% if big_stats.err_msg %}
+  <p class="sub short"><b>⛔ Derin keşif isteği reddediliyor</b> — son partinin tamamı
+  hata verdi, bu yüzden tablo dolmuyor. HL'nin döndüğü hata:
+  <code>{{ big_stats.err_msg }}</code></p>
+  {% endif %}
   {% if big_stats.hl_err %}
   <p class="sub short"><b>⚠️ Son turda {{ big_stats.hl_err }} adreste kayıt yazılamadı</b>
   — liste eksik olabilir. Sunucu günlüğünde "hl_positions yazılamadı" satırlarına bak.</p>

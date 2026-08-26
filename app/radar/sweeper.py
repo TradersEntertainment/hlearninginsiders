@@ -7,7 +7,7 @@ ve o günden beri işlem yapmamış balinalar WS akışına hiç düşmez — PL
 
 İki sürekli akışla kapatılır:
 1) Adres süpürmesi: sıcak havuz (watchlist + pozisyon sahipleri + leaderboard)
-   dönüşümlü olarak ALL_DEXES ile sorgulanır; TÜM hisse pozisyonları
+   dönüşümlü olarak her dex için sorgulanır; TÜM hisse pozisyonları
    positions_current'a işlenir, kapananlar silinir. Sıcak tam tur ~75-80 dk;
    soğuk kuyruk (yalnız fill'de görülen adresler) günler içinde döner.
 2) recentTrades hasadı: WS kopukluklarının kaçırdığı işlemler REST'ten
@@ -75,7 +75,7 @@ async def build_pools(cfg: Config, client: HLClient) -> tuple[list[str], list[st
 def _parse_equity_positions(resp, coin_set: set[str],
                             sym_map: dict[str, str],
                             min_ntl: float) -> tuple[dict[str, dict], bool]:
-    """ALL_DEXES yanıtından hisse pozisyonları: (coin -> pozisyon, yanıt geçerli mi).
+    """Çok-dex yanıtından hisse pozisyonları: (coin -> pozisyon, yanıt geçerli mi).
     Yanıtta hiç state yoksa 'geçersiz' döner — bozuk yanıtla kayıt SİLİNMEZ."""
     out: dict[str, dict] = {}
     exact: set[str] = set()  # doğrudan coin_set eşleşmesiyle yazılanlar
@@ -120,6 +120,11 @@ def _parse_equity_positions(resp, coin_set: set[str],
     return out, bool(states)
 
 
+def _dexes(cfg: Config) -> list[str]:
+    """Sorgulanacak dex'ler: ana dex ("") + tüm HIP-3 hisse dex'leri."""
+    return ["", *cfg.equity_dexes]
+
+
 def _hl_floor(cfg: Config):
     """coin -> alt sınır çözücüsü (kademeli: HIP-3 / BTC-ETH / diğer kripto)."""
     from .bigpos import threshold
@@ -127,7 +132,7 @@ def _hl_floor(cfg: Config):
 
 
 def _parse_all_positions(resp, min_ntl) -> dict[str, dict]:
-    """ALL_DEXES yanıtından TÜM pozisyonlar — hisse filtresi YOK.
+    """Çok-dex yanıtından TÜM pozisyonlar — hisse filtresi YOK.
 
     `_parse_equity_positions` hisse evreninde olmayan her coin'i eliyor; yani
     BTC/ETH gibi ana dex pozisyonları her taramada elimize gelip ÇÖPE gidiyordu.
@@ -261,6 +266,7 @@ def _slice(pool: list[str], cursor: int, count: int) -> tuple[list[str], int, bo
 
 
 PRIME_TTL = 24 * 3600      # leaderboard önbelleğiyle aynı ritim
+PRIME_FAIL_TTL = 900       # geçiş tamamen patlarsa bu kadar bekle (fırtına freni)
 PRIME_CONC = 6             # eşzamanlı istek (normal süpürme bütçesini boğmasın)
 PROBE_CONC = 4             # anlık sonda: aynı anda en fazla bu kadar istek
 
@@ -280,8 +286,8 @@ async def probe_address(cfg: Config, client: HLClient, addr: str) -> int:
 
     Süpürücü havuzu sırayla geziyor; büyük bir işlem gördüğümüz adrese sıra
     saatler sonra gelebiliyordu. Oysa o işlem adresi bize zaten bedava verdi:
-    tek ALL_DEXES çağrısı hem hisse pozisyonlarını (positions_current) hem de
-    tüm HL pozisyonlarını (hl_positions) anında tazeler.
+    aynı yanıt hem hisse pozisyonlarını (positions_current) hem de tüm HL
+    pozisyonlarını (hl_positions) anında tazeler.
 
     Süpürmeyle AYNI yanıt tipini ve aynı yazma fonksiyonlarını kullanır, yani
     'adresin artık tutmadığını sil/kapat' otoritesi de aynı — ayrı bir kod
@@ -295,7 +301,7 @@ async def probe_address(cfg: Config, client: HLClient, addr: str) -> int:
         return 0                      # evren henüz keşfedilmedi
     sym_map = {(r["symbol"] or "").upper(): r["coin"] for r in rows}
     async with _sem():
-        resp = await client.clearinghouse(addr, "ALL_DEXES")
+        resp = await client.clearinghouse_all(addr, _dexes(cfg))
     positions, valid = _parse_equity_positions(resp, coin_set, sym_map,
                                                cfg.min_position_notional)
     if not valid:
@@ -321,32 +327,44 @@ async def prime_hl(cfg: Config, client: HLClient) -> int:
         return 0
     if now() - int(await kv_get("hl_prime_ts") or 0) < PRIME_TTL:
         return 0
+    # Tamamen başarısız geçişten sonra HEMEN tekrar deneme. API kalıcı hata
+    # veriyorsa 120 adres × 5 deneme × 20 sn zaman aşımı süpürme döngüsünü
+    # dakikalarca kilitliyor, nöbetçi de "derin keşif ölü" sanıyordu.
+    if now() - int(await kv_get("hl_prime_fail_ts") or 0) < PRIME_FAIL_TTL:
+        return 0
     addrs = await _leaderboard_addrs(client, top)
     if not addrs:
         return 0                       # leaderboard düştü → damgalama, sonra dene
     ts = now()
     sem = asyncio.Semaphore(PRIME_CONC)
     n_ok = n_pos = 0
+    fail_msg: list[str] = []
 
     async def one(addr: str):
         nonlocal n_ok, n_pos
+        from ..health import beat
+        await beat("sweeper")            # nabız ÖNCE: uzun geçiş ölü görünmesin
         async with sem:
             try:
-                resp = await client.clearinghouse(addr, "ALL_DEXES")
+                resp = await client.clearinghouse_all(addr, _dexes(cfg))
                 pos = _parse_all_positions(resp, _hl_floor(cfg))
                 await _upsert_hl(addr, pos, ts, held=set(_parse_all_positions(resp, 0)))
             except Exception as e:
+                if not fail_msg:
+                    fail_msg.append(f"{type(e).__name__}: {e}"[:200])
                 log.debug("prime %s: %s", addr, e)   # tek adres tüm geçişi düşürmesin
                 return
             n_ok += 1
             n_pos += len(pos)
-        from ..health import beat
-        await beat("sweeper")
 
     await asyncio.gather(*(one(a) for a in addrs))
     if not n_ok:
-        return 0                       # hepsi hata → damgalama, bir sonraki turda dene
+        await kv_set("hl_prime_fail_ts", now())
+        log.warning("HL ön taraması tamamen başarısız (%d hesap). İlk hata: %s",
+                    len(addrs), fail_msg[0] if fail_msg else "?")
+        return 0                       # başarı damgası YOK — süre dolunca yeniden dene
     await kv_set("hl_prime_ts", ts)
+    await kv_set("hl_prime_fail_ts", 0)
     log.info("HL en büyükler ön taraması: %d/%d hesap, %d dev pozisyon",
              n_ok, len(addrs), n_pos)
     return n_pos
@@ -381,16 +399,21 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     n_ok = 0
     n_err = 0
     n_hlerr = 0
+    last_err: list[str] = []      # ilk hata metni — panelde/Telegram'da görünsün
 
     async def one(addr: str):
         nonlocal n_pos, n_ok, n_err, n_hlerr
         from ..health import beat
         await beat("sweeper")  # ilerleme nabzı
         try:
-            resp = await client.clearinghouse(addr, "ALL_DEXES")
+            resp = await client.clearinghouse_all(addr, _dexes(cfg))
         except Exception as e:
             n_err += 1
-            log.debug("sweep %s: %s", addr, e)
+            # İlk hatayı GÖRÜNÜR yap: debug seviyesinde kaldığı için canlıda
+            # "parti tamamen hata" yazıyor ama NEDENİ hiçbir yerde okunmuyordu.
+            if not last_err:
+                last_err.append(f"{type(e).__name__}: {e}"[:200])
+                log.warning("derin keşif isteği başarısız (%s…): %s", addr[:10], e)
             return
         positions, valid = _parse_equity_positions(resp, coin_set, sym_map,
                                                    cfg.min_position_notional)
@@ -415,14 +438,15 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
 
     await kv_set("sweep_cursor_hot", hcur)
     await kv_set("sweep_cursor_cold", ccur)
-    # Parti tamamen başarısızsa (ALL_DEXES reddi vb.) tur muhasebesini damgalama:
+    # Parti tamamen başarısızsa (API reddi vb.) tur muhasebesini damgalama:
     # eskiden %100 hatada bile 'son tam tur şimdi' yazılıp tablo donmuşken
     # 'derin keşif çalışıyor' sanılıyordu (PLTR $1.26M yanılgısının dönüşü).
     total_calls = n_ok + n_err
     all_failed = total_calls > 0 and n_ok == 0
     if all_failed:
         log.warning("derin keşif partisi tamamen başarısız (%d/%d hata) —"
-                    " ALL_DEXES reddi olabilir, tur damgalanmadı", n_err, total_calls)
+                    " tur damgalanmadı. İlk hata: %s",
+                    n_err, total_calls, last_err[0] if last_err else "?")
     elif hot_done:
         await kv_set("sweep_last_full", ts)
         log.info("derin keşif SICAK tur bitti: %d adres (soğuk kuyruk %d)",
@@ -432,6 +456,7 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
                                  "tour_min": tour_min, "cursor": hcur,
                                  "batch_positions": n_pos,
                                  "ok": n_ok, "err": n_err, "hl_err": n_hlerr,
+                                 "err_msg": last_err[0] if last_err else "",
                                  "ts": ts})
     return {"hot": len(hot), "cold": len(cold), "positions": n_pos,
             "ok": n_ok, "err": n_err}
@@ -722,6 +747,8 @@ async def loop(cfg: Config, client: HLClient) -> None:
              cfg.sweep_interval_sec)
     while True:
         try:
+            from ..health import beat
+            await beat("sweeper")   # tur başı nabzı ön taramadan ÖNCE
             # Ayrı try: ön tarama patlarsa normal süpürme yine koşsun
             await prime_hl(cfg, client)
         except asyncio.CancelledError:
