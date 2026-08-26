@@ -366,6 +366,11 @@ app.include_router(router)
 async def health_endpoint():
     coll = getattr(app.state, "collector", None)
     out = {"ok": True, "ws_connected": bool(coll and coll.connected), "state": STATE}
+    if coll:
+        # anlık sonda sayaçları: "büyük işlem → hemen profiline bak" çalışıyor mu
+        out["probes"] = {"ok": coll.probes_ok, "err": coll.probes_err,
+                         "skipped": coll.probes_skipped,
+                         "inflight": len(coll._probing)}
     try:
         from .db import kv_get
         out["sweep"] = await kv_get("sweep_stats") or {}

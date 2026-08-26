@@ -172,6 +172,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "hl_big_min_usd": {"type": "float", "label": "HL en büyükler eşiği ($)",
                        "group": "Tarama & performans",
                        "desc": "Tüm Hyperliquid pozisyonları bu boyutun üstündeyse kaydedilir (/devler'deki 'Hyperliquid'in en büyükleri' paneli). Düşürürsen tablo hızlı büyür"},
+    "probe_min_notional": {"type": "float", "label": "Anlık sonda eşiği ($)",
+                           "group": "Tarama & performans",
+                           "desc": "Canlı akışta bu boyutu aşan işlem görülünce o adresin TÜM defteri hemen çekilir (süpürücünün sırasını beklemeden). 0 = kapalı"},
+    "probe_cooldown_sec": {"type": "int", "label": "Anlık sonda bekleme (sn)",
+                           "group": "Tarama & performans",
+                           "desc": "Aynı adres için iki sonda arası en az bu kadar süre — sürekli işlem yapan bir hesap REST'i boğmasın"},
     "hl_prime_top": {"type": "int", "label": "HL en büyükler: ön tarama hesabı",
                      "group": "Tarama & performans",
                      "desc": "Açılışta (ve günde bir) leaderboard'ın ilk kaç hesabı öncelikli taransın — panel hemen ve EN BÜYÜKTEN dolsun. 0 = kapalı, normal rotasyonu bekle"},
@@ -267,6 +273,8 @@ class Config:
         self.hl_big_min_usd = float(os.getenv("HL_BIG_MIN_USD", "1000000"))
         self.hl_records_keep = int(os.getenv("HL_RECORDS_KEEP", "500"))
         self.hl_prime_top = int(os.getenv("HL_PRIME_TOP", "120"))
+        self.probe_min_notional = float(os.getenv("PROBE_MIN_NOTIONAL", "100000"))
+        self.probe_cooldown_sec = int(os.getenv("PROBE_COOLDOWN_SEC", "600"))
         self.show_tradingview = True
         # "Saati gelenler" yayın kanalı — kişisel chat'ten AYRI (bot kanala admin olmalı)
         self.telegram_channel_id = os.getenv("TELEGRAM_CHANNEL_ID", "")

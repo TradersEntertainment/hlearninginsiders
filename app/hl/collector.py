@@ -19,6 +19,7 @@ log = logging.getLogger("hl.collector")
 
 WHALE_FILL_COOLDOWN = 1800  # aynı adres+coin için 30 dk'da bir alert
 WS_RECEIVE_TIMEOUT = 90     # 90 sn hiç mesaj gelmezse (pong dahil) bağlantı ölü say
+MAX_INFLIGHT_PROBES = 24    # aynı anda bekleyen sonda üst sınırı (fırtına freni)
 
 
 class Collector:
@@ -34,6 +35,10 @@ class Collector:
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
         self.last_trade: dict[str, int] = {}  # coin -> son işlem ts (zombi nöbetçisi)
         self.fills_seen = 0
+        self._probing: set[str] = set()   # sondası uçuşta olan adresler
+        self.probes_ok = 0
+        self.probes_err = 0
+        self.probes_skipped = 0
 
     async def _current_coins(self) -> list[str]:
         async with db() as conn:
@@ -243,6 +248,50 @@ class Collector:
             n_parts = len(set(a["tids"]))
             await self._maybe_alert(coin, addr, side, avg_px, a["ntl"], is_watch,
                                     taker_ratio=ratio, n_parts=n_parts)
+
+        # Büyük işlem gördüğümüz adresin TÜM defterine HEMEN bak. Süpürücü
+        # havuzu sırayla geziyor; bu adrese sıra saatler sonra gelebilirdi.
+        await self._kick_probes(agg)
+
+    async def _kick_probes(self, agg: dict) -> None:
+        """Eşiği aşan adresler için anlık profil sondası (arka planda).
+
+        WS döngüsünü ASLA bloklamaz: istekler ayrı görevde koşar. Aynı adres
+        için hem uçuşta-tekilleştirme hem kalıcı cooldown var; toplam uçuş
+        sayısı da sınırlı (bir işlem fırtınası REST'i boğmasın).
+        """
+        cfg, client = self.cfg, self.client
+        if not client or float(getattr(cfg, "probe_min_notional", 0)) <= 0:
+            return
+        thr = float(cfg.probe_min_notional)
+        # aynı adres birden çok coin'de işlem yaptıysa TOPLAMINA bak
+        by_addr: dict[str, float] = {}
+        for (coin, addr, side), a in agg.items():
+            by_addr[addr] = by_addr.get(addr, 0.0) + a["ntl"]
+        for addr, ntl in sorted(by_addr.items(), key=lambda kv: -kv[1]):
+            if ntl < thr or addr in self._probing:
+                continue
+            if len(self._probing) >= MAX_INFLIGHT_PROBES:
+                self.probes_skipped += 1
+                continue
+            if await alert_recent("probe", addr, int(cfg.probe_cooldown_sec)):
+                continue
+            await alert_log("probe", addr)
+            self._probing.add(addr)
+            asyncio.create_task(self._probe(addr, ntl))
+
+    async def _probe(self, addr: str, ntl: float) -> None:
+        from ..radar.sweeper import probe_address
+        try:
+            n = await probe_address(self.cfg, self.client, addr)
+            self.probes_ok += 1
+            log.info("sonda: %s..%s ($%.0fK işlem) → %d hisse pozisyonu tazelendi",
+                     addr[:8], addr[-4:], ntl / 1000, n)
+        except Exception as e:
+            self.probes_err += 1
+            log.debug("sonda başarısız %s: %s", addr, e)
+        finally:
+            self._probing.discard(addr)
 
     async def _position_notional(self, addr, coin, dex):
         """Adresin bu coindeki güncel pozisyon büyüklüğü ($). Client yoksa None."""

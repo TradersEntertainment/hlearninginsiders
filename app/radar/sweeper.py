@@ -250,6 +250,49 @@ def _slice(pool: list[str], cursor: int, count: int) -> tuple[list[str], int, bo
 
 PRIME_TTL = 24 * 3600      # leaderboard önbelleğiyle aynı ritim
 PRIME_CONC = 6             # eşzamanlı istek (normal süpürme bütçesini boğmasın)
+PROBE_CONC = 4             # anlık sonda: aynı anda en fazla bu kadar istek
+
+_probe_sem: asyncio.Semaphore | None = None
+
+
+def _sem() -> asyncio.Semaphore:
+    # Modül seviyesinde kurulursa import anındaki (yanlış) event loop'a bağlanır
+    global _probe_sem
+    if _probe_sem is None:
+        _probe_sem = asyncio.Semaphore(PROBE_CONC)
+    return _probe_sem
+
+
+async def probe_address(cfg: Config, client: HLClient, addr: str) -> int:
+    """Tek adresin TÜM defterini HEMEN çek ve yaz (canlı işlem tetiklemesi).
+
+    Süpürücü havuzu sırayla geziyor; büyük bir işlem gördüğümüz adrese sıra
+    saatler sonra gelebiliyordu. Oysa o işlem adresi bize zaten bedava verdi:
+    tek ALL_DEXES çağrısı hem hisse pozisyonlarını (positions_current) hem de
+    tüm HL pozisyonlarını (hl_positions) anında tazeler.
+
+    Süpürmeyle AYNI yanıt tipini ve aynı yazma fonksiyonlarını kullanır, yani
+    'adresin artık tutmadığını sil/kapat' otoritesi de aynı — ayrı bir kod
+    yolu değil. Dönen değer: yazılan hisse pozisyonu sayısı.
+    """
+    async with db() as conn:
+        cur = await conn.execute("SELECT coin, symbol FROM tickers")
+        rows = [dict(r) for r in await cur.fetchall()]
+    coin_set = {r["coin"] for r in rows}
+    if not coin_set:
+        return 0                      # evren henüz keşfedilmedi
+    sym_map = {(r["symbol"] or "").upper(): r["coin"] for r in rows}
+    async with _sem():
+        resp = await client.clearinghouse(addr, "ALL_DEXES")
+    positions, valid = _parse_equity_positions(resp, coin_set, sym_map,
+                                               cfg.min_position_notional)
+    if not valid:
+        return 0                      # bozuk yanıt — mevcut kayıtlara dokunma
+    ts = now()
+    await _upsert_address(addr, positions, ts)
+    await _upsert_hl(addr, _parse_all_positions(resp, cfg.hl_big_min_usd), ts,
+                     held=set(_parse_all_positions(resp, 0)))
+    return len(positions)
 
 
 async def prime_hl(cfg: Config, client: HLClient) -> int:
