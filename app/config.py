@@ -172,6 +172,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "hl_big_min_usd": {"type": "float", "label": "HL en büyükler eşiği ($)",
                        "group": "Tarama & performans",
                        "desc": "Tüm Hyperliquid pozisyonları bu boyutun üstündeyse kaydedilir (/devler'deki 'Hyperliquid'in en büyükleri' paneli). Düşürürsen tablo hızlı büyür"},
+    "hl_prime_top": {"type": "int", "label": "HL en büyükler: ön tarama hesabı",
+                     "group": "Tarama & performans",
+                     "desc": "Açılışta (ve günde bir) leaderboard'ın ilk kaç hesabı öncelikli taransın — panel hemen ve EN BÜYÜKTEN dolsun. 0 = kapalı, normal rotasyonu bekle"},
     "hl_records_keep": {"type": "int", "label": "HL rekor arşivi (satır)",
                         "group": "Tarama & performans",
                         "desc": "Kapanmış pozisyonlardan kaç tanesi 'gördüğümüz en büyükler' arşivinde tutulsun (zirveye göre ilk N)"},
@@ -263,6 +266,7 @@ class Config:
         self.pricechart_days = int(os.getenv("PRICECHART_DAYS", "30"))
         self.hl_big_min_usd = float(os.getenv("HL_BIG_MIN_USD", "1000000"))
         self.hl_records_keep = int(os.getenv("HL_RECORDS_KEEP", "500"))
+        self.hl_prime_top = int(os.getenv("HL_PRIME_TOP", "120"))
         self.show_tradingview = True
         # "Saati gelenler" yayın kanalı — kişisel chat'ten AYRI (bot kanala admin olmalı)
         self.telegram_channel_id = os.getenv("TELEGRAM_CHANNEL_ID", "")

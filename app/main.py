@@ -367,6 +367,11 @@ async def health_endpoint():
     coll = getattr(app.state, "collector", None)
     out = {"ok": True, "ws_connected": bool(coll and coll.connected), "state": STATE}
     try:
+        from .db import kv_get
+        out["sweep"] = await kv_get("sweep_stats") or {}
+    except Exception:
+        pass
+    try:
         snap = await health.snapshot(app.state.cfg)
         out["tasks"] = {n: {"ok": c["ok"], "silent_sec": c["silent"]}
                         for n, c in snap["checks"].items()}

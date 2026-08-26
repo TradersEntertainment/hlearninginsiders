@@ -12,7 +12,7 @@ için (en zengin hesaplar) gerçek devleri büyük olasılıkla yakalar, ama
 import logging
 
 from ..assets import kind as asset_kind
-from ..db import db
+from ..db import db, kv_get
 
 log = logging.getLogger("radar.bigpos")
 
@@ -71,13 +71,32 @@ async def record_big(limit: int = 150, min_ntl: float = 0) -> list[dict]:
     return _decorate(rows, await _sym_map())
 
 
-async def stats() -> dict:
-    """Panel başlığı için: kaç adres izleniyor, kaç kayıt var, en son ne zaman."""
+async def stats(threshold: float = 0) -> dict:
+    """Panel başlığı + boş durum teşhisi.
+
+    'İzlediğimiz adres' sayısı süpürme HAVUZUNDAN gelir (sweep_stats), tablodan
+    DEĞİL: eskiden COUNT(DISTINCT address) FROM hl_positions kullanılıyordu, o
+    da "≥eşik pozisyonu OLAN adres" demek — tablo boşken 0 yazıyor, doluyken de
+    gerçek havuzun (1500+) küçük bir alt kümesini gösteriyordu.
+    """
     async with db() as conn:
         cur = await conn.execute(
             "SELECT COUNT(*) n, COUNT(DISTINCT address) a,"
             " SUM(CASE WHEN closed_ts IS NULL THEN 1 ELSE 0 END) open_n,"
             " MAX(ts) last_ts FROM hl_positions")
         r = await cur.fetchone()
-    return {"rows": r["n"] or 0, "addrs": r["a"] or 0,
-            "open": r["open_n"] or 0, "last_ts": r["last_ts"]}
+    sw = await kv_get("sweep_stats") or {}
+    hot = int(sw.get("hot") or 0)
+    cursor = int(sw.get("cursor") or 0)
+    return {
+        "rows": r["n"] or 0, "hit_addrs": r["a"] or 0,
+        "open": r["open_n"] or 0, "last_ts": r["last_ts"],
+        # süpürme durumu — "neden boş?" sorusunun cevabı
+        "watched": hot + int(sw.get("cold") or 0),
+        "swept_pct": round(cursor / hot * 100) if hot else 0,
+        "tour_min": int(sw.get("tour_min") or 0),
+        "last_sweep": sw.get("ts"),
+        "hl_err": int(sw.get("hl_err") or 0),
+        "started": bool(sw),
+        "threshold": threshold,
+    }

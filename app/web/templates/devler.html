@@ -50,8 +50,12 @@
   <b>Canlı</b> şu an açık olanlar; <b>Rekorlar</b> şimdiye kadar gördüğümüz en büyük hâlleri
   (kapanmış olsa bile arşivde kalır).
   <span class="warn">Kapsam: HL'de "bu coindeki tüm pozisyonlar" diye bir API yok — liste
-  izlediğimiz {{ big_stats.addrs }} adres arasından. Havuz en zengin hesaplarla tohumlandığı için
-  devleri büyük olasılıkla yakalar, ama "kesin en büyüğü" diye okuma.</span></p>
+  izlediğimiz {{ big_stats.watched or '…' }} adres arasından. Havuz en zengin hesaplarla
+  tohumlandığı için devleri büyük olasılıkla yakalar, ama "kesin en büyüğü" diye okuma.</span></p>
+  {% if big_stats.hl_err %}
+  <p class="sub short"><b>⚠️ Son turda {{ big_stats.hl_err }} adreste kayıt yazılamadı</b>
+  — liste eksik olabilir. Sunucu günlüğünde "hl_positions yazılamadı" satırlarına bak.</p>
+  {% endif %}
   {% if big_live or big_rec %}
   <div class="tabs" data-target="#bigtable" data-attr="view">
     <button type="button" class="tab active" data-f="live">📌 Şu an açık</button>
@@ -73,8 +77,18 @@
   </table>
   </div>
   {% else %}
-  <p class="dim">Henüz kayıt yok — derin keşif havuzu tur tur geziyor, ilk turlardan sonra
-  burası dolar. (Eşik: ayarlardaki "HL en büyükler eşiği".)</p>
+  {# Boş durum TEŞHİS etsin: "henüz değil" ile "bozuk" ayırt edilebilsin #}
+  {% if not big_stats.started %}
+  <p class="dim">⏳ Derin keşif henüz başlamadı — açılıştan ~45 sn sonra başlar,
+  ilk tarama en zengin hesaplarla yapılır ve panel birkaç dakika içinde dolar.</p>
+  {% else %}
+  <p class="dim">⏳ Henüz eşiği aşan pozisyon kaydedilmedi.
+  Son tarama <b>{{ big_stats.last_sweep|age }}</b> önce ·
+  havuzun <b>%{{ big_stats.swept_pct }}</b>'si tarandı ·
+  tam tur ~<b>{{ big_stats.tour_min }} dk</b>.
+  Eşiğin ({{ big_stats.threshold|usd }}) altındaki pozisyonlar hiç yazılmaz —
+  ayarlardan düşürebilirsin.</p>
+  {% endif %}
   {% endif %}
 </div>
 

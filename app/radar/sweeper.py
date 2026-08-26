@@ -158,12 +158,20 @@ def _parse_all_positions(resp, min_ntl: float) -> dict[str, dict]:
     return out
 
 
-async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int) -> None:
+async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int,
+                     held: set[str] | None = None) -> None:
     """hl_positions'a yaz: zirve YALNIZ büyürse güncellenir, kapanan SİLİNMEZ.
 
     Rekor arşivi ("gördüğümüz en büyükler") bu yüzden var: positions_current
     kapanınca satırı siliyor, oradan geçmiş geri getirilemiyor.
+
+    `held` = adresin ŞU AN tuttuğu TÜM coin'ler (boyut gözetmeksizin). Kapanma
+    kararı buna göre verilir: yalnız eşik üstü sözlüğe bakılırsa $1.05M'lik bir
+    pozisyon $0.99M'ye gerileyince listeden düşüp "KAPANDI" damgası yiyordu —
+    kripto oynaklığında bu sürekli olur ve arşivi yalan söyletirdi. `held`
+    verilmezse eski davranış (yalnız yazılanlar açık sayılır).
     """
+    open_coins = held if held is not None else set(positions)
     async with db() as conn:
         for coin, p in positions.items():
             await conn.execute(
@@ -188,12 +196,13 @@ async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int) -> None:
                 (coin, addr, p["dex"], p["side"], p["szi"], p["entry_px"],
                  p["leverage"], p["liq_px"], p["upnl"], p["notional"],
                  ts, ts, p["notional"], ts))
-        # Adresin artık tutmadıkları: SİLME, kapandı damgası vur (rekor kalsın)
-        if positions:
-            q = ",".join("?" * len(positions))
+        # Adresin artık tutmadıkları: SİLME, kapandı damgası vur (rekor kalsın).
+        # Ölçüt eşik ÜSTÜ değil, GERÇEKTEN tutulan coin listesi (yukarıdaki not).
+        if open_coins:
+            q = ",".join("?" * len(open_coins))
             await conn.execute(
                 f"UPDATE hl_positions SET closed_ts=? WHERE address=? AND closed_ts IS NULL"
-                f" AND coin NOT IN ({q})", (ts, addr, *positions.keys()))
+                f" AND coin NOT IN ({q})", (ts, addr, *open_coins))
         else:
             await conn.execute(
                 "UPDATE hl_positions SET closed_ts=? WHERE address=? AND closed_ts IS NULL",
@@ -239,6 +248,55 @@ def _slice(pool: list[str], cursor: int, count: int) -> tuple[list[str], int, bo
     return batch, (0 if wrapped else new_cursor), wrapped
 
 
+PRIME_TTL = 24 * 3600      # leaderboard önbelleğiyle aynı ritim
+PRIME_CONC = 6             # eşzamanlı istek (normal süpürme bütçesini boğmasın)
+
+
+async def prime_hl(cfg: Config, client: HLClient) -> int:
+    """En zengin hesapları ÖNCE tara — 'HL en büyükleri' paneli hemen dolsun.
+
+    Sıcak havuz (watch → holders → leaderboard) sırayla geziliyor ve
+    leaderboard EN SONDA; yani bu panelin bütün konusu olan dev hesaplara
+    ancak turun sonunda (75-125 dk) sıra geliyordu. Bu tek seferlik geçiş
+    yalnız hl_positions'ı besler — positions_current'a DOKUNMAZ, hisse
+    hattının tur düzeni aynı kalır.
+    """
+    top = int(getattr(cfg, "hl_prime_top", 0))
+    if top <= 0:
+        return 0
+    if now() - int(await kv_get("hl_prime_ts") or 0) < PRIME_TTL:
+        return 0
+    addrs = await _leaderboard_addrs(client, top)
+    if not addrs:
+        return 0                       # leaderboard düştü → damgalama, sonra dene
+    ts = now()
+    sem = asyncio.Semaphore(PRIME_CONC)
+    n_ok = n_pos = 0
+
+    async def one(addr: str):
+        nonlocal n_ok, n_pos
+        async with sem:
+            try:
+                resp = await client.clearinghouse(addr, "ALL_DEXES")
+                pos = _parse_all_positions(resp, cfg.hl_big_min_usd)
+                await _upsert_hl(addr, pos, ts, held=set(_parse_all_positions(resp, 0)))
+            except Exception as e:
+                log.debug("prime %s: %s", addr, e)   # tek adres tüm geçişi düşürmesin
+                return
+            n_ok += 1
+            n_pos += len(pos)
+        from ..health import beat
+        await beat("sweeper")
+
+    await asyncio.gather(*(one(a) for a in addrs))
+    if not n_ok:
+        return 0                       # hepsi hata → damgalama, bir sonraki turda dene
+    await kv_set("hl_prime_ts", ts)
+    log.info("HL en büyükler ön taraması: %d/%d hesap, %d dev pozisyon",
+             n_ok, len(addrs), n_pos)
+    return n_pos
+
+
 async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     hot, cold = await build_pools(cfg, client)
     if not hot and not cold:
@@ -267,9 +325,10 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     n_pos = 0
     n_ok = 0
     n_err = 0
+    n_hlerr = 0
 
     async def one(addr: str):
-        nonlocal n_pos, n_ok, n_err
+        nonlocal n_pos, n_ok, n_err, n_hlerr
         from ..health import beat
         await beat("sweeper")  # ilerleme nabzı
         try:
@@ -289,8 +348,12 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
         # Aynı yanıttan TÜM Hyperliquid pozisyonları (ana dex dahil) — ek
         # istek yok, yalnız şimdiye kadar atılan kısmı saklıyoruz.
         try:
-            await _upsert_hl(addr, _parse_all_positions(resp, cfg.hl_big_min_usd), ts)
+            await _upsert_hl(addr, _parse_all_positions(resp, cfg.hl_big_min_usd), ts,
+                             held=set(_parse_all_positions(resp, 0)))
         except Exception:
+            # Sayaç ŞART: bu blok sessizdi, kalıcı bir hata olsa panel sonsuza
+            # dek "birazdan dolar" der, kullanıcı bozuk olduğunu asla göremezdi.
+            n_hlerr += 1
             log.exception("hl_positions yazılamadı: %s", addr)
 
     await asyncio.gather(*(one(a) for a in batch))
@@ -313,7 +376,8 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     await kv_set("sweep_stats", {"hot": len(hot), "cold": len(cold),
                                  "tour_min": tour_min, "cursor": hcur,
                                  "batch_positions": n_pos,
-                                 "ok": n_ok, "err": n_err, "ts": ts})
+                                 "ok": n_ok, "err": n_err, "hl_err": n_hlerr,
+                                 "ts": ts})
     return {"hot": len(hot), "cold": len(cold), "positions": n_pos,
             "ok": n_ok, "err": n_err}
 
@@ -565,6 +629,13 @@ async def loop(cfg: Config, client: HLClient) -> None:
              " %d adres/%ds", cfg.sweep_leaderboard_top, cfg.sweep_batch_size,
              cfg.sweep_interval_sec)
     while True:
+        try:
+            # Ayrı try: ön tarama patlarsa normal süpürme yine koşsun
+            await prime_hl(cfg, client)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("HL ön taraması başarısız")
         try:
             from ..health import beat
             await beat("sweeper")  # turbaşı: uzun parti sahte alarm üretmesin

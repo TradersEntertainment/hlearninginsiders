@@ -1044,10 +1044,13 @@ async def lowvol_page(request: Request):
     rows = [p for p in rows if p["notional"] >= minv]
     humans = [p for p in rows if not p["entity"]]
     bots = [p for p in rows if p["entity"]]
-    # Tüm Hyperliquid'in en büyükleri (derinlik/hacim filtresi YOK)
-    big_live = await bigpos.live_big(150, minv)
-    big_rec = await bigpos.record_big(150, minv)
-    big_stats = await bigpos.stats()
+    # Tüm Hyperliquid'in en büyükleri (derinlik/hacim filtresi YOK).
+    # 'minv' GEÇİLMEZ: o çip sessiz-sular tablosunun filtresi; buraya
+    # uygulanınca panel "filtre yok" diyip aslında filtreleniyordu ve boş
+    # durum (filtreli listeye bakar) başlıktaki sayıyla (filtresiz) çelişiyordu.
+    big_live = await bigpos.live_big(150)
+    big_rec = await bigpos.record_big(150)
+    big_stats = await bigpos.stats(cfg.hl_big_min_usd)
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         sym_map = {r["coin"]: r["symbol"] for r in await cur.fetchall()}
