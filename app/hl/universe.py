@@ -1,7 +1,7 @@
 """HL hisse perp evreni — HIP-3 dex'lerinden coin listesini keşfeder."""
 import logging
 
-from ..db import db, now
+from ..db import db, kv_get, kv_set, now
 from .client import HLClient
 
 log = logging.getLogger("hl.universe")
@@ -81,6 +81,60 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str],
     if coins:
         log.info("evren yenilendi: %d coin (%s)", len(coins), ", ".join(coins[:8]) + ("…" if len(coins) > 8 else ""))
     return coins
+
+
+CRYPTO_KV = "crypto_top_coins"
+CRYPTO_TTL = 3600          # ana dex hacim sıralaması saatte bir tazelensin
+CRYPTO_CACHE_MIN = 50      # eşik ayardan yükseltilirse yeniden istek atmayalım
+
+
+async def top_crypto_coins(client: HLClient, top_n: int,
+                           ttl: int = CRYPTO_TTL) -> list[str]:
+    """Ana dex'in (kripto) günlük hacimce en büyük ilk N coin'i.
+
+    Bu liste `tickers`'a YAZILMAZ: kripto coin'leri earnings/hisse hattının
+    hiçbir yerine girmez — tek işleri canlı akışta dev bir işlem görünce
+    profil sondasını tetiklemek. kv'de önbelleklenir, yani abonelik döngüsü
+    her tazelemede çağırsa bile saatte tek `metaAndAssetCtxs` isteği eder.
+
+    İstek düşerse önceki liste (bayat da olsa) döner — dinlemeyi kesmek,
+    listeyi bir saat eski kullanmaktan daha kötü.
+    """
+    top_n = int(top_n or 0)
+    if top_n <= 0:
+        return []
+    cached = await kv_get(CRYPTO_KV) or {}
+    coins = [c for c in (cached.get("coins") or []) if isinstance(c, str)]
+    fresh = (coins and now() - int(cached.get("ts") or 0) < ttl
+             and int(cached.get("want") or 0) >= top_n)
+    if fresh:
+        return coins[:top_n]
+    try:
+        data = await client.meta_and_ctxs("")
+        meta, ctxs = data[0], data[1]
+    except Exception as e:
+        log.warning("kripto evreni alınamadı: %s", e)
+        return coins[:top_n]
+    ranked: list[tuple[float, str]] = []
+    for asset, ctx in zip((meta or {}).get("universe") or [], ctxs or []):
+        name = asset.get("name") or ""
+        # ":" ana dex'te olmamalı; olursa HIP-3 coin'idir, hisse hattına ait
+        if not name or asset.get("isDelisted") or ":" in name:
+            continue
+        try:
+            vol = float((ctx or {}).get("dayNtlVlm") or 0)
+        except (TypeError, ValueError):
+            continue
+        ranked.append((vol, name))
+    if not ranked:
+        return coins[:top_n]
+    ranked.sort(key=lambda r: (-r[0], r[1]))
+    want = max(top_n, CRYPTO_CACHE_MIN)
+    out = [n for _, n in ranked[:want]]
+    await kv_set(CRYPTO_KV, {"coins": out, "want": want, "ts": now()})
+    log.info("kripto dinleme listesi: %d coin (%s)", min(top_n, len(out)),
+             ", ".join(out[:6]) + ("…" if len(out) > 6 else ""))
+    return out[:top_n]
 
 
 async def get_universe() -> list[dict]:

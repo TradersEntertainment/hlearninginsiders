@@ -264,7 +264,9 @@ class TelegramBot:
             st["takvim kaynakları"] = (f"yahoo:{cstats.get('yahoo', 0)}"
                                        f" finnhub:{cstats.get('finnhub', 0)}"
                                        f" nasdaq:{cstats.get('nasdaq', 0)}")
-        st["evren"] = f"{n_tick} coin"
+        st["evren"] = f"{n_tick} hisse coin"
+        if coll and coll.crypto_coins:
+            st["evren"] += f" + {len(coll.crypto_coins)} kripto (yalnız sonda tetiği)"
         n_fills = await kv_get("fills_count")
         st["fill havuzu"] = n_fills if n_fills is not None else "sayılıyor…"
         st["adres havuzu"] = n_addr

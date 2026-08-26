@@ -181,6 +181,18 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "hl_prime_top": {"type": "int", "label": "HL en büyükler: ön tarama hesabı",
                      "group": "Tarama & performans",
                      "desc": "Açılışta (ve günde bir) leaderboard'ın ilk kaç hesabı öncelikli taransın — panel hemen ve EN BÜYÜKTEN dolsun. 0 = kapalı, normal rotasyonu bekle"},
+    "hl_crypto_min_usd": {"type": "float", "label": "Kripto eşiği ($)",
+                          "group": "Tarama & performans",
+                          "desc": "Ana dex'te (BTC/ETH HARİÇ) bu boyutun altındaki pozisyonlar kaydedilmez. Kriptoda $1M gürültüdür, hisse tarafındaki eşik burada işe yaramaz"},
+    "hl_major_min_usd": {"type": "float", "label": "BTC/ETH eşiği ($)",
+                         "group": "Tarama & performans",
+                         "desc": "BTC ve ETH'te bu boyutun altındaki pozisyonlar kaydedilmez — en likit iki markette çıta daha yüksek"},
+    "crypto_watch_top": {"type": "int", "label": "Canlı dinlenen kripto coin",
+                         "group": "Tarama & performans",
+                         "desc": "Ana dex'te 24h hacme göre ilk kaç coin canlı dinlensin (büyük işlem → adresin defterine anında bak). Bu işlemler fills'e YAZILMAZ, yalnız sonda tetikler. 0 = kripto dinleme kapalı"},
+    "probe_min_notional_crypto": {"type": "float", "label": "Kripto sonda eşiği ($)",
+                                  "group": "Tarama & performans",
+                                  "desc": "Ana dex işlemlerinde sondayı tetikleyen boyut. Hisse eşiğinden yüksektir: BTC'de $100K'lık işlem gürültü, ama $2M+ süpüren birinin dev pozisyon taşıması makul"},
     "hl_records_keep": {"type": "int", "label": "HL rekor arşivi (satır)",
                         "group": "Tarama & performans",
                         "desc": "Kapanmış pozisyonlardan kaç tanesi 'gördüğümüz en büyükler' arşivinde tutulsun (zirveye göre ilk N)"},
@@ -275,6 +287,10 @@ class Config:
         self.hl_prime_top = int(os.getenv("HL_PRIME_TOP", "120"))
         self.probe_min_notional = float(os.getenv("PROBE_MIN_NOTIONAL", "100000"))
         self.probe_cooldown_sec = int(os.getenv("PROBE_COOLDOWN_SEC", "600"))
+        self.probe_min_notional_crypto = float(os.getenv("PROBE_MIN_NOTIONAL_CRYPTO", "2000000"))
+        self.hl_crypto_min_usd = float(os.getenv("HL_CRYPTO_MIN_USD", "20000000"))
+        self.hl_major_min_usd = float(os.getenv("HL_MAJOR_MIN_USD", "50000000"))
+        self.crypto_watch_top = int(os.getenv("CRYPTO_WATCH_TOP", "30"))
         self.show_tradingview = True
         # "Saati gelenler" yayın kanalı — kişisel chat'ten AYRI (bot kanala admin olmalı)
         self.telegram_channel_id = os.getenv("TELEGRAM_CHANNEL_ID", "")

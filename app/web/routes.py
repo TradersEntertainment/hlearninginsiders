@@ -1050,7 +1050,7 @@ async def lowvol_page(request: Request):
     # durum (filtreli listeye bakar) başlıktaki sayıyla (filtresiz) çelişiyordu.
     big_live = await bigpos.live_big(150)
     big_rec = await bigpos.record_big(150)
-    big_stats = await bigpos.stats(cfg.hl_big_min_usd)
+    big_stats = await bigpos.stats(cfg)
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         sym_map = {r["coin"]: r["symbol"] for r in await cur.fetchall()}

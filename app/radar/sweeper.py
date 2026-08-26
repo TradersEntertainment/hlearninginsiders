@@ -120,7 +120,13 @@ def _parse_equity_positions(resp, coin_set: set[str],
     return out, bool(states)
 
 
-def _parse_all_positions(resp, min_ntl: float) -> dict[str, dict]:
+def _hl_floor(cfg: Config):
+    """coin -> alt sınır çözücüsü (kademeli: HIP-3 / BTC-ETH / diğer kripto)."""
+    from .bigpos import threshold
+    return lambda coin: threshold(coin, cfg)
+
+
+def _parse_all_positions(resp, min_ntl) -> dict[str, dict]:
     """ALL_DEXES yanıtından TÜM pozisyonlar — hisse filtresi YOK.
 
     `_parse_equity_positions` hisse evreninde olmayan her coin'i eliyor; yani
@@ -128,7 +134,13 @@ def _parse_all_positions(resp, min_ntl: float) -> dict[str, dict]:
     Burada eşiği aşan hepsi tutulur — ek API isteği yok, aynı yanıt.
     Anahtar ham coin (ör. "BTC", "xyz:NVDA"); sembol eşlemesi yapılmaz, çünkü
     burada amaç "hangi hisse" değil "hangi pozisyon".
+
+    `min_ntl` sayı YA DA `coin -> alt sınır` çağrılabiliri olabilir: ana dex'in
+    "büyük" tanımı hisse tarafından çok farklı (BTC'de $1M gürültü), o yüzden
+    eşik coin başına çözülebiliyor. Kapanma tespitinde 0 geçilir (bkz.
+    `_upsert_hl` `held`), yani eşik altına gerileyen "kapandı" sayılmaz.
     """
+    floor = min_ntl if callable(min_ntl) else (lambda _c: float(min_ntl))
     out: dict[str, dict] = {}
     for state in _iter_states(resp):
         for ap in state.get("assetPositions") or []:
@@ -141,7 +153,7 @@ def _parse_all_positions(resp, min_ntl: float) -> dict[str, dict]:
                 ntl = float(pos.get("positionValue") or 0)
             except (TypeError, ValueError):
                 continue
-            if szi == 0 or ntl < min_ntl:
+            if szi == 0 or ntl < floor(coin):
                 continue
             if coin in out and ntl <= out[coin]["notional"]:
                 continue                      # aynı coin iki state'te → büyük olan
@@ -290,7 +302,7 @@ async def probe_address(cfg: Config, client: HLClient, addr: str) -> int:
         return 0                      # bozuk yanıt — mevcut kayıtlara dokunma
     ts = now()
     await _upsert_address(addr, positions, ts)
-    await _upsert_hl(addr, _parse_all_positions(resp, cfg.hl_big_min_usd), ts,
+    await _upsert_hl(addr, _parse_all_positions(resp, _hl_floor(cfg)), ts,
                      held=set(_parse_all_positions(resp, 0)))
     return len(positions)
 
@@ -321,7 +333,7 @@ async def prime_hl(cfg: Config, client: HLClient) -> int:
         async with sem:
             try:
                 resp = await client.clearinghouse(addr, "ALL_DEXES")
-                pos = _parse_all_positions(resp, cfg.hl_big_min_usd)
+                pos = _parse_all_positions(resp, _hl_floor(cfg))
                 await _upsert_hl(addr, pos, ts, held=set(_parse_all_positions(resp, 0)))
             except Exception as e:
                 log.debug("prime %s: %s", addr, e)   # tek adres tüm geçişi düşürmesin
@@ -391,7 +403,7 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
         # Aynı yanıttan TÜM Hyperliquid pozisyonları (ana dex dahil) — ek
         # istek yok, yalnız şimdiye kadar atılan kısmı saklıyoruz.
         try:
-            await _upsert_hl(addr, _parse_all_positions(resp, cfg.hl_big_min_usd), ts,
+            await _upsert_hl(addr, _parse_all_positions(resp, _hl_floor(cfg)), ts,
                              held=set(_parse_all_positions(resp, 0)))
         except Exception:
             # Sayaç ŞART: bu blok sessizdi, kalıcı bir hata olsa panel sonsuza
@@ -617,6 +629,38 @@ async def prune_hl_records(keep: int) -> int:
     return n
 
 
+async def prune_hl_below_tier(cfg: Config) -> int:
+    """Kademe altında kalan KRİPTO satırlarını sil.
+
+    Eşikler ayardan yükseltilebiliyor (ya da kripto tarafı sonradan açıldı):
+    eski $5M'lik bir BTC satırı artık "dev" sayılmıyor, arşivde durmasının
+    anlamı yok. HIP-3 (hisse) satırlarına ve kademe ÜSTÜ kriptoya dokunulmaz.
+
+    Ölçü ZİRVE'dir (peak_notional), anlık değer değil — bir zamanlar $60M'a
+    çıkmış, şimdi $10M'a inmiş pozisyon rekor arşivinde kalmayı hak eder.
+    Eşik kuralının tek sahibi `bigpos.threshold`; burada kopyalanmaz.
+    """
+    from .bigpos import threshold
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT rowid AS rid, coin, notional, peak_notional FROM hl_positions"
+            " WHERE instr(coin, ':') = 0")     # ":" yok = ana dex = kripto
+        rows = [dict(r) for r in await cur.fetchall()]
+    dead = [r["rid"] for r in rows
+            if max(float(r["peak_notional"] or 0), float(r["notional"] or 0))
+            < threshold(r["coin"], cfg)]
+    if not dead:
+        return 0
+    async with db() as conn:
+        for i in range(0, len(dead), 400):     # SQLite değişken sınırı
+            chunk = dead[i:i + 400]
+            q = ",".join("?" * len(chunk))
+            await conn.execute(
+                f"DELETE FROM hl_positions WHERE rowid IN ({q})", tuple(chunk))
+    log.info("kademe altı kripto satırı silindi: %d", len(dead))
+    return len(dead)
+
+
 async def maintenance(cfg: Config) -> None:
     """Günlük veri emekliliği — /data volume'u sınırsız büyümesin.
 
@@ -640,10 +684,15 @@ async def maintenance(cfg: Config) -> None:
         n_kv += await prune_hl_records(cfg.hl_records_keep)
     except Exception:
         log.exception("HL rekor budaması başarısız")
-    if n_fills or n_met or n_al or n_kv:
+    try:
+        n_tier = await prune_hl_below_tier(cfg)
+    except Exception:
+        log.exception("kademe budaması başarısız")
+        n_tier = 0
+    if n_fills or n_met or n_al or n_kv or n_tier:
         log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı, %d önbellek"
-                 " anahtarı emekli (fills kalan %d)",
-                 n_fills, n_met, n_al, n_kv, n_left)
+                 " anahtarı, %d kademe altı kripto satırı emekli (fills kalan %d)",
+                 n_fills, n_met, n_al, n_kv, n_tier, n_left)
 
 
 async def housekeeping(cfg: Config) -> None:

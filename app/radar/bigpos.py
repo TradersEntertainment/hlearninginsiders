@@ -20,6 +20,39 @@ COLS = ("coin, address, dex, side, szi, entry_px, leverage, liq_px, upnl,"
         " notional, ts, first_seen_ts, peak_notional, peak_ts, closed_ts")
 
 
+# Ana dex'in "büyük" tanımı hisse tarafından ÇOK farklı: xyz:NVDA'da $1M dev,
+# BTC'de gürültü. Kullanıcı kuralı: BTC/ETH $50M, diğer kripto $20M.
+MAJORS = frozenset({"BTC", "ETH"})
+
+
+def threshold(coin: str, cfg) -> float:
+    """Bu coin'de bir pozisyonun kaydedilmeye değer sayılacağı alt sınır."""
+    c = (coin or "").upper()
+    if ":" in c:                                    # HIP-3 (hisse/emtia/endeks)
+        return float(getattr(cfg, "hl_big_min_usd", 1_000_000))
+    if c in MAJORS:
+        return float(getattr(cfg, "hl_major_min_usd", 50_000_000))
+    return float(getattr(cfg, "hl_crypto_min_usd", 20_000_000))
+
+
+def money_short(v) -> str:
+    """$20M / $1.5M / $750K — panelde kademeleri yan yana yazmak için kısa biçim
+    ('$20.00M' üç kademe yan yana gelince gürültü oluyor)."""
+    v = float(v or 0)
+    if v >= 1_000_000:
+        return f"${v / 1_000_000:g}M"
+    if v >= 1_000:
+        return f"${v / 1_000:g}K"
+    return f"${v:g}"
+
+
+def tiers(cfg) -> list[tuple[str, str]]:
+    """Panelde gösterilecek (ne, ne kadar) kademeleri — tek kaynağı threshold()."""
+    return [("HIP-3 hisse/emtia", money_short(threshold("xyz:X", cfg))),
+            ("BTC/ETH", money_short(threshold("BTC", cfg))),
+            ("diğer kripto", money_short(threshold("SOL", cfg)))]
+
+
 def classify(coin: str) -> str:
     """'equity' | 'crypto' — sekme filtresi için.
 
@@ -71,7 +104,7 @@ async def record_big(limit: int = 150, min_ntl: float = 0) -> list[dict]:
     return _decorate(rows, await _sym_map())
 
 
-async def stats(threshold: float = 0) -> dict:
+async def stats(cfg=None) -> dict:
     """Panel başlığı + boş durum teşhisi.
 
     'İzlediğimiz adres' sayısı süpürme HAVUZUNDAN gelir (sweep_stats), tablodan
@@ -98,5 +131,6 @@ async def stats(threshold: float = 0) -> dict:
         "last_sweep": sw.get("ts"),
         "hl_err": int(sw.get("hl_err") or 0),
         "started": bool(sw),
-        "threshold": threshold,
+        # eşik artık tek sayı değil: coin türüne göre kademeli
+        "tiers": tiers(cfg) if cfg is not None else [],
     }

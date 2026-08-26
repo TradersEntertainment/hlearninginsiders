@@ -49,6 +49,9 @@
   <p class="sub">Hacim/OI filtresi <b>yok</b> — ham büyüklük sıralaması.
   <b>Canlı</b> şu an açık olanlar; <b>Rekorlar</b> şimdiye kadar gördüğümüz en büyük hâlleri
   (kapanmış olsa bile arşivde kalır).
+  {% if big_stats.tiers %}<br>Kayıt eşiği coin türüne göre <b>kademeli</b>:
+  {% for what, amount in big_stats.tiers %}{{ what }} <b>{{ amount }}</b>{% if not loop.last %} ·
+  {% endif %}{% endfor %} — altı hiç yazılmaz (Ayarlar → Tarama &amp; performans).{% endif %}
   <span class="warn">Kapsam: HL'de "bu coindeki tüm pozisyonlar" diye bir API yok — liste
   izlediğimiz {{ big_stats.watched or '…' }} adres arasından. Havuz en zengin hesaplarla
   tohumlandığı için devleri büyük olasılıkla yakalar, ama "kesin en büyüğü" diye okuma.</span></p>
@@ -86,8 +89,9 @@
   Son tarama <b>{{ big_stats.last_sweep|age }}</b> önce ·
   havuzun <b>%{{ big_stats.swept_pct }}</b>'si tarandı ·
   tam tur ~<b>{{ big_stats.tour_min }} dk</b>.
-  Eşiğin ({{ big_stats.threshold|usd }}) altındaki pozisyonlar hiç yazılmaz —
-  ayarlardan düşürebilirsin.</p>
+  Kademelerin altındaki pozisyonlar hiç yazılmaz
+  ({% for what, amount in big_stats.tiers %}{{ what }} {{ amount }}{% if not loop.last %},
+  {% endif %}{% endfor %}) — ayarlardan düşürebilirsin.</p>
   {% endif %}
   {% endif %}
 </div>

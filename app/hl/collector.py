@@ -33,6 +33,7 @@ class Collector:
         self.connected = False
         self.subscribed: set[str] = set()
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
+        self.crypto_coins: set[str] = set()  # yalnız sonda tetikleyicisi (ana dex)
         self.last_trade: dict[str, int] = {}  # coin -> son işlem ts (zombi nöbetçisi)
         self.fills_seen = 0
         self._probing: set[str] = set()   # sondası uçuşta olan adresler
@@ -41,9 +42,32 @@ class Collector:
         self.probes_skipped = 0
 
     async def _current_coins(self) -> list[str]:
+        """Abone olunacak coin'ler: HIP-3 hisse perp'leri + ana dex'in hacimce
+        ilk N kripto coin'i.
+
+        Kripto tarafı SADECE tetikleyicidir (`self.crypto_coins`): oradan gelen
+        işlemler fills'e yazılmaz, balina alarmı üretmez — yalnız profil
+        sondasını uyandırır. Saf bir BTC/ETH balinası eskiden ancak rotasyon
+        sırası ona gelince görülüyordu.
+        """
         async with db() as conn:
             cur = await conn.execute("SELECT coin FROM tickers")
-            return [r["coin"] for r in await cur.fetchall()]
+            equity = [r["coin"] for r in await cur.fetchall()]
+        eq = set(equity)
+        crypto = [c for c in await self._crypto_coins() if c not in eq]
+        self.crypto_coins = set(crypto)
+        return equity + crypto
+
+    async def _crypto_coins(self) -> list[str]:
+        top = int(getattr(self.cfg, "crypto_watch_top", 0) or 0)
+        if top <= 0 or not self.client:
+            return []
+        try:
+            from .universe import top_crypto_coins
+            return await top_crypto_coins(self.client, top)
+        except Exception as e:
+            log.debug("kripto dinleme listesi alınamadı: %s", e)
+            return []
 
     async def run(self):
         delay = 5
@@ -197,7 +221,7 @@ class Collector:
                     a["known"] += notional
                     if taker:
                         a["tk"] += notional
-                if notional >= self.cfg.min_fill_notional:
+                if notional >= self.cfg.min_fill_notional and coin not in self.crypto_coins:
                     rows.append((coin, tid, addr, side, px, sz, notional, ts, taker))
                     a["wrote"] = True
 
@@ -207,29 +231,32 @@ class Collector:
         for (coin, addr, side), a in agg.items():
             if a["wrote"] or a["ntl"] < self.cfg.min_fill_notional or not a["sz"]:
                 continue
+            if coin in self.crypto_coins:
+                continue
             taker = None
             if a["known"] > 0:
                 taker = 1 if a["tk"] >= a["known"] / 2 else 0
             rows.append((coin, f"agg{min(a['tids'])}", addr, side,
                          a["pxsz"] / a["sz"], a["sz"], a["ntl"], a["ts"], taker))
 
-        if not rows:
-            return
-        watch = set()
-        async with db() as conn:
-            for r in rows:
-                await conn.execute(
-                    "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,notional,ts,taker)"
-                    " VALUES(?,?,?,?,?,?,?,?,?)", r)
-                await conn.execute(
-                    "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
-                    " ON CONFLICT(address) DO NOTHING", (r[2], r[7]))
-            self.fills_seen += len(rows)
-            addr_list = list({r[2] for r in rows})
-            q = ",".join("?" * len(addr_list))
-            cur = await conn.execute(
-                f"SELECT address FROM addresses WHERE watchlist=1 AND address IN ({q})", addr_list)
-            watch = {row["address"] for row in await cur.fetchall()}
+        # Kripto akışında rows HER ZAMAN boş kalır; eskiden burada dönülüyordu →
+        # sonda hiç tetiklenmezdi. Yazma bloğu artık koşullu, sonda en sonda.
+        watch: set[str] = set()
+        if rows:
+            async with db() as conn:
+                for r in rows:
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,notional,ts,taker)"
+                        " VALUES(?,?,?,?,?,?,?,?,?)", r)
+                    await conn.execute(
+                        "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
+                        " ON CONFLICT(address) DO NOTHING", (r[2], r[7]))
+                self.fills_seen += len(rows)
+                addr_list = list({r[2] for r in rows})
+                q = ",".join("?" * len(addr_list))
+                cur = await conn.execute(
+                    f"SELECT address FROM addresses WHERE watchlist=1 AND address IN ({q})", addr_list)
+                watch = {row["address"] for row in await cur.fetchall()}
 
         # Sicilli adres SADECE daha önce kazandığı hisseye dönerse ilgi çeker.
         # (Genel whale alertleri watchlist dışı büyük pozları da yakalar.)
@@ -240,6 +267,8 @@ class Collector:
 
         # Alarm kararı PARTİ TOPLAMI üzerinden verilir (bölünmüş emirler kaçmasın)
         for (coin, addr, side), a in agg.items():
+            if coin in self.crypto_coins:
+                continue        # kripto yalnız sonda tetikler, alarm üretmez
             is_watch = addr in watch and coin in win_map.get(addr, set())
             if a["ntl"] < self.cfg.whale_alert_notional and not is_watch:
                 continue
@@ -256,20 +285,32 @@ class Collector:
     async def _kick_probes(self, agg: dict) -> None:
         """Eşiği aşan adresler için anlık profil sondası (arka planda).
 
+        İki ayrı eşik: hisse tarafında $100K bile anlamlıdır (piyasa küçük),
+        kripto tarafında gürültüdür — orada varsayılan $2M. Bir adres iki
+        taraftan HERHANGİ biriyle eşiği geçerse tek sonda atılır (defterin
+        tamamı zaten tek çağrıda geliyor).
+
         WS döngüsünü ASLA bloklamaz: istekler ayrı görevde koşar. Aynı adres
         için hem uçuşta-tekilleştirme hem kalıcı cooldown var; toplam uçuş
         sayısı da sınırlı (bir işlem fırtınası REST'i boğmasın).
         """
         cfg, client = self.cfg, self.client
-        if not client or float(getattr(cfg, "probe_min_notional", 0)) <= 0:
+        if not client:
             return
-        thr = float(cfg.probe_min_notional)
+        thr_eq = float(getattr(cfg, "probe_min_notional", 0) or 0)
+        thr_cr = float(getattr(cfg, "probe_min_notional_crypto", 0) or 0)
+        if thr_eq <= 0 and thr_cr <= 0:
+            return
         # aynı adres birden çok coin'de işlem yaptıysa TOPLAMINA bak
-        by_addr: dict[str, float] = {}
+        by_addr: dict[str, list[float]] = {}      # adres -> [hisse, kripto]
         for (coin, addr, side), a in agg.items():
-            by_addr[addr] = by_addr.get(addr, 0.0) + a["ntl"]
-        for addr, ntl in sorted(by_addr.items(), key=lambda kv: -kv[1]):
-            if ntl < thr or addr in self._probing:
+            v = by_addr.setdefault(addr, [0.0, 0.0])
+            v[1 if coin in self.crypto_coins else 0] += a["ntl"]
+        cand = [(eq + cr, addr, "kripto" if cr > eq else "hisse")
+                for addr, (eq, cr) in by_addr.items()
+                if (thr_eq > 0 and eq >= thr_eq) or (thr_cr > 0 and cr >= thr_cr)]
+        for ntl, addr, src in sorted(cand, reverse=True):
+            if addr in self._probing:
                 continue
             if len(self._probing) >= MAX_INFLIGHT_PROBES:
                 self.probes_skipped += 1
@@ -278,15 +319,15 @@ class Collector:
                 continue
             await alert_log("probe", addr)
             self._probing.add(addr)
-            asyncio.create_task(self._probe(addr, ntl))
+            asyncio.create_task(self._probe(addr, ntl, src))
 
-    async def _probe(self, addr: str, ntl: float) -> None:
+    async def _probe(self, addr: str, ntl: float, src: str = "hisse") -> None:
         from ..radar.sweeper import probe_address
         try:
             n = await probe_address(self.cfg, self.client, addr)
             self.probes_ok += 1
-            log.info("sonda: %s..%s ($%.0fK işlem) → %d hisse pozisyonu tazelendi",
-                     addr[:8], addr[-4:], ntl / 1000, n)
+            log.info("sonda: %s..%s (%s tarafında $%.0fK işlem) → %d hisse pozisyonu tazelendi",
+                     addr[:8], addr[-4:], src, ntl / 1000, n)
         except Exception as e:
             self.probes_err += 1
             log.debug("sonda başarısız %s: %s", addr, e)

@@ -371,6 +371,9 @@ async def health_endpoint():
         out["probes"] = {"ok": coll.probes_ok, "err": coll.probes_err,
                          "skipped": coll.probes_skipped,
                          "inflight": len(coll._probing)}
+        # kaç coin dinleniyor + kaçı ana dex (kripto = yalnız sonda tetiği)
+        out["subs"] = {"total": len(coll.subscribed),
+                       "crypto": len(coll.crypto_coins)}
     try:
         from .db import kv_get
         out["sweep"] = await kv_get("sweep_stats") or {}
