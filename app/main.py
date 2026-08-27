@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db as dbm
 from . import health
+from .ai import analyst as ai_analyst
 from .config import get_config
 from .earnings import calendar as cal
 from .earnings import evaluator
@@ -341,6 +342,7 @@ async def lifespan(app: FastAPI):
     _spawn("digest", lambda: digest_loop(cfg, notifier), notifier)
     _spawn("channel", lambda: channel_loop(cfg, bot), notifier)
     _spawn("collector", collector.run, notifier)
+    _spawn("ai", lambda: ai_analyst.loop(cfg, session), notifier)
     _spawn("watchdog", lambda: watchdog_loop(cfg, notifier), notifier)
     if bot:
         _spawn("telegram", bot.run_polling, notifier)

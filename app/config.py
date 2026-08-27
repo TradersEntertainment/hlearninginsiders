@@ -86,6 +86,19 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Sekmede gösterilecek en küçük pozisyon — toz görünmesin"},
     "lowvol_alert_min_usd": {"type": "float", "label": "Telegram alarm tabanı ($)", "group": "Sessiz su radarı",
                              "desc": "Telegram'a SADECE gerçekten absürt boyutlar düşer — bunun altı sitede görünür ama bildirim üretmez"},
+    # ---- AI analist ----
+    "ai_enabled": {"type": "bool", "label": "🤖 AI analist", "group": "AI analist",
+                   "desc": "Veriden hipotez üretip Python'a sınatan arka plan analisti. AI_API_KEY (env) girilmeden çalışmaz. Çıktı YALNIZ sitede görünür, Telegram'a hiçbir şey düşmez"},
+    "ai_interval_sec": {"type": "int", "label": "Tur aralığı (sn)", "group": "AI analist",
+                        "desc": "Kaç saniyede bir brifing hazırlanıp modele gönderilsin. Groq bedava katmanında günde 100K token var: 7200 (2 saat) ~48K/gün eder, rahat pay bırakır"},
+    "ai_daily_token_cap": {"type": "int", "label": "Günlük token tavanı", "group": "AI analist",
+                           "desc": "Bir günde harcanabilecek toplam token. Tavan dolunca çağrı HİÇ yapılmaz, ertesi gün sıfırlanır. Sağlayıcının sınırının altında tut"},
+    "ai_max_hypotheses": {"type": "int", "label": "Tur başına hipotez", "group": "AI analist",
+                          "desc": "Model her turda en fazla kaç hipotez üretsin. Az tutmak modeli EN İYİ tahminini seçmeye zorlar ve sicili anlamlı kılar"},
+    "ai_model": {"type": "str", "label": "Model adı", "group": "AI analist",
+                 "desc": "Sağlayıcıdaki model kimliği (ör. llama-3.3-70b-versatile)"},
+    "ai_base_url": {"type": "str", "label": "API adresi", "group": "AI analist",
+                    "desc": "OpenAI-uyumlu sohbet tamamlama adresi. Groq/Cerebras/OpenRouter/DeepSeek aynı biçimi konuşur — sağlayıcı değiştirmek için burayı ve model adını değiştir"},
     "min_fill_notional": {"type": "float", "label": "Min fill boyutu ($)",
                           "group": "Skorlama eşikleri", "desc": "Bu boyut üstü işlemler adres havuzuna yazılır"},
     "whale_alert_notional": {"type": "float", "label": "Anlık balina alert eşiği ($)",
@@ -280,6 +293,16 @@ class Config:
 
         # Telegram
         self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        # AI analist. Anahtar GİZLİ: yalnız env'den okunur, ayar sayfasında
+        # görünmez/düzenlenmez (TELEGRAM_BOT_TOKEN ile aynı kural).
+        self.ai_api_key = os.getenv("AI_API_KEY", "")
+        self.ai_enabled = convert_value("bool", os.getenv("AI_ENABLED", "0"))
+        self.ai_interval_sec = int(os.getenv("AI_INTERVAL_SEC", "7200"))
+        self.ai_daily_token_cap = int(os.getenv("AI_DAILY_TOKEN_CAP", "90000"))
+        self.ai_max_hypotheses = int(os.getenv("AI_MAX_HYPOTHESES", "3"))
+        self.ai_model = os.getenv("AI_MODEL", "llama-3.3-70b-versatile")
+        self.ai_base_url = os.getenv(
+            "AI_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
 
         # Bildirim tercihleri (hepsi /settings'ten canlı değişir)

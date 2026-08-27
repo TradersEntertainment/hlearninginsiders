@@ -137,6 +137,42 @@ CREATE TABLE IF NOT EXISTS hl_positions(
 );
 CREATE INDEX IF NOT EXISTS idx_hlpos_peak ON hl_positions(peak_notional DESC);
 CREATE INDEX IF NOT EXISTS idx_hlpos_open ON hl_positions(closed_ts, notional DESC);
+-- ---- AI analist ----
+-- LLM ÖNERİR, Python KARAR VERİR. Model hipotez üretir; vadesi gelince aynı
+-- veriden ölçülüp tuttu/tutmadı diye damgalanır. Böylece modelin kendi sicili
+-- oluşur ve uyduruyorsa istatistik onu ele verir (balina sicilinin aynısı).
+CREATE TABLE IF NOT EXISTS ai_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER, model TEXT,
+  ok INTEGER,                      -- 1 = tur başarılı
+  tokens_in INTEGER, tokens_out INTEGER,
+  n_obs INTEGER, n_hyp INTEGER,
+  err TEXT                         -- hata metni (panelde görünür, log'a gömülmez)
+);
+CREATE INDEX IF NOT EXISTS idx_airuns_ts ON ai_runs(ts DESC);
+CREATE TABLE IF NOT EXISTS ai_observations(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER, ts INTEGER,
+  subject_kind TEXT, subject TEXT, -- coin | address | global
+  text TEXT                        -- ölçülemeyen (sicile girmeyen) serbest gözlem
+);
+CREATE INDEX IF NOT EXISTS idx_aiobs_ts ON ai_observations(ts DESC);
+CREATE TABLE IF NOT EXISTS ai_hypotheses(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER, created_ts INTEGER,
+  claim TEXT, rationale TEXT, confidence REAL,
+  subject_kind TEXT,                  -- coin | position | global
+  subject TEXT,                       -- coin adı, ya da position ise adres
+  subject_coin TEXT,                  -- position hipotezlerinde coin
+  metric TEXT, op TEXT, value REAL,   -- KAPALI enum; Python bunu ölçebilmeli
+  horizon_h INTEGER,
+  baseline REAL, baseline_ts INTEGER, -- kayıt anındaki ölçüm (vadede belirsizlik olmasın)
+  resolve_ts INTEGER,
+  status TEXT DEFAULT 'open',         -- open | hit | miss | unresolvable
+  measured REAL, resolved_ts INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_aihyp_due ON ai_hypotheses(status, resolve_ts);
+CREATE INDEX IF NOT EXISTS idx_aihyp_new ON ai_hypotheses(created_ts DESC);
 """
 
 

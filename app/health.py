@@ -67,6 +67,8 @@ def limits(cfg: Config) -> dict[str, int]:
         "hourstats": 7200,
         "digest": 2400,
         "collector": 900,
+        # AI turu 2 saatte bir; kapalıyken bile nabız atar (döngü boşta döner)
+        "ai": cfg.ai_interval_sec * 3 + 600,
     }
     # telegram görevi YALNIZ bot token'ı varken spawn edilir (main.lifespan);
     # token'sız 'sadece dashboard' kurulumunda beklenirse kalp atışı hiç
@@ -100,6 +102,7 @@ def periods(cfg: Config) -> dict[str, int]:
         "hourstats": 600,
         "digest": 600,
         "collector": 0,        # olay güdümlü: her WS mesajında atar
+        "ai": cfg.ai_interval_sec,
     }
     if cfg.telegram_bot_token:
         per["telegram"] = 0    # olay güdümlü: uzun yoklama

@@ -36,6 +36,7 @@ COLD_PER_BATCH = 10           # parti başına soğuk havuz adedi (uzun kuyruk)
 SPEC_INTERVAL = 600           # uzman paneli önbelleği tazeleme aralığı (sn)
 METRICS_RETENTION_D = 45      # asset_metrics emekliliği (evaluator ≤7 gün bakar)
 ALERTS_RETENTION_D = 30       # alerts_log emekliliği (en uzun cooldown 7 gün)
+AI_RETENTION_D = 60           # ai_runs/ai_observations emekliliği (hipotezler KALICI)
 
 
 async def build_pools(cfg: Config, client: HLClient) -> tuple[list[str], list[str]]:
@@ -740,6 +741,10 @@ async def maintenance(cfg: Config) -> None:
     n_fills = await _chunked_delete("fills", ts_now - keep * 86400)
     n_met = await _chunked_delete("asset_metrics", ts_now - METRICS_RETENTION_D * 86400)
     n_al = await _chunked_delete("alerts_log", ts_now - ALERTS_RETENTION_D * 86400)
+    # AI turu/gözlemi emekli olur; HİPOTEZLER KALIR — sicil onlar, silinirse
+    # modelin karnesi kendiliğinden temizlenmiş olurdu.
+    n_ai = await _chunked_delete("ai_runs", ts_now - AI_RETENTION_D * 86400)
+    n_ai += await _chunked_delete("ai_observations", ts_now - AI_RETENTION_D * 86400)
     n_left = await refresh_fills_count()
     try:
         # ayrı try: kv budaması patlarsa satır emekliliği yine de yapılmış olsun
@@ -756,10 +761,11 @@ async def maintenance(cfg: Config) -> None:
     except Exception:
         log.exception("kademe budaması başarısız")
         n_tier = 0
-    if n_fills or n_met or n_al or n_kv or n_tier:
+    if n_fills or n_met or n_al or n_kv or n_tier or n_ai:
         log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı, %d önbellek"
-                 " anahtarı, %d kademe altı kripto satırı emekli (fills kalan %d)",
-                 n_fills, n_met, n_al, n_kv, n_tier, n_left)
+                 " anahtarı, %d kademe altı kripto satırı, %d AI turu/gözlemi"
+                 " emekli (fills kalan %d)",
+                 n_fills, n_met, n_al, n_kv, n_tier, n_ai, n_left)
 
 
 async def housekeeping(cfg: Config) -> None:

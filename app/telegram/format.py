@@ -367,7 +367,7 @@ TASK_TR = {
     "bookwall": "duvar radarı", "sweeper": "derin keşif",
     "hourstats": "saat istatistiği",
     "digest": "günlük özet", "collector": "canlı işlem akışı (WS)",
-    "telegram": "telegram botu", "watchdog": "bekçi",
+    "telegram": "telegram botu", "watchdog": "bekçi", "ai": "AI analist",
     "channel": "kanal yayını",
 }
 

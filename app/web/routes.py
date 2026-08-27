@@ -1037,6 +1037,46 @@ async def hot_hours_send(request: Request):
     return back("ok" if ok else "err")
 
 
+@router.get("/ai")
+async def ai_page(request: Request):
+    """AI analist: ürettiği hipotezler ve KENDİ sicili.
+
+    Karne en üstte: uyduran model ilk bakışta görünür. Sayfa AI'a bağımlı
+    değil — model hiç çalışmasa da boş durum ve hata metni okunur kalır.
+    """
+    _guard(request)
+    cfg = request.app.state.cfg
+    from ..ai import analyst as ai_analyst
+    from ..ai.schema import METRICS
+    rec = await ai_analyst.record()
+    budget = await ai_analyst.budget_state(cfg)
+    async with db() as conn:
+        cur = await conn.execute(
+            """SELECT * FROM ai_hypotheses WHERE status='open'
+               ORDER BY resolve_ts LIMIT 40""")
+        open_h = [dict(r) for r in await cur.fetchall()]
+        cur = await conn.execute(
+            """SELECT * FROM ai_hypotheses WHERE status!='open'
+               ORDER BY resolved_ts DESC LIMIT 40""")
+        done_h = [dict(r) for r in await cur.fetchall()]
+        cur = await conn.execute(
+            "SELECT * FROM ai_observations ORDER BY ts DESC LIMIT 25")
+        obs = [dict(r) for r in await cur.fetchall()]
+        cur = await conn.execute(
+            "SELECT * FROM ai_runs ORDER BY ts DESC LIMIT 8")
+        runs = [dict(r) for r in await cur.fetchall()]
+    for h in open_h + done_h:
+        h["symbol"] = (h.get("subject_coin") or "").split(":")[-1]
+        h["metric_desc"] = METRICS.get(h.get("metric") or "", ("", ""))[1]
+    return _render(request, "ai.html", {
+        "rec": rec, "budget": budget, "open_h": open_h, "done_h": done_h,
+        "obs": obs, "runs": runs,
+        "enabled": bool(cfg.ai_enabled), "has_key": bool(cfg.ai_api_key),
+        "model": cfg.ai_model,
+        "interval_h": round(cfg.ai_interval_sec / 3600, 1),
+    })
+
+
 @router.get("/devler")
 async def lowvol_page(request: Request):
     """Sessiz sular: düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri."""

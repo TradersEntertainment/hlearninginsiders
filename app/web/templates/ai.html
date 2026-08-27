@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}🤖 AI analist · HL Radar{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>🤖 AI analist <span class="dim" style="text-transform:none">·
+    {% if not enabled %}kapalı{% elif not has_key %}anahtar yok{% else %}{{ model }} · {{ interval_h }} saatte bir{% endif %}</span></h2>
+  <p class="sub">Model veriyi okuyup <b>sınanabilir</b> hipotez üretir; vadesi gelince
+  <b>Python ölçer</b> ve tuttu/tutmadı diye damgalar. Aşağıdaki karne modelin kendi
+  sicilidir — uyduruyorsa bunu sen değil, istatistik yakalar.
+  <span class="warn">AI çıktısıdır, doğrulanmamıştır; <b>yatırım tavsiyesi değildir</b>.
+  Telegram'a hiçbir şey düşmez.</span></p>
+
+  {% if not enabled or not has_key %}
+  <p class="dim">⏳ AI analist çalışmıyor
+  {%- if not has_key %} — Railway'e <code>AI_API_KEY</code> ekle (Groq'ta bedava anahtar alınır){% endif %}
+  {%- if not enabled %}{% if not has_key %} ve{% endif %} Ayarlar → AI analist'ten <b>aç</b>{% endif %}.</p>
+  {% endif %}
+
+  <p style="margin:10px 0 4px;font-size:15px">
+    <span class="long"><b>{{ rec.hit }}</b> tuttu</span> ·
+    <span class="short"><b>{{ rec.miss }}</b> tutmadı</span> ·
+    <b>{{ rec.open }}</b> beklemede ·
+    <span class="dim ihit" data-tip="Baz ya da vade verisi olmadığı için ölçülemedi — tuttu/tutmadı sayılmaz, sicile katılmaz">{{ rec.unresolvable }} ölçülemedi</span>
+    {% if rec.rate is not none %} · <b>%{{ rec.rate }} isabet</b>{% endif %}
+  </p>
+  <p class="sub short">Bugün harcanan: <b>{{ budget.tokens }}</b> / {{ budget.cap }} token
+  ({{ budget.calls }} çağrı) · kalan <b>{{ budget.left }}</b>. Tavan dolunca tur atlanır,
+  ertesi gün sıfırlanır.</p>
+</div>
+
+<div class="panel">
+  <h2>⏳ Açık hipotezler <span class="dim" style="text-transform:none">· sonucu bekleniyor</span></h2>
+  {% if open_h %}
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th class="l">İddia</th><th class="l">Konu</th><th class="l">Ölçüt</th>
+        <th title="Kayıt anındaki değer">Baz</th><th>Vade</th><th>Güven</th></tr>
+    {% for h in open_h %}
+    <tr>
+      <td class="l">{{ h.claim }}</td>
+      <td class="l">{% if h.symbol %}<a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% endif %}
+        {%- if h.subject_kind == 'position' %} <span class="dim">{{ m.addr(h.subject, k, 6) }}</span>{% endif %}</td>
+      <td class="l dim ihit" data-tip="{{ h.metric_desc }}">{{ h.metric }} {{ h.op }} {{ '%g'|format(h.value) }}</td>
+      <td class="dim">{{ '%g'|format(h.baseline or 0) }}</td>
+      <td class="dim">{{ h.resolve_ts|dt }}</td>
+      <td class="dim">%{{ '%.0f'|format((h.confidence or 0) * 100) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Henüz açık hipotez yok.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>🏁 Sonuçlananlar</h2>
+  {% if done_h %}
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th>Sonuç</th><th class="l">İddia</th><th class="l">Konu</th>
+        <th class="l">Ölçüt</th><th title="Vadede ölçülen değer">Ölçülen</th><th>Ne zaman</th></tr>
+    {% for h in done_h %}
+    <tr>
+      <td>{% if h.status == 'hit' %}<span class="long"><b>TUTTU</b></span>
+          {%- elif h.status == 'miss' %}<span class="short"><b>tutmadı</b></span>
+          {%- else %}<span class="dim" title="Baz ya da vade verisi yoktu — sicile sayılmaz">ölçülemedi</span>{% endif %}</td>
+      <td class="l">{{ h.claim }}</td>
+      <td class="l">{% if h.symbol %}<a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% endif %}</td>
+      <td class="l dim">{{ h.metric }} {{ h.op }} {{ '%g'|format(h.value) }}</td>
+      <td class="dim">{% if h.measured is not none %}{{ '%.2f'|format(h.measured) }}{% else %}—{% endif %}</td>
+      <td class="dim">{{ h.resolved_ts|dt }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Henüz sonuçlanan hipotez yok — ilkleri vadesi geldiğinde burada belirir.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>💭 Gözlemler <span class="dim" style="text-transform:none">· ölçülmez, sicile girmez</span></h2>
+  <p class="sub">Modelin sınanabilir bir ölçüte bağlayamadığı notlar. Serbestçe
+  konuşabilsin diye tutuluyor ama <b>karneye sayılmaz</b>.</p>
+  {% if obs %}
+  <ul style="margin:0;padding-left:18px;line-height:1.55">
+    {% for o in obs %}
+    <li><span class="dim">{{ o.ts|dt }}</span>
+      {% if o.subject %}<b>{{ o.subject.split(':')[-1] }}</b> — {% endif %}{{ o.text }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="dim">Henüz gözlem yok.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>⚙️ Son turlar</h2>
+  {% if runs %}
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th>Zaman</th><th>Durum</th><th>Gözlem</th><th>Hipotez</th>
+        <th title="girdi + çıktı">Token</th><th class="l">Hata</th></tr>
+    {% for r in runs %}
+    <tr>
+      <td class="dim">{{ r.ts|dt }}</td>
+      <td>{% if r.ok %}<span class="long">✓</span>{% else %}<span class="short">✗</span>{% endif %}</td>
+      <td class="dim">{{ r.n_obs }}</td>
+      <td class="dim">{{ r.n_hyp }}</td>
+      <td class="dim">{{ r.tokens_in }}+{{ r.tokens_out }}</td>
+      <td class="l short">{{ r.err or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Henüz tur çalışmadı.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

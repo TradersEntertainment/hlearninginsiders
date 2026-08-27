@@ -22,6 +22,9 @@ insider şüpheli balina pozisyonlarını yakalayan bot + dashboard.
 - 📈 **Fiyat grafiği:** coin sayfasında mum grafiği — liq duvarları, balina giriş seviyeleri ve geçmiş bilanço günleri üzerinde işaretli; isteğe bağlı TradingView gömülüsü
 - 🎯 **Pozisyon takibi:** bir balinayı takibe al, kapatınca/eksiltince tahmini P&L ile haber ver
   — takip **pozisyon kapanana kadar** sürer, süreyle düşmez (14 günde bir "bırakayım mı?" diye yoklar)
+- 🤖 **AI analist:** veriden **sınanabilir** hipotez üretir ("NVDA 48 saatte %2 düşer"),
+  Python vadesi gelince ölçer ve tuttu/tutmadı diye damgalar — modelin **kendi sicili**
+  sitede görünür. Bedava Groq ile çalışır; Telegram'a hiçbir şey düşmez
 - 📊 Dashboard: ticker ara → en büyük pozlar + **likidasyona en yakın pozlar** + balina karnesi;
   grafiklerin üstüne gelince **anlık ipucu** (fiyat/saat/kim), ✅ PROPR filtresi, iki tema
 
@@ -118,6 +121,35 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
   liq/entry seviyeleri o fiyat uzayına aittir. Katlanabilir TradingView paneli ise
   **hisse senedinin** grafiğidir — seansları ve fiyatı birebir aynı değildir.
 - Bu bir gözlem/istihbarat aracıdır; **yatırım tavsiyesi değildir**.
+
+## AI Analist (opsiyonel)
+
+Bir dil modeline ham veri verip "örüntü bul" demek kendinden emin uydurma üretir.
+Bu yüzden iş bölünmüştür: **istatistiği Python hesaplar, model yalnız hipotez
+önerir, kararı yine Python verir.**
+
+1. Her turda (varsayılan 2 saat) Python kompakt bir brifing hazırlar — içinde
+   sitede **hiç göstermediğimiz** veriler de var: `asset_metrics`'in 45 günlük
+   serisi, `fills.taker` agresörlük dengesi, çekilmiş emir defteri duvarları,
+   `hl_positions` yaşam döngüsü, `alerts_log` (botun kendi gürültü kaydı),
+   cüzdan bağlantıları, likidasyona tırmanma kademeleri, listelenme yaşı.
+2. Model, **kapalı bir metrik listesinden** seçerek hipotez üretir
+   (`price_move_pct`, `oi_change_pct`, `volume_ratio`, `position_closed`,
+   `position_grew_pct`). Ölçülebilir bir ölçüte bağlanamayan iddia **gözlem**
+   sayılır ve sicile girmez.
+3. Kayıt anında baz değer saklanır; vade gelince Python ölçer:
+   **tuttu / tutmadı / ölçülemedi**. Ölçülemeyen hiçbirine sayılmaz — istatistiği
+   güzelleştirmek için tahmin yürütmek aracın anlamını bozardı.
+4. `/ai` sayfasında modelin karnesi en üstte durur. Uyduruyorsa istatistik onu
+   ele verir.
+
+**Kurulum:** [Groq](https://console.groq.com)'tan bedava anahtar al →
+Railway'e `AI_API_KEY` ekle → Ayarlar → AI analist'ten aç. Bedava katmanda
+günde 100K token sınırı var; 2 saatlik tur ~48K/gün eder, rahat pay kalır.
+Sağlayıcı değiştirmek için `ai_base_url` + `ai_model` ayarını değiştir —
+Groq/Cerebras/OpenRouter/DeepSeek aynı OpenAI-uyumlu biçimi konuşur.
+
+Çıktı **yalnız sitede** görünür: doğrulanmamış AI metni Telegram'a düşmez.
 
 ## Üçüncü Taraf
 
