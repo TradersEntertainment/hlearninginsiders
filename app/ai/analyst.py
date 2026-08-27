@@ -161,6 +161,22 @@ async def run_once(cfg: Config, session) -> dict:
                  str(o.get("subject") or "")[:64], txt))
             n_obs += 1
 
+        # AYNI AÇIK HİPOTEZİ TEKRAR KAYDETME. Brifingte "aynısını tekrar
+        # önerme" satırı var ama PROMPT BİR GARANTİ DEĞİLDİR: model her turda
+        # aynı çağrıyı yeniden öneriyordu, altı açık kaydın dördü tekrardı.
+        # Bir isabetli tahminin beş kez sayılması karneyi — aracın tek değerli
+        # çıktısını — şişirirdi. Tekillik promptun değil Python'ın işi.
+        #
+        # Anahtarda EŞİK (value) YOK: "%2 artar" ile "%8 artar" aynı yöndeki
+        # aynı çağrıdır, ikisini ayrı saymak sicili şişirmenin kolay yoluydu.
+        # Yalnız AÇIK olanlar engeller — sonuçlanmış bir hipotezin aynısını
+        # yeniden önermek meşrudur: yeni an, yeni baz, yeni tahmin.
+        cur = await conn.execute(
+            "SELECT subject, subject_coin, metric, op FROM ai_hypotheses"
+            " WHERE status='open'")
+        open_keys = {(r["subject"], r["subject_coin"], r["metric"], r["op"])
+                     for r in await cur.fetchall()}
+
         for h in (out.get("hypotheses") or [])[:int(cfg.ai_max_hypotheses)]:
             try:
                 v = schema.validate(h, coins, addrs)
@@ -176,6 +192,14 @@ async def run_once(cfg: Config, session) -> dict:
                         (run_id, ts, f"[ölçülemez hipotez] {claim}"))
                     n_obs += 1
                 continue
+            key = (v["subject"], v["subject_coin"], v["metric"], v["op"])
+            if key in open_keys:
+                # Gözleme DÜŞÜRMÜYORUZ: tekrar yeni bilgi değil. Aynı cümleyi
+                # her turda gözlem paneline yazmak, az önce temizlediğimiz
+                # papağan gürültüsünü geri getirirdi.
+                rejected.append(
+                    f"zaten açık: {v['subject_coin']} {v['metric']} {v['op']}")
+                continue
             base = await _baseline(v["metric"], v["subject"], v["subject_coin"])
             if base is None:
                 rejected.append(f"baz değer yok: {v['subject_coin']}")
@@ -189,6 +213,7 @@ async def run_once(cfg: Config, session) -> dict:
                  v["subject_kind"], v["subject"], v["subject_coin"], v["metric"],
                  v["op"], v["value"], v["horizon_h"], base, ts,
                  ts + v["horizon_h"] * 3600))
+            open_keys.add(key)        # tur İÇİNDE gelen ikinci kopya da düşsün
             n_hyp += 1
 
         await conn.execute(

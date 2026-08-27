@@ -233,9 +233,10 @@ async def _sessions(limit=6) -> list[str]:
     return lines
 
 
-async def _own_record(conn) -> list[str]:
+async def _own_record(conn, ts=None) -> list[str]:
     """Modelin KENDİ sicili brifinge girer: geçmiş hipotezlerinin nasıl gittiğini
-    görsün ki aynı hatayı tekrarlamasın."""
+    görsün ki aynı hatayı tekrarlamasın. (`ts` kullanılmıyor — bölüm imzası
+    `build()` içindeki listeyle aynı kalsın diye duruyor.)"""
     cur = await conn.execute(
         "SELECT status, COUNT(*) n FROM ai_hypotheses GROUP BY status")
     st = {r["status"]: r["n"] for r in await cur.fetchall()}
@@ -269,23 +270,25 @@ async def _own_record(conn) -> list[str]:
 
 async def build(max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     """Brifing metnini üret. Bölümler ÖNEM SIRASINDA: tavan aşılırsa sondan
-    kesilir, yani en değerli kısım her zaman içeride kalır."""
+    kesilir, yani en değerli kısım her zaman içeride kalır.
+
+    `_own_record` başta: modelin kendi karnesi ve açık hipotez listesi
+    brifingin en pahalı bağlamı. Sonda dururken tavan bağladığında ilk kırpılan
+    O oluyordu — yani "aynısını tekrar önerme" satırı modele hiç ulaşmıyordu.
+    """
     ts = now()
     async with db() as conn:
         sections: list[list[str]] = []
-        for fn in (_universe, _metrics_moves, _new_positions, _taker_balance,
-                   _hl_lifecycle, _walls, _liq, _records, _alerts):
+        for fn in (_universe, _own_record, _metrics_moves, _new_positions,
+                   _taker_balance, _hl_lifecycle, _walls, _liq, _records,
+                   _alerts):
             try:
                 sections.append(await fn(conn, ts))
             except Exception:
                 log.exception("brifing bölümü atlandı: %s", fn.__name__)
                 sections.append([])
-        try:
-            sections.append(await _own_record(conn))
-        except Exception:
-            log.exception("brifing: kendi sicili okunamadı")
     try:
-        sections.insert(-1, await _sessions())
+        sections.append(await _sessions())
     except Exception:
         log.exception("brifing: seans karnesi okunamadı")
 
