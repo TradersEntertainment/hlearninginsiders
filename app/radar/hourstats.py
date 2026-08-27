@@ -30,6 +30,9 @@ MIN_CANDLES = 24 * 20  # en az ~20 günlük veri yoksa istatistik üretme
 REFRESH_SEC = 600  # döngü periyodu
 PER_CYCLE = 2      # her turda yenilenecek coin sayısı
 STALE_SEC = 24 * 3600
+# Çıktı şeması sürümü. Artınca kv'deki eski kayıtlar BAYAT sayılır ve rotasyon
+# onları yeniden hesaplar — yoksa yeni alanlar aylarca boş kalırdı.
+HSTATS_V = 2
 
 _inflight: set[str] = set()
 
@@ -53,6 +56,11 @@ def compute_stats(candles: list[dict]) -> dict | None:
         return None
     hours = [{"n": 0, "s": 0.0, "w": 0} for _ in range(24)]
     open_c = closed_c = 1.0
+    # Yön ayrımı: net getiri "%20 çıkıp %18 düştü" ile "%2 tek yönde gitti"yi
+    # aynı gösteriyor. Yukarı ve aşağı hareketi AYRI bileşikliyoruz.
+    up = {"open": 1.0, "closed": 1.0}
+    dn = {"open": 1.0, "closed": 1.0}
+    n_sess = {"open": 0, "closed": 0}
     t_min = t_max = candles[0]["t"]
     for c in candles:
         if c["o"] <= 0:
@@ -67,10 +75,16 @@ def compute_stats(candles: list[dict]) -> dict | None:
         b["w"] += 1 if r > 0 else 0
         # NYSE normal seansı ~09:30-16:00 ET; 1h mumda 9-16 başlangıçları
         # "açık" sayılır (09:00 mumunun yarısı kapalıdır — yaklaşıklama)
-        if dt.weekday() < 5 and 9 <= dt.hour < 16:
+        sess = "open" if (dt.weekday() < 5 and 9 <= dt.hour < 16) else "closed"
+        n_sess[sess] += 1
+        if sess == "open":
             open_c *= 1 + r
         else:
             closed_c *= 1 + r
+        if r > 0:
+            up[sess] *= 1 + r
+        elif r < 0:
+            dn[sess] *= 1 + r
         t_min, t_max = min(t_min, c["t"]), max(t_max, c["t"])
 
     ref = datetime.fromtimestamp(t_max, ET)
@@ -89,8 +103,13 @@ def compute_stats(candles: list[dict]) -> dict | None:
     return {
         "hours": out_hours,
         "open_ret": (open_c - 1) * 100, "closed_ret": (closed_c - 1) * 100,
+        # seans × yön: borsa kapalıyken ne kadar çıktı / ne kadar düştü
+        "open_up": (up["open"] - 1) * 100, "open_dn": (dn["open"] - 1) * 100,
+        "closed_up": (up["closed"] - 1) * 100, "closed_dn": (dn["closed"] - 1) * 100,
+        "n_open": n_sess["open"], "n_closed": n_sess["closed"],
         "days": round((t_max - t_min) / 86400),
         "best": best, "worst": worst,
+        "v": HSTATS_V,
         "ts": now(),
     }
 
@@ -118,6 +137,59 @@ def hot_now(stats_map: dict[str, dict], et_hour: int) -> list[dict]:
                     "closed_heavy": s["closed_ret"] > s["open_ret"],
                     "closed_ret": s["closed_ret"], "open_ret": s["open_ret"]})
     out.sort(key=lambda x: -x["avg"])
+    return out
+
+
+def _share(closed: float, opened: float) -> float | None:
+    """Hareketin yüzde kaçı KAPALI seansta oldu. İkisi de sıfırsa None —
+    'hiç hareket yok' ile '%0 kapalıda' aynı şey değil, hücre '—' göstersin."""
+    total = abs(closed) + abs(opened)
+    if total <= 0:
+        return None
+    return abs(closed) / total * 100
+
+
+def session_ranking(stats_map: dict[str, dict],
+                    sym_map: dict[str, str] | None = None) -> list[dict]:
+    """Seans karnesi: hangi hisse ne kadarını borsa KAPALIYKEN yapmış.
+
+    HIP-3 perp'i 7/24 işlem görür, hisse senedi kapalıdır: kapalı seanstaki
+    hareket saf perp/balina kaynaklıdır. Yükseliş ve düşüş AYRI verilir —
+    net getiri "%20 çıkıp %18 düştü"yü "%2 gitti" gibi gösteriyordu.
+
+    Kapalı seans açıktan ~4 kat uzun olduğu için toplamın yanında saat başına
+    ortalama da hesaplanır; kıyas ancak öyle dürüst olur.
+
+    Henüz yeni şemayla tazelenmemiş kayıtlar ATLANIR (yarım veriyle yanlış
+    sıralama üretmektense listede hiç görünmesin).
+    """
+    sym_map = sym_map or {}
+    out = []
+    for coin, st in (stats_map or {}).items():
+        if not st or st.get("empty") or int(st.get("v") or 0) < HSTATS_V:
+            continue
+        n_cl, n_op = int(st.get("n_closed") or 0), int(st.get("n_open") or 0)
+        cu, cd = float(st.get("closed_up") or 0), float(st.get("closed_dn") or 0)
+        ou, od = float(st.get("open_up") or 0), float(st.get("open_dn") or 0)
+        out.append({
+            "coin": coin,
+            "symbol": sym_map.get(coin) or coin.split(":")[-1].upper(),
+            "closed_up": cu, "closed_dn": cd, "open_up": ou, "open_dn": od,
+            "closed_ret": float(st.get("closed_ret") or 0),
+            "open_ret": float(st.get("open_ret") or 0),
+            "up_share": _share(cu, ou), "dn_share": _share(cd, od),
+            # saat başına ortalama — seans uzunluğu farkını nötrler
+            "rate_closed_up": (cu / n_cl) if n_cl else 0.0,
+            "rate_open_up": (ou / n_op) if n_op else 0.0,
+            "rate_closed_dn": (cd / n_cl) if n_cl else 0.0,
+            "rate_open_dn": (od / n_op) if n_op else 0.0,
+            "closed_heavy": float(st.get("closed_ret") or 0) > float(st.get("open_ret") or 0),
+            "n_closed": n_cl, "n_open": n_op,
+            "days": int(st.get("days") or 0),
+        })
+    # Varsayılan: yükselişinin en çok kapalı seansta oluştuğu hisse başta
+    out.sort(key=lambda r: (-(r["up_share"] if r["up_share"] is not None else -1),
+                            -r["closed_up"]))
     return out
 
 
@@ -219,7 +291,9 @@ async def refresh_loop(cfg: Config, client: HLClient) -> None:
                 have = await all_stats()
                 ts = now()
                 todo = [c for c in coins
-                        if not have.get(c) or ts - int(have[c].get("ts") or 0) > STALE_SEC]
+                        if not have.get(c)
+                        or int(have[c].get("v") or 0) < HSTATS_V     # eski şema
+                        or ts - int(have[c].get("ts") or 0) > STALE_SEC]
                 for coin in todo[:PER_CYCLE]:
                     await refresh_coin(cfg, client, coin)
         except asyncio.CancelledError:

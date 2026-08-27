@@ -660,6 +660,12 @@ async def index(request: Request):
         h["symbol"] = sym_map.get(h["coin"], h["coin"].split(":")[-1])
         h["propr"] = propr_listed(h["symbol"])
     n_hstats = sum(1 for s in hmap.values() if s and not s.get("empty"))
+    # 🌙 Seans karnesi: hareketin ne kadarı borsa KAPALIYKEN oldu (yön ayrımlı).
+    # Aynı hmap — ek istek yok; yeni şemayla henüz tazelenmemişler atlanır.
+    session_rows = hourstats.session_ranking(hmap, sym_map)
+    for r in session_rows:
+        r["propr"] = propr_listed(r["symbol"])
+    session_rows = session_rows[:20]
 
     collector = getattr(request.app.state, "collector", None)
     health_state = await kv_get("health_state") or {}
@@ -673,7 +679,7 @@ async def index(request: Request):
         "book_walls": book_walls,
         "trackers": trackers,
         "hot_hours": hot_hours, "tsi_now": datetime.now(TR).hour,
-        "n_hstats": n_hstats,
+        "n_hstats": n_hstats, "session_rows": session_rows,
         "has_channel": bool(cfg.telegram_channel_id) and request.app.state.bot is not None,
         "hot_result": request.query_params.get("hot"),
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),

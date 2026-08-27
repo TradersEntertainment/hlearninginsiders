@@ -217,6 +217,50 @@
   {% endif %}
 </div>
 
+<div class="panel">
+  <h2>🌙 Seans karnesi <span class="dim" style="text-transform:none">· hareket ne zaman geliyor?{% if session_rows %} · {{ session_rows|length }} hisse{% endif %}</span></h2>
+  <p class="sub">HIP-3 perp'i 7/24 işlem görür, <b>hisse senedi ise kapalıdır</b> — borsa
+  kapalıyken gelen hareket saf perp/balina kaynaklıdır. Yükseliş ve düşüş <b>ayrı</b>:
+  net getiri "%20 çıkıp %18 düştü"yü "%2 gitti" gibi gösteriyordu.
+  <b>Kapalı payı</b> asıl cevaptır — yükselişin yüzde kaçı borsa kapalıyken oluşmuş.
+  <span class="warn">Kapalı seans açıktan ~4 kat uzun, o yüzden <b>saat başına</b> kolonu var;
+  adil kıyas orada. Seans ayrımı yaklaşıktır (hafta içi 09:00-16:00 ET açık sayılır;
+  resmi tatiller ayrıştırılmaz). Geçmiş istatistik — garanti değil.</span></p>
+  {% if session_rows %}
+  <p class="sub short">Kolon başlığına tıkla → sırala.</p>
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th class="l">Hisse</th>
+        <th title="Borsa KAPALIYKEN biriken yükseliş (bileşik)">🌙 Kapalı ↑</th>
+        <th title="Borsa KAPALIYKEN biriken düşüş (bileşik)">🌙 Kapalı ↓</th>
+        <th title="Borsa AÇIKKEN biriken yükseliş">☀️ Açık ↑</th>
+        <th title="Borsa AÇIKKEN biriken düşüş">☀️ Açık ↓</th>
+        <th title="Yükselişin yüzde kaçı borsa kapalıyken oluşmuş">Kapalı payı</th>
+        <th title="Saat başına ortalama yükseliş — kapalı / açık (seans uzunluğu farkını nötrler)">Saat başı ↑</th>
+        <th title="İstatistiğin kapsadığı gün sayısı">Gün</th></tr>
+    {% for r in session_rows %}
+    <tr data-propr="{{ 1 if r.propr else 0 }}">
+      <td class="l"><a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>{% if r.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {% if r.closed_heavy %}<span title="Net getirinin çoğu borsa kapalıyken gelmiş">🌙</span>{% endif %}</td>
+      <td class="long ihit" data-tip="{{ r.symbol }} · borsa kapalıyken toplam yükseliş {{ '%+.1f'|format(r.closed_up) }}% ({{ r.n_closed }} saatlik mum)">{{ '%+.1f'|format(r.closed_up) }}%</td>
+      <td class="short ihit" data-tip="{{ r.symbol }} · borsa kapalıyken toplam düşüş {{ '%+.1f'|format(r.closed_dn) }}% ({{ r.n_closed }} saatlik mum)">{{ '%+.1f'|format(r.closed_dn) }}%</td>
+      <td class="long ihit" data-tip="{{ r.symbol }} · borsa açıkken toplam yükseliş {{ '%+.1f'|format(r.open_up) }}% ({{ r.n_open }} saatlik mum)">{{ '%+.1f'|format(r.open_up) }}%</td>
+      <td class="short ihit" data-tip="{{ r.symbol }} · borsa açıkken toplam düşüş {{ '%+.1f'|format(r.open_dn) }}% ({{ r.n_open }} saatlik mum)">{{ '%+.1f'|format(r.open_dn) }}%</td>
+      <td class="ihit" data-tip="{% if r.up_share is none %}Hiç yükseliş kaydedilmemiş{% else %}{{ r.symbol }} yükselişinin %{{ '%.0f'|format(r.up_share) }}'i borsa KAPALIYKEN oluşmuş{% endif %}">
+        {% if r.up_share is none %}<span class="dim">—</span>{% else %}<b>%{{ '%.0f'|format(r.up_share) }}</b>{% endif %}</td>
+      <td class="dim ihit" data-tip="Saat başına ortalama yükseliş — kapalı {{ '%+.3f'|format(r.rate_closed_up) }}% / açık {{ '%+.3f'|format(r.rate_open_up) }}%">{{ '%.3f'|format(r.rate_closed_up) }} / {{ '%.3f'|format(r.rate_open_up) }}</td>
+      <td class="dim">{{ r.days }}g</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">⏳ Seans karnesi hazırlanıyor{% if n_hstats %} — {{ n_hstats }} hissenin saat
+  istatistiği var, seans ayrımı sıradaki tazelemede işlenir (rotasyon coin'leri
+  günde bir gezer){% endif %}.</p>
+  {% endif %}
+</div>
+
 <div class="panel third compact">
   <h2>🚨 En şüpheliler</h2>
   <p class="sub">Botun "bu insider olabilir 🤨" dediği pozisyonlar. Skor yükseldikçe şüphe artar.</p>
