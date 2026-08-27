@@ -151,13 +151,14 @@
 <div class="panel third compact">
   <h2>👣 Aktif takipler{% if trackers %} <span class="dim" style="text-transform:none">· {{ trackers|length }} balina izleniyor</span>{% endif %}</h2>
   <p class="sub">İzlemeye aldığın balinalar: pozu kapattıkça/büyüttükçe Telegram'a haber gelir.
-  Tam kapanış ve yön değişimi anında bildirilir.</p>
+  Tam kapanış ve yön değişimi anında bildirilir. Takip <b>pozisyon kapanana kadar</b>
+  sürer — süreyle bitmez; bırakmak için Telegram'dan <code>/birak_N</code>.</p>
   {% if trackers %}
   <table>
     <tr><th class="l">Hisse</th><th class="l">Balina</th><th>Yön</th>
         <th title="Takibe alındığındaki pozisyon büyüklüğü">Başlangıç</th>
         <th title="Başlangıca göre ne kadarı kapandı">Durum</th>
-        <th title="Takibin bitmesine kalan gün">Kalan</th></tr>
+        <th title="Sonraki 'takipteyim, bırakayım mı?' yoklamasına kalan gün — takip bu süreyle BİTMEZ">Yoklama</th></tr>
     {% for t in trackers %}
     <tr data-propr="{{ 1 if t.propr else 0 }}">
       <td class="l"><a href="/t/{{ t.symbol }}{{ k }}"><b>{{ t.symbol }}</b></a>{% if t.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>

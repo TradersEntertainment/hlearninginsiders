@@ -7,9 +7,11 @@ Coin sayfası açıldığında veri bayatsa anında arka planda tarama tetikleni
 import asyncio
 import logging
 
+from .. import assets
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
 from ..hl.client import HLClient
+from ..hl.universe import symbol_of
 from ..telegram import format as fmt
 
 log = logging.getLogger("radar.autoscan")
@@ -20,6 +22,46 @@ NEW_BIG_COOLDOWN = 48 * 3600  # aynı coin+adres için tekrar alert etme
 # Earnings'i yakın coin bu aralıkla yeniden taranır. Daha sık olursa (eski 600)
 # 2 earnings coini tüm tarama slotlarını tekeller, evrenin kalanı hiç sıra alamaz.
 EARNINGS_RESCAN = 1800
+BIG_CACHE_TTL = 600           # "hacimce top-N hisse" listesi bu kadar önbelleklenir
+
+_big_cache: dict = {"ts": 0, "coins": set()}
+
+
+async def _big_coins(cfg: Config) -> set[str]:
+    """Hacimce top-N hisse (NVDA gibi) — her coin taramasında yeniden
+    hesaplanmasın diye önbellekli. Hata olursa BOŞ küme değil, bayat liste
+    döner: boş küme dev hisseleri küçük sınıfa düşürüp alarm yağdırırdı."""
+    if now() - int(_big_cache["ts"]) < BIG_CACHE_TTL:
+        return _big_cache["coins"]
+    from .bookwall import big_coin_set
+    try:
+        _big_cache["coins"] = await big_coin_set(cfg)
+        _big_cache["ts"] = now()
+    except Exception:
+        log.debug("büyük sınıf listesi alınamadı, öncekiyle devam")
+    return _big_cache["coins"]
+
+
+def alert_floor(cfg: Config, coin: str, big_coins: set[str]) -> float:
+    """Bu enstrümanda BİLDİRİM için gereken pozisyon boyutu.
+
+    "Büyük" enstrümana göre değişir: XYZ100'de $3M gürültüdür (endeksin OI'si
+    zaten devasa), ama SNDK gibi küçük bir hissede $3M piyasanın yarısıdır ve
+    tam da aradığımız sinyaldir. Tek eşik ikisini birden idare edemiyordu.
+
+    Kademeler — kullanıcı kuralı:
+      endeks/emtia/FX/ETF (XYZ100, SP500, GOLD, SILVER…)  → $10M
+      hacimce top-N hisse (NVDA…)                          → $5M
+      diğer hisseler                                       → mevcut eşik ($1M)
+
+    Bu YALNIZ bildirim kapısıdır: sitede ve skorlamada eşik değişmez, küçük
+    pozisyonlar görünmeye devam eder.
+    """
+    if assets.kind(symbol_of(coin)) == "non_equity":
+        return float(getattr(cfg, "big_alert_index_usd", 10_000_000))
+    if coin in big_coins:
+        return float(getattr(cfg, "big_alert_major_usd", 5_000_000))
+    return float(getattr(cfg, "big_alert_min_usd", 0) or cfg.big_position_usd)
 
 
 def is_scanning(coin: str) -> bool:
@@ -44,10 +86,11 @@ async def _alert_new_big(cfg: Config, notifier, coin: str, rows: list[dict]) -> 
     if not notifier:
         return
     ts = now()
+    floor = alert_floor(cfg, coin, await _big_coins(cfg))
     for p in rows:
         if p.get("entity"):  # MM/vault — gürültü, alert yok
             continue
-        if p["notional"] < cfg.big_position_usd:
+        if p["notional"] < floor:
             continue
         if (p.get("score") or 0) < cfg.alert_min_score:
             continue

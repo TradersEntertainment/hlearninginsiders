@@ -654,7 +654,20 @@ def track_flip(t: dict, live: dict) -> str:
     return "\n".join(lines)
 
 
+def track_checkin(t: dict, live: dict, base: float) -> str:
+    """Süre doldu ama poz açık: takip SÜRÜYOR, yalnız haber veriyoruz."""
+    closed_total = (base - abs(live["szi"])) / base * 100 if base > 0 else 0
+    prog = (f" · başlangıçtan beri %{closed_total:.0f} kapanmış"
+            if closed_total > 1 else "")
+    return (f"⏳ <b>Takip sürüyor</b> — {t['symbol']} (#{t['id']})\n"
+            f"👤 {alink(t['address'])} pozu hâlâ açık:"
+            f" {_side_badge(live['side'])} <b>{usd(live['notional'])}</b>{prog}\n"
+            f"Kapanana kadar izlemeye devam ediyorum."
+            f" Bırakmak istersen: /birak_{t['id']}")
+
+
 def track_expired(t: dict, live: dict, base: float, offer_id: int) -> str:
+    """ESKİ davranış (track_auto_stop=1) — süre dolunca takip biter."""
     closed_total = (base - abs(live["szi"])) / base * 100 if base > 0 else 0
     prog = (f" · başlangıçtan beri %{closed_total:.0f} kapanmış"
             if closed_total > 1 else "")
@@ -682,8 +695,10 @@ def track_list(rows: list[dict]) -> str:
         lines.append(f"  #{r['id']} <b>{r['symbol']}</b> {_side_badge(r['side'])}"
                      f" {alink(r['address'])} — {prog}"
                      f" (başlangıç {usd(r.get('base_notional'))})"
-                     f" · ⏳{left_d}g{chk} · /birak_{r['id']}")
-    lines.append("\n<i>Her %X adımında bildirim gelir; tam kapanış anında bildirilir.</i>")
+                     f" · sonraki yoklama {left_d}g{chk} · /birak_{r['id']}")
+    lines.append("\n<i>Takip pozisyon KAPANANA KADAR sürer — süreyle bitmez."
+                 " Her %X adımında bildirim gelir, tam kapanış anında bildirilir;"
+                 " bırakmak için /birak_N.</i>")
     return "\n".join(lines)
 
 
@@ -877,7 +892,7 @@ def help_text() -> str:
         "/unignore 0x… — elemeyi kaldır\n"
         "/forget 0x… — adresin sicilini sıfırla + watchlist'ten çıkar\n"
         "/watchlist — sicilli adresler\n"
-        "/takipler — aktif pozisyon takipleri (earnings sonrası balina çıkışı)\n"
+        "/takipler — aktif pozisyon takipleri (bırakmak için /birak_N)\n"
         "/takip 0x… SNDK — herhangi bir balinayı ELLE takibe al (teklif beklemeden)\n"
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"

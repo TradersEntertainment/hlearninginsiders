@@ -183,6 +183,55 @@ async def _offer_for_event(cfg: Config, client: HLClient, notifier,
     return 1
 
 
+# ---------------- tek seferlik diriltme ----------------
+
+REVIVE_KV = "track_revive_done"
+
+
+async def revive_expired(cfg: Config, client: HLClient) -> int:
+    """Eskiden "süre doldu" diye kapanmış ama pozu HÂLÂ AÇIK takipleri geri aç.
+
+    Süre dolumu artık takibi bitirmiyor; bu geçiş, kural değişmeden önce
+    düşmüş takipleri kurtarır. KAPANDIĞI için biten takiplere dokunulmaz —
+    onlar işini yapmış demektir.
+
+    MIGRATIONS'a konmaz: orası her boot'ta koşuyor ve yalnız ALTER TABLE için;
+    oraya UPDATE koymak kullanıcının sonradan /birak_N ile durdurduğu takipleri
+    her deploy'da geri açardı. Bir kez koşar, kv damgasıyla kilitlenir.
+    """
+    from ..db import kv_get, kv_set
+    if await kv_get(REVIVE_KV):
+        return 0
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT * FROM trackers WHERE active=0 AND end_note='süre doldu'")
+        rows = [dict(r) for r in await cur.fetchall()]
+    if not rows:
+        await kv_set(REVIVE_KV, now())
+        return 0
+    ts = now()
+    new_exp = ts + max(1, int(cfg.track_expire_days)) * 86400
+    n = 0
+    for t in rows:
+        try:
+            live = await live_position(client, t["address"], t["coin"])
+        except Exception:
+            log.debug("diriltme sorgusu başarısız #%s", t.get("id"))
+            return n          # API sorunlu → damgalama, sonraki turda yeniden dene
+        if not live:
+            continue          # poz gerçekten kapanmış — geri açmanın anlamı yok
+        async with db() as conn:
+            await conn.execute(
+                """UPDATE trackers SET active=1, expires_ts=?, end_note=NULL,
+                   last_check_ts=? WHERE id=?""", (new_exp, ts, t["id"]))
+        n += 1
+        log.info("takip #%s (%s) geri açıldı — poz hâlâ açık", t["id"], t["symbol"])
+    await kv_set(REVIVE_KV, ts)
+    if n:
+        log.info("süre dolduğu için düşmüş %d takip geri açıldı", n)
+    return n
+
+
 # ---------------- aktif takip kontrolü ----------------
 
 async def check_trackers(cfg: Config, client: HLClient, notifier) -> None:
@@ -256,17 +305,45 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
                     "UPDATE trackers SET last_szi=? WHERE id=?", (cur_szi, t["id"]))
         return
 
-    # 4) Süre doldu (poz hâlâ açık) → bilgilendir, devam için yeni teklif bırak
+    # 4) Süre doldu AMA poz hâlâ açık → takip BİTMEZ, yalnız yoklama yapılır.
+    #
+    #    Eskiden burada active=0 yazılıp yeni bir "devam edelim mi" teklifi
+    #    bırakılıyordu. Bu, özelliğin tek amacını (balina çıkışını yakalamak)
+    #    tam da beklenen olaydan önce iptal ediyordu: poz hiç kapanmadan takip
+    #    düşüyor, kullanıcı elle /takip_N'e basmazsa çıkış kaçıyordu.
+    #    Kural: varsayılan takipte kalmak; durdurmayı KULLANICI seçer (/birak_N).
     if ts > int(t["expires_ts"] or 0):
+        if getattr(cfg, "track_auto_stop", False):
+            await _auto_stop(cfg, notifier, t, live, base, ts)
+            return
+        # Süre HER HÂLÜKÂRDA uzatılır — gönderim başarısız olsa bile.
+        # Bu, yukarıdaki "state yalnız başarılı gönderimden sonra" kuralından
+        # BİLEREK ayrılır: o kural kritik bildirimi kaybetmemek için var;
+        # burada uzatmamak ters arızayı doğurur (track_poll_sec = 120 sn'de
+        # bir, sonsuza kadar aynı yoklama mesajı). Yoklama bilgilendirmedir.
+        new_exp = ts + max(1, int(cfg.track_expire_days)) * 86400
         async with db() as conn:
-            await conn.execute(
-                "UPDATE trackers SET active=0, end_note='süre doldu' WHERE id=?",
-                (t["id"],))
-            cur = await conn.execute(
-                """INSERT INTO track_offers(address,coin,symbol,side,notional,created_ts)
-                   VALUES(?,?,?,?,?,?)""",
-                (t["address"], t["coin"], t["symbol"], live["side"],
-                 live["notional"], ts))
-            offer_id = cur.lastrowid
-        await notifier.send("track", fmt.track_expired(t, live, base, offer_id),
-                            priority="normal", key=f"expire:{t['id']}")
+            await conn.execute("UPDATE trackers SET expires_ts=? WHERE id=?",
+                               (new_exp, t["id"]))
+        await notifier.send("track", fmt.track_checkin(t, live, base),
+                            priority="normal",
+                            key=f"checkin:{t['id']}:{t['expires_ts']}")
+
+
+async def _auto_stop(cfg: Config, notifier, t: dict, live: dict,
+                     base: float, ts: int) -> None:
+    """ESKİ davranış (track_auto_stop=1): süre dolunca takibi bitir ve devam
+    için yeni teklif bırak. Varsayılan kapalı — geri dönüş yolu olsun diye
+    korunuyor."""
+    async with db() as conn:
+        await conn.execute(
+            "UPDATE trackers SET active=0, end_note='süre doldu' WHERE id=?",
+            (t["id"],))
+        cur = await conn.execute(
+            """INSERT INTO track_offers(address,coin,symbol,side,notional,created_ts)
+               VALUES(?,?,?,?,?,?)""",
+            (t["address"], t["coin"], t["symbol"], live["side"],
+             live["notional"], ts))
+        offer_id = cur.lastrowid
+    await notifier.send("track", fmt.track_expired(t, live, base, offer_id),
+                        priority="normal", key=f"expire:{t['id']}")

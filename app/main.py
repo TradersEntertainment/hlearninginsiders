@@ -179,6 +179,9 @@ async def tracker_loop(cfg, client, notifier):
     while True:
         try:
             await health.beat("tracker")  # turbaşı: yavaş API sahte alarm üretmesin
+            # Kural değişmeden önce "süre doldu" diye düşmüş takipleri kurtar
+            # (kendi kv damgasıyla yalnız bir kez koşar).
+            await tracker.revive_expired(cfg, client)
             await tracker.check_trackers(cfg, client, notifier)
             await health.beat("tracker")
         except Exception:

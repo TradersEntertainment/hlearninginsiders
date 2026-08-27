@@ -151,8 +151,14 @@ async def big_coin_set(cfg: Config) -> set[str]:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         coins = [(r["coin"], r["symbol"]) for r in await cur.fetchall()]
     mets = await latest_metrics_all()
+    # HACMİ BİLİNMEYEN coin "büyük sınıf" SAYILMAZ. Eskiden yalnız sıralanıyordu:
+    # metrik tablosu boşken (ilk açılış ya da metrik görevi düşükken) hepsinin
+    # hacmi 0 olur, sıralama rastgeleleşir ve gelişigüzel 10 coin dev muamelesi
+    # görüp yüksek alarm tabanına düşerdi — küçük hissedeki gerçek sinyal
+    # sessizce kısılırdı.
     eq_by_vol = sorted(
-        (c for c, s in coins if assets.kind(s) != "non_equity"),
+        (c for c, s in coins
+         if assets.kind(s) != "non_equity" and ((mets.get(c) or {}).get("day_volume") or 0) > 0),
         key=lambda c: (mets.get(c) or {}).get("day_volume") or 0, reverse=True)
     return set(eq_by_vol[: int(cfg.wall_big_top_n)])
 

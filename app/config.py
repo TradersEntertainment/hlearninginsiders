@@ -35,6 +35,15 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "1 = earnings/yeni büyük poz/likidasyon sessiz saatte de gelir"},
     "digest_hour": {"type": "int", "label": "Sabah özeti saati (TSİ)", "group": "Bildirimler",
                     "desc": "Günlük özetin gönderileceği saat"},
+    "big_alert_index_usd": {"type": "float", "label": "Endeks/emtia bildirim tabanı ($)",
+                            "group": "Bildirimler",
+                            "desc": "XYZ100, SP500, GOLD, SILVER gibi endeks/emtia/FX/ETF'lerde 'yeni büyük pozisyon' bildirimi için gereken boyut. OI'leri devasa olduğu için hisse eşiği burada gürültü üretiyordu"},
+    "big_alert_major_usd": {"type": "float", "label": "Büyük hisse bildirim tabanı ($)",
+                            "group": "Bildirimler",
+                            "desc": "Hacimce ilk N hissede (NVDA, TSLA…) bildirim için gereken boyut — likit hisselerde küçük poz sinyal değildir. Liste dinamiktir (Emir defteri radarı → 'Büyük sınıf hisse sayısı')"},
+    "big_alert_min_usd": {"type": "float", "label": "Normal hisse bildirim tabanı ($)",
+                          "group": "Bildirimler",
+                          "desc": "Küçük/orta hisselerde (SNDK, CBRS…) bildirim tabanı. Burada $1M bile piyasanın büyük kısmı olabilir — asıl insider sinyali burada, düşük tutulur"},
     "alert_min_score": {"type": "int", "label": "Bildirim için min şüphe skoru", "group": "Bildirimler",
                         "desc": "Yeni büyük pozisyon bildirimi için gereken minimum skor (0 = hepsi)"},
     "notify_liqmap": {"type": "bool", "label": "🧲 Likidasyon duvarı (küme)", "group": "Bildirimler",
@@ -43,8 +52,11 @@ EDITABLE_FIELDS: dict[str, dict] = {
                      "desc": "Earnings geçince 'takip edelim mi?' teklifi + takipteki balina pozunu kapadıkça haber"},
     "track_step_pct": {"type": "float", "label": "Takip bildirim adımı (%)", "group": "Bildirimler",
                        "desc": "Takipteki poz, toplam boyutun bu yüzdesi kadar değişmeden bildirim GELMEZ (spam önleyici)"},
-    "track_expire_days": {"type": "int", "label": "Takip süresi (gün)", "group": "Bildirimler",
-                          "desc": "Takip bu kadar gün sonra kendiliğinden biter (poz hâlâ açıksa haber verir)"},
+    "track_auto_stop": {"type": "bool", "label": "Takip süreyle bitsin (eski davranış)",
+                        "group": "Bildirimler",
+                        "desc": "Açılırsa takip, süre dolunca poz açık olsa bile BİTER (eskiden böyleydi — balinanın çıkışı kaçıyordu). Kapalıyken takip yalnız pozisyon kapanınca ya da /birak_N ile biter"},
+    "track_expire_days": {"type": "int", "label": "Takip yoklama aralığı (gün)", "group": "Bildirimler",
+                          "desc": "Poz hâlâ açıkken kaç günde bir 'takipteyim, bırakayım mı?' densin. Takip bu süreyle BİTMEZ — yalnız pozisyon kapanınca ya da /birak_N ile biter"},
     "notify_lowvol": {"type": "bool", "label": "🐘 Sessiz su devi", "group": "Bildirimler",
                       "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
     "notify_listing": {"type": "bool", "label": "🆕 Yeni hisse listelendi", "group": "Bildirimler",
@@ -287,6 +299,7 @@ class Config:
         self.notify_track = True
         self.track_step_pct = float(os.getenv("TRACK_STEP_PCT", "10"))
         self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
+        self.track_auto_stop = convert_value("bool", os.getenv("TRACK_AUTO_STOP", "0"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
         self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
         self.hourstats_days = int(os.getenv("HOURSTATS_DAYS", "90"))
@@ -344,6 +357,10 @@ class Config:
         self.min_fill_notional = float(os.getenv("MIN_FILL_NOTIONAL", "5000"))
         self.min_position_notional = float(os.getenv("MIN_POSITION_NOTIONAL", "10000"))
         self.big_position_usd = float(os.getenv("BIG_POSITION_USD", "1000000"))
+        # "Yeni büyük pozisyon" BİLDİRİMİ kademeli (sitede/skorlamada değişmez)
+        self.big_alert_index_usd = float(os.getenv("BIG_ALERT_INDEX_USD", "10000000"))
+        self.big_alert_major_usd = float(os.getenv("BIG_ALERT_MAJOR_USD", "5000000"))
+        self.big_alert_min_usd = float(os.getenv("BIG_ALERT_MIN_USD", "1000000"))
         self.huge_position_usd = float(os.getenv("HUGE_POSITION_USD", "5000000"))
         self.combo_window_hours = int(os.getenv("COMBO_WINDOW_HOURS", "72"))
         self.fresh_big_alert_hours = int(os.getenv("FRESH_BIG_ALERT_HOURS", "24"))
