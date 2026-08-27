@@ -57,7 +57,16 @@ class AIClient:
                 if r.status == 429:
                     raise RateLimited(_retry_after(r.headers))
                 if r.status != 200:
-                    raise RuntimeError(f"HTTP {r.status}: {body[:200]}")
+                    # Model adları sağlayıcıda dönüyor (Groq eski llama'ları
+                    # emekliye ayırdı). Çıplak "model_not_found" kullanıcıya
+                    # NE YAZACAĞINI söylemiyordu; kullanılabilir listeyi hatanın
+                    # içine koyuyoruz ki panelde doğrudan okunsun.
+                    hint = ""
+                    if r.status in (400, 404) and "model" in body.lower():
+                        names = await self.list_models()
+                        if names:
+                            hint = " — kullanılabilir modeller: " + ", ".join(names[:12])
+                    raise RuntimeError(f"HTTP {r.status}: {body[:200]}{hint}")
                 data = json.loads(body)
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             raise RuntimeError(f"ağ hatası: {e}") from e
@@ -72,6 +81,25 @@ class AIClient:
         return (text,
                 int(usage.get("prompt_tokens") or 0),
                 int(usage.get("completion_tokens") or 0))
+
+    async def list_models(self) -> list[str]:
+        """Sağlayıcıdaki model kimlikleri. OpenAI-uyumlu API'lerde sohbet uç
+        noktasının kardeşi `/models`'tır. Hata yolunda çağrılır — başarısız
+        olursa sessizce boş döner, asıl hatanın üstünü örtmesin."""
+        if "/chat/completions" not in self.base_url:
+            return []
+        url = self.base_url.replace("/chat/completions", "/models")
+        try:
+            async with self.session.get(
+                    url, headers={"Authorization": f"Bearer {self.api_key}"},
+                    timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status != 200:
+                    return []
+                data = json.loads(await r.text())
+        except Exception:
+            return []
+        out = [str(m.get("id")) for m in (data.get("data") or []) if m.get("id")]
+        return sorted(out)
 
 
 def _retry_after(headers) -> float:

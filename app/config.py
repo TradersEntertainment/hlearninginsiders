@@ -92,11 +92,11 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "ai_interval_sec": {"type": "int", "label": "Tur aralığı (sn)", "group": "AI analist",
                         "desc": "Kaç saniyede bir brifing hazırlanıp modele gönderilsin. Groq bedava katmanında günde 100K token var: 7200 (2 saat) ~48K/gün eder, rahat pay bırakır"},
     "ai_daily_token_cap": {"type": "int", "label": "Günlük token tavanı", "group": "AI analist",
-                           "desc": "Bir günde harcanabilecek toplam token. Tavan dolunca çağrı HİÇ yapılmaz, ertesi gün sıfırlanır. Sağlayıcının sınırının altında tut"},
+                           "desc": "Bir günde harcanabilecek toplam token. Tavan dolunca çağrı HİÇ yapılmaz, ertesi gün sıfırlanır. Sağlayıcının sınırının altında tut (Groq bedava: gpt-oss-120b için 200K/gün)"},
     "ai_max_hypotheses": {"type": "int", "label": "Tur başına hipotez", "group": "AI analist",
                           "desc": "Model her turda en fazla kaç hipotez üretsin. Az tutmak modeli EN İYİ tahminini seçmeye zorlar ve sicili anlamlı kılar"},
     "ai_model": {"type": "str", "label": "Model adı", "group": "AI analist",
-                 "desc": "Sağlayıcıdaki model kimliği (ör. llama-3.3-70b-versatile)"},
+                 "desc": "Sağlayıcıdaki model kimliği (ör. openai/gpt-oss-120b). Model adları sağlayıcıda değişir; yanlış ad girersen /ai sayfasındaki hata metni kullanılabilir modelleri listeler"},
     "ai_base_url": {"type": "str", "label": "API adresi", "group": "AI analist",
                     "desc": "OpenAI-uyumlu sohbet tamamlama adresi. Groq/Cerebras/OpenRouter/DeepSeek aynı biçimi konuşur — sağlayıcı değiştirmek için burayı ve model adını değiştir"},
     "min_fill_notional": {"type": "float", "label": "Min fill boyutu ($)",
@@ -298,9 +298,12 @@ class Config:
         self.ai_api_key = os.getenv("AI_API_KEY", "")
         self.ai_enabled = convert_value("bool", os.getenv("AI_ENABLED", "0"))
         self.ai_interval_sec = int(os.getenv("AI_INTERVAL_SEC", "7200"))
-        self.ai_daily_token_cap = int(os.getenv("AI_DAILY_TOKEN_CAP", "90000"))
+        self.ai_daily_token_cap = int(os.getenv("AI_DAILY_TOKEN_CAP", "180000"))
         self.ai_max_hypotheses = int(os.getenv("AI_MAX_HYPOTHESES", "3"))
-        self.ai_model = os.getenv("AI_MODEL", "llama-3.3-70b-versatile")
+        # Groq eski llama'ları 06/2026'da emekliye ayırdı; model adları
+        # sağlayıcıda döner. Yanlış ad girilirse hata metni kullanılabilir
+        # listeyi de yazar (bkz. ai/client.py list_models).
+        self.ai_model = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
         self.ai_base_url = os.getenv(
             "AI_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")

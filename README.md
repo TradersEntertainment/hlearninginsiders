@@ -150,9 +150,13 @@ Bu yüzden iş bölünmüştür: **istatistiği Python hesaplar, model yalnız h
 3. `/ai` sayfasında **▶️ Şimdi çalıştır**'a bas — anahtarın doğru olup olmadığını
    beklemeden görürsün. Sonra kendi ritmiyle 2 saatte bir çalışır.
 
-Bedava katmanda
-günde 100K token sınırı var; 2 saatlik tur ~48K/gün eder, rahat pay kalır.
-Sağlayıcı değiştirmek için `ai_base_url` + `ai_model` ayarını değiştir —
+Bedava katmanda `openai/gpt-oss-120b` için günde 200K token sınırı var;
+2 saatlik tur ~48K/gün eder, rahat pay kalır.
+
+**Model adları sağlayıcıda değişir** (Groq eski llama'ları 06/2026'da emekliye
+ayırdı). Yanlış model adı girilirse `/ai` sayfasındaki hata metni sağlayıcıdan
+**kullanılabilir modelleri çekip listeler** — doğrusunu oradan kopyalayıp
+`AI_MODEL`'e yaz. Sağlayıcı değiştirmek için `ai_base_url` + `ai_model` yeter;
 Groq/Cerebras/OpenRouter/DeepSeek aynı OpenAI-uyumlu biçimi konuşur.
 
 Çıktı **yalnız sitede** görünür: doğrulanmamış AI metni Telegram'a düşmez.
