@@ -670,14 +670,16 @@ async def index(request: Request):
         t["days_left"] = max(0, (int(t.get("expires_ts") or 0) - ts_now) // 86400)
         t["propr"] = propr_listed(t.get("symbol") or "")
 
-    # 🕐 Saati gelenler: şu saati tarihsel olarak güçlü hisseler
+    # 🕐 Şu saatte beklenenler: SIRALAMA (eskiden eşik filtresiydi ve hiçbir
+    # hisse eşiği geçmediğinde panel bomboş kalıyordu — özellik yok sanılıyordu).
     hmap = await hourstats.all_stats()
     et_hour = datetime.now(hourstats.ET).hour
-    hot_hours = hourstats.hot_now(hmap, et_hour)[:8]
+    hot_rank = hourstats.hour_ranking(hmap, et_hour, limit=5)
+    hot_hours = hot_rank["up"]
     for h in hot_hours:
         h["symbol"] = sym_map.get(h["coin"], h["coin"].split(":")[-1])
         h["propr"] = propr_listed(h["symbol"])
-    n_hstats = sum(1 for s in hmap.values() if s and not s.get("empty"))
+    n_hstats = hot_rank["n_stats"]
     # 🌙 Seans karnesi: hareketin ne kadarı borsa KAPALIYKEN oldu (yön ayrımlı).
     # Aynı hmap — ek istek yok; yeni şemayla henüz tazelenmemişler atlanır.
     session_rows = hourstats.session_ranking(hmap, sym_map)
@@ -697,7 +699,7 @@ async def index(request: Request):
         "book_walls": book_walls,
         "trackers": trackers,
         "hot_hours": hot_hours, "tsi_now": datetime.now(TR).hour,
-        "n_hstats": n_hstats, "session_rows": session_rows,
+        "n_hstats": n_hstats, "hot_rank": hot_rank, "session_rows": session_rows,
         "has_channel": bool(cfg.telegram_channel_id) and request.app.state.bot is not None,
         "hot_result": request.query_params.get("hot"),
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
@@ -1028,6 +1030,52 @@ async def history_page(request: Request):
     return _render(request, "history.html", {"rows": rows, "winners": winners})
 
 
+@router.get("/saatler")
+async def hours_page(request: Request):
+    """Şu saatte ne bekliyoruz — iki yön, sıralı.
+
+    Ana sayfadaki panel yalnız ilk 5 yükseliş adayını gösterir; tam liste,
+    düşüş tarafı ve sonraki saatler burada. Sıralama EŞİKLE KESİLMEZ: eşiği
+    geçen 💪 rozetlenir, geçen yoksa "sinyal zayıf" diye açıkça yazılır —
+    boş panel göstermek, zayıf sinyali dürüstçe göstermekten kötüdür.
+    """
+    _guard(request)
+    cfg = request.app.state.cfg
+    hmap = await hourstats.all_stats()
+    et_hour = datetime.now(hourstats.ET).hour
+    universe = await get_universe()
+    sym_map = {t["coin"]: t["symbol"] for t in universe}
+    rank = hourstats.hour_ranking(hmap, et_hour, limit=20)
+    for row in (*rank["up"], *rank["down"]):
+        row["symbol"] = sym_map.get(row["coin"], row["coin"].split(":")[-1])
+        row["propr"] = propr_listed(row["symbol"])
+
+    # Sonraki 6 saat: "ne" sorusunun yanına "ne zaman". Aynı stats_map,
+    # ek istek yok — yalnız farklı saat kovalarına bakılıyor.
+    ahead = []
+    for i in range(1, 7):
+        h = (et_hour + i) % 24
+        r = hourstats.hour_ranking(hmap, h, limit=1)
+        top = (r["up"] or [None])[0]
+        ahead.append({
+            "et": h,
+            "tsi": (datetime.now(hourstats.ET).replace(hour=h, minute=0)
+                    .astimezone(TR).hour),
+            "symbol": sym_map.get(top["coin"], top["coin"].split(":")[-1]) if top else None,
+            "avg": top["avg"] if top else None,
+            "strong": bool(top and top["verdict"] == "güçlü"),
+        })
+
+    return _render(request, "saatler.html", {
+        "rank": rank, "ahead": ahead, "et_now": et_hour,
+        "tsi_now": datetime.now(TR).hour,
+        "min_n": hourstats.MIN_N, "hot_mean": hourstats.HOT_MEAN,
+        "hot_win": hourstats.HOT_WIN,
+        "has_channel": bool(cfg.telegram_channel_id) and request.app.state.bot is not None,
+        "hot_result": request.query_params.get("hot"),
+    })
+
+
 @router.post("/saatler/gonder")
 async def hot_hours_send(request: Request):
     """Panelden seçilen 'saati gelenler'i yayın kanalına gönder (admin)."""
@@ -1039,8 +1087,13 @@ async def hot_hours_send(request: Request):
     form = await request.form()
     coins = [c for c in form.getlist("coins") if c]
 
+    # Form iki sayfada da olabilir; geldiği yere dön. Açık yönlendirme olmasın
+    # diye hedef BİLİNEN listeyle sınırlı — form alanına ne yazılırsa yazılsın.
+    nxt = form.get("nxt") or "/"
+    nxt = nxt if nxt in ("/", "/saatler") else "/"
+
     def back(flag: str):
-        return RedirectResponse(f"/{_keyq(request, f'hot={flag}')}", status_code=303)
+        return RedirectResponse(f"{nxt}{_keyq(request, f'hot={flag}')}", status_code=303)
 
     if not cfg.telegram_channel_id:
         return back("err_ch")

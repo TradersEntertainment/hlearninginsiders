@@ -180,28 +180,36 @@
 </div>
 
 <div class="panel third compact">
-  <h2>🕐 Saati gelenler <span class="dim" style="text-transform:none">· TSİ {{ '%02d'|format(tsi_now) }}:00</span></h2>
-  <p class="sub">Tarihsel olarak ŞU SAATTE yükselme eğilimi güçlü hisseler (son ~90 gün, 1h mumlar).
-  Geçmiş istatistik — garanti değil. Detaylı saat haritası hisse sayfasında.</p>
+  <h2>🕐 Şu saatte beklenenler <span class="dim" style="text-transform:none">· TSİ {{ '%02d'|format(tsi_now) }}:00 ·
+    <a href="/saatler{{ k }}">tam liste →</a></span></h2>
+  <p class="sub">Bu saatin tarihsel karnesine göre <b>sıralı</b> ilk {{ hot_hours|length or 5 }} yükseliş adayı
+  (son ~90 gün, 1h mumlar). Eşiği geçenler 💪 rozetli. Düşüş tarafı, sonraki saatler ve
+  tam liste <a href="/saatler{{ k }}">🕐 saatler</a> sayfasında.
+  Geçmiş istatistik — garanti değil.</p>
   {% if hot_result == 'ok' %}<p class="okline">✓ Seçtiklerin kanala gitti!</p>
   {% elif hot_result == 'err_ch' %}<p class="short">Kanal tanımlı değil — Railway'e <code>TELEGRAM_CHANNEL_ID</code> ekle (botu kanala admin yap).</p>
   {% elif hot_result == 'err_bot' %}<p class="short">Bot aktif değil — Railway'e <code>TELEGRAM_BOT_TOKEN</code> ekle (kanal tanımlı ama bot yok).</p>
   {% elif hot_result == 'err_empty' %}<p class="warn">Göndermek için en az bir hisse seç.</p>
   {% elif hot_result == 'err' %}<p class="short">✗ Gönderilemedi — kanal id'sini ve botun kanal yetkisini kontrol et.</p>{% endif %}
   {% if hot_hours %}
-  {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">{% endif %}
+  {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">
+    <input type="hidden" name="nxt" value="/">{% endif %}
   <table>
     <tr>{% if is_admin %}<th title="Kanala gönderilecekleri seç"></th>{% endif %}
         <th class="l">Hisse</th><th title="Bu saatin tarihsel ortalama getirisi">Bu saat ort.</th>
-        <th title="Bu saatte kaç kez yükselmiş">Kazanç</th><th title="Kaç örnek gün">Örnek</th></tr>
+        <th title="Bu saatte kaç kez yükselmiş">Kazanç</th><th title="Kaç örnek gün">Örnek</th>
+        <th class="l">Damga</th></tr>
     {% for h in hot_hours %}
     <tr data-propr="{{ 1 if h.propr else 0 }}">
-      {% if is_admin %}<td><input type="checkbox" name="coins" value="{{ h.coin }}"></td>{% endif %}
+      {% if is_admin %}<td><input type="checkbox" name="coins" value="{{ h.coin }}"
+        {% if h.verdict != 'güçlü' %}disabled title="Kanala yalnız 💪 güçlü olanlar gönderilebilir"{% endif %}></td>{% endif %}
       <td class="l"><a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% if h.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
         {% if h.closed_heavy %}<span title="Bu hissede getirinin çoğu borsa kapalıyken gelmiş">🌙</span>{% endif %}</td>
       <td class="long"><b>{{ '%+.2f'|format(h.avg) }}%</b></td>
       <td>%{{ '%.0f'|format(h.win) }}</td>
       <td class="dim">{{ h.n }}</td>
+      <td class="l">{% if h.verdict == 'güçlü' %}<span class="long"><b>💪</b></span>
+        {%- else %}<span class="dim">nötr</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
@@ -213,7 +221,9 @@
   </form>
   {% endif %}
   {% else %}
-  <p class="dim">Şu saat için eşiği geçen hisse yok{% if n_hstats < 5 %} — istatistikler hazırlanıyor ({{ n_hstats }} hisse hazır), doldukça burası canlanır{% endif %}.</p>
+  <p class="dim">Bu saatte tarihsel ortalaması pozitif olan hisse yok{% if n_hstats < 5 %} —
+    istatistikler hazırlanıyor ({{ n_hstats }} hisse hazır), doldukça burası canlanır{% endif %}.
+    Düşüş tarafı için <a href="/saatler{{ k }}">🕐 saatler</a>.</p>
   {% endif %}
 </div>
 

@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}🕐 Saatler · HL Radar{% endblock %}
+{% block content %}
+
+{% macro hourtable(rows, dir) %}
+<div style="overflow-x:auto">
+<table>
+  <tr>{% if is_admin and dir == 'up' %}<th title="Kanala gönderilecekleri seç"></th>{% endif %}
+      <th class="l">Hisse</th>
+      <th title="Bu saat kovasının tarihsel ortalama getirisi">Bu saat ort.</th>
+      <th title="Bu saatte kaç kez {{ 'yükselmiş' if dir == 'up' else 'düşmüş' }}">Kazanç</th>
+      <th title="Kaç örnek gün — küçükse rakama az güven">Örnek</th>
+      <th class="l">Damga</th></tr>
+  {% for h in rows %}
+  <tr data-propr="{{ 1 if h.propr else 0 }}">
+    {% if is_admin and dir == 'up' %}
+    <td><input type="checkbox" name="coins" value="{{ h.coin }}"
+        {% if h.verdict != 'güçlü' %}disabled title="Yalnız 💪 güçlü olanlar kanala gönderilebilir"{% endif %}></td>
+    {% endif %}
+    <td class="l"><a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>
+      {%- if h.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+      {%- if h.closed_heavy %} <span title="Bu hissede getirinin çoğu borsa KAPALIYKEN gelmiş">🌙</span>{% endif %}</td>
+    <td class="{{ 'long' if h.avg > 0 else 'short' }}"><b>{{ '%+.2f'|format(h.avg) }}%</b></td>
+    <td>%{{ '%.0f'|format(h.win) }}</td>
+    <td class="dim">{{ h.n }}</td>
+    <td class="l">{% if h.verdict == 'güçlü' %}<span class="long"><b>💪 güçlü</b></span>
+      {%- elif h.verdict == 'zayıf' %}<span class="short"><b>👎 zayıf</b></span>
+      {%- else %}<span class="dim">nötr</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endmacro %}
+
+<div class="panel">
+  <h2>🕐 Şu saatte ne bekliyoruz? <span class="dim" style="text-transform:none">·
+    TSİ {{ '%02d'|format(tsi_now) }}:00 · ET {{ '%02d'|format(et_now) }}:00</span></h2>
+  <p class="sub">Son ~90 günün 1 saatlik mumlarından, <b>bu saat kovasının</b> tarihsel
+  karnesi. Bu bir <b>sıralama</b>dır, tahmin değil: geçmişte bu saatte ne olduğunu
+  söyler, gelecekte ne olacağını değil.
+  <span class="warn">Geçmiş istatistik — garanti değil, yatırım tavsiyesi değildir.</span></p>
+
+  {% if hot_result == 'ok' %}<p class="okline">✓ Seçtiklerin kanala gitti!</p>
+  {% elif hot_result == 'err_ch' %}<p class="short">Kanal tanımlı değil — Railway'e <code>TELEGRAM_CHANNEL_ID</code> ekle (botu kanala admin yap).</p>
+  {% elif hot_result == 'err_bot' %}<p class="short">Bot aktif değil — Railway'e <code>TELEGRAM_BOT_TOKEN</code> ekle (kanal tanımlı ama bot yok).</p>
+  {% elif hot_result == 'err_empty' %}<p class="warn">Göndermek için en az bir <b>💪 güçlü</b> hisse seç.</p>
+  {% elif hot_result == 'err' %}<p class="short">✗ Gönderilemedi — kanal id'sini ve botun kanal yetkisini kontrol et.</p>{% endif %}
+
+  {% if rank.n_stats %}
+    {% if rank.n_strong %}
+    <p class="okline">Bu saatte eşiği geçen <b>{{ rank.n_strong }}</b> hisse var
+      (💪 = örnek ≥ {{ min_n }} · ortalama ≥ +%{{ hot_mean }} · kazanç ≥ %{{ hot_win|int }}).</p>
+    {% else %}
+    <p class="warn">⚠️ Bu saatte istatistiksel olarak <b>güçlü olan yok</b>.
+      Aşağıdakiler yine de en iyiler — ama <b>sinyal zayıf</b>, rakamlara göre
+      işlem açmadan önce örnek sayısına ve kazanç oranına bak.</p>
+    {% endif %}
+  {% endif %}
+  <p class="sub dim">{{ rank.n_stats }} hissenin istatistiği hazır{% if rank.thin %} ·
+    {{ rank.thin }} hisse bu saatte <b>{{ min_n }} örnekten az</b> olduğu için
+    sıralamaya girmedi (veri biriktikçe katılırlar){% endif %}.</p>
+</div>
+
+<div class="panel">
+  <h2>⬆️ Yükselmesi beklenenler{% if rank.up %} <span class="dim" style="text-transform:none">· {{ rank.up|length }} hisse</span>{% endif %}</h2>
+  {% if rank.up %}
+    {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">
+      <input type="hidden" name="nxt" value="/saatler">{% endif %}
+    {{ hourtable(rank.up, 'up') }}
+    {% if is_admin %}
+    <div class="btnrow">
+      <button type="submit" {% if not has_channel %}disabled title="Railway'e TELEGRAM_CHANNEL_ID ekle (botu kanala admin yap)"{% endif %}>📣 Seçtiklerimi kanala gönder</button>
+      <span class="dim" style="font-size:12px">Kanala yalnız <b>💪 güçlü</b> olanlar gider —
+        zayıf sinyali sayfada göstermek başka, yayınlamak başka.</span>
+    </div>
+    </form>
+    {% endif %}
+  {% elif rank.n_stats %}
+  <p class="dim">Bu saatte tarihsel ortalaması <b>pozitif</b> olan hisse yok —
+    aşağıdaki düşüş listesine bak.</p>
+  {% else %}
+  <p class="dim">Henüz istatistik yok — saat istatistikleri arka planda hisse hisse
+    hesaplanıyor, doldukça burası canlanır.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>⬇️ Düşmesi beklenenler{% if rank.down %} <span class="dim" style="text-transform:none">· {{ rank.down|length }} hisse</span>{% endif %}</h2>
+  <p class="sub">Aynı veri, ters yön. "Bu saatte bir şey beklemiyoruz" ile
+  "bu saatte düşmesini bekliyoruz" ayrı şeyler — ikisi karışmasın diye ayrı liste.</p>
+  {% if rank.down %}
+  {{ hourtable(rank.down, 'down') }}
+  {% elif rank.n_stats %}
+  <p class="dim">Bu saatte tarihsel ortalaması negatif olan hisse yok.</p>
+  {% else %}
+  <p class="dim">Henüz istatistik yok.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>⏭ Sonraki 6 saat <span class="dim" style="text-transform:none">· en yüksek ortalamalı hisse</span></h2>
+  <p class="sub">"Ne" sorusunun yanına "ne zaman": her saatin tarihsel birincisi.
+  💪 o saatte eşiği geçiyor demektir.</p>
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th>TSİ</th><th>ET</th><th class="l">Birinci</th><th>Bu saat ort.</th></tr>
+    {% for a in ahead %}
+    <tr>
+      <td><b>{{ '%02d'|format(a.tsi) }}:00</b></td>
+      <td class="dim">{{ '%02d'|format(a.et) }}:00</td>
+      <td class="l">{% if a.symbol %}<a href="/t/{{ a.symbol }}{{ k }}"><b>{{ a.symbol }}</b></a>
+        {%- if a.strong %} <span class="long">💪</span>{% endif %}
+        {%- else %}<span class="dim">—</span>{% endif %}</td>
+      <td class="{{ 'long' if a.avg and a.avg > 0 else 'dim' }}">
+        {% if a.avg is not none %}{{ '%+.2f'|format(a.avg) }}%{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+</div>
+
+{% endblock %}

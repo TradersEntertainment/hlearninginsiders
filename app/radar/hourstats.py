@@ -124,20 +124,52 @@ def verdict(stats: dict, et_hour: int) -> tuple[str, dict]:
     return "nötr", b
 
 
-def hot_now(stats_map: dict[str, dict], et_hour: int) -> list[dict]:
-    """ŞU SAATİ tarihsel olarak güçlü olan hisseler (ana sayfa bölümü)."""
-    out = []
+def hour_ranking(stats_map: dict[str, dict], et_hour: int,
+                 limit: int | None = None, min_n: int = MIN_N) -> dict:
+    """Bu saatin tarihsel SIRALAMASI — eşikle kesmez.
+
+    Eskiden yalnız `hot_now()` vardı ve o bir sıralama değil bir FİLTREydi:
+    "güçlü" eşiğini (n/ortalama/kazanç) geçmeyen hiç görünmüyordu. Hiçbiri
+    geçmediğinde panel tamamen boş kalıyor, özellik yokmuş gibi duruyordu.
+    Oysa sorulan şey sıralama: "şu saatte en çok hangisi yükselir".
+
+    Burada `verdict()` ELEMEK için değil ETİKETLEMEK için çağrılıyor: her satır
+    kendi damgasını taşır, arayüz güçlüyü rozetler, zayıfı zayıf gösterir.
+
+    Örneklemi ince olanlar (n < min_n) sıralamaya girmez ama SAYILIR (`thin`):
+    "liste kısa çünkü veri yok" ile "liste kısa çünkü öyle" ayrı şeylerdir ve
+    kullanıcı hangisi olduğunu görebilmeli.
+    """
+    rows, thin, n_strong = [], 0, 0
     for coin, s in stats_map.items():
         if not s or s.get("empty"):
             continue
         v, b = verdict(s, et_hour)
-        if v != "güçlü":
+        if (b.get("n") or 0) < min_n:
+            thin += 1
             continue
-        out.append({"coin": coin, "avg": b["avg"], "win": b["win"], "n": b["n"],
-                    "closed_heavy": s["closed_ret"] > s["open_ret"],
-                    "closed_ret": s["closed_ret"], "open_ret": s["open_ret"]})
-    out.sort(key=lambda x: -x["avg"])
-    return out
+        if v == "güçlü":
+            n_strong += 1
+        rows.append({"coin": coin, "avg": b["avg"], "win": b["win"], "n": b["n"],
+                     "verdict": v,
+                     "closed_heavy": s["closed_ret"] > s["open_ret"],
+                     "closed_ret": s["closed_ret"], "open_ret": s["open_ret"]})
+    up = sorted((r for r in rows if r["avg"] > 0), key=lambda x: -x["avg"])
+    down = sorted((r for r in rows if r["avg"] < 0), key=lambda x: x["avg"])
+    if limit:
+        up, down = up[:limit], down[:limit]
+    return {"up": up, "down": down, "n_stats": len(rows),
+            "n_strong": n_strong, "thin": thin}
+
+
+def hot_now(stats_map: dict[str, dict], et_hour: int) -> list[dict]:
+    """ŞU SAATİ tarihsel olarak güçlü olan hisseler.
+
+    `hour_ranking()` üstünde ince bir süzgeç: tek sıralama yolu olsun, aynı
+    mantık iki yerde durmasın. Anlamı değişmedi — "güçlü" hâlâ eşiği geçendir.
+    """
+    return [r for r in hour_ranking(stats_map, et_hour)["up"]
+            if r["verdict"] == "güçlü"]
 
 
 def _share(closed: float, opened: float) -> float | None:

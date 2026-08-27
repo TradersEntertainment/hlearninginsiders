@@ -96,6 +96,24 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
 5. Earnings'ten 24 saat sonra fiyat hareketi ölçülür → doğru bilenler sicile işlenir,
    2+ doğru bilen watchlist'e alınır, kapatanlar raporlanır.
 
+## Saat İstatistikleri: `/saatler`
+
+Her hissenin son ~90 günlük 1 saatlik mumları 24 saat kovasına bölünür; her kova
+için ortalama getiri, kazanma oranı ve örnek sayısı tutulur. `/saatler` sayfası
+**şu anki saatin** karnesini iki yönde sıralar: yükselmesi ve düşmesi beklenenler.
+
+Bu bir **sıralama**dır, eşik filtresi değil — eskiden yalnız `örnek≥40 &
+ortalama≥+%0.10 & kazanç≥%55` olanlar gösteriliyordu ve hiçbiri geçmediğinde
+panel bomboş kalıyordu. Şimdi liste hep dolu, eşiği geçenler 💪 rozetli, geçen
+yoksa "sinyal zayıf" diye yazıyor. Örneklemi ince olanlar sıralamaya girmez ama
+sayılır — liste neden kısa, görünür.
+
+**Kanala yayın kasten daha sıkı:** `/saatler/gonder` yalnız 💪 güçlü olanları
+gönderir. Zayıf sinyali sayfada sıralı göstermek başka, kanaldan yayınlamak başka.
+
+Ana sayfadaki "🕐 Şu saatte beklenenler" paneli ilk 5 yükseliş adayını gösterir
+ve tam listeye bağlanır.
+
 ## Bir Şey Ters Gittiğinde: `/tani`
 
 Telegram'da `/tani`, sitede `/tani` (düz metin, `?full=1` uzun sürüm) tek bir blokta
