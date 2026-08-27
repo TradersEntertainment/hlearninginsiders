@@ -18,7 +18,17 @@ import aiohttp
 log = logging.getLogger("ai.client")
 
 TIMEOUT = 60          # model yavaş olabilir; tur zaten 2 saatte bir
-MAX_OUT_TOKENS = 1200  # yapılandırılmış çıktı için fazlasıyla yeter
+# AKIL YÜRÜTEN MODELLER (gpt-oss…) muhakemeyi de bu bütçeden harcar; 1200 iken
+# bütçe muhakemede bitiyor ve içerik kanalı BOŞ dönüyordu (Groq bunu
+# json_validate_failed + failed_generation:"" diye bildiriyor).
+MAX_OUT_TOKENS = 4000
+# Bu modellerde muhakeme derinliği ayarlanabilir; bizim iş kısa ve yapılandırılmış,
+# "low" hem yeter hem token yakmaz. Yalnız destekleyen modele gönderilir.
+REASONING_MODELS = ("gpt-oss",)
+
+
+class JsonModeRejected(Exception):
+    """Sağlayıcı kendi JSON kipinde üretimi doğrulayamadı — kipsiz tekrar dene."""
 
 
 class RateLimited(Exception):
@@ -38,15 +48,33 @@ class AIClient:
         self.model = model
 
     async def complete(self, system: str, user: str) -> tuple[str, int, int]:
-        """(metin, girdi_token, çıktı_token). Hata durumunda exception fırlatır."""
+        """(metin, girdi_token, çıktı_token). Hata durumunda exception fırlatır.
+
+        Sağlayıcının JSON kipi bir KOLAYLIKTIR, gereklilik değil: çıktının her
+        alanını zaten kendimiz doğruluyoruz (`schema.validate`). gpt-oss gibi
+        akıl yürüten modellerde Groq'un doğrulayıcısı boş üretimle patlıyor —
+        o durumda kipi bırakıp kendi toleranslı ayrıştırıcımızla devam ediyoruz.
+        Tekrar YALNIZ bu hataya özeldir ve turda bir kezdir.
+        """
+        try:
+            return await self._call(system, user, json_mode=True)
+        except JsonModeRejected as e:
+            log.info("sağlayıcı JSON kipini doğrulayamadı (%s) — kipsiz tekrar", e)
+            return await self._call(system, user, json_mode=False)
+
+    async def _call(self, system: str, user: str,
+                    json_mode: bool) -> tuple[str, int, int]:
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
             "max_tokens": MAX_OUT_TOKENS,
             "temperature": 0.4,          # örüntü önerisi için biraz çeşitlilik
-            "response_format": {"type": "json_object"},
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        if any(m in self.model for m in REASONING_MODELS):
+            payload["reasoning_effort"] = "low"
         headers = {"Authorization": f"Bearer {self.api_key}",
                    "Content-Type": "application/json"}
         try:
@@ -56,6 +84,9 @@ class AIClient:
                 body = await r.text()
                 if r.status == 429:
                     raise RateLimited(_retry_after(r.headers))
+                if (r.status == 400 and json_mode
+                        and "json_validate_failed" in body):
+                    raise JsonModeRejected(body[:120])
                 if r.status != 200:
                     # Model adları sağlayıcıda dönüyor (Groq eski llama'ları
                     # emekliye ayırdı). Çıplak "model_not_found" kullanıcıya
@@ -117,21 +148,59 @@ def _retry_after(headers) -> float:
 def parse_output(text: str) -> dict:
     """Model çıktısını sözlüğe çevir. Bozuksa RuntimeError.
 
-    `response_format=json_object` istesek de bazı sağlayıcılar metni ``` ile
-    sarabiliyor; onu toleransla soyuyoruz. Ötesini ZORLAMIYORUZ: ayrıştırılamayan
-    çıktı hata sayılır ve panelde görünür — DB'ye tahmin yazmaktansa turu
-    kaybetmek yeğdir.
+    JSON kipi kapalıyken (bkz. `complete`) model, JSON'un önüne/arkasına
+    açıklama ya da ``` çiti koyabiliyor. Üç aşamalı deniyoruz: düz ayrıştır →
+    ``` çitini soy → metnin içindeki ilk süslü parantez bloğunu çıkar.
+
+    Daha ötesini ZORLAMIYORUZ: ayrıştırılamayan çıktı hata sayılır ve panelde
+    görünür. DB'ye tahmin yazmaktansa turu kaybetmek yeğdir.
     """
     t = (text or "").strip()
-    if t.startswith("```"):
-        t = t.split("```")[1] if "```" in t[3:] else t[3:]
-        t = t.lstrip()
-        if t.lower().startswith("json"):
-            t = t[4:].lstrip()
-    try:
-        out = json.loads(t)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"çıktı JSON değil: {e}") from e
-    if not isinstance(out, dict):
+    for cand in (t, _strip_fence(t), _first_object(t)):
+        if not cand:
+            continue
+        try:
+            out = json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(out, dict):
+            return out
         raise RuntimeError("çıktı sözlük değil")
-    return out
+    raise RuntimeError(f"çıktı JSON değil: {t[:120]!r}")
+
+
+def _strip_fence(t: str) -> str:
+    if not t.startswith("```"):
+        return ""
+    body = t.split("```")[1] if "```" in t[3:] else t[3:]
+    body = body.lstrip()
+    if body.lower().startswith("json"):
+        body = body[4:].lstrip()
+    return body.strip()
+
+
+def _first_object(t: str) -> str:
+    """Metindeki ilk dengeli {...} bloğu. Dizge içindeki süslü parantezleri
+    ve kaçışları sayar — yoksa 'text' alanındaki bir { ayrıştırmayı bozardı."""
+    start = t.find("{")
+    if start < 0:
+        return ""
+    depth, in_str, esc = 0, False, False
+    for i, ch in enumerate(t[start:], start):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return t[start:i + 1]
+    return ""
