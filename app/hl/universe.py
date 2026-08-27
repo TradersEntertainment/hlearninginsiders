@@ -114,6 +114,11 @@ async def top_crypto_coins(client: HLClient, top_n: int,
         meta, ctxs = data[0], data[1]
     except Exception as e:
         log.warning("kripto evreni alınamadı: %s", e)
+        if not coins:
+            # Elde bayat liste bile YOKSA bu bir cevap değil, bir HATA. Sessizce
+            # [] dönmek ana dex tetiğini tamamen kapatıp sebebini yutuyordu:
+            # çağıran "kripto yok" ile "bakamadım"ı ayırt edemiyordu.
+            raise
         return coins[:top_n]
     ranked: list[tuple[float, str]] = []
     for asset, ctx in zip((meta or {}).get("universe") or [], ctxs or []):

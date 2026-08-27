@@ -34,6 +34,7 @@ class Collector:
         self.subscribed: set[str] = set()
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
         self.crypto_coins: set[str] = set()  # yalnız sonda tetikleyicisi (ana dex)
+        self.crypto_err = ""                 # liste alınamadıysa SEBEBİ (/status okur)
         self.last_trade: dict[str, int] = {}  # coin -> son işlem ts (zombi nöbetçisi)
         self.fills_seen = 0
         self._probing: set[str] = set()   # sondası uçuşta olan adresler
@@ -64,9 +65,14 @@ class Collector:
             return []
         try:
             from .universe import top_crypto_coins
-            return await top_crypto_coins(self.client, top)
+            out = await top_crypto_coins(self.client, top)
+            self.crypto_err = "" if out else "liste boş döndü"
+            return out
         except Exception as e:
-            log.debug("kripto dinleme listesi alınamadı: %s", e)
+            # debug seviyesinde SESSİZDİ: ana dex kripto dinleme özelliği
+            # tamamen kapanır, /status'ta satır hiç görünmez, kimse anlamazdı.
+            self.crypto_err = f"{type(e).__name__}: {e}"[:120]
+            log.warning("kripto dinleme listesi alınamadı — ana dex tetiği KAPALI: %s", e)
             return []
 
     async def run(self):

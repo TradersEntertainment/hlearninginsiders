@@ -31,7 +31,13 @@
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Şu an açık pozisyon yok (hisse dex'leri + ana dex).</p>{% endif %}
+  {% if live_fail %}<p class="short">⚠️ {{ live_fail }} dex sorgusu yanıt vermedi —
+    liste <b>eksik olabilir</b>. Sayfayı birazdan tazele.</p>{% endif %}
+  {% elif live_fail and live_fail >= live_dex_n %}
+  <p class="short">⚠️ Hiçbir dex sorgusu yanıt vermedi — <b>"poz yok" demiyoruz</b>,
+    Hyperliquid'e ulaşılamadı. Sayfayı birazdan tazele.</p>
+  {% else %}<p class="dim">Şu an açık pozisyon yok (hisse dex'leri + ana dex){%
+    if live_fail %} — ⚠️ {{ live_fail }} dex sorgusu düştü, eksik olabilir{% endif %}.</p>{% endif %}
 </div>
 
 <div class="panel">

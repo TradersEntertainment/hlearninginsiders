@@ -958,10 +958,15 @@ async def whale_page(request: Request, address: str):
         snaps = [dict(r) for r in await cur.fetchall()]
 
     live = []
+    live_fail = 0
     for dex in [*cfg.equity_dexes, ""]:
         try:
             state = await client.clearinghouse(addr, dex)
-        except Exception:
+        except Exception as e:
+            # Sessizce atlanınca sayfa EKSİK listeyi tam sanıp gösteriyordu;
+            # hepsi düşerse "bu balinanın pozu yok" diye okunuyordu.
+            live_fail += 1
+            log.warning("balina sayfası %s… dex=%r sorgusu düştü: %s", addr[:10], dex, e)
             continue
         for ap in (state or {}).get("assetPositions") or []:
             p = ap.get("position") or {}
@@ -987,6 +992,7 @@ async def whale_page(request: Request, address: str):
         sym_map = {r["coin"]: r["symbol"] for r in await cur.fetchall()}
     return _render(request, "whale.html", {
         "address": addr, "arow": arow, "live": live, "fills": fills, "snaps": snaps,
+        "live_fail": live_fail, "live_dex_n": len(cfg.equity_dexes) + 1,
         "linked": linked, "sym_map": sym_map,
     })
 

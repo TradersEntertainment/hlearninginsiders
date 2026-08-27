@@ -279,6 +279,9 @@ class TelegramBot:
         st["evren"] = f"{n_tick} hisse coin"
         if coll and coll.crypto_coins:
             st["evren"] += f" + {len(coll.crypto_coins)} kripto (yalnız sonda tetiği)"
+        elif coll and getattr(coll, "crypto_err", ""):
+            # Sessizce kapanan özellik = olmayan özellik. Sebebi burada okunsun.
+            st["evren"] += f" · ⚠️ kripto tetiği kapalı ({coll.crypto_err})"
         n_fills = await kv_get("fills_count")
         st["fill havuzu"] = n_fills if n_fills is not None else "sayılıyor…"
         st["adres havuzu"] = n_addr
@@ -308,6 +311,13 @@ class TelegramBot:
                                  + (f", son tam tur {tr_time(int(last_full))}"
                                     if last_full else ", ilk tur sürüyor")
                                  + errnote)
+        # Duvar radarı: sıfır sonuç "duvar yok" da olabilir "defter alınamadı"
+        # da. Nabız attığı için sağlık YEŞİL kalıyordu; ikisini ayırt et.
+        wl = await kv_get("wall_stats") or {}
+        if wl.get("book_err"):
+            st["duvar radarı"] = (
+                f"⚠️ {wl['book_err']}/{wl.get('coins', '?')} coinde defter alınamadı"
+                + (f": {wl['err_msg']}" if wl.get("err_msg") else ""))
         hv = await kv_get("harvest_stats") or {}
         if hv.get("total"):
             st["işlem hasadı"] = f"{hv['total']} fill REST'ten toplandı"
@@ -357,10 +367,15 @@ class TelegramBot:
             lines.append(f"🎯 Sicil: {r.get('hits') or 0} doğru / {r.get('misses') or 0} yanlış"
                          + (" │ ⭐ watchlist" if r.get("watchlist") else ""))
         pos_found = False
+        n_fail = 0
         for dex in [*self.cfg.equity_dexes, ""]:
             try:
                 state = await self.client.clearinghouse(addr, dex)
-            except Exception:
+            except Exception as e:
+                # ALL_DEXES dersi: yutulan hata "burada bir şey yok"a dönüşüyordu.
+                # Burada daha kötüsü oluyordu — hiç bakılmadan "poz yok" DENİYORDU.
+                n_fail += 1
+                log.warning("/balina %s… dex=%r sorgusu düştü: %s", addr[:10], dex, e)
                 continue
             for ap in (state or {}).get("assetPositions") or []:
                 p = ap.get("position") or {}
@@ -374,8 +389,15 @@ class TelegramBot:
                 side = "🔴SHORT" if szi < 0 else "🟢LONG"
                 lines.append(f"  {p.get('coin')} {side} {fmt.usd(float(p.get('positionValue') or 0))} "
                              f"@{fmt.px(float(p.get('entryPx') or 0))}")
-        if not pos_found:
-            lines.append("Açık pozisyon yok (hisse dex'leri + ana dex bakıldı).")
+        n_dex = len(self.cfg.equity_dexes) + 1
+        if not pos_found and n_fail >= n_dex:
+            lines.append("⚠️ Hiçbir dex sorgusu yanıt vermedi — <b>poz yok demiyoruz</b>, "
+                         "HL'ye ulaşılamadı. Birazdan tekrar dene.")
+        elif not pos_found:
+            lines.append("Açık pozisyon yok (hisse dex'leri + ana dex bakıldı)."
+                         + (f" ⚠️ {n_fail} dex sorgusu düştü, eksik olabilir." if n_fail else ""))
+        elif n_fail:
+            lines.append(f"⚠️ {n_fail} dex sorgusu düştü — liste eksik olabilir.")
         await self.send("\n".join(lines), chat_id)
 
     async def _cmd_forget(self, args: list[str], chat_id: str) -> None:

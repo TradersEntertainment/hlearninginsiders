@@ -172,13 +172,21 @@ async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
 
     ts = now()
     n_alerts = 0
+    n_bookerr = 0
+    first_err = ""
     for coin, symbol in coins:
         from ..health import beat
         await beat("bookwall")  # ilerleme nabzı
         try:
             book = await client.l2_book(coin)
         except Exception as e:
-            log.debug("l2Book %s: %s", coin, e)
+            # debug seviyesinde SESSİZDİ: defter hiç alınamazsa duvar radarı
+            # sıfır sonuç üretir ama nabız attığı için sağlık YEŞİL kalır —
+            # "çalışıyor ama hiçbir şey bulmuyor" ile ayırt edilemezdi.
+            n_bookerr += 1
+            if not first_err:
+                first_err = f"{type(e).__name__}: {e}"[:160]
+                log.warning("l2Book alınamadı (%s): %s", coin, e)
             continue
         rec_min, alert_min = floors(cfg, symbol, coin, big_coins)
         bids, asks = _parse_book(book)
@@ -208,6 +216,12 @@ async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
                                     priority="normal", key=f"gone:{coin}:{a['side']}")
             log.info("duvar kalktı: %s %s (tepe %s)", symbol, a["side"],
                      fmt.usd(a.get("peak_notional")))
+    if coins and n_bookerr >= len(coins):
+        log.warning("duvar taraması TAMAMEN başarısız (%d/%d coin) — defter"
+                    " alınamadı. İlk hata: %s", n_bookerr, len(coins), first_err)
+    from ..db import kv_set
+    await kv_set("wall_stats", {"coins": len(coins), "book_err": n_bookerr,
+                                "err_msg": first_err, "alerts": n_alerts, "ts": ts})
     return n_alerts
 
 
