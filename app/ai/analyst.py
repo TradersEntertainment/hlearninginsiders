@@ -287,6 +287,16 @@ async def record() -> dict:
             "last_run": dict(last) if last else None}
 
 
+def nap_sec(cfg: Config) -> int:
+    """İki tur arası uyku.
+
+    KAPALIYKEN KISA uyur: kullanıcı ayarlardan açtığında döngü 2 saatlik uykuda
+    olursa hiçbir şey olmaz ve "bozuk mu?" hissi doğar — oysa kapalı turun
+    maliyeti sıfır (istek yok, token yok). Açık haldeki ritim aynen korunur.
+    """
+    return max(600, int(cfg.ai_interval_sec)) if cfg.ai_enabled else 600
+
+
 async def loop(cfg: Config, session) -> None:
     """Denetimli arka plan döngüsü. Site ASLA buna bağımlı değil: hata da olsa
     yalnız kendi paneli boş kalır."""
@@ -305,4 +315,4 @@ async def loop(cfg: Config, session) -> None:
             raise
         except Exception:
             log.exception("AI turu hatası")
-        await asyncio.sleep(max(600, int(cfg.ai_interval_sec)))
+        await asyncio.sleep(nap_sec(cfg))

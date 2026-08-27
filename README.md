@@ -143,8 +143,14 @@ Bu yüzden iş bölünmüştür: **istatistiği Python hesaplar, model yalnız h
 4. `/ai` sayfasında modelin karnesi en üstte durur. Uyduruyorsa istatistik onu
    ele verir.
 
-**Kurulum:** [Groq](https://console.groq.com)'tan bedava anahtar al →
-Railway'e `AI_API_KEY` ekle → Ayarlar → AI analist'ten aç. Bedava katmanda
+**Kurulum (üç adım):**
+1. [Groq](https://console.groq.com)'tan bedava anahtar al
+2. Railway → Variables: `AI_API_KEY=gsk_…` **ve** `AI_ENABLED=1`
+   (ya da anahtarı ekleyip Ayarlar → AI analist'ten aç)
+3. `/ai` sayfasında **▶️ Şimdi çalıştır**'a bas — anahtarın doğru olup olmadığını
+   beklemeden görürsün. Sonra kendi ritmiyle 2 saatte bir çalışır.
+
+Bedava katmanda
 günde 100K token sınırı var; 2 saatlik tur ~48K/gün eder, rahat pay kalır.
 Sağlayıcı değiştirmek için `ai_base_url` + `ai_model` ayarını değiştir —
 Groq/Cerebras/OpenRouter/DeepSeek aynı OpenAI-uyumlu biçimi konuşur.

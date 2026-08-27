@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import pathlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -18,6 +19,8 @@ from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bigpos, clusters, hourstats, lowvol, metrics,
                      pricechart)
+
+log = logging.getLogger("web.routes")
 
 TR = ZoneInfo("Europe/Istanbul")
 
@@ -1071,10 +1074,40 @@ async def ai_page(request: Request):
     return _render(request, "ai.html", {
         "rec": rec, "budget": budget, "open_h": open_h, "done_h": done_h,
         "obs": obs, "runs": runs,
+        "ai_result": request.query_params.get("ai") or "",
         "enabled": bool(cfg.ai_enabled), "has_key": bool(cfg.ai_api_key),
         "model": cfg.ai_model,
         "interval_h": round(cfg.ai_interval_sec / 3600, 1),
     })
+
+
+@router.post("/ai/run")
+async def ai_run_now(request: Request):
+    """AI turunu ELLE çalıştır (yönetici).
+
+    Kurulumun doğrulanabildiği tek an burası: yanlış anahtar aksi hâlde ancak
+    ilk zamanlı turda (en kötü 2 saat sonra) `ai_runs.err`'e düşerdi.
+
+    Bütçe kapısını ATLAMAZ — `run_once` kendi tavanını kontrol eder; aksi hâlde
+    düğmeye basa basa bedava katman yakılabilirdi.
+    """
+    _guard(request)
+    _require_admin(request)
+    cfg = request.app.state.cfg
+    from ..ai import analyst as ai_analyst
+    try:
+        await ai_analyst.resolve_due()
+        r = await ai_analyst.run_once(cfg, request.app.state.session)
+    except Exception as e:
+        log.exception("elle AI turu hatası")
+        return RedirectResponse(f"/ai{_keyq(request, 'ai=err')}", status_code=303)
+    if r.get("skipped"):
+        note = f"ai=skip:{r['skipped']}"
+    elif r.get("error"):
+        note = "ai=err"
+    else:
+        note = f"ai=ok:{r.get('hypotheses', 0)}:{r.get('observations', 0)}"
+    return RedirectResponse(f"/ai{_keyq(request, note)}", status_code=303)
 
 
 @router.get("/devler")

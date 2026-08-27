@@ -15,7 +15,29 @@
   {% if not enabled or not has_key %}
   <p class="dim">⏳ AI analist çalışmıyor
   {%- if not has_key %} — Railway'e <code>AI_API_KEY</code> ekle (Groq'ta bedava anahtar alınır){% endif %}
-  {%- if not enabled %}{% if not has_key %} ve{% endif %} Ayarlar → AI analist'ten <b>aç</b>{% endif %}.</p>
+  {%- if not enabled %}{% if not has_key %} ve{% endif %} <a href="/settings{{ k }}">Ayarlar</a> → AI analist'ten <b>aç</b>
+    (ya da Railway'e <code>AI_ENABLED=1</code>){% endif %}.</p>
+  {% endif %}
+
+  {% if ai_result %}
+    {% set parts = ai_result.split(':') %}
+    {% if parts[0] == 'ok' %}
+    <p class="okline">✓ Tur çalıştı — <b>{{ parts[1] }}</b> hipotez, <b>{{ parts[2] }}</b> gözlem üretildi.</p>
+    {% elif parts[0] == 'skip' %}
+    <p class="short">Tur atlandı: <b>{{ parts[1] }}</b>{% if parts[1] == 'bütçe' %} — günlük token tavanı doldu, yarın sıfırlanır{% elif parts[1] == 'kapalı' %} — anahtar yok ya da AI kapalı{% elif parts[1] == '429' %} — sağlayıcı hız sınırı, biraz sonra dene{% endif %}.</p>
+    {% else %}
+    <p class="short">✗ Tur başarısız — sebebi aşağıdaki <b>Son turlar</b> tablosundaki <i>Hata</i> kolonunda yazıyor.</p>
+    {% endif %}
+  {% endif %}
+
+  {% if is_admin %}
+  <form method="post" action="/ai/run{{ k }}" class="btnrow" style="margin-top:8px">
+    <button type="submit" {% if not enabled or not has_key %}disabled
+      title="Önce AI_API_KEY ekle ve AI analisti aç"{% else %}
+      title="Zamanlı turu beklemeden şimdi çalıştır — anahtarın doğru mu hemen görürsün"{% endif %}>
+      ▶️ Şimdi çalıştır</button>
+    <span class="dim" style="font-size:12px">Günlük token tavanı burada da geçerlidir.</span>
+  </form>
   {% endif %}
 
   <p style="margin:10px 0 4px;font-size:15px">

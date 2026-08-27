@@ -321,6 +321,7 @@ async def lifespan(app: FastAPI):
 
     app.state.cfg = cfg
     app.state.client = client
+    app.state.session = session      # /ai/run elle turu bu oturumu kullanır
     app.state.bot = bot
     app.state.notifier = notifier
     app.state.collector = collector
