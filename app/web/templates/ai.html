@@ -65,7 +65,7 @@
       <td class="l">{% if h.symbol %}<a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% endif %}
         {%- if h.subject_kind == 'position' %} <span class="dim">{{ m.addr(h.subject, k, 6) }}</span>{% endif %}</td>
       <td class="l dim ihit" data-tip="{{ h.metric_desc }}">{{ h.metric }} {{ h.op }} {{ '%g'|format(h.value) }}</td>
-      <td class="dim">{{ '%g'|format(h.baseline or 0) }}</td>
+      <td class="dim">{{ h.baseline_txt }}</td>
       <td class="dim">{{ h.resolve_ts|dt }}</td>
       <td class="dim">%{{ '%.0f'|format((h.confidence or 0) * 100) }}</td>
     </tr>
@@ -92,7 +92,7 @@
       <td class="l">{{ h.claim }}</td>
       <td class="l">{% if h.symbol %}<a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% endif %}</td>
       <td class="l dim">{{ h.metric }} {{ h.op }} {{ '%g'|format(h.value) }}</td>
-      <td class="dim">{% if h.measured is not none %}{{ '%.2f'|format(h.measured) }}{% else %}—{% endif %}</td>
+      <td class="dim">{{ h.measured_txt }}</td>
       <td class="dim">{{ h.resolved_ts|dt }}</td>
     </tr>
     {% endfor %}

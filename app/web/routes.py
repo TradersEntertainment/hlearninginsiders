@@ -38,6 +38,21 @@ def _usd(n):
     return f"${n:.0f}"
 
 
+def _plain(v) -> str:
+    """Birimsiz okunabilir sayı: 5.66M / 12.3K / 180.5 (bilimsel gösterim yok)."""
+    if v is None:
+        return "—"
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if abs(f) >= 1_000_000:
+        return f"{f / 1_000_000:.2f}M"
+    if abs(f) >= 1_000:
+        return f"{f / 1_000:.1f}K"
+    return f"{f:g}"
+
+
 def _px(p):
     if not p:
         return "-"
@@ -1071,10 +1086,22 @@ async def ai_page(request: Request):
     for h in open_h + done_h:
         h["symbol"] = (h.get("subject_coin") or "").split(":")[-1]
         h["metric_desc"] = METRICS.get(h.get("metric") or "", ("", ""))[1]
+        # Hacim bazı 5.65795e+08 diye görünüyordu; metrik başına birim farklı
+        # olduğu için para biçimlendiricisi ($ ekler) uygun değil — sade sayı.
+        h["baseline_txt"] = _plain(h.get("baseline"))
+        h["measured_txt"] = _plain(h.get("measured"))
+    # Sonuç şeridi SORGU parametresinden geliyor; sayfa yenilenince eski sonuç
+    # ekranda kalıp yalan söylüyordu ("✗ başarısız" derken son iki tur ✓).
+    # Yalnız son turla TUTARLIYSA göster.
+    ai_result = request.query_params.get("ai") or ""
+    if ai_result and runs:
+        claims_err = ai_result.startswith("err")
+        if claims_err != (not runs[0]["ok"]):
+            ai_result = ""
     return _render(request, "ai.html", {
         "rec": rec, "budget": budget, "open_h": open_h, "done_h": done_h,
         "obs": obs, "runs": runs,
-        "ai_result": request.query_params.get("ai") or "",
+        "ai_result": ai_result,
         "enabled": bool(cfg.ai_enabled), "has_key": bool(cfg.ai_api_key),
         "model": cfg.ai_model,
         "interval_h": round(cfg.ai_interval_sec / 3600, 1),

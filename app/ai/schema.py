@@ -38,6 +38,30 @@ def _num(v, name: str) -> float:
         raise Rejected(f"{name} sayı değil: {v!r}")
 
 
+def expand_addr(subject: str, addresses: set[str]) -> str | None:
+    """Kısaltılmış adresi havuzdaki TAM adrese çöz.
+
+    Brifing yer kazanmak için adresleri `0xc8b527..8891` diye kısaltıyor
+    (`briefing._addr`), model de sadakatle onu geri veriyor. Havuzda tam adres
+    arandığı için pozisyon hipotezlerinin HEPSİ reddediliyordu — beş metrikten
+    ikisi fiilen ölüydü. Brifingi tam adrese çevirmek yerine (30 satırda ~210
+    token) kısaltmayı burada geri açıyoruz.
+
+    Belirsizlikte tahmin YOK: birden çok adrese uyuyorsa None döner. Yanlış
+    adrese hipotez yazmak, hipotezi hiç yazmamaktan kötüdür.
+    """
+    a = (subject or "").strip().lower()
+    if not addresses or a in addresses:
+        return a or None
+    if ".." not in a:
+        return None
+    prefix, _, suffix = a.partition("..")
+    if len(prefix) < 4 or len(suffix) < 3:
+        return None            # ayırt etmeye yetmeyecek kadar kısa
+    hits = [f for f in addresses if f.startswith(prefix) and f.endswith(suffix)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def validate(raw: dict, coins: set[str], addresses: set[str]) -> dict:
     """Ham LLM önerisi -> kayda hazır hipotez. Uymuyorsa `Rejected` fırlatır.
 
@@ -82,8 +106,10 @@ def validate(raw: dict, coins: set[str], addresses: set[str]) -> dict:
         subject = subject.lower()
         if not subject.startswith("0x") or len(subject) < 10:
             raise Rejected(f"adres gibi görünmüyor: {subject!r}")
-        if addresses and subject not in addresses:
-            raise Rejected(f"havuzda olmayan adres: {subject!r}")
+        full = expand_addr(subject, addresses)
+        if full is None:
+            raise Rejected(f"havuzda tek karşılığı olmayan adres: {subject!r}")
+        subject = full
         if subject_coin not in coins:
             raise Rejected(f"evrende olmayan coin: {subject_coin!r}")
 
