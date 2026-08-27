@@ -71,7 +71,7 @@ class Collector:
         except Exception as e:
             # debug seviyesinde SESSİZDİ: ana dex kripto dinleme özelliği
             # tamamen kapanır, /status'ta satır hiç görünmez, kimse anlamazdı.
-            self.crypto_err = f"{type(e).__name__}: {e}"[:120]
+            self.crypto_err = f"{type(e).__name__}: {e}"[:200]
             log.warning("kripto dinleme listesi alınamadı — ana dex tetiği KAPALI: %s", e)
             return []
 

@@ -327,6 +327,10 @@ async def lifespan(app: FastAPI):
     app.state.collector = collector
     app.state.state = STATE
 
+    # Uyarı halkası: WARNING+ satırları /tani dökümüne girsin diye kök logger'a
+    # takılır. Görevlerden ÖNCE takılır ki açılıştaki ilk hatalar da yakalansın.
+    from . import diag
+    diag.install()
     await dbm.kv_set("boot_ts", dbm.now())  # bekçinin açılış toleransı
     _spawn("universe", lambda: universe_loop(cfg, client, notifier), notifier)
     _spawn("calendar", lambda: calendar_loop(cfg, session), notifier)
@@ -353,6 +357,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    try:
+        from .diag import flush_logs
+        await flush_logs()        # kapanış öncesi son uyarılar diske insin
+    except Exception:
+        pass
     for info in TASKS.values():
         info["task"].cancel()
     await asyncio.gather(*(i["task"] for i in TASKS.values()), return_exceptions=True)

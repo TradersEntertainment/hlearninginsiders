@@ -57,6 +57,7 @@ Detaylı mimari için: [PLAN.md](PLAN.md)
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
 | `/status` | Bot durumu (WS, havuz boyutları, tarama hızı, son yenilemeler) |
+| `/tani` | **Tam sistem dökümü** — bir şey ters giderse bunu kopyalayıp gönder |
 | `/bildirimler` | Bildirim ayarları + son gönderilenler |
 | `/gecmis` · `/winners` | Bilanço arşivi · en iyi biliciler |
 | `/settime SHAZ bmo` | Bilanço saatini elle düzelt |
@@ -94,6 +95,18 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
    pozisyonlar skorlanır, top 10 Telegram'a gider, snapshot DB'ye yazılır.
 5. Earnings'ten 24 saat sonra fiyat hareketi ölçülür → doğru bilenler sicile işlenir,
    2+ doğru bilen watchlist'e alınır, kapatanlar raporlanır.
+
+## Bir Şey Ters Gittiğinde: `/tani`
+
+Telegram'da `/tani`, sitede `/tani` (düz metin, `?full=1` uzun sürüm) tek bir blokta
+her şeyi verir: hangi görev ne zaman nabız attı, hangi tabloda kaç satır var ve
+kaydın yaşı ne, alt sistemlerin sayaçları ve **hata metinleri**, panelden
+değiştirdiğin ayarlar, ve son uyarı/hata satırları (`log_events` tablosu — tekrar
+edenler `×N` diye tekilleşir, 7 gün saklanır).
+
+Ekran görüntüsünden iyidir: eksiksiz, aranabilir, Railway log'una gitmeye gerek
+bırakmaz. Sırlar (bot token, AI anahtarı, pano jetonu…) dökümde **yoktur** — ayar
+bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
 
 ## Sınırlar / Bilinmesi Gerekenler
 

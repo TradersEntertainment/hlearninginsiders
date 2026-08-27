@@ -173,6 +173,17 @@ CREATE TABLE IF NOT EXISTS ai_hypotheses(
 );
 CREATE INDEX IF NOT EXISTS idx_aihyp_due ON ai_hypotheses(status, resolve_ts);
 CREATE INDEX IF NOT EXISTS idx_aihyp_new ON ai_hypotheses(created_ts DESC);
+
+-- Uyarı/hata halkası: bir şey patladığında metni yalnız Railway log'undaydı ve
+-- pratikte kimse oraya bakmıyordu. /tani dökümünün en değerli parçası bu.
+-- KALICI olması şart: asıl merak edilen an, yeniden başlatmadan hemen öncesi.
+CREATE TABLE IF NOT EXISTS log_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER, logger TEXT, level TEXT, msg TEXT,
+  n INTEGER DEFAULT 1                 -- aynı mesaj tekrarladıysa sayaç (satır değil)
+);
+CREATE INDEX IF NOT EXISTS idx_logev_ts ON log_events(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_logev_dedupe ON log_events(logger, level, ts DESC);
 """
 
 

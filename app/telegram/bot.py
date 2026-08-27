@@ -245,6 +245,14 @@ class TelegramBot:
         elif cmd in ("saglik", "sağlık", "health"):
             from ..health import snapshot
             await self.send(fmt.health_report(await snapshot(self.cfg)), chat_id)
+        elif cmd in ("tani", "tanı", "diag"):
+            # Tam sistem dökümü. Uzun — send() zaten MAX_LEN'de parçalıyor.
+            # <pre> içinde: kopyalanınca hizalama bozulmasın.
+            # `self` durum nesnesi olarak geçiyor: bot.collector main'de atanıyor,
+            # diag yalnız `.collector` özniteliğine bakıyor.
+            from ..diag import report
+            txt = await report(self.cfg, self)
+            await self.send(f"<pre>{fmt.esc(txt)}</pre>", chat_id)
         elif cmd in ("devler", "big", "biggest"):
             from ..radar import bigpos
             await self.send(

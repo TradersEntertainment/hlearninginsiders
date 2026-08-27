@@ -1143,6 +1143,28 @@ async def ai_run_now(request: Request):
     return RedirectResponse(f"/ai{_keyq(request, note)}", status_code=303)
 
 
+@router.get("/tani")
+async def diag_page(request: Request):
+    """Tanı dökümü — DÜZ METİN, kopyala-yapıştır için.
+
+    Neden HTML değil: bu sayfanın işi okunmak değil, TAŞINMAK. Ekran görüntüsü
+    yerine tek blok metin gönderilebilsin diye düz metin; tarayıcıda da
+    Ctrl+A/Ctrl+C ile bir kerede alınır.
+
+    `_guard` ile korumalı: içinde ayar değerleri ve hata metinleri var.
+    Kimlik doğrulamasız `/health` uç noktasına DOKUNULMUYOR — o kasten açık.
+    """
+    _guard(request)
+    from ..diag import report
+    full = request.query_params.get("full") in ("1", "true", "evet")
+    try:
+        text = await report(request.app.state.cfg, request.app.state, full=full)
+    except Exception as e:
+        log.exception("tanı dökümü üretilemedi")
+        text = f"TANI DÖKÜMÜ ÜRETİLEMEDİ: {type(e).__name__}: {e}\n"
+    return Response(text, media_type="text/plain; charset=utf-8")
+
+
 @router.get("/devler")
 async def lowvol_page(request: Request):
     """Sessiz sular: düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri."""

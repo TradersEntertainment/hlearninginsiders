@@ -761,11 +761,17 @@ async def maintenance(cfg: Config) -> None:
     except Exception:
         log.exception("kademe budaması başarısız")
         n_tier = 0
-    if n_fills or n_met or n_al or n_kv or n_tier or n_ai:
+    try:
+        from ..diag import prune_logs
+        n_log = await prune_logs()
+    except Exception:
+        log.exception("uyarı kaydı budaması başarısız")
+        n_log = 0
+    if n_fills or n_met or n_al or n_kv or n_tier or n_ai or n_log:
         log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı, %d önbellek"
-                 " anahtarı, %d kademe altı kripto satırı, %d AI turu/gözlemi"
-                 " emekli (fills kalan %d)",
-                 n_fills, n_met, n_al, n_kv, n_tier, n_ai, n_left)
+                 " anahtarı, %d kademe altı kripto satırı, %d AI turu/gözlemi,"
+                 " %d uyarı kaydı emekli (fills kalan %d)",
+                 n_fills, n_met, n_al, n_kv, n_tier, n_ai, n_log, n_left)
 
 
 async def housekeeping(cfg: Config) -> None:

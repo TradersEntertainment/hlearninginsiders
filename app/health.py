@@ -236,6 +236,13 @@ async def watchdog_cycle(cfg: Config, notifier, respawn) -> dict:
         log.info("✅ %s kendine geldi (%d dk)", n, mins)
 
     await kv_set("health_state", state)
+    # Uyarı halkasını burada kalıcılaştır: işi zaten "her şey ayakta mı" olan
+    # döngü bu, ve YENİ denetimli görev eklemeden düzenli bir ritim veriyor.
+    try:
+        from . import diag
+        await diag.flush_logs()
+    except Exception:
+        log.exception("uyarı halkası boşaltılamadı")
     downs = sorted(n for n, st in state.items() if not st.get("pending"))
     return {"downs": downs, "new": confirmed_new, "recovered": recovered}
 

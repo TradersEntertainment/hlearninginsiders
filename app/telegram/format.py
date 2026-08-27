@@ -899,6 +899,7 @@ def help_text() -> str:
         "/bildirimler — bildirim ayarları + son gönderilenler\n"
         "/devler — Hyperliquid'in en büyük açık pozisyonları\n"
         "/saglik — sistem sağlığı (bekçi raporu: hangi görev canlı)\n"
+        "/tani — TAM sistem dökümü (bir şey ters giderse bunu kopyalayıp gönder)\n"
         "/status — bot durumu\n"
         "/id — bu sohbetin chat id'si"
     )
