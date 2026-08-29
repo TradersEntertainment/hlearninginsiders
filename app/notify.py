@@ -26,6 +26,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "track":     ("notify_track",     "👣 Pozisyon kapanış takibi",           "high"),
     "lowvol":    ("notify_lowvol",    "🐘 Sessiz su devi (düşük hacim)",      "high"),
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
+    "offhours":  ("notify_offhours",  "🌙 Kapalı seans hareketi",             "high"),
     "listing":   ("notify_listing",   "🆕 Yeni hisse listelendi",             "high"),
     "health":    ("notify_health",    "⚕️ Sistem sağlığı",                    "high"),
     "digest":    ("notify_digest",    "🌅 Günlük özet",                       "normal"),

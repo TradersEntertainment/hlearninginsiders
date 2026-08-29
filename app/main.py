@@ -117,16 +117,42 @@ async def calendar_loop(cfg, session):
         await asyncio.sleep(cfg.calendar_refresh_sec)
 
 
-async def metrics_loop(cfg, client):
+def metrics_nap(cfg) -> int:
+    """İki örnekleme arası. ABD KAPALIYKEN HIZLI: "10 dakikada %1" tetiğinin
+    çözünürlüğü budur — 300 sn'de bir örneklemek o pencereye tek aralık koyar.
+    Tek equity dex için poll = 1 istek, yani 60 sn saatte 60 istek eder; bütçe
+    350/dk olduğu için maliyeti yok. health.limits()["metrics"] YAVAŞ değere
+    göre hesaplandığından hızlanmak bekçiyi asla tetiklemez."""
+    from .radar.hourstats import us_closed
+    try:
+        if us_closed(None, int(getattr(cfg, "offhours_close_hour", 0))):
+            return max(15, int(getattr(cfg, "metrics_poll_closed_sec",
+                                       cfg.metrics_poll_sec)))
+    except Exception:
+        pass
+    return int(cfg.metrics_poll_sec)
+
+
+async def metrics_loop(cfg, client, notifier=None):
     while True:
         try:
             n = await metrics.poll_metrics(cfg, client)
             if n:
                 await health.beat("metrics")
                 _stamp("metrik toplama")
+                # Kapalı seans alarmı TAM burada: yeni fiyat geldiği anda
+                # değerlendirilmeli. Ayrı bir görev ya geç kalır ya aynı veriyi
+                # defalarca değerlendirirdi. Kendi try'ı var — alarm patlarsa
+                # metrik toplama durmaz.
+                if notifier is not None:
+                    try:
+                        from .radar import offhours
+                        await offhours.check_alerts(cfg, notifier)
+                    except Exception:
+                        log.exception("kapalı seans alarmı başarısız")
         except Exception as e:
             log.warning("metrik toplanamadı: %s", e)
-        await asyncio.sleep(cfg.metrics_poll_sec)
+        await asyncio.sleep(metrics_nap(cfg))
 
 
 async def check_due(cfg, client, notifier):
@@ -334,7 +360,7 @@ async def lifespan(app: FastAPI):
     await dbm.kv_set("boot_ts", dbm.now())  # bekçinin açılış toleransı
     _spawn("universe", lambda: universe_loop(cfg, client, notifier), notifier)
     _spawn("calendar", lambda: calendar_loop(cfg, session), notifier)
-    _spawn("metrics", lambda: metrics_loop(cfg, client), notifier)
+    _spawn("metrics", lambda: metrics_loop(cfg, client, notifier), notifier)
     _spawn("due", lambda: due_loop(cfg, client, notifier), notifier)
     _spawn("anomaly", lambda: anomaly_loop(cfg, notifier), notifier)
     _spawn("autoscan", lambda: autoscan.loop(cfg, client, notifier), notifier)

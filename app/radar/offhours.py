@@ -18,7 +18,7 @@ veri değil. Sapmayı gösteriyoruz, kehaneti değil.
 """
 import logging
 
-from ..db import db
+from ..db import alert_log, alert_recent, db
 from . import hourstats, metrics
 
 log = logging.getLogger("radar.offhours")
@@ -126,3 +126,95 @@ async def players(anchor_ts: int, limit: int = PLAYERS_LIMIT) -> dict:
     return {"long": [r for r in rows if r["side"] == "long"][:limit],
             "short": [r for r in rows if r["side"] == "short"][:limit],
             "total": len(rows)}
+
+
+async def check_alerts(cfg, notifier) -> dict:
+    """Kapalı seans hareket bildirimleri. İKİ AYRI TETİK:
+
+      1) KÜMÜLATİF SAPMA — çıpaya göre |sapma| her yeni `offhours_alert_pct`
+         bandını geçtiğinde bir kez (%0.5 → %1.0 → %1.5…). Anahtarda ÇIPA var,
+         yani yeni pencere sayaçları kendiliğinden sıfırlar; ayrı durum tablosu
+         gerekmiyor.
+      2) ANİ HAREKET — kısa pencerede (`offhours_spike_min`) gelen sıçrama.
+         Coin başına sabit bekleme; bant mantığı burada işlemez çünkü sıçrama
+         tekrarlanabilir bir olaydır.
+
+    İkisi ayrı çünkü "hafta sonu boyunca yavaşça %0.8 saptı" ile "10 dakikada
+    %1.2 sıçradı" farklı olaylar; birini diğerinin eşiğiyle ölçmek ikisini de
+    kaçırır.
+
+    YALNIZ ABD kapalıyken çalışır (açıkken %0.5 sürekli olur, bildirim
+    gürültüye gömülür) ve YALNIZ PROPR'da listeli sembollere bakar (harekete
+    geçemeyeceğin hisse için bildirim gürültüdür).
+    """
+    from ..propr import is_listed as propr_listed
+    out = {"dev": 0, "spike": 0, "skipped": "" }
+    if not hourstats.us_closed(None, ts_hour(cfg)):   # 1. param ref_ts, 2. saat
+        out["skipped"] = "ABD açık"
+        return out
+
+    scr = await screener(cfg)
+    if not scr["closed"]:                     # çıpa/durum tutarsızsa sus
+        out["skipped"] = "ABD açık"
+        return out
+    band_pct = max(0.01, float(getattr(cfg, "offhours_alert_pct", 0.5)))
+    spike_pct = max(0.01, float(getattr(cfg, "offhours_spike_pct", 1.0)))
+    win = max(1, int(getattr(cfg, "offhours_spike_min", 10))) * 60
+    cool = max(60, int(getattr(cfg, "offhours_spike_cooldown", 1800)))
+    anchor, ts = scr["anchor_ts"], hourstats.now()
+
+    for r in scr["rows"]:
+        if not propr_listed(r["symbol"]):
+            continue
+        base = {"symbol": r["symbol"], "px": r["px"], "base_px": r["base_px"],
+                "anchor_ts": anchor, "oi_chg": r.get("oi_chg"),
+                "weekend_left": scr.get("weekend_left") or 0}
+
+        # --- 1) kümülatif sapma bandı ---
+        band = int(abs(r["dev"]) / band_pct)
+        if band >= 1:
+            # YÖN anahtara giriyor: +%1.1'den -%1.1'e savrulan bir hisse aynı
+            # bant numarasına düşer ama bu iki AYRI olaydır — yön anahtarda
+            # olmasaydı savrulma sessizce bastırılırdı.
+            key = f"dev:{r['coin']}:{anchor}:{'+' if r['dev'] > 0 else '-'}{band}"
+            if not await alert_recent("offhours", key, 30 * 86400):
+                text = fmt_move({**base, "kind": "dev", "pct": r["dev"]})
+                await notifier.send("offhours", text, priority="high", key=key)
+                await alert_log("offhours", key, text)
+                out["dev"] += 1
+
+        # --- 2) ani hareket ---
+        ref = await metrics.metric_at(r["coin"], ts - win)
+        # Referans örnek ÇIPADAN ESKİYSE tetikleme: pencere seansın içine
+        # taşmış demektir ve ölçülen şey "kapalıyken sıçrama" değil, seansın
+        # normal oynaklığı olur.
+        if not ref or int(ref.get("ts") or 0) < anchor or not ref.get("mark_px"):
+            continue
+        jump = _pct(r["px"], ref["mark_px"])
+        if jump is None or abs(jump) < spike_pct:
+            continue
+        key = f"spike:{r['coin']}"
+        if await alert_recent("offhours", key, cool):
+            continue
+        text = fmt_move({**base, "kind": "spike", "pct": jump,
+                         "ref_px": ref["mark_px"], "window_min": win // 60})
+        await notifier.send("offhours", text, priority="high",
+                            key=f"{key}:{ts // cool}")
+        await alert_log("offhours", key, text)
+        out["spike"] += 1
+
+    if out["dev"] or out["spike"]:
+        log.info("kapalı seans bildirimi: %d sapma, %d ani hareket",
+                 out["dev"], out["spike"])
+    return out
+
+
+def ts_hour(cfg):
+    """cfg'den çıpa saati (yoksa modül varsayılanı)."""
+    return None if cfg is None else int(
+        getattr(cfg, "offhours_close_hour", hourstats.CLOSE_TSI_HOUR))
+
+
+def fmt_move(m: dict) -> str:
+    from ..telegram import format as fmt
+    return fmt.offhours_move(m)

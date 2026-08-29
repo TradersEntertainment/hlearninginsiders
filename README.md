@@ -121,6 +121,31 @@ ve ne kadar kaldığını yazar.
 ET karşılığı kışın 16:00 (tam kapanış), yazın 17:00'dir. Gözlemin farklıysa
 ayardan kaydır — kod değişikliği gerekmez.
 
+### Bildirimler (`🌙 Kapalı seans hareketi`)
+
+İki **ayrı** tetik — "hafta sonu boyunca yavaşça %0.8 saptı" ile "10 dakikada
+%1.2 sıçradı" farklı olaylardır, birini diğerinin eşiğiyle ölçmek ikisini de
+kaçırır:
+
+| Tetik | Ne zaman | Tekrar |
+|---|---|---|
+| **Kümülatif sapma** | Çıpaya göre \|sapma\| her yeni **%0.5** bandını geçince | Her yeni bantta bir kez (%0.5 → %1.0 → %1.5…), **yön ayrı** |
+| **Ani hareket** | **10 dakikada %1** | Hisse başına 30 dk bekleme |
+
+Kurallar: yalnız **ABD kapalıyken** (açıkken %0.5 sürekli olur, bildirim
+gürültüye gömülür) ve yalnız **PROPR'da listeli** hisseler (harekete
+geçemeyeceğin hisse için bildirim gürültüdür). Eşiklerin hepsi
+*Ayarlar → Kapalı seans*'tan değişir.
+
+İki tasarım ayrıntısı: (1) bant anahtarında **çıpa** var, yani yeni pencere
+sayaçları kendiliğinden sıfırlar — ayrı durum tablosu yok. (2) Ani hareket
+penceresi seansın içine taşıyorsa (referans örnek çıpadan eski) tetiklenmez;
+yoksa ölçülen şey "kapalıyken sıçrama" değil seansın normal oynaklığı olurdu.
+
+ABD kapalıyken metrik örnekleme 5 dakikadan **1 dakikaya** iner
+(`metrics_poll_closed_sec`) — "10 dakikada %1" tetiğinin çözünürlüğü budur.
+Tek dex için poll = 1 istek, yani saatte 60 istek; bütçe 350/dakika.
+
 Sınırlar: (a) ABD tatillerinde borsa kapalı ama hafta içi olduğu için çıpa
 yanlış seçilebilir — tatil takvimimiz yok, o yüzden **çıpa zamanı ekranda
 yazıyor**, yanlışsa görülür. (b) Çıpa örneği kapanıştan 30 dakikadan eskiyse

@@ -66,6 +66,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "desc": "Bu saatlerde 'saati gelenler' otomatik olarak yayın kanalına gönderilir. Virgülle: 10,14,17 · boş = kapalı (TELEGRAM_CHANNEL_ID gerekir)"},
     "notify_health": {"type": "bool", "label": "⚕️ Sistem sağlığı", "group": "Bildirimler",
                       "desc": "VARSAYILAN KAPALI — sağlık olayları zaten ana sayfa rozetinde + /saglik + /health'te görünür; Telegram'a da istersen aç"},
+    "notify_offhours": {"type": "bool", "label": "🌙 Kapalı seans hareketi", "group": "Bildirimler",
+                        "desc": "ABD kapalıyken (hafta sonu/gece) kapanış fiyatından sapan ya da ani sıçrayan hisseler — yalnız PROPR'da listeli olanlar"},
     "notify_wall": {"type": "bool", "label": "🧱 Emir defteri duvarı", "group": "Bildirimler",
                     "desc": "Deftere fiyatın hemen yanına konan dev bekleyen emir duvarları (ve çekilirse/dolarsa haberi)"},
     "wall_window_pct": {"type": "float", "label": "Duvar penceresi (%)", "group": "Emir defteri radarı",
@@ -240,8 +242,23 @@ EDITABLE_FIELDS: dict[str, dict] = {
                       "group": "Takvim & semboller",
                       "desc": "HL sembolü → TradingView sembolü, ör: 'SMSN:KRX:005930;X:NYSE:X'. Bir sembolde gömülüyü kapatmak için karşılığını boş bırak (ör: 'CXMT:')"},
     "offhours_close_hour": {"type": "int", "label": "ABD kapanış saati (TSİ)",
-                            "group": "Tarama & performans",
+                            "group": "Kapalı seans",
                             "desc": "Kapalı seans sapmasının çıpası — TSİ'de sabit saat (0 = 24:00, Cuma gece yarısı). Kışın ET 16:00 kapanışına denk gelir, yazın 1 saat kayar"},
+    "offhours_alert_pct": {"type": "float", "label": "Sapma bildirim bandı (%)",
+                           "group": "Kapalı seans",
+                           "desc": "Kapanış çıpasından bu kadar sapınca haber gelir; sonra her yeni bantta bir kez daha (%0.5 → %1.0 → %1.5…)"},
+    "offhours_spike_pct": {"type": "float", "label": "Ani hareket eşiği (%)",
+                           "group": "Kapalı seans",
+                           "desc": "Kısa pencerede bu kadar hareket = ayrı bildirim. Yavaş biriken sapmadan farklı bir olay"},
+    "offhours_spike_min": {"type": "int", "label": "Ani hareket penceresi (dk)",
+                           "group": "Kapalı seans",
+                           "desc": "Ani hareket kaç dakikalık pencerede ölçülsün"},
+    "offhours_spike_cooldown": {"type": "int", "label": "Ani hareket beklemesi (sn)",
+                                "group": "Kapalı seans",
+                                "desc": "Aynı hisse için iki ani hareket bildirimi arasındaki asgari süre"},
+    "metrics_poll_closed_sec": {"type": "int", "label": "Kapalıyken metrik örnekleme (sn)",
+                                "group": "Kapalı seans",
+                                "desc": "ABD kapalıyken fiyat ne sıklıkta örneklensin — ani hareket tetiğinin çözünürlüğü budur (tek dex için poll = 1 istek)"},
     "hourstats_days": {"type": "int", "label": "Saat istatistiği penceresi (gün)",
                        "group": "Tarama & performans",
                        "desc": "Saatlik getiri haritası için geriye bakılacak gün sayısı (1h mumlar)"},
@@ -332,6 +349,11 @@ class Config:
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
         self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
         self.offhours_close_hour = int(os.getenv("OFFHOURS_CLOSE_HOUR", "0"))
+        self.offhours_alert_pct = float(os.getenv("OFFHOURS_ALERT_PCT", "0.5"))
+        self.offhours_spike_pct = float(os.getenv("OFFHOURS_SPIKE_PCT", "1.0"))
+        self.offhours_spike_min = int(os.getenv("OFFHOURS_SPIKE_MIN", "10"))
+        self.offhours_spike_cooldown = int(os.getenv("OFFHOURS_SPIKE_COOLDOWN", "1800"))
+        self.metrics_poll_closed_sec = int(os.getenv("METRICS_POLL_CLOSED_SEC", "60"))
         self.hourstats_days = int(os.getenv("HOURSTATS_DAYS", "90"))
         self.pricechart_days = int(os.getenv("PRICECHART_DAYS", "30"))
         self.hl_big_min_usd = float(os.getenv("HL_BIG_MIN_USD", "1000000"))
@@ -353,6 +375,7 @@ class Config:
         self.sweep_rpm_headroom = float(os.getenv("SWEEP_RPM_HEADROOM", "0.85"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))
         self.notify_lowvol = True
+        self.notify_offhours = True
         self.notify_wall = True
         self.notify_health = False  # bekçi sitede konuşur; Telegram istenirse açılır
         self.notify_listing = True

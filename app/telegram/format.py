@@ -528,6 +528,37 @@ def wall_gone(w: dict) -> str:
             " daha rahat hareket edebilir.</i>")
 
 
+def offhours_move(m: dict) -> str:
+    """Kapalı seans hareketi — kümülatif sapma bandı ya da ani sıçrama.
+
+    İki tetik ayrı cümleyle anlatılır: "hafta sonu boyunca %0.8 saptı" ile
+    "10 dakikada %1.2 sıçradı" farklı olaylardır, aynı metne sıkıştırılmaz.
+    """
+    sym = m["symbol"]
+    up = m["pct"] > 0
+    arrow = "🟢📈" if up else "🔴📉"
+    if m["kind"] == "spike":
+        head = (f"{arrow} <b>{sym}</b> — <b>{m['window_min']} dakikada"
+                f" %{abs(m['pct']):.2f}</b> {'sıçradı' if up else 'düştü'}")
+        detail = f"{px(m['ref_px'])} → <b>{px(m['px'])}</b>"
+    else:
+        head = (f"{arrow} <b>{sym}</b> — kapanıştan beri <b>%{abs(m['pct']):.2f}</b>"
+                f" {'yukarıda' if up else 'aşağıda'}")
+        detail = f"kapanış {px(m['base_px'])} → <b>{px(m['px'])}</b>"
+    lines = [head, detail + f" │ {age_str(m['anchor_ts'])}dır kapalı"]
+    if m.get("weekend_left"):
+        h = m["weekend_left"] // 3600
+        lines.append(f"🗓 Hafta sonu penceresi — açılışa <b>{h} saat</b> var")
+    if m.get("oi_chg") is not None:
+        lines.append(f"📊 Açık pozisyon (OI) %{m['oi_chg']:+.1f}"
+                     + (" — pozisyon kuruluyor" if abs(m["oi_chg"]) >= 2 else ""))
+    lines.append("<i>ABD kapalıyken dayanak hisse durur; bu hareket saf perp"
+                 " akışıdır. Geri döneceğinin garantisi yok.</i>")
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    return "\n".join(lines)
+
+
 def lowvol_alert(p: dict) -> str:
     """Sessiz su devi: düşük hacimli hissede absürt boyutlu yeni pozisyon."""
     sym = p.get("symbol") or p["coin"].split(":")[-1]
