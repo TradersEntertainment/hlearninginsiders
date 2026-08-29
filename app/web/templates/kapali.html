@@ -5,26 +5,28 @@
 
 <div class="panel">
   <h2>🌙 Kapalı seans <span class="dim" style="text-transform:none">·
-    {% if scr.closed %}{% if weekend %}hafta sonu{% else %}gece kapanışı{% endif %}
-    {%- else %}hisse işlem görüyor — son kapalı pencerenin özeti{% endif %}</span></h2>
-  <p class="sub">HIP-3 perp'i <b>7/24</b> işlem görür, dayanak hisse görmez.
-  Çıpa <b>after-hours bitişidir (ET 20:00)</b>, normal kapanış (16:00) değil:
-  16:00–20:00 arası hisse hâlâ işlem gördüğü için perp ona tutunabilir. Saf
-  perp/balina akışı ancak 20:00'den sonra başlar — kimse gerçek hisseyle
-  arbitraj yapıp fiyatı yerine oturtamaz.
+    {% if scr.weekend %}HAFTA SONU{% elif scr.closed %}gece kapanışı
+    {%- else %}ABD açık — son kapalı pencerenin özeti{% endif %}</span></h2>
+  <p class="sub">xyz dex <b>hiç kapanmaz</b>, kapanan ABD'dir. Bu yüzden ABD
+  kapalıyken oluşan fark <b>saf perp/balina akışıdır</b> — kimse gerçek hisseyle
+  arbitraj yapıp fiyatı yerine oturtamaz. Asıl pencere <b>hafta sonu</b>:
+  Cuma 24:00 → Pazartesi 00:00 TSİ, 48 saat.
   <span class="warn">Sapma bir tahmin değildir: geri döneceğinin garantisi yok,
   yatırım tavsiyesi değildir.</span></p>
 
   <p style="margin:8px 0 4px">
     <b>Çıpa:</b> {{ anchor_tr.strftime('%d.%m %H:%M') }} TSİ
-    <span class="dim">({{ anchor_et.strftime('%a %H:%M') }} ET — after-hours bitişi)</span>
+    <span class="dim">({{ anchor_et.strftime('%a %H:%M') }} ET — ABD kapanışı)</span>
     {% if scr.closed %} · <b>{{ (scr.closed_for // 3600) }}s {{ (scr.closed_for % 3600) // 60 }}dk</b> boyunca kapalı
-    · pre-market <b>{{ open_tr.strftime('%d.%m %H:%M') }}</b>,
-      seans <b>{{ reg_tr.strftime('%H:%M') }}</b> TSİ{% endif %}
+    · seans açılışı <b>{{ reg_tr.strftime('%d.%m %H:%M') }} TSİ</b>{% endif %}
+    {%- if scr.weekend %}<br><b class="long">🗓 Hafta sonu penceresi</b>:
+      {{ wk_end_tr.strftime('%d.%m %H:%M') }} TSİ'ye kadar ·
+      <b>{{ (scr.weekend_left // 3600) }}s {{ (scr.weekend_left % 3600) // 60 }}dk</b> kaldı{% endif %}
   </p>
   <p class="sub dim">{{ scr.rows|length }}/{{ scr.n_tickers }} hissede çıpa fiyatı bulundu{%
     if scr.n_nodata %} · {{ scr.n_nodata }} hissede kapanış anına ait ölçüm yok{% endif %}.
-    Çıpa sabit TSİ değil <b>ET 20:00</b>'e bağlı — yazın 03:00, kışın 04:00 TSİ.</p>
+    Çıpa <b>TSİ'de sabit saat</b> (Ayarlar → ABD kapanış saati); kışın ET 16:00
+    kapanışına denk gelir, yazın bir saat kayar.</p>
 
   {% if scr.n_stale %}
   <p class="short">⚠️ {{ scr.n_stale }} satırda çıpa örneği kapanıştan <b>30 dakikadan
@@ -41,7 +43,7 @@
   <table>
     <tr><th class="l">Hisse</th>
         <th title="Kapanış anındaki mark fiyatı">Kapanış</th>
-        <th title="{{ 'Şu anki' if scr.closed else 'Pre-market açılışındaki' }} mark fiyatı">{{ 'Şu an' if scr.closed else 'Açılışta' }}</th>
+        <th title="{{ 'Şu anki' if scr.closed else 'Son seans açılışındaki' }} mark fiyatı">{{ 'Şu an' if scr.closed else 'Açılışta' }}</th>
         <th title="Kapanışa göre yüzde değişim — bu kolona göre sıralı">Sapma</th>
         <th title="Açık pozisyon (OI) değişimi — sapmaya eşlik ediyor mu?">OI değ.</th>
         <th title="Günlük hacim">Hacim</th>

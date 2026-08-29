@@ -5,12 +5,12 @@ kapalıyken oluşan fark bu yüzden SAF PERP/BALİNA AKIŞIDIR — kimse gerçek
 hisseyle arbitraj yapıp fiyatı yerine oturtamaz. Yani buradaki sapma, "birileri
 kapalıyken pozisyon kuruyor" sinyalinin en temiz hâli.
 
-Ölçüm iki noktalıdır:
-  ÇIPA    = hissenin en son işlem gördüğü andaki mark fiyatı (ET 20:00)
-  ÖLÇÜM   = şu an (kapalıyken) ya da pre-market açılışı (hisse işlem görüyorken)
+xyz dex HİÇ KAPANMAZ (7/24); kapanan ABD'dir. Ölçüm iki noktalıdır:
+  ÇIPA    = son ABD kapanışındaki mark fiyatı (TSİ'de sabit saat, vars. 24:00)
+  ÖLÇÜM   = şu an (ABD kapalıyken) ya da son seans açılışı (ABD açıkken)
 
-"Kapanış" 16:00 DEĞİLDİR: 16:00–20:00 arası after-hours'ta hisse hâlâ işlem
-görür, perp ona tutunabilir. Perp'in gerçekten koptuğu pencere 20:00'de başlar.
+Botun asıl penceresi HAFTA SONU: Cuma 24:00 TSİ → Pazartesi 00:00 TSİ. 48 saat
+boyunca ABD tamamen kapalı, perp işlemeye devam ediyor.
 
 Bilerek YAPMADIĞIMIZ şey: "geri dönerse şu kadar kazandırır" hesabı. Sapmanın
 geçmişte gerçekten geri dönüp dönmediğini ölçmeden o cümle bir temenni olur,
@@ -38,19 +38,20 @@ def _pct(new, old) -> float | None:
     return (new - old) / old * 100 if old else None
 
 
-async def screener(limit: int | None = None) -> dict:
+async def screener(cfg=None, limit: int | None = None) -> dict:
     """Her hisse için kapanış çıpasına göre sapma.
 
-    Piyasa AÇIKKEN sayfa boş kalmaz: bir önceki kapalı seansın AÇILIŞA kadarki
-    sapması gösterilir — "gece ne oldu" sorusu sabah da geçerlidir.
+    ABD AÇIKKEN sayfa boş kalmaz: bir önceki kapalı pencerenin açılışa kadarki
+    sapması gösterilir — "hafta sonu ne oldu" sorusu Pazartesi de geçerlidir.
     """
     ts = hourstats.now()
-    # "Kapalı" = hisse HİÇBİR şekilde işlem görmüyor (after-hours dahil bitmiş).
-    closed = not hourstats.is_equity_tradable(ts)
-    anchor = hourstats.last_close_ts(ts)
-    # Kapalıyken şimdiye kadar; hisse işlem görüyorken bir önceki kapalı
-    # pencerenin tamamı (after-hours bitişi → pre-market açılışı).
-    measure_ts = ts if closed else hourstats.next_open_ts(anchor)
+    h = int(getattr(cfg, "offhours_close_hour", hourstats.CLOSE_TSI_HOUR)) if cfg else None
+    closed = hourstats.us_closed(ts, h)
+    anchor = hourstats.last_close_ts(ts, h)
+    weekend = hourstats.weekend_window(ts, h)
+    # ABD kapalıyken şimdiye kadar; açıkken son kapanış→son açılış penceresi
+    # ("gece/hafta sonu ne oldu" sorusu seans başladıktan sonra da geçerli).
+    measure_ts = ts if closed else hourstats.last_regular_open_ts(ts)
 
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers ORDER BY symbol")
@@ -94,6 +95,8 @@ async def screener(limit: int | None = None) -> dict:
         rows = rows[:limit]
     return {"rows": rows, "closed": closed, "anchor_ts": anchor,
             "measure_ts": measure_ts, "closed_for": max(0, ts - anchor),
+            "weekend": weekend,                                      # (başlangıç, bitiş)
+            "weekend_left": max(0, weekend[1] - ts) if weekend else 0,
             "next_open_ts": hourstats.next_open_ts(ts),              # pre-market
             "next_reg_ts": hourstats.next_regular_open_ts(ts),       # normal seans
             "n_stale": n_stale, "n_nodata": n_nodata, "n_tickers": len(tickers)}

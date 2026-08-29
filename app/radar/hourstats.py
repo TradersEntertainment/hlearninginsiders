@@ -23,26 +23,25 @@ log = logging.getLogger("radar.hourstats")
 ET = ZoneInfo("America/New_York")
 TR = ZoneInfo("Europe/Istanbul")
 
-# ABD hisse işlem pencereleri (ET). Bunlar DAKİKA hassasiyetindedir.
+# HL'nin xyz dex'i HİÇ KAPANMAZ (7/24). Kapanan ABD borsasıdır — kapalı seans
+# sapması da tam bu yüzden anlamlıdır: perp işlemeye devam ederken dayanak
+# hisse durur, aradaki fark saf perp/balina akışıdır.
 #
-# ÖNEMLİ: "borsa kapandı" 16:00 DEĞİLDİR. Sıra şöyle:
-#   04:00–09:30  pre-market
-#   09:30–16:00  normal seans
-#   16:00–20:00  after-hours
-#   20:00–04:00  hisse HİÇ işlem görmüyor  ← perp'in gerçekten koptuğu pencere
-#
-# Kapalı seans sapmasının çıpası bu yüzden 16:00 değil **20:00**: 16:00–20:00
-# arasında dayanak hisse hâlâ fiyatlanıyor, perp ona tutunabiliyor. Saf
-# perp/balina akışı ancak after-hours bitince başlar.
+# KAPANIŞ ÇIPASI TSİ'DE SABİT BİR SAATTİR (varsayılan 24:00 = gece yarısı).
+# Kullanıcının gözlemi bu; kışın tam olarak ET 16:00 kapanışına denk gelir,
+# yazın bir saat kayar. ET'ye bağlamak yerine TSİ'de sabitliyoruz ÇÜNKÜ
+# kullanıcı böyle görüyor ve ayardan değiştirilebilir — yanlışsa kod değil
+# ayar değişir. Çıpa zamanı ayrıca ekranda yazıyor.
 #
 # DİKKAT: `compute_stats` içindeki `9 <= dt.hour < 16` yaklaşıklaması BİLEREK
 # ayrı duruyor. O, 1 saatlik mumları kovalıyor (09:00 mumunun yarısı kapalıdır)
 # ve 90 günlük istatistikleri üretiyor; dakika hassasiyetine çevirmek kv'deki
 # tüm hstats kayıtlarını sessizce değiştirirdi. İki farklı soru, iki fonksiyon.
-MKT_OPEN = dtime(9, 30)          # normal seans açılışı
-MKT_CLOSE = dtime(16, 0)         # normal seans kapanışı
-EXT_OPEN = dtime(4, 0)           # pre-market başlangıcı
-EXT_CLOSE = dtime(20, 0)         # after-hours bitişi — asıl "kapanış"
+MKT_OPEN = dtime(9, 30)          # ABD normal seans açılışı (ET)
+MKT_CLOSE = dtime(16, 0)         # ABD normal seans kapanışı (ET)
+EXT_OPEN = dtime(4, 0)           # pre-market başlangıcı (ET)
+EXT_CLOSE = dtime(20, 0)         # after-hours bitişi (ET)
+CLOSE_TSI_HOUR = 0               # kapalı seans çıpası: TSİ saati (0 = 24:00)
 
 
 def _et(ref_ts: int | None = None) -> datetime:
@@ -79,16 +78,65 @@ def _walk(d: datetime, at: dtime, back: bool) -> int:
     return int(d.timestamp())          # ulaşılamaz; sessiz None'dan iyidir
 
 
-def last_close_ts(ref_ts: int | None = None) -> int:
-    """Hissenin en son işlem gördüğü an (ET 20:00, after-hours bitişi).
+def last_close_ts(ref_ts: int | None = None, tsi_hour: int | None = None) -> int:
+    """En son ABD kapanışı — kapalı seans sapmasının ÇIPASI.
 
-    Kapalı seans sapmasının ÇIPASI budur — 16:00 değil. 16:00–20:00 arası
-    after-hours'ta hisse hâlâ işlem görüyor, yani perp kopmuş sayılmaz.
-
-    Sabit bir TSİ saatine bağlanmıyor: ET 20:00 kışın 04:00, yazın 03:00 TSİ'ye
-    denk gelir. TSİ'ye sabitlenseydi çıpa yılın yarısında bir saat kayardı.
+    TSİ'de sabit saat (varsayılan gece yarısı = "Cuma 24:00"). Hafta sonu
+    boyunca Cuma'nınkinde kalır: Cumartesi ve Pazar gece yarıları bir ABD
+    seansını KAPATMIYOR, o yüzden çıpa olamazlar.
     """
-    return _walk(_et(ref_ts), EXT_CLOSE, back=True)
+    h = CLOSE_TSI_HOUR if tsi_hour is None else int(tsi_hour) % 24
+    d = datetime.fromtimestamp(int(ref_ts) if ref_ts else now(), TR)
+    for back in range(0, 9):
+        day = (d - timedelta(days=back)).date()
+        cand = datetime.combine(day, dtime(h), TR)
+        # Bu kapanış hangi ABD gününe ait? Gece yarısı civarı bir kapanış,
+        # BİR ÖNCEKİ günün seansını kapatır.
+        sess_day = day - timedelta(days=1) if h < 12 else day
+        if cand <= d and sess_day.weekday() < 5:
+            return int(cand.timestamp())
+    return int(d.timestamp())          # ulaşılamaz; sessiz None'dan iyidir
+
+
+def last_regular_open_ts(ref_ts: int | None = None) -> int:
+    """En son NORMAL seans açılışı (ET 09:30)."""
+    return _walk(_et(ref_ts), MKT_OPEN, back=True)
+
+
+def us_closed(ref_ts: int | None = None, tsi_hour: int | None = None) -> bool:
+    """ABD borsası kapalı mı.
+
+    "Son kapanıştan sonrayız" DEĞİL, "son kapanış son açılıştan daha yeni"
+    diye sorulur. İlk hâli Pazartesi seans içinde bile 'kapalı' diyordu:
+    hafta sonu çıpası duruyor ama sıradaki açılış Salı'ya kayıyordu.
+
+    (xyz dex'in kendisi HİÇ kapanmaz — kapanan ABD. O yüzden 'piyasa kapalı'
+    değil 'ABD kapalı' diyoruz.)
+    """
+    ts = int(ref_ts) if ref_ts else now()
+    return last_close_ts(ts, tsi_hour) > last_regular_open_ts(ts)
+
+
+def weekend_window(ref_ts: int | None = None,
+                   tsi_hour: int | None = None) -> tuple[int, int] | None:
+    """Hafta sonu penceresi (başlangıç, bitiş) — içinde değilsek None.
+
+    Botun asıl işi bu pencere: Cuma 24:00 TSİ'den Pazartesi 00:00 TSİ'ye.
+    48 saat boyunca ABD tamamen kapalı, xyz dex ise işlemeye devam ediyor.
+    """
+    h = CLOSE_TSI_HOUR if tsi_hour is None else int(tsi_hour) % 24
+    ts = int(ref_ts) if ref_ts else now()
+    d = datetime.fromtimestamp(ts, TR)
+    for back in range(0, 8):
+        day = (d - timedelta(days=back)).date()
+        if day.weekday() != 5:            # pencere CUMARTESİ başlar
+            continue
+        start = datetime.combine(day, dtime(h), TR)
+        end = start + timedelta(days=2)   # Pazartesi aynı saat
+        if start.timestamp() <= ts < end.timestamp():
+            return int(start.timestamp()), int(end.timestamp())
+        break
+    return None
 
 
 def next_open_ts(ref_ts: int | None = None) -> int:

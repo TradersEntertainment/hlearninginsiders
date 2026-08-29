@@ -112,14 +112,14 @@ Sayfa iki şey gösterir:
 Piyasa açıkken sayfa boş kalmaz: bir önceki kapalı seansın **açılışa kadarki**
 sapması gösterilir.
 
-**Çıpa after-hours bitişidir (ET 20:00)**, normal kapanış (16:00) değil.
-ABD'de sıra şöyle: 04:00–09:30 pre-market · 09:30–16:00 normal seans ·
-16:00–20:00 after-hours · 20:00–04:00 hisse **hiç** işlem görmüyor. Perp ancak
-son pencerede gerçekten kopar; 16:00–20:00 arası dayanak hisse hâlâ fiyatlandığı
-için perp ona tutunabilir.
+**xyz dex hiç kapanmaz (7/24); kapanan ABD'dir.** Asıl pencere hafta sonu:
+**Cuma 24:00 → Pazartesi 00:00 TSİ**, tam 48 saat. Sayfa bu pencerede olduğunu
+ve ne kadar kaldığını yazar.
 
-Çıpa sabit bir TSİ saatine değil ET 20:00'e bağlıdır — yazın 03:00, kışın
-04:00 TSİ'ye denk gelir; TSİ'ye sabitlense yılın yarısında bir saat kayardı.
+Çıpa **TSİ'de sabit bir saattir** (Ayarlar → *ABD kapanış saati*, varsayılan
+24:00). Türkiye'de yaz saati olmadığı için çıpa yıl boyu aynı saattedir;
+ET karşılığı kışın 16:00 (tam kapanış), yazın 17:00'dir. Gözlemin farklıysa
+ayardan kaydır — kod değişikliği gerekmez.
 
 Sınırlar: (a) ABD tatillerinde borsa kapalı ama hafta içi olduğu için çıpa
 yanlış seçilebilir — tatil takvimimiz yok, o yüzden **çıpa zamanı ekranda

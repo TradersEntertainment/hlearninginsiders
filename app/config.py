@@ -239,6 +239,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "tv_symbol_map": {"type": "str", "label": "TradingView sembol eşlemesi",
                       "group": "Takvim & semboller",
                       "desc": "HL sembolü → TradingView sembolü, ör: 'SMSN:KRX:005930;X:NYSE:X'. Bir sembolde gömülüyü kapatmak için karşılığını boş bırak (ör: 'CXMT:')"},
+    "offhours_close_hour": {"type": "int", "label": "ABD kapanış saati (TSİ)",
+                            "group": "Tarama & performans",
+                            "desc": "Kapalı seans sapmasının çıpası — TSİ'de sabit saat (0 = 24:00, Cuma gece yarısı). Kışın ET 16:00 kapanışına denk gelir, yazın 1 saat kayar"},
     "hourstats_days": {"type": "int", "label": "Saat istatistiği penceresi (gün)",
                        "group": "Tarama & performans",
                        "desc": "Saatlik getiri haritası için geriye bakılacak gün sayısı (1h mumlar)"},
@@ -328,6 +331,7 @@ class Config:
         self.track_auto_stop = convert_value("bool", os.getenv("TRACK_AUTO_STOP", "0"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
         self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
+        self.offhours_close_hour = int(os.getenv("OFFHOURS_CLOSE_HOUR", "0"))
         self.hourstats_days = int(os.getenv("HOURSTATS_DAYS", "90"))
         self.pricechart_days = int(os.getenv("PRICECHART_DAYS", "30"))
         self.hl_big_min_usd = float(os.getenv("HL_BIG_MIN_USD", "1000000"))

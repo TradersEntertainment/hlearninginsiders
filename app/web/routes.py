@@ -1039,7 +1039,7 @@ async def offhours_page(request: Request):
     hangi kapanış olduğu (hafta sonu / gece) dinamik yazılıyor.
     """
     _guard(request)
-    scr = await offhours.screener()
+    scr = await offhours.screener(request.app.state.cfg)
     who = await offhours.players(scr["anchor_ts"])
     return _render(request, "kapali.html", {
         "scr": scr, "who": who,
@@ -1047,7 +1047,8 @@ async def offhours_page(request: Request):
         "anchor_et": datetime.fromtimestamp(scr["anchor_ts"], hourstats.ET),
         "open_tr": datetime.fromtimestamp(scr["next_open_ts"], TR),
         "reg_tr": datetime.fromtimestamp(scr["next_reg_ts"], TR),
-        "weekend": datetime.fromtimestamp(scr["anchor_ts"], hourstats.ET).weekday() == 4,
+        "wk_end_tr": (datetime.fromtimestamp(scr["weekend"][1], TR)
+                      if scr["weekend"] else None),
     })
 
 
