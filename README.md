@@ -96,6 +96,32 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
 5. Earnings'ten 24 saat sonra fiyat hareketi ölçülür → doğru bilenler sicile işlenir,
    2+ doğru bilen watchlist'e alınır, kapatanlar raporlanır.
 
+## Funding: `/funding`
+
+Bütün hisse perp'leri funding oranına göre sıralı — varsayılan en yüksek üstte,
+başlığa tıklayarak istediğin kolona göre.
+
+Funding bir **pozisyonlanma** sinyalidir: pozitif = longlar shortlara ödüyor
+(kalabalık long), negatif = tersi. Hyperliquid funding'i **saatlik** öder (çoğu
+borsanın 8 saatliği değil), o yüzden yıllık karşılık `oran × 24 × 365`:
+%0.05/saat = **%438/yıl**. Tabloda ikisi de var; sıralamayı sezgisel yapan
+yıllık olan.
+
+24 saatlik değişim de gösteriliyor ve **işaret değiştirenler 🔄** ile işaretli —
+kalabalığın yön değiştirmesi oranın kendisinden daha çok şey söyler.
+🔥 aşırı funding demek ve eşiği `funding_extreme`'den gelir, yani sayfa ile
+anomali bildirimi aynı şeye "aşırı" der.
+
+**Ayırt edici kısım:** alttaki *"funding'i kim ödüyor"* tablosu — bildiğimiz
+balina pozisyonlarının günlük funding gideri/geliri (`büyüklük × oran × 24`).
+Funding oranı herkeste var; kimin ödediği için oranla pozisyon sahibini
+birleştirmek gerekiyor.
+
+Sınırlar: (a) long/short toplamları ve maliyetler yalnız **adres havuzumuzu**
+kapsar — gerçek toplam değil, gördüğümüz kadarının alt sınırıdır. (b) Yalnız
+hisse perp'leri; ana dex kripto funding'i toplanmıyor. (c) Yeni bildirim yok —
+aşırı funding'i `anomaly` zaten aynı eşikle haber veriyor.
+
 ## Kapalı Seans: `/kapali`
 
 HIP-3 perp'i 7/24 işlem görür, dayanak hisse görmez. Borsa kapalıyken oluşan

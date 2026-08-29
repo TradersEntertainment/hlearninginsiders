@@ -17,8 +17,8 @@ from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, bigpos, clusters, hourstats, lowvol, metrics,
-                     offhours,
+from ..radar import (autoscan, bigpos, clusters, funding, hourstats, lowvol,
+                     metrics, offhours,
                      pricechart)
 
 log = logging.getLogger("web.routes")
@@ -1029,6 +1029,14 @@ async def history_page(request: Request):
                ORDER BY hits DESC, misses ASC LIMIT 30""")
         winners = [dict(r) for r in await cur.fetchall()]
     return _render(request, "history.html", {"rows": rows, "winners": winners})
+
+
+@router.get("/funding")
+async def funding_page(request: Request):
+    """Funding sıralaması — kim kime ödüyor, ve bildiğimiz balinalar ne kadar."""
+    _guard(request)
+    fr = await funding.ranking(request.app.state.cfg)
+    return _render(request, "funding.html", {"fr": fr})
 
 
 @router.get("/kapali")
