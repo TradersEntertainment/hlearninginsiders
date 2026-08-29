@@ -96,6 +96,38 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
 5. Earnings'ten 24 saat sonra fiyat hareketi ölçülür → doğru bilenler sicile işlenir,
    2+ doğru bilen watchlist'e alınır, kapatanlar raporlanır.
 
+## Kapalı Seans: `/kapali`
+
+HIP-3 perp'i 7/24 işlem görür, dayanak hisse görmez. Borsa kapalıyken oluşan
+fiyat farkı bu yüzden **saf perp/balina akışıdır** — kimse gerçek hisseyle
+arbitraj yapıp fiyatı yerine oturtamaz.
+
+Sayfa iki şey gösterir:
+- **Kapanıştan beri sapma:** her hissenin kapanış anındaki mark fiyatı ile
+  şu anki fiyatı arasındaki yüzde fark. Varsayılan sıra mutlak sapma (en çok
+  kıpırdayan üstte); başlığa tıklayarak istediğin kolona göre sıralanır.
+- **Kapalıyken açılan pozisyonlar:** çıpadan sonra açılmış pozisyonlar,
+  long ve short ayrı.
+
+Piyasa açıkken sayfa boş kalmaz: bir önceki kapalı seansın **açılışa kadarki**
+sapması gösterilir.
+
+**Çıpa after-hours bitişidir (ET 20:00)**, normal kapanış (16:00) değil.
+ABD'de sıra şöyle: 04:00–09:30 pre-market · 09:30–16:00 normal seans ·
+16:00–20:00 after-hours · 20:00–04:00 hisse **hiç** işlem görmüyor. Perp ancak
+son pencerede gerçekten kopar; 16:00–20:00 arası dayanak hisse hâlâ fiyatlandığı
+için perp ona tutunabilir.
+
+Çıpa sabit bir TSİ saatine değil ET 20:00'e bağlıdır — yazın 03:00, kışın
+04:00 TSİ'ye denk gelir; TSİ'ye sabitlense yılın yarısında bir saat kayardı.
+
+Sınırlar: (a) ABD tatillerinde borsa kapalı ama hafta içi olduğu için çıpa
+yanlış seçilebilir — tatil takvimimiz yok, o yüzden **çıpa zamanı ekranda
+yazıyor**, yanlışsa görülür. (b) Çıpa örneği kapanıştan 30 dakikadan eskiyse
+satır ⏳ ile işaretlenir. (c) "Geri dönerse şu kadar kazandırır" hesabı
+**bilerek yok**: sapmanın geçmişte gerçekten geri döndüğü ölçülmeden o cümle
+bir temenni olurdu.
+
 ## Saat İstatistikleri: `/saatler`
 
 Her hissenin son ~90 günlük 1 saatlik mumları 24 saat kovasına bölünür; her kova

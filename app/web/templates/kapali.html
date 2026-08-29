@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}🌙 Kapalı seans · HL Radar{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>🌙 Kapalı seans <span class="dim" style="text-transform:none">·
+    {% if scr.closed %}{% if weekend %}hafta sonu{% else %}gece kapanışı{% endif %}
+    {%- else %}hisse işlem görüyor — son kapalı pencerenin özeti{% endif %}</span></h2>
+  <p class="sub">HIP-3 perp'i <b>7/24</b> işlem görür, dayanak hisse görmez.
+  Çıpa <b>after-hours bitişidir (ET 20:00)</b>, normal kapanış (16:00) değil:
+  16:00–20:00 arası hisse hâlâ işlem gördüğü için perp ona tutunabilir. Saf
+  perp/balina akışı ancak 20:00'den sonra başlar — kimse gerçek hisseyle
+  arbitraj yapıp fiyatı yerine oturtamaz.
+  <span class="warn">Sapma bir tahmin değildir: geri döneceğinin garantisi yok,
+  yatırım tavsiyesi değildir.</span></p>
+
+  <p style="margin:8px 0 4px">
+    <b>Çıpa:</b> {{ anchor_tr.strftime('%d.%m %H:%M') }} TSİ
+    <span class="dim">({{ anchor_et.strftime('%a %H:%M') }} ET — after-hours bitişi)</span>
+    {% if scr.closed %} · <b>{{ (scr.closed_for // 3600) }}s {{ (scr.closed_for % 3600) // 60 }}dk</b> boyunca kapalı
+    · pre-market <b>{{ open_tr.strftime('%d.%m %H:%M') }}</b>,
+      seans <b>{{ reg_tr.strftime('%H:%M') }}</b> TSİ{% endif %}
+  </p>
+  <p class="sub dim">{{ scr.rows|length }}/{{ scr.n_tickers }} hissede çıpa fiyatı bulundu{%
+    if scr.n_nodata %} · {{ scr.n_nodata }} hissede kapanış anına ait ölçüm yok{% endif %}.
+    Çıpa sabit TSİ değil <b>ET 20:00</b>'e bağlı — yazın 03:00, kışın 04:00 TSİ.</p>
+
+  {% if scr.n_stale %}
+  <p class="short">⚠️ {{ scr.n_stale }} satırda çıpa örneği kapanıştan <b>30 dakikadan
+    eski</b> (metrik görevi o sırada düşmüş olabilir) — o satırlar ⏳ ile işaretli,
+    sapmaları yanıltıcı olabilir.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>📊 Kapanıştan beri sapma <span class="dim" style="text-transform:none">·
+    en çok kıpırdayan üstte · başlığa tıklayarak sırala</span></h2>
+  {% if scr.rows %}
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th class="l">Hisse</th>
+        <th title="Kapanış anındaki mark fiyatı">Kapanış</th>
+        <th title="{{ 'Şu anki' if scr.closed else 'Pre-market açılışındaki' }} mark fiyatı">{{ 'Şu an' if scr.closed else 'Açılışta' }}</th>
+        <th title="Kapanışa göre yüzde değişim — bu kolona göre sıralı">Sapma</th>
+        <th title="Açık pozisyon (OI) değişimi — sapmaya eşlik ediyor mu?">OI değ.</th>
+        <th title="Günlük hacim">Hacim</th>
+        <th title="Bildiğimiz açık pozisyon sayısı / toplam büyüklük">Poz</th></tr>
+    {% for r in scr.rows %}
+    <tr data-propr="{{ 1 if r.propr else 0 }}">
+      <td class="l"><a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>
+        {%- if r.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {%- if r.stale %} <span title="Çıpa örneği kapanıştan 30dk'dan eski — sapma yanıltıcı olabilir">⏳</span>{% endif %}</td>
+      <td class="dim">{{ r.base_px|px }}</td>
+      <td>{{ r.px|px }}</td>
+      <td class="{{ 'long' if r.dev > 0 else 'short' }}"><b>{{ '%+.2f'|format(r.dev) }}%</b></td>
+      <td class="{% if r.oi_chg %}{{ 'long' if r.oi_chg > 0 else 'short' }}{% else %}dim{% endif %}">
+        {% if r.oi_chg is not none %}{{ '%+.1f'|format(r.oi_chg) }}%{% else %}—{% endif %}</td>
+      <td class="dim">{{ r.volume|usd }}</td>
+      <td class="dim">{% if r.n_pos %}{{ r.n_pos }} · {{ r.pos_ntl|usd }}{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Kapanış anına ait fiyat ölçümü bulunamadı — metrik geçmişi
+    henüz kapanışı kapsamıyor olabilir. Birkaç seans sonra burası dolar.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>🌙 Kapalıyken açılan pozisyonlar <span class="dim" style="text-transform:none">·
+    {{ who.total }} pozisyon · çıpadan beri</span></h2>
+  <p class="sub">Borsa kapalıyken pozisyon açan, dayanak hisseyle işlem yapamaz —
+  ya perp'e özel bir görüşü var ya da açılışı bekliyor. "Hafta sonu kimler
+  oynuyor" sorusunun cevabı.</p>
+
+  {% if who.long or who.short %}
+  <div class="setwrap">
+    {% for side, rows, label in (('long', who.long, '🟢 LONG açanlar'), ('short', who.short, '🔴 SHORT açanlar')) %}
+    <div>
+      <p class="{{ side }}" style="margin:0 0 6px;font-size:15px"><b>{{ label }}</b>
+        <span class="dim">({{ rows|length }})</span></p>
+      {% if rows %}
+      <div style="overflow-x:auto">
+      <table>
+        <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Büyüklük</th>
+            <th title="Kaldıraç">Kald.</th><th title="İnsider şüphe skoru">Skor</th><th>Ne zaman</th></tr>
+        {% for p in rows %}
+        <tr>
+          <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a></td>
+          <td class="l">{{ m.addr(p.address, k, 6) }}
+            {%- if p.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}</td>
+          <td><b>{{ p.notional|usd }}</b></td>
+          <td class="dim">{{ p.leverage|int }}x</td>
+          <td class="dim">{{ p.score or 0 }}</td>
+          <td class="dim">{{ p.op_ts|dt }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      </div>
+      {% else %}<p class="dim">Yok.</p>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="dim">Kapanıştan beri açılan pozisyon görmedik. Derin keşif havuzu
+    turunu tamamladıkça yenileri burada belirir.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -11,7 +11,7 @@ Veri: HL candleSnapshot (coin başına günde 1 istek — bütçede önemsiz).
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..config import Config
@@ -22,6 +22,84 @@ log = logging.getLogger("radar.hourstats")
 
 ET = ZoneInfo("America/New_York")
 TR = ZoneInfo("Europe/Istanbul")
+
+# ABD hisse işlem pencereleri (ET). Bunlar DAKİKA hassasiyetindedir.
+#
+# ÖNEMLİ: "borsa kapandı" 16:00 DEĞİLDİR. Sıra şöyle:
+#   04:00–09:30  pre-market
+#   09:30–16:00  normal seans
+#   16:00–20:00  after-hours
+#   20:00–04:00  hisse HİÇ işlem görmüyor  ← perp'in gerçekten koptuğu pencere
+#
+# Kapalı seans sapmasının çıpası bu yüzden 16:00 değil **20:00**: 16:00–20:00
+# arasında dayanak hisse hâlâ fiyatlanıyor, perp ona tutunabiliyor. Saf
+# perp/balina akışı ancak after-hours bitince başlar.
+#
+# DİKKAT: `compute_stats` içindeki `9 <= dt.hour < 16` yaklaşıklaması BİLEREK
+# ayrı duruyor. O, 1 saatlik mumları kovalıyor (09:00 mumunun yarısı kapalıdır)
+# ve 90 günlük istatistikleri üretiyor; dakika hassasiyetine çevirmek kv'deki
+# tüm hstats kayıtlarını sessizce değiştirirdi. İki farklı soru, iki fonksiyon.
+MKT_OPEN = dtime(9, 30)          # normal seans açılışı
+MKT_CLOSE = dtime(16, 0)         # normal seans kapanışı
+EXT_OPEN = dtime(4, 0)           # pre-market başlangıcı
+EXT_CLOSE = dtime(20, 0)         # after-hours bitişi — asıl "kapanış"
+
+
+def _et(ref_ts: int | None = None) -> datetime:
+    return datetime.fromtimestamp(int(ref_ts) if ref_ts else now(), ET)
+
+
+def is_market_open(ref_ts: int | None = None) -> bool:
+    """NORMAL seans (09:30–16:00 ET) açık mı."""
+    d = _et(ref_ts)
+    return d.weekday() < 5 and MKT_OPEN <= d.time() < MKT_CLOSE
+
+
+def is_equity_tradable(ref_ts: int | None = None) -> bool:
+    """Hisse HERHANGİ bir şekilde işlem görüyor mu (pre-market + seans +
+    after-hours, 04:00–20:00 ET).
+
+    Kapalı seans screener'ının sorduğu soru budur: perp gerçekten koptu mu?
+    Normal seans kapalı ama after-hours açıkken kopmuş sayılmaz.
+
+    Tatiller HESABA KATILMAZ — tatil takvimimiz yok. Bir tatil gününde bu
+    fonksiyon "işlem görüyor" der ve çıpa yanlış seçilir. Uydurmak yerine çıpa
+    zamanını ekranda gösteriyoruz ki yanlışsa görünsün.
+    """
+    d = _et(ref_ts)
+    return d.weekday() < 5 and EXT_OPEN <= d.time() < EXT_CLOSE
+
+
+def _walk(d: datetime, at: dtime, back: bool) -> int:
+    for i in range(0, 9):
+        day = (d + timedelta(days=-i if back else i)).date()
+        cand = datetime.combine(day, at, ET)
+        if day.weekday() < 5 and ((cand <= d) if back else (cand > d)):
+            return int(cand.timestamp())
+    return int(d.timestamp())          # ulaşılamaz; sessiz None'dan iyidir
+
+
+def last_close_ts(ref_ts: int | None = None) -> int:
+    """Hissenin en son işlem gördüğü an (ET 20:00, after-hours bitişi).
+
+    Kapalı seans sapmasının ÇIPASI budur — 16:00 değil. 16:00–20:00 arası
+    after-hours'ta hisse hâlâ işlem görüyor, yani perp kopmuş sayılmaz.
+
+    Sabit bir TSİ saatine bağlanmıyor: ET 20:00 kışın 04:00, yazın 03:00 TSİ'ye
+    denk gelir. TSİ'ye sabitlenseydi çıpa yılın yarısında bir saat kayardı.
+    """
+    return _walk(_et(ref_ts), EXT_CLOSE, back=True)
+
+
+def next_open_ts(ref_ts: int | None = None) -> int:
+    """Hissenin yeniden işlem göreceği an (ET 04:00, pre-market başlangıcı)."""
+    return _walk(_et(ref_ts), EXT_OPEN, back=False)
+
+
+def next_regular_open_ts(ref_ts: int | None = None) -> int:
+    """Sıradaki NORMAL seans açılışı (ET 09:30) — "asıl açılış ne zaman"."""
+    return _walk(_et(ref_ts), MKT_OPEN, back=False)
+
 
 MIN_N = 40         # bir saat kovasının "anlamlı" sayılması için asgari örnek
 HOT_MEAN = 0.10    # güçlü saat: ortalama getiri eşiği (%/saat)

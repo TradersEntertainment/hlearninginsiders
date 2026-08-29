@@ -18,6 +18,7 @@ from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bigpos, clusters, hourstats, lowvol, metrics,
+                     offhours,
                      pricechart)
 
 log = logging.getLogger("web.routes")
@@ -1028,6 +1029,26 @@ async def history_page(request: Request):
                ORDER BY hits DESC, misses ASC LIMIT 30""")
         winners = [dict(r) for r in await cur.fetchall()]
     return _render(request, "history.html", {"rows": rows, "winners": winners})
+
+
+@router.get("/kapali")
+async def offhours_page(request: Request):
+    """Kapalı seans screener'ı — kapanıştan beri sapma + kapalıyken açılanlar.
+
+    Adı kasten "haftasonu" değil: aynı mantık her gece geçerli. Başlıkta
+    hangi kapanış olduğu (hafta sonu / gece) dinamik yazılıyor.
+    """
+    _guard(request)
+    scr = await offhours.screener()
+    who = await offhours.players(scr["anchor_ts"])
+    return _render(request, "kapali.html", {
+        "scr": scr, "who": who,
+        "anchor_tr": datetime.fromtimestamp(scr["anchor_ts"], TR),
+        "anchor_et": datetime.fromtimestamp(scr["anchor_ts"], hourstats.ET),
+        "open_tr": datetime.fromtimestamp(scr["next_open_ts"], TR),
+        "reg_tr": datetime.fromtimestamp(scr["next_reg_ts"], TR),
+        "weekend": datetime.fromtimestamp(scr["anchor_ts"], hourstats.ET).weekday() == 4,
+    })
 
 
 @router.get("/saatler")
