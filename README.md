@@ -174,12 +174,29 @@ sapması gösterilir.
 **Cuma 24:00 → Pazartesi 00:00 TSİ**, tam 48 saat. Sayfa bu pencerede olduğunu
 ve ne kadar kaldığını yazar.
 
+⚠️ **Hafta sonu penceresinin bitişi ABD'nin açılışı DEĞİLDİR.** Pencere Pzt
+00:00 TSİ'de biter, ABD ise Pzt **16:30** TSİ'de açılır (09:30 ET) — arada
+16,5 saat daha kapalı kalır. Bu yüzden hem sayfa başlığında hem her kapalı
+seans bildiriminde **ABD açılışına kalan süre** yazar. Bildirimler ancak ABD
+gerçekten açıldığında susar; hafta içi ritim: 00:00 TSİ'de başlar, 16:30
+TSİ'de susar.
+
 Çıpa **TSİ'de sabit bir saattir** (Ayarlar → *ABD kapanış saati*, varsayılan
 24:00). Türkiye'de yaz saati olmadığı için çıpa yıl boyu aynı saattedir;
 ET karşılığı kışın 16:00 (tam kapanış), yazın 17:00'dir. Gözlemin farklıysa
 ayardan kaydır — kod değişikliği gerekmez.
 
 ### Bildirimler (`🌙 Kapalı seans hareketi`)
+
+**Pencere: yalnız hafta sonu** (Cuma 24:00 → Pzt 00:00 TSİ). Önce "ABD
+kapalıyken" diye kurulmuştu, ama ABD hafta içi de 00:00–16:30 TSİ arası
+kapalıdır — bu günde ~16 saat bildirim demekti. *Ayarlar → Kapalı seans →
+"Bildirim yalnız hafta sonu"* kapatılırsa hafta içi geceler de dahil olur.
+
+⚠️ Hafta sonu penceresinin bitişi (Pzt 00:00 TSİ) **ABD'nin açılışı değildir**
+(Pzt 16:30 TSİ). Bu yüzden hem sayfa hem her bildirim **ABD açılışına kalan
+süreyi** yazar — sayfa aradaki 16,5 saatte de kapalı olduğunu gösterir, ama
+bildirim gelmez.
 
 İki **ayrı** tetik — "hafta sonu boyunca yavaşça %0.8 saptı" ile "10 dakikada
 %1.2 sıçradı" farklı olaylardır, birini diğerinin eşiğiyle ölçmek ikisini de
@@ -190,10 +207,9 @@ kaçırır:
 | **Kümülatif sapma** | Çıpaya göre \|sapma\| her yeni **%0.5** bandını geçince | Her yeni bantta bir kez (%0.5 → %1.0 → %1.5…), **yön ayrı** |
 | **Ani hareket** | **10 dakikada %1** | Hisse başına 30 dk bekleme |
 
-Kurallar: yalnız **ABD kapalıyken** (açıkken %0.5 sürekli olur, bildirim
-gürültüye gömülür) ve yalnız **PROPR'da listeli** hisseler (harekete
-geçemeyeceğin hisse için bildirim gürültüdür). Eşiklerin hepsi
-*Ayarlar → Kapalı seans*'tan değişir.
+Kurallar: yalnız **hafta sonu penceresinde** ve yalnız **PROPR'da listeli**
+hisseler (harekete geçemeyeceğin hisse için bildirim gürültüdür). Eşiklerin
+hepsi *Ayarlar → Kapalı seans*'tan değişir.
 
 İki tasarım ayrıntısı: (1) bant anahtarında **çıpa** var, yani yeni pencere
 sayaçları kendiliğinden sıfırlar — ayrı durum tablosu yok. (2) Ani hareket

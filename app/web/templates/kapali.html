@@ -5,7 +5,9 @@
 
 <div class="panel">
   <h2>🌙 Kapalı seans <span class="dim" style="text-transform:none">·
-    {% if scr.weekend %}HAFTA SONU{% elif scr.closed %}gece kapanışı
+    {% if scr.weekend %}HAFTA SONU
+    {%- elif scr.closed %}ABD kapalı · açılışa {{ (scr.next_reg_ts - scr.measure_ts) // 3600 }}s
+      {{ ((scr.next_reg_ts - scr.measure_ts) % 3600) // 60 }}dk
     {%- else %}ABD açık — son kapalı pencerenin özeti{% endif %}</span></h2>
   <p class="sub">xyz dex <b>hiç kapanmaz</b>, kapanan ABD'dir. Bu yüzden ABD
   kapalıyken oluşan fark <b>saf perp/balina akışıdır</b> — kimse gerçek hisseyle
@@ -21,7 +23,9 @@
     · seans açılışı <b>{{ reg_tr.strftime('%d.%m %H:%M') }} TSİ</b>{% endif %}
     {%- if scr.weekend %}<br><b class="long">🗓 Hafta sonu penceresi</b>:
       {{ wk_end_tr.strftime('%d.%m %H:%M') }} TSİ'ye kadar ·
-      <b>{{ (scr.weekend_left // 3600) }}s {{ (scr.weekend_left % 3600) // 60 }}dk</b> kaldı{% endif %}
+      <b>{{ (scr.weekend_left // 3600) }}s {{ (scr.weekend_left % 3600) // 60 }}dk</b> kaldı
+      <span class="dim">— dikkat: pencerenin bitişi ABD'nin açılışı DEĞİLDİR,
+      açılış {{ reg_tr.strftime('%d.%m %H:%M') }} TSİ</span>{% endif %}
   </p>
   <p class="sub dim">{{ scr.rows|length }}/{{ scr.n_tickers }} hissede çıpa fiyatı bulundu{%
     if scr.n_nodata %} · {{ scr.n_nodata }} hissede kapanış anına ait ölçüm yok{% endif %}.

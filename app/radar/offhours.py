@@ -143,13 +143,22 @@ async def check_alerts(cfg, notifier) -> dict:
     %1.2 sıçradı" farklı olaylar; birini diğerinin eşiğiyle ölçmek ikisini de
     kaçırır.
 
-    YALNIZ ABD kapalıyken çalışır (açıkken %0.5 sürekli olur, bildirim
-    gürültüye gömülür) ve YALNIZ PROPR'da listeli sembollere bakar (harekete
-    geçemeyeceğin hisse için bildirim gürültüdür).
+    PENCERE — varsayılan YALNIZ HAFTA SONU (Cuma 24:00 → Pzt 00:00 TSİ).
+    Önce "ABD kapalıyken" diye kurmuştuk ama ABD hafta içi de 00:00–16:30 TSİ
+    arası kapalı; bu günde ~16 saat bildirim demekti ve kullanıcının istediği
+    bu değildi. `offhours_alert_weekend_only=0` ile eski davranışa dönülür.
+
+    YALNIZ PROPR'da listeli sembollere bakılır (harekete geçemeyeceğin hisse
+    için bildirim gürültüdür).
     """
     from ..propr import is_listed as propr_listed
     out = {"dev": 0, "spike": 0, "skipped": "" }
-    if not hourstats.us_closed(None, ts_hour(cfg)):   # 1. param ref_ts, 2. saat
+    h = ts_hour(cfg)
+    if getattr(cfg, "offhours_alert_weekend_only", True):
+        if hourstats.weekend_window(None, h) is None:
+            out["skipped"] = "hafta sonu değil"
+            return out
+    elif not hourstats.us_closed(None, h):            # 1. param ref_ts, 2. saat
         out["skipped"] = "ABD açık"
         return out
 
@@ -168,7 +177,8 @@ async def check_alerts(cfg, notifier) -> dict:
             continue
         base = {"symbol": r["symbol"], "px": r["px"], "base_px": r["base_px"],
                 "anchor_ts": anchor, "oi_chg": r.get("oi_chg"),
-                "weekend_left": scr.get("weekend_left") or 0}
+                "weekend_left": scr.get("weekend_left") or 0,
+                "next_reg_ts": scr.get("next_reg_ts")}
 
         # --- 1) kümülatif sapma bandı ---
         band = int(abs(r["dev"]) / band_pct)

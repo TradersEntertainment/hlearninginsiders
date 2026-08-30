@@ -565,9 +565,19 @@ def offhours_move(m: dict) -> str:
                 f" {'yukarıda' if up else 'aşağıda'}")
         detail = f"kapanış {px(m['base_px'])} → <b>{px(m['px'])}</b>"
     lines = [head, detail + f" │ {age_str(m['anchor_ts'])}dır kapalı"]
+    # AÇILIŞ GERİ SAYIMI HER MESAJDA. Eskiden yalnız hafta sonu penceresinde
+    # vardı ve pencere Pzt 00:00 TSİ'de bittiği hâlde ABD Pzt 16:30'da açıldığı
+    # için, aradaki 16,5 saatte mesaj yalnız "2gdır kapalı" diyordu — sistem
+    # takılmış gibi okunuyordu. Üstelik o satır "açılışa" derken aslında
+    # PENCERENİN bitişini sayıyordu, yani hafta sonu boyunca da yanlıştı.
+    if m.get("next_reg_ts"):
+        left = max(0, int(m["next_reg_ts"]) - now())
+        when = datetime.fromtimestamp(int(m["next_reg_ts"]), TR)
+        lines.append(f"🕰 ABD açılışına <b>{left // 3600}s {left % 3600 // 60}dk</b>"
+                     f" ({when:%a %H:%M} TSİ)")
     if m.get("weekend_left"):
-        h = m["weekend_left"] // 3600
-        lines.append(f"🗓 Hafta sonu penceresi — açılışa <b>{h} saat</b> var")
+        wl = m["weekend_left"]
+        lines.append(f"🗓 Hafta sonu penceresi: {wl // 3600}s {wl % 3600 // 60}dk kaldı")
     if m.get("oi_chg") is not None:
         lines.append(f"📊 Açık pozisyon (OI) %{m['oi_chg']:+.1f}"
                      + (" — pozisyon kuruluyor" if abs(m["oi_chg"]) >= 2 else ""))

@@ -256,6 +256,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "offhours_close_hour": {"type": "int", "label": "ABD kapanış saati (TSİ)",
                             "group": "Kapalı seans",
                             "desc": "Kapalı seans sapmasının çıpası — TSİ'de sabit saat (0 = 24:00, Cuma gece yarısı). Kışın ET 16:00 kapanışına denk gelir, yazın 1 saat kayar"},
+    "offhours_alert_weekend_only": {"type": "bool", "label": "Bildirim yalnız hafta sonu",
+                                    "group": "Kapalı seans",
+                                    "desc": "Açıkken bildirim SADECE hafta sonu penceresinde gelir (Cuma 24:00 → Pzt 00:00 TSİ). Kapatılırsa hafta içi geceler de dahil olur — ABD 00:00–16:30 TSİ arası kapalı olduğu için günde ~16 saat bildirim demektir"},
     "offhours_alert_pct": {"type": "float", "label": "Sapma bildirim bandı (%)",
                            "group": "Kapalı seans",
                            "desc": "Kapanış çıpasından bu kadar sapınca haber gelir; sonra her yeni bantta bir kez daha (%0.5 → %1.0 → %1.5…)"},
@@ -370,6 +373,7 @@ class Config:
         # gibi ENV-ONLY: EDITABLE_FIELDS'a girmez.
         self.crypto_chat_id = os.getenv("CRYPTO_CHAT_ID", "")
         self.offhours_close_hour = int(os.getenv("OFFHOURS_CLOSE_HOUR", "0"))
+        self.offhours_alert_weekend_only = True
         self.offhours_alert_pct = float(os.getenv("OFFHOURS_ALERT_PCT", "0.5"))
         self.offhours_spike_pct = float(os.getenv("OFFHOURS_SPIKE_PCT", "1.0"))
         self.offhours_spike_min = int(os.getenv("OFFHOURS_SPIKE_MIN", "10"))
