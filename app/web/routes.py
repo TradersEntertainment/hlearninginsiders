@@ -17,8 +17,8 @@ from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, bigpos, clusters, funding, hourstats, lowvol,
-                     metrics, offhours,
+from ..radar import (autoscan, bigpos, clusters, cryptovol, funding, hourstats,
+                     lowvol, metrics, offhours,
                      pricechart)
 
 log = logging.getLogger("web.routes")
@@ -1029,6 +1029,20 @@ async def history_page(request: Request):
                ORDER BY hits DESC, misses ASC LIMIT 30""")
         winners = [dict(r) for r in await cur.fetchall()]
     return _render(request, "history.html", {"rows": rows, "winners": winners})
+
+
+@router.get("/hacim")
+async def cryptovol_page(request: Request):
+    """Yakın zamanda yüksek hacimliler — kripto 5dk hacim rekorları."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    return _render(request, "hacim.html", {
+        "events": await cryptovol.recent(),
+        "st": await kv_get("cryptovol_stats") or {},
+        "has_chat": bool((getattr(cfg, "crypto_chat_id", "") or "").strip()),
+        "min_usd": getattr(cfg, "crypto_vol_min_usd", 0),
+        "enabled": bool(getattr(cfg, "crypto_vol_enabled", True)),
+    })
 
 
 @router.get("/funding")

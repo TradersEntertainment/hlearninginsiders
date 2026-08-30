@@ -182,6 +182,21 @@ CREATE TABLE IF NOT EXISTS log_events (
   ts INTEGER, logger TEXT, level TEXT, msg TEXT,
   n INTEGER DEFAULT 1                 -- aynı mesaj tekrarladıysa sayaç (satır değil)
 );
+-- Kripto hacim patlaması: bir coin son 24 saatin en yüksek 5 dakikalık
+-- hacmine ulaştığında bir satır. UNIQUE(coin,bucket_ts) tekilliği DOĞAL olarak
+-- sağlıyor — aynı kova iki kez taransa da tek satır kalır, ayrı dedupe durumu
+-- tutmaya gerek yok.
+CREATE TABLE IF NOT EXISTS vol_events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  coin TEXT, ts INTEGER, bucket_ts INTEGER,
+  vol REAL,            -- ham mum hacmi (rekor karşılaştırması bunun üzerinden)
+  notional REAL,       -- ≈ vol × kapanış (yalnız gösterim + alt sınır)
+  prev_max REAL, ratio REAL,
+  px REAL, chg_pct REAL,
+  alerted INTEGER DEFAULT 0,
+  UNIQUE(coin, bucket_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_volev_ts ON vol_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logev_ts ON log_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logev_dedupe ON log_events(logger, level, ts DESC);
 """

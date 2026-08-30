@@ -528,6 +528,25 @@ def wall_gone(w: dict) -> str:
             " daha rahat hareket edebilir.</i>")
 
 
+def crypto_vol_alert(e: dict) -> str:
+    """Kripto hacim patlaması — 24 saatin en yüksek 5 dakikası."""
+    sym = (e.get("coin") or "").split(":")[-1]
+    chg = e.get("chg_pct") or 0
+    arrow = "🟢" if chg > 0 else ("🔴" if chg < 0 else "⚪")
+    ratio = e.get("ratio")
+    lines = [
+        f"🚀 <b>{sym}</b> — <b>24 saatin en yüksek 5 dakikalık hacmi</b>",
+        f"5dk hacim <b>{usd(e.get('notional'))}</b>"
+        + (f" · önceki rekorun <b>{ratio:.1f}×</b>'i" if ratio else "")
+        + f" · fiyat {px(e.get('px'))} {arrow} <b>{chg:+.2f}%</b>",
+    ]
+    if e.get("day_vol"):
+        lines.append(f"📊 24s hacim {usd(e['day_vol'])}")
+    lines.append("<i>Hacim geldi — yönü fiyat değişimi söylüyor. "
+                 "Yatırım tavsiyesi değildir.</i>")
+    return "\n".join(lines)
+
+
 def offhours_move(m: dict) -> str:
     """Kapalı seans hareketi — kümülatif sapma bandı ya da ani sıçrama.
 

@@ -88,6 +88,47 @@ CRYPTO_TTL = 3600          # ana dex hacim sıralaması saatte bir tazelensin
 CRYPTO_CACHE_MIN = 50      # eşik ayardan yükseltilirse yeniden istek atmayalım
 
 
+MAIN_VOL_KV = "main_dex_volumes"
+MAIN_VOL_TTL = 3600
+
+
+async def main_dex_volumes(client: HLClient, ttl: int = MAIN_VOL_TTL) -> dict:
+    """Ana dex'teki TÜM coin'ler → 24 saatlik notional hacim.
+
+    `top_crypto_coins` yalnız ilk N'i saklıyor; kripto hacim radarı hem TAM
+    listeye (PROPR kesişimi için) hem `dayNtlVlm`'ye (birim denetimi için)
+    ihtiyaç duyuyor. Aynı `metaAndAssetCtxs("")` çağrısı, ayrı önbellek.
+
+    İstek düşerse bayat harita döner; elde hiçbir şey yoksa HATA fırlatır —
+    sessizce boş dönmek "ana dexte coin yok" gibi okunurdu.
+    """
+    cached = await kv_get(MAIN_VOL_KV) or {}
+    vols = cached.get("vols") or {}
+    if vols and now() - int(cached.get("ts") or 0) < ttl:
+        return {k: float(v) for k, v in vols.items()}
+    try:
+        data = await client.meta_and_ctxs("")
+        meta, ctxs = data[0], data[1]
+    except Exception as e:
+        log.warning("ana dex hacim haritası alınamadı: %s", e)
+        if not vols:
+            raise
+        return {k: float(v) for k, v in vols.items()}
+    out: dict[str, float] = {}
+    for asset, ctx in zip((meta or {}).get("universe") or [], ctxs or []):
+        name = asset.get("name") or ""
+        # ":" ana dexte olmaz; olursa HIP-3 (hisse/emtia) coinidir — kripto değil.
+        if not name or asset.get("isDelisted") or ":" in name:
+            continue
+        try:
+            out[name] = float((ctx or {}).get("dayNtlVlm") or 0)
+        except (TypeError, ValueError):
+            continue
+    if out:
+        await kv_set(MAIN_VOL_KV, {"vols": out, "ts": now()})
+    return out
+
+
 async def top_crypto_coins(client: HLClient, top_n: int,
                            ttl: int = CRYPTO_TTL) -> list[str]:
     """Ana dex'in (kripto) günlük hacimce en büyük ilk N coin'i.

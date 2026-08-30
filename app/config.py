@@ -66,6 +66,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "desc": "Bu saatlerde 'saati gelenler' otomatik olarak yayın kanalına gönderilir. Virgülle: 10,14,17 · boş = kapalı (TELEGRAM_CHANNEL_ID gerekir)"},
     "notify_health": {"type": "bool", "label": "⚕️ Sistem sağlığı", "group": "Bildirimler",
                       "desc": "VARSAYILAN KAPALI — sağlık olayları zaten ana sayfa rozetinde + /saglik + /health'te görünür; Telegram'a da istersen aç"},
+    "notify_cryptovol": {"type": "bool", "label": "🚀 Kripto hacim patlaması", "group": "Bildirimler",
+                         "desc": "PROPR'da listeli bir kripto coin son 24 saatin en yüksek 5 dakikalık hacmine ulaşınca — ayrı kanala gider (CRYPTO_CHAT_ID)"},
     "notify_offhours": {"type": "bool", "label": "🌙 Kapalı seans hareketi", "group": "Bildirimler",
                         "desc": "ABD kapalıyken (hafta sonu/gece) kapanış fiyatından sapan ya da ani sıçrayan hisseler — yalnız PROPR'da listeli olanlar"},
     "notify_wall": {"type": "bool", "label": "🧱 Emir defteri duvarı", "group": "Bildirimler",
@@ -241,6 +243,16 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "tv_symbol_map": {"type": "str", "label": "TradingView sembol eşlemesi",
                       "group": "Takvim & semboller",
                       "desc": "HL sembolü → TradingView sembolü, ör: 'SMSN:KRX:005930;X:NYSE:X'. Bir sembolde gömülüyü kapatmak için karşılığını boş bırak (ör: 'CXMT:')"},
+    "crypto_vol_enabled": {"type": "bool", "label": "Kripto hacim radarı", "group": "Kripto hacim",
+                           "desc": "Kapatılırsa hiç mum çekilmez, istek maliyeti sıfırlanır"},
+    "crypto_vol_poll_sec": {"type": "int", "label": "Tarama aralığı (sn)", "group": "Kripto hacim",
+                            "desc": "5 dakikalık kova için doğal ritim 300 sn — kısaltmak aynı kovayı tekrar taramak olur"},
+    "crypto_vol_min_usd": {"type": "float", "label": "Asgari 5dk hacim ($)", "group": "Kripto hacim",
+                           "desc": "Bu tutarın altındaki patlama olay sayılmaz — toz coin rekoru bildirim değildir"},
+    "crypto_vol_cooldown": {"type": "int", "label": "Coin başına bekleme (sn)", "group": "Kripto hacim",
+                            "desc": "Uzun bir yükselişte her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
+    "crypto_vol_max_coins": {"type": "int", "label": "Evren tavanı (coin)", "group": "Kripto hacim",
+                             "desc": "Kaç coin taranacak (PROPR ∩ ana dex, hacimce büyükten). Her coin turda 1 istek eder"},
     "offhours_close_hour": {"type": "int", "label": "ABD kapanış saati (TSİ)",
                             "group": "Kapalı seans",
                             "desc": "Kapalı seans sapmasının çıpası — TSİ'de sabit saat (0 = 24:00, Cuma gece yarısı). Kışın ET 16:00 kapanışına denk gelir, yazın 1 saat kayar"},
@@ -348,6 +360,15 @@ class Config:
         self.track_auto_stop = convert_value("bool", os.getenv("TRACK_AUTO_STOP", "0"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
         self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
+        self.notify_cryptovol = True
+        self.crypto_vol_enabled = True
+        self.crypto_vol_poll_sec = int(os.getenv("CRYPTO_VOL_POLL_SEC", "300"))
+        self.crypto_vol_min_usd = float(os.getenv("CRYPTO_VOL_MIN_USD", "250000"))
+        self.crypto_vol_cooldown = int(os.getenv("CRYPTO_VOL_COOLDOWN", "1800"))
+        self.crypto_vol_max_coins = int(os.getenv("CRYPTO_VOL_MAX_COINS", "120"))
+        # Kripto bildirimlerinin gideceği AYRI kanal. Diğer chat/kanal id'leri
+        # gibi ENV-ONLY: EDITABLE_FIELDS'a girmez.
+        self.crypto_chat_id = os.getenv("CRYPTO_CHAT_ID", "")
         self.offhours_close_hour = int(os.getenv("OFFHOURS_CLOSE_HOUR", "0"))
         self.offhours_alert_pct = float(os.getenv("OFFHOURS_ALERT_PCT", "0.5"))
         self.offhours_spike_pct = float(os.getenv("OFFHOURS_SPIKE_PCT", "1.0"))

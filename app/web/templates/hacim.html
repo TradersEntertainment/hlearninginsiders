@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}🚀 Hacim · HL Radar{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>🚀 Yakın zamanda yüksek hacimliler <span class="dim" style="text-transform:none">·
+    son 48 saat · başlığa tıklayarak sırala</span></h2>
+  <p class="sub">PROPR'da listeli bir <b>kripto</b> coin, son 24 saatin
+  <b>en yüksek 5 dakikalık hacmine</b> ulaştığında buraya düşer.
+  Kripto/TradFi ayrımı listeden değil <b>ana dex üyeliğinden</b> gelir:
+  HL'de hisse ve emtia perp'leri <code>xyz:</code> önekli olduğu için ana dexte
+  kalan her şey zaten kriptodur.
+  <span class="warn">Hacim geldi demek yön belli demek değildir — yönü fiyat
+  değişimi söyler. Yatırım tavsiyesi değildir.</span></p>
+
+  <p class="sub dim">
+    {%- if not enabled %}<span class="short">⏸ Radar kapalı</span> (Ayarlar → Kripto hacim). ·
+    {%- else %}{{ st.coins or 0 }} coin izleniyor{% if st.checked %} · son turda
+      {{ st.checked }} tarandı{% if st.err %}, <span class="short">{{ st.err }} hata</span>{% endif %}{% endif %}
+    {%- if st.ts %} · {{ st.ts|dt }}{% endif %} · {% endif %}
+    5dk asgari hacim <b>{{ min_usd|usd }}</b>
+  </p>
+
+  {% if not has_chat %}
+  <p class="short">⚠️ <b>Kanal tanımlı değil</b> — Railway'e <code>CRYPTO_CHAT_ID</code>
+    ekle (yeni kanalı aç, botu admin yap). Olaylar burada kaydediliyor ama
+    Telegram'a <b>gönderilmiyor</b>: ana kanala düşürmek, ayırma isteğini bozardı.</p>
+  {% endif %}
+
+  {% if st.unit_bad %}
+  <p class="short">⚠️ {{ st.unit_bad|length }} coinde hacim <b>birimi şüpheli</b>
+    ({{ st.unit_bad|join(', ') }}): mum hacmi × fiyat toplamı borsanın bildirdiği
+    24s hacimle uyuşmuyor. <b>Rekor tespiti etkilenmez</b> (ham hacim üzerinden
+    yapılıyor), ama aşağıdaki $ değerleri ve asgari hacim eşiği yanıltıcı olabilir.</p>
+  {% endif %}
+
+  {% if events %}
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th class="l">Coin</th>
+        <th>Ne zaman</th>
+        <th title="O 5 dakikadaki dolar hacmi">5dk hacim</th>
+        <th title="Önceki 24 saatin en yüksek kovasının kaç katı">Kat</th>
+        <th title="O 5 dakikadaki fiyat değişimi — hacme yön eşlik etti mi?">Fiyat değ.</th>
+        <th>Fiyat</th>
+        <th title="Telegram kanalına gönderildi mi">Bildirim</th></tr>
+    {% for e in events %}
+    <tr>
+      <td class="l"><b>{{ e.coin }}</b></td>
+      <td class="dim">{{ e.bucket_ts|dt }}</td>
+      <td><b>{{ e.notional|usd }}</b></td>
+      <td class="{{ 'long' if e.ratio and e.ratio >= 2 else 'dim' }}">
+        {% if e.ratio %}{{ '%.1f'|format(e.ratio) }}x{% else %}—{% endif %}</td>
+      <td class="{{ 'long' if e.chg_pct > 0 else ('short' if e.chg_pct < 0 else 'dim') }}">
+        <b>{{ '%+.2f'|format(e.chg_pct or 0) }}%</b></td>
+      <td class="dim">{{ e.px|px }}</td>
+      <td class="dim">{% if e.alerted %}✓{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Son 48 saatte hacim rekoru kıran coin görmedik.
+    {% if enabled %}Radar {{ st.coins or 0 }} coini izliyor; rekor kırılınca
+      burası dolar.{% endif %}</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>❓ Bu sekme ne işe yarıyor?</h2>
+  <p class="sub">Bir coinin 5 dakikalık hacmi <b>kendi 24 saatlik rekorunu</b>
+  kırdıysa, o coine olağandışı bir ilgi gelmiş demektir — haber, likidasyon
+  zinciri, büyük bir alıcı/satıcı. Eşik mutlak bir dolar rakamı değil
+  <b>coinin kendi normali</b> olduğu için küçük coinde de büyük coinde de
+  çalışır.</p>
+  <p class="sub">İki ayrıntı: (1) devam eden mum hesaba katılmaz — yarım hacmi
+  tam kovalarla karşılaştırmak yanıltırdı, o yüzden en fazla 5 dakikalık bir
+  gecikme vardır. (2) Uzun bir yükselişte her yeni kova yeni bir rekor olabilir;
+  Telegram'a hepsi gitmez (coin başına bekleme var) ama <b>tablodaki her satır
+  gerçek bir rekordur</b>.</p>
+</div>
+
+{% endblock %}

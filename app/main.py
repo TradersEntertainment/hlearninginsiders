@@ -361,6 +361,8 @@ async def lifespan(app: FastAPI):
     _spawn("universe", lambda: universe_loop(cfg, client, notifier), notifier)
     _spawn("calendar", lambda: calendar_loop(cfg, session), notifier)
     _spawn("metrics", lambda: metrics_loop(cfg, client, notifier), notifier)
+    from .radar.cryptovol import loop as cryptovol_loop
+    _spawn("cryptovol", lambda: cryptovol_loop(cfg, client, notifier), notifier)
     _spawn("due", lambda: due_loop(cfg, client, notifier), notifier)
     _spawn("anomaly", lambda: anomaly_loop(cfg, notifier), notifier)
     _spawn("autoscan", lambda: autoscan.loop(cfg, client, notifier), notifier)

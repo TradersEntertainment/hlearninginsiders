@@ -767,6 +767,11 @@ async def maintenance(cfg: Config) -> None:
     except Exception:
         log.exception("uyarı kaydı budaması başarısız")
         n_log = 0
+    try:
+        from .cryptovol import prune as prune_vol
+        n_log += await prune_vol()
+    except Exception:
+        log.exception("hacim olayı budaması başarısız")
     if n_fills or n_met or n_al or n_kv or n_tier or n_ai or n_log:
         log.info("günlük bakım: %d fill, %d metrik, %d alarm kaydı, %d önbellek"
                  " anahtarı, %d kademe altı kripto satırı, %d AI turu/gözlemi,"

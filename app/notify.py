@@ -27,6 +27,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "lowvol":    ("notify_lowvol",    "🐘 Sessiz su devi (düşük hacim)",      "high"),
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "offhours":  ("notify_offhours",  "🌙 Kapalı seans hareketi",             "high"),
+    "cryptovol": ("notify_cryptovol", "🚀 Kripto hacim patlaması",            "high"),
     "listing":   ("notify_listing",   "🆕 Yeni hisse listelendi",             "high"),
     "health":    ("notify_health",    "⚕️ Sistem sağlığı",                    "high"),
     "digest":    ("notify_digest",    "🌅 Günlük özet",                       "normal"),
@@ -57,7 +58,7 @@ class Notifier:
         self.suppressed = 0
 
     async def send(self, kind: str, text: str, *, priority: str = "",
-                   key: str = "") -> bool:
+                   key: str = "", chat_id: str = "") -> bool:
         if not self.bot:
             return False
         prio = priority or KINDS.get(kind, ("", "", "normal"))[2]
@@ -70,7 +71,11 @@ class Notifier:
             log.debug("bildirim kapalı, atlandı: %s", kind)
             return False
 
-        if prio != "critical" and in_quiet_hours(self.cfg):
+        # KANAL HEDEFLİ mesajda sessiz saat ertelemesi UYGULANMAZ. Sessiz saat
+        # kişisel sohbeti korumak içindir; ayrı kanal kullanıcının bilerek
+        # açtığı bir akıştır ve 5 dakikalık bir hacim patlamasını sabah
+        # özetine ertelemek onu değersiz kılar. Tip toggle'ı yine geçerli.
+        if not chat_id and prio != "critical" and in_quiet_hours(self.cfg):
             if not (prio == "high" and self.cfg.quiet_allow_high):
                 self.suppressed += 1
                 async with db() as conn:
@@ -80,7 +85,7 @@ class Notifier:
                 log.info("sessiz saat — %s bildirimi sabah özetine bırakıldı", kind)
                 return False
 
-        ok = await self.bot.send(text)
+        ok = await self.bot.send(text, chat_id or None)
         if ok:
             await alert_log(f"sent:{kind}", key or kind, text)
         return ok

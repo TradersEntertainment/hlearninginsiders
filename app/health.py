@@ -55,6 +55,7 @@ def limits(cfg: Config) -> dict[str, int]:
     lim = {
         "universe": cfg.universe_refresh_sec * 3 + 300,
         "calendar": cfg.calendar_refresh_sec * 2 + 600,
+        "cryptovol": int(getattr(cfg, "crypto_vol_poll_sec", 300)) * 3 + 300,
         "metrics": cfg.metrics_poll_sec * 3 + 120,
         "due": 360,
         "anomaly": cfg.anomaly_poll_sec * 4 + 120,
@@ -90,6 +91,7 @@ def periods(cfg: Config) -> dict[str, int]:
     per = {
         "universe": cfg.universe_refresh_sec,
         "calendar": cfg.calendar_refresh_sec,
+        "cryptovol": int(getattr(cfg, "crypto_vol_poll_sec", 300)),
         "metrics": cfg.metrics_poll_sec,
         "due": cfg.due_check_sec,
         "anomaly": cfg.anomaly_poll_sec,

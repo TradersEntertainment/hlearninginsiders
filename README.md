@@ -96,6 +96,38 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
 5. Earnings'ten 24 saat sonra fiyat hareketi ölçülür → doğru bilenler sicile işlenir,
    2+ doğru bilen watchlist'e alınır, kapatanlar raporlanır.
 
+## Kripto Hacim Patlaması: `/hacim`
+
+PROPR'da listeli bir **kripto** coin, son 24 saatin **en yüksek 5 dakikalık
+hacmine** ulaştığında olay üretilir: sitede `/hacim` sekmesine düşer, Telegram'da
+**ayrı bir kanala** gider.
+
+Eşik mutlak bir dolar rakamı değil **coinin kendi normali** olduğu için küçük
+coinde de büyük coinde de çalışır.
+
+**Kanal kurulumu:** yeni bir Telegram kanalı/grubu aç, mevcut botu oraya admin
+yap, Railway'e `CRYPTO_CHAT_ID` ekle. Yeni bot/token gerekmez. Tanımlı değilse
+olaylar sitede kaydedilir ama **gönderilmez** — ana kanala düşürmek ayırma
+isteğini bozardı.
+
+**Kripto/TradFi ayrımı** PROPR listesini bölerek değil **ana dex üyeliğiyle**
+yapılır: HL'de hisse/emtia perp'leri `xyz:` önekli geldiği için ana dexte kalan
+her şey zaten kriptodur. PROPR'a sonradan kripto eklersen otomatik girer.
+
+**Birim meselesi:** HL mumundaki hacim alanının baz mı quote mu olduğuna dair
+varsayım yapılmaz. Rekor karşılaştırması **ham mum hacmi** üzerinden yapılır —
+aynı coinin kendi kovaları kıyaslandığı için birim sadeleşir. Dolar değeri
+yalnız gösterim ve asgari hacim eşiği içindir ve kendini denetler: 24 saatlik
+toplam borsanın bildirdiği hacimle 5 kattan fazla saparsa sayfada uyarı çıkar.
+
+İki ayrıntı: (a) devam eden mum hesaba katılmaz (yarım hacmi tam kovayla
+kıyaslamak yanıltırdı) — bu yüzden en fazla 5 dakikalık gecikme vardır.
+(b) Uzun bir yükselişte her yeni kova yeni bir rekor olabilir; Telegram'a hepsi
+gitmez (coin başına bekleme) ama **tablodaki her satır gerçek bir rekordur**.
+
+Maliyet: coin başına turda 1 istek. ~96 coin / 5 dakika ≈ **19 rpm**, bütçe
+350 rpm. Ayarlar → *Kripto hacim*'den kapatılabilir (maliyet sıfırlanır).
+
 ## Funding: `/funding`
 
 Bütün hisse perp'leri funding oranına göre sıralı — varsayılan en yüksek üstte,
