@@ -38,6 +38,37 @@
 {% endif %}
 {% endmacro %}
 
+{% macro diagline(st, enabled, min_usd, alert_min, birim, ayar) %}
+<p class="sub dim">
+  {%- if not enabled %}<span class="short">⏸ Radar kapalı</span> (Ayarlar → {{ ayar }}). ·
+  {%- else %}{{ st.coins or 0 }} {{ birim }} izleniyor{% if st.checked %} · son turda
+    {{ st.checked }} tarandı{% if st.err %}, <span class="short">{{ st.err }} hata</span>{% endif %}{% endif %}
+  {%- if st.ts %} · {{ st.ts|dt }}{% endif %} · {% endif %}
+  eşik: sayfa <b>{{ min_usd|usd }}</b> · bildirim <b>{{ alert_min|usd }}</b>
+</p>
+
+{# "0 rekor" ÜÇ ayrı sebepten olabilir ve üçü de aynı görünüyordu. Hangisi
+   olduğunu artık burası söylüyor — eşiği tahminle değil veriyle ayarla. #}
+{% if st.n_nodata %}
+<p class="short">⚠️ <b>{{ st.n_nodata }} sembolde 5dk mum verisi gelmiyor</b>
+  (hata değil — borsa boş liste dönüyor). Bu sayı taranan sembollerin tamamına
+  yakınsa sorun eşikte değil <b>veri kaynağında</b>dır: hiçbir eşik ayarı
+  bunu düzeltmez.</p>
+{% endif %}
+{% if st.n_bucket %}
+<p class="sub dim">🔎 {{ st.n_bucket }} kova incelendi ·
+  {%- if st.n_record %} <b>{{ st.n_record }} rekor</b> bulundu
+    {%- if st.below_page %} · <span class="short">{{ st.below_page }}'si sayfa
+      eşiğinin ALTINDA kaldı{% if st.best_miss %} (en büyüğü
+      <b>{{ st.best_miss.sym }} {{ st.best_miss.notional|usd }}</b>){% endif %}</span>
+    {%- endif %}
+    {%- if st.below_alert %} · {{ st.below_alert }}'si bildirim eşiğinin altında
+      (sayfada var, Telegram'a gitmedi){% endif %}
+  {%- else %} rekor çıkmadı — bir kova kendi 24 saatlik zirvesini kırmadı,
+    <b>bu normaldir</b>; eşiklerle ilgisi yok{% endif %}.</p>
+{% endif %}
+{% endmacro %}
+
 <div class="panel">
   <h2>📈 Hisselerde hacim rekoru <span class="dim" style="text-transform:none">·
     son 48 saat · başlığa tıklayarak sırala</span></h2>
@@ -49,13 +80,7 @@
   <span class="warn">Hacim geldi demek yön belli demek değildir — yönü fiyat
   değişimi söyler. Yatırım tavsiyesi değildir.</span></p>
 
-  <p class="sub dim">
-    {%- if not eq_enabled %}<span class="short">⏸ Radar kapalı</span> (Ayarlar → Hisse hacim). ·
-    {%- else %}{{ eq_st.coins or 0 }} hisse izleniyor{% if eq_st.checked %} · son turda
-      {{ eq_st.checked }} tarandı{% if eq_st.err %}, <span class="short">{{ eq_st.err }} hata</span>{% endif %}{% endif %}
-    {%- if eq_st.ts %} · {{ eq_st.ts|dt }}{% endif %} · {% endif %}
-    5dk asgari hacim <b>{{ eq_min_usd|usd }}</b>
-  </p>
+  {{ diagline(eq_st, eq_enabled, eq_min_usd, eq_alert_min, 'hisse', 'Hisse hacim') }}
 
   {% if not eq_has_chat %}
   <p class="short">⚠️ <b>Kanal tanımlı değil</b> — Railway'e <code>CRYPTO_STOCKS_ID</code>
@@ -80,7 +105,9 @@
   {% else %}
   <p class="dim">Son 48 saatte hacim rekoru kıran hisse görmedik.
     {% if eq_enabled %}Radar {{ eq_st.coins or 0 }} hisseyi izliyor; rekor
-      kırılınca burası dolar.{% endif %}</p>
+      kırılınca burası dolar. <b>Geçmiş doldurulamıyor</b> — eşik altı rekorlar
+      eskiden hiçbir yere yazılmıyordu, panel yeni eşikle ileriye doğru
+      dolar.{% endif %}</p>
   {% endif %}
 </div>
 
@@ -92,13 +119,7 @@
   HL'de hisse ve emtia perp'leri <code>xyz:</code> önekli olduğu için ana dexte
   kalan her şey zaten kriptodur.</p>
 
-  <p class="sub dim">
-    {%- if not enabled %}<span class="short">⏸ Radar kapalı</span> (Ayarlar → Kripto hacim). ·
-    {%- else %}{{ st.coins or 0 }} coin izleniyor{% if st.checked %} · son turda
-      {{ st.checked }} tarandı{% if st.err %}, <span class="short">{{ st.err }} hata</span>{% endif %}{% endif %}
-    {%- if st.ts %} · {{ st.ts|dt }}{% endif %} · {% endif %}
-    5dk asgari hacim <b>{{ min_usd|usd }}</b>
-  </p>
+  {{ diagline(st, enabled, min_usd, alert_min, 'coin', 'Kripto hacim') }}
 
   {% if not has_chat %}
   <p class="short">⚠️ <b>Kanal tanımlı değil</b> — Railway'e <code>CRYPTO_CHAT_ID</code>
@@ -128,9 +149,14 @@
   gecikme vardır. (2) Uzun bir yükselişte her yeni kova yeni bir rekor olabilir;
   Telegram'a hepsi gitmez (sembol başına bekleme var) ama <b>tablodaki her satır
   gerçek bir rekordur</b>.</p>
+  <p class="sub"><b>Sayfa eşiği ≠ bildirim eşiği.</b> Sayfa bilerek daha çoğunu
+  gösterir; Telegram seçicidir. Bu ayrım olmadan eşik altı rekorlar
+  <b>hiçbir yere</b> yazılmıyordu ve "panel neden boş" sorusunun cevabı yoktu.
+  Şimdi tablodaki her satır gerçek bir rekor, "Bildirim" kolonu da hangisinin
+  kanala gittiğini söylüyor.</p>
   <p class="sub dim">Hisse eşiği kriptodan düşük tutuluyor çünkü hisse perp'leri
   çok daha ince: SHEIN'in 24 saatlik <b>toplam</b> hacmi $4.2M'ken patlama
-  mumu ~$150K'ydı. İkisi de Ayarlar'dan ayrı ayrı değiştirilebilir.</p>
+  mumu ~$150K'ydı. Dördü de Ayarlar'dan ayrı ayrı değiştirilebilir.</p>
 </div>
 
 {% endblock %}

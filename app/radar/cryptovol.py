@@ -27,6 +27,31 @@ BUCKET_SEC = 300
 LOOKBACK_SEC = 25 * 3600      # 24 saat taban + biraz pay
 UNIT_CHECK_RATIO = 5.0        # notional toplamı dayNtlVlm'den bu kat saparsa uyar
 RETENTION_D = 14
+MIN_BUCKETS = 12              # en az bir saatlik taban olmadan rekor aranmaz
+
+
+def n_closed(candles: list[dict], ref_ts: int | None = None) -> int:
+    """Kaç KAPANMIŞ kova elimizde?
+
+    Boş/eksik mum listesi bir HATA DEĞİL, veri yokluğudur — `err` sayacına
+    girmez. İkisini ayırt etmezsek "panel neden boş" sorusu cevapsız kalır:
+    borsa mum vermiyor mu, yoksa rekor mu çıkmadı, aynı görünür.
+    """
+    ts = int(ref_ts) if ref_ts else now()
+    return sum(1 for c in candles if c["t"] + BUCKET_SEC <= ts)
+
+
+def note_miss(out: dict, coin: str, rec: dict) -> None:
+    """Sayfa eşiğini geçemeyen EN BÜYÜK rekoru sakla.
+
+    Eşiğin doğru yerde olup olmadığını ancak kaçırdıklarımızı görerek
+    anlayabiliriz; yoksa eşiği tahminle ayarlıyoruz.
+    """
+    best = out.get("best_miss")
+    if not best or rec["notional"] > best["notional"]:
+        out["best_miss"] = {"sym": coin.split(":")[-1],
+                            "notional": rec["notional"],
+                            "ratio": rec.get("ratio")}
 
 
 def parse_vol_candles(raw) -> list[dict]:
@@ -53,7 +78,7 @@ def find_record(candles: list[dict], ref_ts: int | None = None) -> dict | None:
     """
     ts = int(ref_ts) if ref_ts else now()
     closed = [c for c in candles if c["t"] + BUCKET_SEC <= ts]
-    if len(closed) < 12:                 # en az bir saatlik taban olsun
+    if len(closed) < MIN_BUCKETS:        # en az bir saatlik taban olsun
         return None
     last, prev = closed[-1], closed[:-1]
     prev_max = max((c["v"] for c in prev), default=0.0)
@@ -97,7 +122,11 @@ async def universe(cfg, client) -> tuple[list[str], dict]:
 async def scan(cfg, client, notifier=None) -> dict:
     """Bir tur: her coin için 5dk mumlarını çek, rekoru bul, kaydet, bildir."""
     out = {"checked": 0, "events": 0, "alerted": 0, "err": 0,
-           "unit_bad": [], "skipped": "", "coins": 0}
+           "unit_bad": [], "skipped": "", "coins": 0,
+           # TEŞHİS: "0 rekor" üç ayrı sebepten olabilir ve üçü de ekranda
+           # aynı görünüyordu — mum gelmiyor / rekor çıkmadı / eşik eledi.
+           "n_nodata": 0, "n_bucket": 0, "n_record": 0,
+           "below_page": 0, "below_alert": 0, "best_miss": None}
     if not getattr(cfg, "crypto_vol_enabled", True):
         out["skipped"] = "kapalı"
         return out
@@ -108,7 +137,9 @@ async def scan(cfg, client, notifier=None) -> dict:
         log.warning("kripto hacim evreni alınamadı: %s", e)
         return out
     out["coins"] = len(coins)
-    min_usd = float(getattr(cfg, "crypto_vol_min_usd", 250000))
+    min_usd = float(getattr(cfg, "crypto_vol_min_usd", 50000))
+    alert_min = max(min_usd,
+                    float(getattr(cfg, "crypto_vol_alert_min_usd", 250000)))
     cool = max(60, int(getattr(cfg, "crypto_vol_cooldown", 1800)))
     chat = (getattr(cfg, "crypto_chat_id", "") or "").strip()
     ts = now()
@@ -124,10 +155,19 @@ async def scan(cfg, client, notifier=None) -> dict:
                 log.warning("5dk mum alınamadı (%s): %s", coin, e)
             continue
         out["checked"] += 1
+        if n_closed(candles, ts) < MIN_BUCKETS:
+            out["n_nodata"] += 1           # borsa mum vermiyor — hata değil
+            continue
+        out["n_bucket"] += 1
         if unit_sane(candles, vols.get(coin)) is False:
             out["unit_bad"].append(coin)
         rec = find_record(candles, ts)
-        if not rec or rec["notional"] < min_usd:
+        if not rec:
+            continue
+        out["n_record"] += 1
+        if rec["notional"] < min_usd:
+            out["below_page"] += 1
+            note_miss(out, coin, rec)
             continue
 
         # UNIQUE(coin,bucket_ts): aynı kova iki kez taransa da tek satır kalır.
@@ -143,6 +183,11 @@ async def scan(cfg, client, notifier=None) -> dict:
             continue                       # bu kovayı zaten kaydetmiştik
         out["events"] += 1
 
+        # SAYFA eşiği ≠ BİLDİRİM eşiği: satır kaydedildi (sayfada bağlam),
+        # ama kanala düşmesi için daha yüksek eşiği geçmesi gerekiyor.
+        if rec["notional"] < alert_min:
+            out["below_alert"] += 1
+            continue
         if notifier is None or not chat:
             continue                       # kanal yoksa GÖNDERME (ana kanalı kirletme)
         key = f"cryptovol:{coin}"

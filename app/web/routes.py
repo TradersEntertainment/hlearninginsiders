@@ -1044,11 +1044,13 @@ async def cryptovol_page(request: Request):
         "st": await kv_get("cryptovol_stats") or {},
         "has_chat": bool((getattr(cfg, "crypto_chat_id", "") or "").strip()),
         "min_usd": getattr(cfg, "crypto_vol_min_usd", 0),
+        "alert_min": getattr(cfg, "crypto_vol_alert_min_usd", 0),
         "enabled": bool(getattr(cfg, "crypto_vol_enabled", True)),
         "eq_events": await equityvol.recent(),
         "eq_st": eq_st,
         "eq_has_chat": bool((getattr(cfg, "crypto_stocks_id", "") or "").strip()),
         "eq_min_usd": getattr(cfg, "equity_vol_min_usd", 0),
+        "eq_alert_min": getattr(cfg, "equity_vol_alert_min_usd", 0),
         "eq_enabled": bool(getattr(cfg, "equity_vol_enabled", True)),
         # PROPR listesi elle yazılmış bir kopya ve eskiyor (SHEIN/MRNA vakası).
         # Neyin taranmadığını kullanıcı görsün diye buradan geçiyor.

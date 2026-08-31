@@ -283,9 +283,19 @@ async def _subsystems(cfg) -> list[str]:
         vs = await kv_get(kv_key) or {}
         if not vs:
             continue
+        miss = vs.get("best_miss") or {}
         out.append(f"  {lbl}: {vs.get('coins', '?')} sembol"
                    f" · {vs.get('checked', 0)} tarandı"
-                   f" · {vs.get('events', 0)} rekor / {vs.get('alerted', 0)} bildirim"
+                   f" · {vs.get('n_bucket', 0)} kova → {vs.get('n_record', 0)} rekor"
+                   f" · {vs.get('events', 0)} yazıldı / {vs.get('alerted', 0)} bildirim"
+                   # "0 rekor"un sebebini ayırt eden üç sayı; biri olmadan
+                   # eşik mi veri mi sorusu cevapsız kalıyordu.
+                   + (f" · ⚠️ {vs['n_nodata']} sembolde MUM YOK" if vs.get("n_nodata") else "")
+                   + (f" · {vs['below_page']} rekor sayfa eşiği altında"
+                      + (f" (en büyüğü {miss.get('sym')} {_num(miss.get('notional'))}$)"
+                         if miss else "") if vs.get("below_page") else "")
+                   + (f" · {vs['below_alert']} rekor bildirim eşiği altında"
+                      if vs.get("below_alert") else "")
                    + (f" · ⚠️ {vs['err']} mum hatası" if vs.get("err") else "")
                    + ("" if vs.get("chat") else f" · ⚠️ {chat_env} TANIMSIZ (gönderilmiyor)")
                    + (f" · ⚠️ birim şüpheli: {', '.join(vs['unit_bad'][:5])}"

@@ -120,16 +120,29 @@ ulaştığında olay üretilir: sitede `/hacim` sekmesine düşer, Telegram'da *
 bir kanala** gider. Eşik mutlak bir dolar rakamı değil **sembolün kendi
 normali** olduğu için ince perp'te de likit perp'te de çalışır.
 
-**İki evren, iki kanal, iki eşik** — aynı dedektör:
+**İki evren, iki kanal** — aynı dedektör; her birinde **sayfa eşiği ayrı,
+bildirim eşiği ayrı**:
 
-| Panel | Evren | Kanal | 5dk asgari |
-|---|---|---|---|
-| 📈 Hisseler | PROPR ∩ **xyz dex** | `CRYPTO_STOCKS_ID` | **$100K** |
-| 🚀 Kripto | PROPR ∩ **ana dex** | `CRYPTO_CHAT_ID` | **$250K** |
+| Panel | Evren | Kanal | Sayfa | Bildirim |
+|---|---|---|---|---|
+| 📈 Hisseler | PROPR ∩ **xyz dex** | `CRYPTO_STOCKS_ID` | $10K | **$100K** |
+| 🚀 Kripto | PROPR ∩ **ana dex** | `CRYPTO_CHAT_ID` | $50K | **$250K** |
 
 Hisse eşiği düşük çünkü hisse perp'leri çok daha ince: SHEIN'in 24 saatlik
-**toplam** hacmi $4.2M'ken patlama mumu ~$150K'ydı. İkisi de Ayarlar'dan ayrı
+**toplam** hacmi $4.2M'ken patlama mumu ~$150K'ydı. Dördü de Ayarlar'dan ayrı
 değiştirilir (*Hisse hacim* / *Kripto hacim*).
+
+Eşiği ilk kurduğumuzda **tek** ayar hem kaydı hem bildirimi kesiyordu: eşik
+altı rekorlar sayfaya da yazılmadığı için panel boş kalıyor ve "radar mı
+çalışmıyor, eşik mi yüksek" sorusu cevapsız kalıyordu. Şimdi sayfa her rekoru
+gösteriyor, "Bildirim" kolonu hangisinin kanala gittiğini söylüyor.
+
+**Boşsa neden boş, sayfa söylüyor.** Her tur şunları yazar: kaç kova
+incelendi, kaç rekor bulundu, kaçı hangi eşiğe takıldı ve **eşiğin altında
+kalan en büyük rekor hangisiydi**. Ayrıca mum verisi hiç gelmeyen semboller
+ayrı sayılır (`n_nodata`) — bu bir hata değil veri yokluğudur, ve sayı
+yüksekse sorun eşikte değil kaynaktadır. Aynı sayılar `/tani` çıktısında da
+vardır.
 
 **Kanal kurulumu:** yeni bir Telegram kanalı/grubu aç, mevcut botu oraya admin
 yap, Railway'e ilgili değişkeni ekle. Yeni bot/token gerekmez. Tanımlı değilse

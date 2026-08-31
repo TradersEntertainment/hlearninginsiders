@@ -21,8 +21,8 @@ import asyncio
 import logging
 
 from ..db import alert_log, alert_recent, db, kv_set, now
-from .cryptovol import (INTERVAL, LOOKBACK_SEC, find_record, parse_vol_candles,
-                        unit_sane)
+from .cryptovol import (INTERVAL, LOOKBACK_SEC, MIN_BUCKETS, find_record,
+                        n_closed, note_miss, parse_vol_candles, unit_sane)
 
 log = logging.getLogger("radar.equityvol")
 
@@ -68,7 +68,11 @@ async def not_listed() -> list[str]:
 async def scan(cfg, client, notifier=None) -> dict:
     """Bir tur: her hisse için 5dk mumlarını çek, rekoru bul, kaydet, bildir."""
     out = {"checked": 0, "events": 0, "alerted": 0, "err": 0,
-           "unit_bad": [], "skipped": "", "coins": 0, "missing": []}
+           "unit_bad": [], "skipped": "", "coins": 0, "missing": [],
+           # TEŞHİS: "0 rekor" üç ayrı sebepten olabilir ve üçü de ekranda
+           # aynı görünüyordu — mum gelmiyor / rekor çıkmadı / eşik eledi.
+           "n_nodata": 0, "n_bucket": 0, "n_record": 0,
+           "below_page": 0, "below_alert": 0, "best_miss": None}
     if not getattr(cfg, "equity_vol_enabled", True):
         out["skipped"] = "kapalı"
         return out
@@ -80,7 +84,9 @@ async def scan(cfg, client, notifier=None) -> dict:
         log.warning("hisse hacim evreni alınamadı: %s", e)
         return out
     out["coins"] = len(coins)
-    min_usd = float(getattr(cfg, "equity_vol_min_usd", 100000))
+    min_usd = float(getattr(cfg, "equity_vol_min_usd", 10000))
+    alert_min = max(min_usd,
+                    float(getattr(cfg, "equity_vol_alert_min_usd", 100000)))
     cool = max(60, int(getattr(cfg, "equity_vol_cooldown", 1800)))
     chat = (getattr(cfg, "crypto_stocks_id", "") or "").strip()
     ts = now()
@@ -96,10 +102,22 @@ async def scan(cfg, client, notifier=None) -> dict:
                 log.warning("5dk mum alınamadı (%s): %s", coin, e)
             continue
         out["checked"] += 1
+        # HL'nin `xyz:` perp'lerine 5dk mum verip vermediği kodda başka hiçbir
+        # yerde sınanmıyor; vermiyorsa boş liste döner ve hiçbir eşik ayarı
+        # işe yaramaz. Bunu sayıp ekrana yazıyoruz.
+        if n_closed(candles, ts) < MIN_BUCKETS:
+            out["n_nodata"] += 1           # borsa mum vermiyor — hata değil
+            continue
+        out["n_bucket"] += 1
         if unit_sane(candles, vols.get(coin)) is False:
             out["unit_bad"].append(coin.split(":")[-1])
         rec = find_record(candles, ts)
-        if not rec or rec["notional"] < min_usd:
+        if not rec:
+            continue
+        out["n_record"] += 1
+        if rec["notional"] < min_usd:
+            out["below_page"] += 1
+            note_miss(out, coin, rec)
             continue
 
         # UNIQUE(coin,bucket_ts): aynı kova iki kez taransa da tek satır kalır.
@@ -115,6 +133,11 @@ async def scan(cfg, client, notifier=None) -> dict:
             continue                       # bu kovayı zaten kaydetmiştik
         out["events"] += 1
 
+        # SAYFA eşiği ≠ BİLDİRİM eşiği: satır kaydedildi (sayfada bağlam),
+        # ama kanala düşmesi için daha yüksek eşiği geçmesi gerekiyor.
+        if rec["notional"] < alert_min:
+            out["below_alert"] += 1
+            continue
         if notifier is None or not chat:
             continue                       # kanal yoksa GÖNDERME (ana kanalı kirletme)
         key = f"equityvol:{coin}"
