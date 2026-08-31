@@ -248,7 +248,11 @@ async def check_clusters(cfg: Config, notifier) -> None:
         # JPY/GOLD/XYZ100 gibi likit varlıklarda küçük kümeler gürültü —
         # onlarda alarm için büyük-sınıf tabanı gerekir (ana sayfa etkilenmez)
         big = assets.kind(c["symbol"]) == "non_equity" or c["coin"] in bigs
-        alert_min = cfg.liq_cluster_big_min_usd if big else cfg.liq_cluster_min_usd
+        # BİLDİRİM eşiği sayfa eşiğinden AYRI ve daha yüksek: find_clusters
+        # $1M'den itibaren duvar sayıyor (ana sayfada bağlam), ama $1.1M'lik bir
+        # duvarı Telegram'a düşürmek gürültü — kullanıcı bunu bildirdi.
+        alert_min = (cfg.liq_cluster_big_min_usd if big
+                     else cfg.liq_cluster_alert_min_usd)
         if c["total"] < alert_min:
             continue
         key = f"{c['coin']}:{c['side']}"

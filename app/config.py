@@ -131,8 +131,10 @@ EDITABLE_FIELDS: dict[str, dict] = {
                              "group": "Likidasyon radarı", "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez"},
     "liq_cluster_window_pct": {"type": "float", "label": "Duvar penceresi (%)",
                                "group": "Likidasyon radarı", "desc": "Fiyatın bu kadar yakınındaki liq'ler 'duvar' sayılır (tweet'teki heatmap mantığı)"},
-    "liq_cluster_min_usd": {"type": "float", "label": "Duvar eşiği ($)",
-                            "group": "Likidasyon radarı", "desc": "NORMAL hisselerde pencere içi toplam liq bu boyutu aşarsa bildirim"},
+    "liq_cluster_min_usd": {"type": "float", "label": "Duvar eşiği — SAYFA ($)",
+                            "group": "Likidasyon radarı", "desc": "Pencere içi toplam liq bu boyutu aşarsa duvar SAYILIR ve ana sayfadaki likidasyon haritasında görünür. Bildirim için ayrı (daha yüksek) eşik var"},
+    "liq_cluster_alert_min_usd": {"type": "float", "label": "Duvar eşiği — BİLDİRİM ($)",
+                                  "group": "Likidasyon radarı", "desc": "NORMAL hisselerde Telegram bildirimi için gereken toplam. Sayfa eşiğinden yüksek tutulur: sayfada bağlam olan küçük duvar, bildirimde gürültüdür"},
     "liq_cluster_big_min_usd": {"type": "float", "label": "Endeks/FX/top-10 duvar eşiği ($)",
                                 "group": "Likidasyon radarı", "desc": "JPY, GOLD, XYZ100 gibi likit varlıklarda liq duvarı alarmı için gereken TOPLAM — küçük kümeler oralarda gürültü"},
     "fresh_wallet_days": {"type": "int", "label": "Taze cüzdan eşiği (gün)",
@@ -449,6 +451,8 @@ class Config:
         self.liq_watch_top_accounts = int(os.getenv("LIQ_WATCH_TOP_ACCOUNTS", "300"))
         self.liq_cluster_window_pct = float(os.getenv("LIQ_CLUSTER_WINDOW_PCT", "5"))
         self.liq_cluster_min_usd = float(os.getenv("LIQ_CLUSTER_MIN_USD", "1000000"))
+        self.liq_cluster_alert_min_usd = float(
+            os.getenv("LIQ_CLUSTER_ALERT_MIN_USD", "5000000"))
         self.max_liq_distance_pct = float(os.getenv("MAX_LIQ_DISTANCE_PCT", "50"))
         self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "250000"))
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))

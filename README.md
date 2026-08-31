@@ -72,6 +72,17 @@ bildirimler beklemeye alınıp sabah **günlük özet**te toplu gelir; "önemli"
 (earnings, yeni büyük pozisyon, likidasyon) istersen sessiz saatte de düşer, **kritik**
 olanlar (son likidasyon uyarısı, 70+ skorlu insider) her zaman geçer.
 
+**Sayfa eşiği ≠ bildirim eşiği.** Site bilerek daha çoğunu gösterir, kanal daha
+seçicidir: sayfada bağlam olan şey Telegram'da gürültüdür. Likidasyon duvarları
+bunun en net örneği — `liq_cluster_min_usd` ($1M) yalnız **ana sayfadaki
+likidasyon haritasını** besler, Telegram'a düşmek için duvarın
+`liq_cluster_alert_min_usd` ($5M) eşiğini geçmesi gerekir; likit/endeks
+varlıklarda (GOLD, XYZ100, FX…) o eşik zaten `liq_cluster_big_min_usd`
+($20M)'dir. Aynı ayrım `/saatler` (hepsi listelenir, kanala yalnız "güçlü"
+saatler gider), `/hacim` (her rekor kaydedilir, bildirimde coin başına bekleme
+var) ve `/kapali` (her bant kaydedilir, bildirim yalnız hafta sonu) için de
+geçerlidir.
+
 ## Ayarlar
 
 Ayar sayfası **`ADMIN_PASSWORD`** ile korunur: şifresi olmayan sayfayı görür ama değiştiremez
