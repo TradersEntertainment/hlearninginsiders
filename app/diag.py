@@ -278,6 +278,24 @@ async def _subsystems(cfg) -> list[str]:
                    f" · {wl.get('alerts', 0)} alarm"
                    + (f" · ⚠️ {wl['book_err']} defter hatası: {wl.get('err_msg', '')}"
                       if wl.get("book_err") else " · defter hatası yok"))
+    for kv_key, lbl, chat_env in (("cryptovol_stats", "kripto hacim", "CRYPTO_CHAT_ID"),
+                                  ("equityvol_stats", "hisse hacim", "CRYPTO_STOCKS_ID")):
+        vs = await kv_get(kv_key) or {}
+        if not vs:
+            continue
+        out.append(f"  {lbl}: {vs.get('coins', '?')} sembol"
+                   f" · {vs.get('checked', 0)} tarandı"
+                   f" · {vs.get('events', 0)} rekor / {vs.get('alerted', 0)} bildirim"
+                   + (f" · ⚠️ {vs['err']} mum hatası" if vs.get("err") else "")
+                   + ("" if vs.get("chat") else f" · ⚠️ {chat_env} TANIMSIZ (gönderilmiyor)")
+                   + (f" · ⚠️ birim şüpheli: {', '.join(vs['unit_bad'][:5])}"
+                      if vs.get("unit_bad") else "")
+                   + (f"\n       ⏸ {vs['skipped']}" if vs.get("skipped") else ""))
+        # PROPR listesi elle tutuluyor ve eskiyor — kaç sembolü kaçırdığımız
+        # görünmezse "neden bildirim gelmedi" sorusu bir daha cevapsız kalır.
+        if vs.get("n_missing"):
+            out.append(f"       📋 PROPR listesinde OLMAYAN {vs['n_missing']} perp"
+                       f" taranmıyor: {', '.join(vs.get('missing', [])[:15])}")
     hv = await kv_get("harvest_stats") or {}
     if hv.get("total"):
         out.append(f"  işlem hasadı: {_num(hv['total'])} fill REST'ten toplandı")

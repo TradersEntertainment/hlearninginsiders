@@ -27,7 +27,7 @@ DEFAULT_PROPR: frozenset[str] = frozenset({
     "CRWV", "ZHIPU", "BE", "UNITREE", "AVGO", "RKLB", "BB", "ARM", "STRC",
     "PURRDAT", "NFLX", "HYUNDAI", "BABA", "JP225", "KR200", "QCOM", "SMH",
     "GIGADEV", "HIMS", "QNT", "NOW", "USAR", "SHAZ", "IBM", "ASML", "BOT",
-    "GME", "XLE", "URNM",
+    "GME", "XLE", "URNM", "SHEIN", "MRNA",
     # CMDTY / FX
     "CL", "GOLD", "BRENTOIL", "SILVER", "COPPER", "NATGAS", "PLATINUM",
     "PALLADIUM", "JPY", "EUR", "NOK",

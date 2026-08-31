@@ -143,10 +143,15 @@ async def check_alerts(cfg, notifier) -> dict:
     %1.2 sıçradı" farklı olaylar; birini diğerinin eşiğiyle ölçmek ikisini de
     kaçırır.
 
-    PENCERE — varsayılan YALNIZ HAFTA SONU (Cuma 24:00 → Pzt 00:00 TSİ).
-    Önce "ABD kapalıyken" diye kurmuştuk ama ABD hafta içi de 00:00–16:30 TSİ
-    arası kapalı; bu günde ~16 saat bildirim demekti ve kullanıcının istediği
-    bu değildi. `offhours_alert_weekend_only=0` ile eski davranışa dönülür.
+    PENCERE — İKİ TETİĞE İKİ AYRI KAPI:
+      • KÜMÜLATİF BANTLAR yalnız hafta sonu (Cuma 24:00 → Pzt 00:00 TSİ).
+        Hafta içi de açtığımızda günde ~16 saat %0.5'lik bildirim demekti;
+        gürültü oradan geliyordu. `offhours_alert_weekend_only=0` ile açılır.
+      • ANİ HAREKET ABD kapalı HER saatte çalışır, ama hafta içi eşiği daha
+        yüksektir (`offhours_spike_pct_weekday`, vars. %2) çünkü pencere 16.5
+        saat ve pre-market'te %1 sıradan. Sebep: SHEIN Pazartesi sabahı %12
+        düştü ve "hafta sonu değil" diye susmuştuk.
+    İkisi de kapalıysa sessizce dönmeyiz — `skipped` dolar.
 
     YALNIZ PROPR'da listeli sembollere bakılır (harekete geçemeyeceğin hisse
     için bildirim gürültüdür).
@@ -154,12 +159,14 @@ async def check_alerts(cfg, notifier) -> dict:
     from ..propr import is_listed as propr_listed
     out = {"dev": 0, "spike": 0, "skipped": "" }
     h = ts_hour(cfg)
-    if getattr(cfg, "offhours_alert_weekend_only", True):
-        if hourstats.weekend_window(None, h) is None:
-            out["skipped"] = "hafta sonu değil"
-            return out
-    elif not hourstats.us_closed(None, h):            # 1. param ref_ts, 2. saat
+    if not hourstats.us_closed(None, h):              # 1. param ref_ts, 2. saat
         out["skipped"] = "ABD açık"
+        return out
+    weekend = hourstats.weekend_window(None, h) is not None
+    bands_on = weekend or not getattr(cfg, "offhours_alert_weekend_only", True)
+    spikes_on = weekend or not getattr(cfg, "offhours_spike_weekend_only", False)
+    if not bands_on and not spikes_on:
+        out["skipped"] = "hafta sonu değil (iki tetik de hafta sonuna kilitli)"
         return out
 
     scr = await screener(cfg)
@@ -167,7 +174,10 @@ async def check_alerts(cfg, notifier) -> dict:
         out["skipped"] = "ABD açık"
         return out
     band_pct = max(0.01, float(getattr(cfg, "offhours_alert_pct", 0.5)))
-    spike_pct = max(0.01, float(getattr(cfg, "offhours_spike_pct", 1.0)))
+    # Hafta içi eşiği ayrı: kapalı pencere 16.5 saat, %1 orada sıradan.
+    spike_pct = max(0.01, float(
+        getattr(cfg, "offhours_spike_pct", 1.0) if weekend
+        else getattr(cfg, "offhours_spike_pct_weekday", 2.0)))
     win = max(1, int(getattr(cfg, "offhours_spike_min", 10))) * 60
     cool = max(60, int(getattr(cfg, "offhours_spike_cooldown", 1800)))
     anchor, ts = scr["anchor_ts"], hourstats.now()
@@ -178,10 +188,11 @@ async def check_alerts(cfg, notifier) -> dict:
         base = {"symbol": r["symbol"], "px": r["px"], "base_px": r["base_px"],
                 "anchor_ts": anchor, "oi_chg": r.get("oi_chg"),
                 "weekend_left": scr.get("weekend_left") or 0,
-                "next_reg_ts": scr.get("next_reg_ts")}
+                "next_reg_ts": scr.get("next_reg_ts"), "weekend": weekend,
+                "spike_thr": spike_pct}
 
-        # --- 1) kümülatif sapma bandı ---
-        band = int(abs(r["dev"]) / band_pct)
+        # --- 1) kümülatif sapma bandı (yalnız hafta sonu) ---
+        band = int(abs(r["dev"]) / band_pct) if bands_on else 0
         if band >= 1:
             # YÖN anahtara giriyor: +%1.1'den -%1.1'e savrulan bir hisse aynı
             # bant numarasına düşer ama bu iki AYRI olaydır — yön anahtarda
@@ -193,7 +204,9 @@ async def check_alerts(cfg, notifier) -> dict:
                 await alert_log("offhours", key, text)
                 out["dev"] += 1
 
-        # --- 2) ani hareket ---
+        # --- 2) ani hareket (ABD kapalı her saatte) ---
+        if not spikes_on:
+            continue
         ref = await metrics.metric_at(r["coin"], ts - win)
         # Referans örnek ÇIPADAN ESKİYSE tetikleme: pencere seansın içine
         # taşmış demektir ve ölçülen şey "kapalıyken sıçrama" değil, seansın

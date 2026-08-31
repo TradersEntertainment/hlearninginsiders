@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS vol_events(
   prev_max REAL, ratio REAL,
   px REAL, chg_pct REAL,
   alerted INTEGER DEFAULT 0,
+  market TEXT,         -- 'crypto' | 'equity' (eski satırlar NULL = crypto)
   UNIQUE(coin, bucket_ts)
 );
 CREATE INDEX IF NOT EXISTS idx_volev_ts ON vol_events(ts DESC);
@@ -239,6 +240,10 @@ MIGRATIONS = [
     "ALTER TABLE positions_current ADD COLUMN first_seen_ts INTEGER",
     # entry_px: takip başlarkenki giriş fiyatı — kapanışta tahmini kâr/zarar için
     "ALTER TABLE trackers ADD COLUMN entry_px REAL",
+    # market: hacim rekoru kripto taramasından mı hisse taramasından mı geldi.
+    # Eski satırların hepsi kripto turundan geldiği için NULL = 'crypto' okunur
+    # (MIGRATIONS yalnız ALTER — geriye dönük UPDATE buraya konmaz).
+    "ALTER TABLE vol_events ADD COLUMN market TEXT",
 ]
 
 

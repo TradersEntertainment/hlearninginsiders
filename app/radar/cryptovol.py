@@ -134,8 +134,8 @@ async def scan(cfg, client, notifier=None) -> dict:
         async with db() as conn:
             cur = await conn.execute(
                 """INSERT OR IGNORE INTO vol_events(coin,ts,bucket_ts,vol,notional,
-                     prev_max,ratio,px,chg_pct,alerted)
-                   VALUES(?,?,?,?,?,?,?,?,?,0)""",
+                     prev_max,ratio,px,chg_pct,alerted,market)
+                   VALUES(?,?,?,?,?,?,?,?,?,0,'crypto')""",
                 (coin, ts, rec["bucket_ts"], rec["vol"], rec["notional"],
                  rec["prev_max"], rec["ratio"], rec["px"], rec["chg_pct"]))
             fresh = (cur.rowcount or 0) > 0
@@ -174,12 +174,19 @@ async def scan(cfg, client, notifier=None) -> dict:
     return out
 
 
-async def recent(limit: int = 60, hours: int = 48) -> list[dict]:
-    """Site sekmesi: yakın zamanda hacim rekoru kıranlar."""
+async def recent(limit: int = 60, hours: int = 48,
+                 market: str = "crypto") -> list[dict]:
+    """Site sekmesi: yakın zamanda hacim rekoru kıranlar.
+
+    `market` boş bırakılırsa ikisi birden döner. Eski satırlarda kolon NULL —
+    hepsi kripto turundan geldiği için COALESCE ile 'crypto' okunur.
+    """
+    q = ("SELECT * FROM vol_events WHERE ts >= ?"
+         + (" AND COALESCE(market,'crypto')=?" if market else "")
+         + " ORDER BY ts DESC LIMIT ?")
+    args = [now() - hours * 3600] + ([market] if market else []) + [limit]
     async with db() as conn:
-        cur = await conn.execute(
-            "SELECT * FROM vol_events WHERE ts >= ? ORDER BY ts DESC LIMIT ?",
-            (now() - hours * 3600, limit))
+        cur = await conn.execute(q, tuple(args))
         return [dict(r) for r in await cur.fetchall()]
 
 

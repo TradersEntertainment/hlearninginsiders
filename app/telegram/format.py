@@ -547,6 +547,36 @@ def crypto_vol_alert(e: dict) -> str:
     return "\n".join(lines)
 
 
+def equity_vol_alert(e: dict) -> str:
+    """Hisse hacim patlaması — kripto metninin hisse hâli.
+
+    Kripto sürümünden farkı iki cümle: sembolün önüne hisse rozeti, ve dayanak
+    borsa kapalıysa "arbitraj yok" notu — o durumda hacim SAF perp akışıdır.
+    """
+    sym = (e.get("coin") or "").split(":")[-1]
+    chg = e.get("chg_pct") or 0
+    arrow = "🟢" if chg > 0 else ("🔴" if chg < 0 else "⚪")
+    ratio = e.get("ratio")
+    lines = [
+        f"📈 <b>{sym}</b> — <b>24 saatin en yüksek 5 dakikalık hacmi</b>",
+        f"5dk hacim <b>{usd(e.get('notional'))}</b>"
+        + (f" · önceki rekorun <b>{ratio:.1f}×</b>'i" if ratio else "")
+        + f" · fiyat {px(e.get('px'))} {arrow} <b>{chg:+.2f}%</b>",
+    ]
+    if e.get("day_vol"):
+        lines.append(f"📊 24s hacim {usd(e['day_vol'])}")
+    try:
+        from ..radar import hourstats
+        if hourstats.us_closed():
+            lines.append("🌙 <b>ABD kapalı</b> — dayanak hisseyle arbitraj "
+                         "yapılamıyor, bu hacim saf perp akışı")
+    except Exception:
+        pass
+    lines.append("<i>Hacim geldi — yönü fiyat değişimi söylüyor. "
+                 "Yatırım tavsiyesi değildir.</i>")
+    return "\n".join(lines)
+
+
 def offhours_move(m: dict) -> str:
     """Kapalı seans hareketi — kümülatif sapma bandı ya da ani sıçrama.
 
@@ -581,6 +611,11 @@ def offhours_move(m: dict) -> str:
     if m.get("oi_chg") is not None:
         lines.append(f"📊 Açık pozisyon (OI) %{m['oi_chg']:+.1f}"
                      + (" — pozisyon kuruluyor" if abs(m["oi_chg"]) >= 2 else ""))
+    # Hafta içi kapalı pencerede eşik hafta sonundan yüksektir; okuyan "bunu
+    # neden aldım, %1'de almamıştım" diye düşünmesin diye eşiği yazıyoruz.
+    if m["kind"] == "spike" and not m.get("weekend", True) and m.get("spike_thr"):
+        lines.append(f"<i>Hafta içi kapalı pencere — eşik %{m['spike_thr']:g}"
+                     f" (hafta sonu daha düşük).</i>")
     lines.append("<i>ABD kapalıyken dayanak hisse durur; bu hareket saf perp"
                  " akışıdır. Geri döneceğinin garantisi yok.</i>")
     if is_listed(sym):

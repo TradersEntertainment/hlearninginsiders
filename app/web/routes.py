@@ -17,9 +17,8 @@ from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, bigpos, clusters, cryptovol, funding, hourstats,
-                     lowvol, metrics, offhours,
-                     pricechart)
+from ..radar import (autoscan, bigpos, clusters, cryptovol, equityvol, funding,
+                     hourstats, lowvol, metrics, offhours, pricechart)
 
 log = logging.getLogger("web.routes")
 
@@ -1033,15 +1032,28 @@ async def history_page(request: Request):
 
 @router.get("/hacim")
 async def cryptovol_page(request: Request):
-    """Yakın zamanda yüksek hacimliler — kripto 5dk hacim rekorları."""
+    """Yakın zamanda yüksek hacimliler — hisse + kripto 5dk hacim rekorları.
+
+    İki panel aynı sekmede: aynı dedektör, ayrı evren ve ayrı Telegram kanalı.
+    """
     _guard(request)
     cfg = request.app.state.cfg
+    eq_st = await kv_get("equityvol_stats") or {}
     return _render(request, "hacim.html", {
         "events": await cryptovol.recent(),
         "st": await kv_get("cryptovol_stats") or {},
         "has_chat": bool((getattr(cfg, "crypto_chat_id", "") or "").strip()),
         "min_usd": getattr(cfg, "crypto_vol_min_usd", 0),
         "enabled": bool(getattr(cfg, "crypto_vol_enabled", True)),
+        "eq_events": await equityvol.recent(),
+        "eq_st": eq_st,
+        "eq_has_chat": bool((getattr(cfg, "crypto_stocks_id", "") or "").strip()),
+        "eq_min_usd": getattr(cfg, "equity_vol_min_usd", 0),
+        "eq_enabled": bool(getattr(cfg, "equity_vol_enabled", True)),
+        # PROPR listesi elle yazılmış bir kopya ve eskiyor (SHEIN/MRNA vakası).
+        # Neyin taranmadığını kullanıcı görsün diye buradan geçiyor.
+        "missing": eq_st.get("missing") or [],
+        "n_missing": eq_st.get("n_missing") or 0,
     })
 
 

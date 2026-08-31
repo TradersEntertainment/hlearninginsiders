@@ -80,8 +80,14 @@ likidasyon haritasını** besler, Telegram'a düşmek için duvarın
 varlıklarda (GOLD, XYZ100, FX…) o eşik zaten `liq_cluster_big_min_usd`
 ($20M)'dir. Aynı ayrım `/saatler` (hepsi listelenir, kanala yalnız "güçlü"
 saatler gider), `/hacim` (her rekor kaydedilir, bildirimde coin başına bekleme
-var) ve `/kapali` (her bant kaydedilir, bildirim yalnız hafta sonu) için de
-geçerlidir.
+var) ve `/kapali` (her bant kaydedilir, kümülatif bant bildirimi yalnız hafta sonu)
+için de geçerlidir.
+
+**Kapalı seans, iki tetik iki kapı:** kümülatif %0,5 bantları **yalnız hafta
+sonu** çalışır (hafta içi de açıkken günde ~16 saat bildirim demekti). **Ani
+hareket** tetiği ise ABD kapalı *her* saatte çalışır — ama hafta içi eşiği
+daha yüksektir (vars. %2 / hafta sonu %1), çünkü pre-market'te %1 sıradan.
+SHEIN Pazartesi sabahı %12 düştüğünde bot "hafta sonu değil" diye susmuştu.
 
 ## Ayarlar
 
@@ -107,19 +113,35 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
 5. Earnings'ten 24 saat sonra fiyat hareketi ölçülür → doğru bilenler sicile işlenir,
    2+ doğru bilen watchlist'e alınır, kapatanlar raporlanır.
 
-## Kripto Hacim Patlaması: `/hacim`
+## Hacim Patlaması: `/hacim`
 
-PROPR'da listeli bir **kripto** coin, son 24 saatin **en yüksek 5 dakikalık
-hacmine** ulaştığında olay üretilir: sitede `/hacim` sekmesine düşer, Telegram'da
-**ayrı bir kanala** gider.
+PROPR'da listeli bir sembol, son 24 saatin **en yüksek 5 dakikalık hacmine**
+ulaştığında olay üretilir: sitede `/hacim` sekmesine düşer, Telegram'da **ayrı
+bir kanala** gider. Eşik mutlak bir dolar rakamı değil **sembolün kendi
+normali** olduğu için ince perp'te de likit perp'te de çalışır.
 
-Eşik mutlak bir dolar rakamı değil **coinin kendi normali** olduğu için küçük
-coinde de büyük coinde de çalışır.
+**İki evren, iki kanal, iki eşik** — aynı dedektör:
+
+| Panel | Evren | Kanal | 5dk asgari |
+|---|---|---|---|
+| 📈 Hisseler | PROPR ∩ **xyz dex** | `CRYPTO_STOCKS_ID` | **$100K** |
+| 🚀 Kripto | PROPR ∩ **ana dex** | `CRYPTO_CHAT_ID` | **$250K** |
+
+Hisse eşiği düşük çünkü hisse perp'leri çok daha ince: SHEIN'in 24 saatlik
+**toplam** hacmi $4.2M'ken patlama mumu ~$150K'ydı. İkisi de Ayarlar'dan ayrı
+değiştirilir (*Hisse hacim* / *Kripto hacim*).
 
 **Kanal kurulumu:** yeni bir Telegram kanalı/grubu aç, mevcut botu oraya admin
-yap, Railway'e `CRYPTO_CHAT_ID` ekle. Yeni bot/token gerekmez. Tanımlı değilse
+yap, Railway'e ilgili değişkeni ekle. Yeni bot/token gerekmez. Tanımlı değilse
 olaylar sitede kaydedilir ama **gönderilmez** — ana kanala düşürmek ayırma
 isteğini bozardı.
+
+**PROPR listesi elle tutulur ve eskir.** Liste `app/propr.py` içinde sabit bir
+kopya; HL yeni perp ekledikçe geride kalır ve filtre koyduğumuz her yerde
+(hacim radarı, kapalı seans bildirimi) o semboller **sessizce** elenir. SHEIN
+tam olarak böyle kaçtı. Bu yüzden `/hacim` ve `/tani`, dexte olup listede
+olmayan sembolleri **sayıp yazar**; eksik olanı Ayarlar → *propr.xyz ek
+semboller* ile eklersin.
 
 **Kripto/TradFi ayrımı** PROPR listesini bölerek değil **ana dex üyeliğiyle**
 yapılır: HL'de hisse/emtia perp'leri `xyz:` önekli geldiği için ana dexte kalan
@@ -136,8 +158,9 @@ kıyaslamak yanıltırdı) — bu yüzden en fazla 5 dakikalık gecikme vardır.
 (b) Uzun bir yükselişte her yeni kova yeni bir rekor olabilir; Telegram'a hepsi
 gitmez (coin başına bekleme) ama **tablodaki her satır gerçek bir rekordur**.
 
-Maliyet: coin başına turda 1 istek. ~96 coin / 5 dakika ≈ **19 rpm**, bütçe
-350 rpm. Ayarlar → *Kripto hacim*'den kapatılabilir (maliyet sıfırlanır).
+Maliyet: sembol başına turda 1 istek. İki radar birlikte ~200 sembol / 5 dakika
+≈ **40 rpm**, bütçe 350 rpm. Her biri kendi Ayarlar grubundan ayrı ayrı
+kapatılabilir (maliyet sıfırlanır).
 
 ## Funding: `/funding`
 
