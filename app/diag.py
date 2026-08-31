@@ -306,6 +306,38 @@ async def _subsystems(cfg) -> list[str]:
         if vs.get("n_missing"):
             out.append(f"       📋 PROPR listesinde OLMAYAN {vs['n_missing']} perp"
                        f" taranmıyor: {', '.join(vs.get('missing', [])[:15])}")
+    bs = await kv_get("bars_stats") or {}
+    if bs:
+        out.append(f"  mum arşivi: {bs.get('coins', '?')} sembol"
+                   f" · {_num(bs.get('bars'))} bar · {bs.get('deep', 0)} seri 500+"
+                   + (f" · ⚠️ {bs['n_empty']} sembolde arşiv sığ/yok"
+                      if bs.get("n_empty") else "")
+                   + (f" · ⚠️ {bs['err']} hata: {bs.get('err_msg', '')}"
+                      if bs.get("err") else ""))
+    ps = await kv_get("patterns_stats") or {}
+    if ps:
+        best = ps.get("best") or {}
+        out.append(f"  örüntü: {ps.get('checked', 0)} çözümleme"
+                   f" · {ps.get('signals', 0)} sinyal / {ps.get('strong', 0)} güçlü"
+                   f" / {ps.get('alerted', 0)} bildirim"
+                   + (f" · {ps['thin']} yetersiz örnek" if ps.get("thin") else "")
+                   # Yapısal yetersizlik ayrı sayılıyor: bu, eşiğin değil
+                   # arşiv/havuz seçiminin sonucu ve çaresi başka.
+                   + (f" ({ps['structural']}'i YAPISAL — havuz dar)"
+                      if ps.get("structural") else "")
+                   + ("" if ps.get("chat") else " · ⚠️ PATTERN_CHAT_ID TANIMSIZ")
+                   + (f"\n       en güçlü: {best.get('coin', '')}"
+                      f" {best.get('tf', '')} {best.get('horizon', '')}bar"
+                      f" z={best.get('z', 0):.1f} fark {best.get('edge', 0):+.0f}p"
+                      if best else ""))
+        try:
+            from .radar.patterns import record as prec
+            r = await prec()
+            out.append(f"       karne: {r['hit']}✓/{r['miss']}✗/{r['open']} açık"
+                       + (f" · isabet %{r['rate']}" if r["rate"] is not None
+                          else " · henüz kapanmış tahmin yok"))
+        except Exception as e:
+            out.append(f"       karne okunamadı ({type(e).__name__}: {e})")
     hv = await kv_get("harvest_stats") or {}
     if hv.get("total"):
         out.append(f"  işlem hasadı: {_num(hv['total'])} fill REST'ten toplandı")

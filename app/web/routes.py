@@ -17,8 +17,9 @@ from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, bigpos, clusters, cryptovol, equityvol, funding,
-                     hourstats, lowvol, metrics, offhours, pricechart)
+from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol,
+                     funding, hourstats, lowvol, metrics, offhours, patterns,
+                     pricechart)
 
 log = logging.getLogger("web.routes")
 
@@ -1056,6 +1057,52 @@ async def cryptovol_page(request: Request):
         # Neyin taranmadığını kullanıcı görsün diye buradan geçiyor.
         "missing": eq_st.get("missing") or [],
         "n_missing": eq_st.get("n_missing") or 0,
+    })
+
+
+@router.get("/orintu")
+async def patterns_page(request: Request):
+    """Örüntü bulucu — geçmiş şekil eşleşmesi + olasılık + karne.
+
+    İki kip: sıralı sinyal listesi, ve `?sym=NVDA` ile tek sembol sorgusu.
+    Elle sorgu CANLI hesaplanır (arşivden), sinyal listesi taramadan gelir.
+    """
+    _guard(request)
+    cfg = request.app.state.cfg
+    sym = (request.query_params.get("sym") or "").strip().upper()
+    manual = None
+    if sym:
+        t = await find_ticker(sym)
+        coin = t["coin"] if t else sym
+        rows = []
+        for tf in bars.TFS:
+            for h in patterns.horizons(cfg):
+                try:
+                    r = await patterns.analyze_coin(cfg, coin, tf, h)
+                except Exception as e:
+                    r = {"coin": coin, "tf": tf, "horizon": h, "label": "yetersiz",
+                         "n": 0, "note": f"{type(e).__name__}: {e}"}
+                if r:
+                    rows.append(r)
+        rows.sort(key=lambda r: -abs(r.get("z") or 0))
+        d = await bars.depth()
+        manual = {"sym": sym, "coin": coin, "rows": rows,
+                  "found": bool(t),
+                  "depth": {tf: d.get(f"{coin}|{tf}", 0) for tf in bars.TFS}}
+    return _render(request, "orintu.html", {
+        "sig": await patterns.recent(80),
+        "hist": await patterns.history(),
+        "rec": await patterns.record(),
+        "rec_alerted": await patterns.record(only_alerted=True),
+        "calib": await patterns.calibration(),
+        "st": await kv_get("patterns_stats") or {},
+        "bst": await kv_get("bars_stats") or {},
+        "manual": manual, "sym": sym,
+        "pool": getattr(cfg, "pattern_pool", "self"),
+        "min_corr": getattr(cfg, "pattern_min_corr", 0.5),
+        "min_matches": getattr(cfg, "pattern_min_matches", 20),
+        "enabled": bool(getattr(cfg, "pattern_enabled", True)),
+        "has_chat": bool((getattr(cfg, "pattern_chat_id", "") or "").strip()),
     })
 
 

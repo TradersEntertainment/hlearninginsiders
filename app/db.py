@@ -197,6 +197,31 @@ CREATE TABLE IF NOT EXISTS vol_events(
   market TEXT,         -- 'crypto' | 'equity' (eski satırlar NULL = crypto)
   UNIQUE(coin, bucket_ts)
 );
+-- Mum arşivi — örüntü bulucunun ham verisi. hourstats zaten 1h mumları
+-- ÇEKİYORDU ama saat-bazlı özete indirip atıyordu; şekil eşleştirmesi ham
+-- seriyi istiyor. Yalnız kapanış + hacim: eşleştirmenin ve sparkline'ın
+-- ihtiyacı bu (OHLC zaten pricechart kv önbelleğinde, coin sayfası için).
+-- WITHOUT ROWID: bileşik anahtarlı bu tabloda gözle görülür yer kazandırır.
+CREATE TABLE IF NOT EXISTS bars(
+  coin TEXT, tf TEXT, ts INTEGER,     -- tf: '1h' | '15m'
+  c REAL, v REAL,
+  PRIMARY KEY(coin, tf, ts)
+) WITHOUT ROWID;
+
+-- Örüntü sinyali VE sonucu aynı satırda (ai_hypotheses deseni): tahmini
+-- kaydetmeden "bu araç tutuyor mu" sorusunun cevabı olmaz.
+CREATE TABLE IF NOT EXISTS pattern_signals(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER, coin TEXT, tf TEXT, win INTEGER, horizon INTEGER,
+  n_match INTEGER, p_up REAL, base_up REAL, edge REAL, z REAL,
+  med_move REAL, q25 REAL, q75 REAL,
+  px REAL, resolve_ts INTEGER,
+  status TEXT DEFAULT 'open',         -- open | hit | miss | unresolvable
+  measured REAL, resolved_ts INTEGER, alerted INTEGER DEFAULT 0,
+  UNIQUE(coin, tf, horizon, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_psig_due ON pattern_signals(status, resolve_ts);
+CREATE INDEX IF NOT EXISTS idx_psig_new ON pattern_signals(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_volev_ts ON vol_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logev_ts ON log_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logev_dedupe ON log_events(logger, level, ts DESC);

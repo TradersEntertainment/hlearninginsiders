@@ -175,6 +175,61 @@ Maliyet: sembol başına turda 1 istek. İki radar birlikte ~200 sembol / 5 daki
 ≈ **40 rpm**, bütçe 350 rpm. Her biri kendi Ayarlar grubundan ayrı ayrı
 kapatılabilir (maliyet sıfırlanır).
 
+## Örüntü Bulucu: `/orintu`
+
+"Şu anki grafik şekli geçmişte olduğunda sonra ne olmuş?" — **analog
+(k-en-yakın-komşu) tahmini**. Son N barın log getirileri z-normalize edilir
+(fiyat seviyesi ve oynaklık ölçeği düşer, saf şekil kalır), geçmişte yeterince
+benzeyen pencereler bulunur, o pencerelerden **sonra** ne olduğu toplanır.
+15m ve 1h dilimlerde çalışır; sekmede hem sıralı sinyal listesi hem
+`?sym=NVDA` ile elle sorgu var.
+
+**Olasılık tek başına bir şey söylemez.** "%62 yukarı" ancak **taban oranın**
+yanında anlamlıdır: aynı seride şekle bakmadan da %58 yukarı çıkıyorsa haber
+yok demektir. Tabloda asıl sayı **Fark** kolonu, **z** ise o farkın
+rastlantıyla açıklanıp açıklanamayacağı (2 ≈ %95).
+
+**Dört tuzak bilerek kapatıldı**, her biri `analog.py` içinde:
+
+| Tuzak | Kapatılışı |
+|---|---|
+| İleriye bakma | eşleşmenin ileri penceresi sorgu anından ÖNCE bitmeli |
+| Kendine benzeme | sorgu penceresiyle çakışanlar atılır |
+| Sahte örneklem | üst üste binen pencereler tek örnek sayılır (≥ `win` bar aralık) |
+| "En yakın 50" | dar geçmişte bu, geçmişin dörtte biri olabilir — bağımsız pencerelerin en fazla %15'i alınır, üstüne **benzerlik eşiği** |
+
+Benzerlik eşiği ham mesafe değil **korelasyon**: z-normalize vektörlerde ikisi
+birebir bağlı (d²=2(1−r)) ama ham mesafe pencere uzunluğuna göre anlam
+değiştirir — 23 boyutta rastgele iki şeklin mesafesi ~1.41'de yoğunlaşır ve
+"0.6" gibi bir eşik pratikte hiçbir şeyi geçirmez (ölçüldü). Korelasyon her
+uzunlukta aynı şeyi söyler; 4300 pencerelik bir geçmişte ulaşılabilen en iyi
+benzerlik ~0.65, r≥0.5 olan ~35 pencere. Varsayılan bu ölçüme dayanıyor.
+
+**Karne zorunlu.** Üretilen her tahmin kaydedilir ve vadesinde otomatik
+notlanır (`ai_hypotheses` deseninin aynısı); ölçüm barı yoksa `unresolvable`
+— bayat veriyle "tuttu" denmez. Sekmede kalibrasyon tablosu var: *"%70
+dediğimizde %66 oldu (n=41)"*. **Aracın güvenilirliğinin tek dürüst ölçüsü
+budur, olasılığın kendisi değil** ve 30-50 kapanmış tahminden önce anlam
+taşımaz.
+
+**Havuz** varsayılan olarak `self` — bir sembol yalnız kendi geçmişiyle
+eşleşir. En saf yorum bu ("bu hisse böyleyken hep şöyle yapardı") ama örneklem
+küçük kalır: 180 günlük 1h arşivi 24 barlık pencerelerde ~180 **bağımsız**
+örnek eder ve çoğu satırda dürüstçe "yeterli örnek yok" çıkar. Ayarlardan
+`class` yapılınca aynı sınıfın (hisse/kripto) tüm geçmişi havuza girer.
+Sekme bu durumu ayrı sayar ve çareyi yazar — sessiz boşluk bırakmaz.
+
+**Bildirim** ayrı kanala gider (`PATTERN_CHAT_ID`) ve **üç koşulu birden**
+ister: yeterli örneklem + z eşiği + anlamlı fark. z tek başına yetmez, çok
+büyük n'de 3 puanlık fark bile "anlamlı" çıkar. Mesaj taban oranı, n'i ve
+aracın o anki sicilini birlikte taşır. Her turda binin üzerinde kombinasyon
+taranıyor; z≥2'yi şansa geçenler de olur — mesaj bunu da söyler.
+
+**Mum arşivi** (`bars` tablosu) bunu besler: 1h 180 gün + 15m 60 gün, yalnız
+kapanış + hacim. Artımlı çekim, sembol başına turda 1 istek (~12 rpm).
+Hangi sembolde kaç bar olduğu sekmede ve `/tani`'da yazar: "yeterli veri yok"
+denince sebebin arşiv mi eşik mi olduğu görünsün diye.
+
 ## Funding: `/funding`
 
 Bütün hisse perp'leri funding oranına göre sıralı — varsayılan en yüksek üstte,

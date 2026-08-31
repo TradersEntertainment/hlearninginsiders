@@ -70,6 +70,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "PROPR'da listeli bir kripto coin son 24 saatin en yüksek 5 dakikalık hacmine ulaşınca — ayrı kanala gider (CRYPTO_CHAT_ID)"},
     "notify_equityvol": {"type": "bool", "label": "📈 Hisse hacim patlaması", "group": "Bildirimler",
                          "desc": "PROPR'da listeli bir HİSSE perp'i son 24 saatin en yüksek 5 dakikalık hacmine ulaşınca — ayrı kanala gider (CRYPTO_STOCKS_ID)"},
+    "notify_pattern": {"type": "bool", "label": "🔮 Örüntü sinyali", "group": "Bildirimler",
+                       "desc": "Geçmiş şekil eşleşmesi taban orandan istatistiksel olarak ayrıştığında — ayrı kanala gider (PATTERN_CHAT_ID)"},
     "notify_offhours": {"type": "bool", "label": "🌙 Kapalı seans hareketi", "group": "Bildirimler",
                         "desc": "ABD kapalıyken (hafta sonu/gece) kapanış fiyatından sapan ya da ani sıçrayan hisseler — yalnız PROPR'da listeli olanlar"},
     "notify_wall": {"type": "bool", "label": "🧱 Emir defteri duvarı", "group": "Bildirimler",
@@ -271,6 +273,34 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Uzun bir hareket boyunca her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
     "equity_vol_max_coins": {"type": "int", "label": "Evren tavanı (hisse)", "group": "Hisse hacim",
                              "desc": "Kaç hisse taranacak (PROPR ∩ xyz dex, hacimce büyükten). Her hisse turda 1 istek eder"},
+    "pattern_enabled": {"type": "bool", "label": "Örüntü bulucu", "group": "Örüntü bulucu",
+                        "desc": "Kapatılırsa tarama durur; mum arşivi ayrı ayarla yönetilir"},
+    "pattern_pool": {"type": "str", "label": "Eşleştirme havuzu", "group": "Örüntü bulucu",
+                     "desc": "self = sembol yalnız KENDİ geçmişiyle eşleşir (saf yorum, küçük örneklem — çoğu sembolde 'yeterli veri yok' çıkar) · class = aynı sınıfın (hisse/kripto) tüm geçmişi, örneklem ~80× büyür"},
+    "pattern_win_1h": {"type": "int", "label": "Pencere — 1h (bar)", "group": "Örüntü bulucu",
+                       "desc": "Şekli kaç barlık parçadan okuyalım. 24 = bir gün"},
+    "pattern_win_15m": {"type": "int", "label": "Pencere — 15m (bar)", "group": "Örüntü bulucu",
+                        "desc": "15 dakikalık dilimde şeklin uzunluğu. 32 = 8 saat"},
+    "pattern_horizons": {"type": "str", "label": "Vadeler (bar)", "group": "Örüntü bulucu",
+                         "desc": "Eşleşmeden SONRA kaç bar ileriye bakılsın; virgülle. Her vade ayrı sinyal üretir"},
+    "pattern_top_k": {"type": "int", "label": "En fazla eşleşme", "group": "Örüntü bulucu",
+                      "desc": "Bir sorguda alınacak azami komşu. Ayrıca mevcut BAĞIMSIZ pencerelerin %15'iyle de sınırlanır: dar havuzda 'en yakın 50' benzerlik değil ortalamanın kendisi olur"},
+    "pattern_min_corr": {"type": "float", "label": "Asgari şekil benzerliği", "group": "Örüntü bulucu",
+                         "desc": "İki şeklin korelasyonu. 1 = birebir aynı, 0 = alakasız. Sıralamayla 'en yakın 50'yi almak yetmez, gerçekten benzemeli. ÖLÇÜM: 4300 pencerelik bir geçmişte ulaşılabilen en iyi benzerlik ~0.65; 0.5 üstü ~35 pencere çıkıyor"},
+    "pattern_min_matches": {"type": "int", "label": "Asgari eşleşme sayısı", "group": "Örüntü bulucu",
+                            "desc": "Bundan az bağımsız örnekle olasılık ÜRETİLMEZ; 'yeterli benzer örnek yok' denir. Uydurma güven yerine dürüst boşluk"},
+    "pattern_z_alert": {"type": "float", "label": "Bildirim için z eşiği", "group": "Örüntü bulucu",
+                        "desc": "Sinyalin taban orandan kaç standart hata uzakta olması gerektiği. 2 ≈ %95; altındakiler sayfada 'zayıf' diye durur"},
+    "pattern_edge_min": {"type": "float", "label": "Bildirim için asgari fark (puan)", "group": "Örüntü bulucu",
+                         "desc": "Olasılık taban orandan en az bu kadar puan ayrılmalı. z tek başına yeterli değil: çok büyük n'de anlamsız küçük farklar da 'anlamlı' çıkar"},
+    "pattern_scan_sec": {"type": "int", "label": "Tarama aralığı (sn)", "group": "Örüntü bulucu",
+                         "desc": "Tüm evrenin taranma periyodu. Hesap yereldir (numpy), API maliyeti yoktur"},
+    "bars_1h_days": {"type": "int", "label": "1h arşiv derinliği (gün)", "group": "Mum arşivi",
+                     "desc": "Eşleştirmenin baktığı geçmiş. Kısaltmak örneklemi küçültür, olasılıkları güvenilmez yapar"},
+    "bars_15m_days": {"type": "int", "label": "15m arşiv derinliği (gün)", "group": "Mum arşivi",
+                      "desc": "15 dakikalık dilimde geçmiş. Bar sayısı 1h'in 4 katı olduğu için disk buradan büyür"},
+    "bars_refresh_sec": {"type": "int", "label": "Arşiv tazeleme (sn)", "group": "Mum arşivi",
+                         "desc": "Her turda tüm semboller iki dilimde güncellenir; sembol başına 1 istek (~12 rpm)"},
     "offhours_close_hour": {"type": "int", "label": "ABD kapanış saati (TSİ)",
                             "group": "Kapalı seans",
                             "desc": "Kapalı seans sapmasının çıpası — TSİ'de sabit saat (0 = 24:00, Cuma gece yarısı). Kışın ET 16:00 kapanışına denk gelir, yazın 1 saat kayar"},
@@ -411,6 +441,25 @@ class Config:
         # Hisse hacim bildirimlerinin kanalı. Kullanıcı Railway'de bu adla
         # oluşturdu; env-only (chat id'leri EDITABLE_FIELDS'a girmez).
         self.crypto_stocks_id = os.getenv("CRYPTO_STOCKS_ID", "")
+        self.notify_pattern = True
+        self.pattern_enabled = True
+        # self = yalnız sembolün kendi geçmişi (kullanıcı tercihi). Dar havuzun
+        # bedeli sık sık "yeterli veri yok"; class'a çevirmek tek ayar.
+        self.pattern_pool = os.getenv("PATTERN_POOL", "self")
+        self.pattern_win_1h = int(os.getenv("PATTERN_WIN_1H", "24"))
+        self.pattern_win_15m = int(os.getenv("PATTERN_WIN_15M", "32"))
+        self.pattern_horizons = os.getenv("PATTERN_HORIZONS", "4,12,24")
+        self.pattern_top_k = int(os.getenv("PATTERN_TOP_K", "50"))
+        self.pattern_min_corr = float(os.getenv("PATTERN_MIN_CORR", "0.5"))
+        self.pattern_min_matches = int(os.getenv("PATTERN_MIN_MATCHES", "20"))
+        self.pattern_z_alert = float(os.getenv("PATTERN_Z_ALERT", "2.0"))
+        self.pattern_edge_min = float(os.getenv("PATTERN_EDGE_MIN", "10"))
+        self.pattern_scan_sec = int(os.getenv("PATTERN_SCAN_SEC", "1800"))
+        self.bars_1h_days = int(os.getenv("BARS_1H_DAYS", "180"))
+        self.bars_15m_days = int(os.getenv("BARS_15M_DAYS", "60"))
+        self.bars_refresh_sec = int(os.getenv("BARS_REFRESH_SEC", "1800"))
+        # Örüntü bildirimlerinin kanalı — env-only (chat id kuralı).
+        self.pattern_chat_id = os.getenv("PATTERN_CHAT_ID", "")
         self.offhours_close_hour = int(os.getenv("OFFHOURS_CLOSE_HOUR", "0"))
         self.offhours_alert_weekend_only = True
         self.offhours_alert_pct = float(os.getenv("OFFHOURS_ALERT_PCT", "0.5"))

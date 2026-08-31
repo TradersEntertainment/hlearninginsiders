@@ -29,6 +29,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "offhours":  ("notify_offhours",  "🌙 Kapalı seans hareketi",             "high"),
     "cryptovol": ("notify_cryptovol", "🚀 Kripto hacim patlaması",            "high"),
     "equityvol": ("notify_equityvol", "📈 Hisse hacim patlaması",             "high"),
+    "pattern":   ("notify_pattern",   "🔮 Örüntü sinyali",                    "high"),
     "listing":   ("notify_listing",   "🆕 Yeni hisse listelendi",             "high"),
     "health":    ("notify_health",    "⚕️ Sistem sağlığı",                    "high"),
     "digest":    ("notify_digest",    "🌅 Günlük özet",                       "normal"),

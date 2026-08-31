@@ -6,3 +6,6 @@ jinja2>=3.1
 python-multipart>=0.0.9
 yfinance>=0.2.50
 tzdata>=2024.1
+# Örüntü eşleştirme (analog.py) — bugüne kadar yalnız
+# yfinance→pandas üzerinden DOLAYLI geliyordu; ona yaslanmak kırılgan.
+numpy>=1.26

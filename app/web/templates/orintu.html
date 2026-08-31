@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% block title %}🔮 Örüntü · HL Radar{% endblock %}
+{% block content %}
+
+{% macro sigrows(rows) %}
+<div style="overflow-x:auto">
+<table>
+  <tr><th class="l">Sembol</th><th>Dilim</th>
+      <th title="Eşleşmeden sonra kaç bar ileriye bakıldı">Vade</th>
+      <th title="Benzer geçmiş durumlarda fiyatın yukarı gitme oranı">Olasılık</th>
+      <th title="Aynı seride ŞEKLE BAKMADAN yukarı gitme oranı — kıyas noktası">Taban</th>
+      <th title="Olasılık eksi taban oran. ASIL SAYI BU">Fark</th>
+      <th title="Farkın standart hataya oranı; 2 ≈ %95">z</th>
+      <th title="Kaç bağımsız benzer örnek bulundu">n</th>
+      <th title="O örneklerde ileri hareketin medyanı">Medyan</th>
+      <th>Güç</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td class="l"><a href="/orintu?sym={{ r.coin.split(':')[-1] }}{{ '&k=' + k[3:] if k else '' }}"><b>{{ r.coin.split(':')[-1] }}</b></a></td>
+    <td class="dim">{{ r.tf }}</td>
+    <td class="dim">{{ r.horizon }} bar</td>
+    <td class="{{ 'long' if (r.p_up or 50) >= 50 else 'short' }}"><b>{{ '%.0f'|format(r.p_up or 0) }}%</b></td>
+    <td class="dim">{{ '%.0f'|format(r.base_up or 0) }}%</td>
+    <td class="{{ 'long' if (r.edge or 0) > 0 else ('short' if (r.edge or 0) < 0 else 'dim') }}">
+      <b>{{ '%+.0f'|format(r.edge or 0) }}</b></td>
+    <td class="dim">{{ '%.1f'|format(r.z or 0) }}</td>
+    <td class="dim">{{ r.n_match or 0 }}</td>
+    <td class="{{ 'long' if (r.med_move or 0) > 0 else 'short' }}">
+      {{ '%+.2f'|format(r.med_move or 0) }}%</td>
+    <td>{% if r.z is not none and (r.z|abs) >= 2 %}<b class="{{ 'long' if (r.edge or 0) > 0 else 'short' }}">kayda değer</b>
+        {%- else %}<span class="dim">zayıf</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endmacro %}
+
+<div class="panel">
+  <h2>🔮 Örüntü bulucu <span class="dim" style="text-transform:none">·
+    15m + 1h · başlığa tıklayarak sırala</span></h2>
+  <p class="sub">Bir sembolün son barlarının <b>şekli</b> z-normalize edilip
+  geçmişte aranıyor; yeterince benzeyen pencerelerden <b>sonra</b> ne olduğu
+  toplanıp olasılığa çevriliyor. Şekil normalize olduğu için $220'lık NVDA ile
+  $6'lık SHEIN aynı dilde konuşur.</p>
+  <p class="sub"><b>Olasılık tek başına bir şey söylemez.</b> "%62 yukarı"
+  ancak <b>taban oranın</b> yanında anlamlıdır: aynı seride şekle bakmadan da
+  %58 yukarı çıkıyorsa haber yok demektir. Tablodaki <b>Fark</b> kolonu asıl
+  sayıdır; <b>z</b> ise o farkın rastlantıyla açıklanıp açıklanamayacağını
+  söyler.
+  <span class="warn">Her turda binin üzerinde kombinasyon taranıyor — z≥2
+  eşiğini şansa geçenler de olur. Yatırım tavsiyesi değildir.</span></p>
+
+  <form method="get" action="/orintu" style="margin:10px 0">
+    <input type="text" name="sym" placeholder="sembol sor: NVDA" value="{{ sym }}"
+           style="padding:7px 10px;border-radius:8px;border:1px solid #3a3352;
+                  background:#1b1730;color:inherit;font-size:14px">
+    {% if k %}<input type="hidden" name="k" value="{{ k[3:] }}">{% endif %}
+    <button type="submit" style="padding:7px 16px;border-radius:8px;border:0;
+            background:#7c5cff;color:#fff;font-weight:600;cursor:pointer">Sor</button>
+  </form>
+
+  <p class="sub dim">
+    {%- if not enabled %}<span class="short">⏸ Radar kapalı</span> (Ayarlar → Örüntü bulucu). ·
+    {%- else %}{{ st.checked or 0 }} çözümleme · <b>{{ st.strong or 0 }}</b> kayda değer
+      {%- if st.thin %} · {{ st.thin }} tanesinde yeterli örnek yok{% endif %}
+      {%- if st.ts %} · {{ st.ts|dt }}{% endif %} · {% endif %}
+    havuz <b>{{ 'yalnız sembolün kendi geçmişi' if pool == 'self' else pool }}</b> ·
+    asgari benzerlik <b>{{ '%.2f'|format(min_corr) }}</b> ·
+    asgari örnek <b>{{ min_matches }}</b>
+  </p>
+
+  <p class="sub dim">📦 Arşiv: {{ bst.coins or 0 }} sembol · {{ '{:,}'.format(bst.bars or 0)|replace(',','.') }} bar ·
+    {{ bst.deep or 0 }} seri 500+ bar
+    {%- if bst.err %} · <span class="short">{{ bst.err }} hata</span>{% endif %}
+    {%- if bst.ts %} · {{ bst.ts|dt }}{% endif %}</p>
+
+  {% if bst.n_empty %}
+  <p class="short">⚠️ <b>{{ bst.n_empty }} sembolde arşiv yok/çok sığ</b>
+    ({{ bst.empty|join(', ') }}). Bu semboller için olasılık üretilemez —
+    sorun eşiklerde değil <b>veri kaynağında</b>: HL bu perp'lere o dilimde
+    mum vermiyor ya da listeleneli çok olmamış olabilir.</p>
+  {% endif %}
+
+  {% if st.structural %}
+  <p class="short">📐 <b>{{ st.structural }} çözümleme yapısal olarak sonuç
+    veremiyor</b> — arşivin derinliği, asgari örnek sayısını karşılayacak kadar
+    bağımsız pencere içermiyor. Havuz <b>yalnız sembolün kendi geçmişi</b>
+    olduğu için bu beklenen bir durum. Sekme sürekli boşsa
+    <b>Ayarlar → Örüntü bulucu → Eşleştirme havuzu</b>'nu <code>class</code>
+    yap: aynı sınıfın tüm geçmişi açılır, örneklem ~80 kat büyür.</p>
+  {% endif %}
+
+  {% if not has_chat %}
+  <p class="short">⚠️ <b>Kanal tanımlı değil</b> — Railway'e <code>PATTERN_CHAT_ID</code>
+    ekle (kanalı aç, botu admin yap). Sinyaller burada kaydediliyor ama
+    Telegram'a gönderilmiyor.</p>
+  {% endif %}
+</div>
+
+{% if manual %}
+<div class="panel">
+  <h2>🔍 {{ manual.sym }} <span class="dim" style="text-transform:none">·
+    şu anki grafik geçmişte ne yapmış</span></h2>
+  {% if not manual.found %}
+  <p class="short">⚠️ <b>{{ manual.sym }}</b> evrende bulunamadı — sembolü
+    doğrudan coin adı olarak denedik.</p>
+  {% endif %}
+  <p class="sub dim">Arşiv derinliği:
+    {% for tf, n in manual.depth.items() %}<b>{{ tf }}</b> {{ n }} bar{% if not loop.last %} · {% endif %}{% endfor %}</p>
+
+  {% set good = manual.rows|selectattr('n')|selectattr('p_up')|list %}
+  {% if good %}
+  {{ sigrows(good) }}
+  {% endif %}
+
+  {% set bad = manual.rows|rejectattr('p_up')|list %}
+  {% if bad %}
+  <p class="sub dim" style="margin-top:10px"><b>Sonuç üretilemeyenler:</b></p>
+  <ul class="sub dim" style="margin:4px 0 0 18px">
+    {% for r in bad %}
+    <li>{{ r.tf }} · {{ r.horizon }} bar — {{ r.note or 'yeterli benzer örnek yok' }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% for r in good if r.matches %}
+  <details style="margin-top:10px">
+    <summary class="sub" style="cursor:pointer">{{ r.tf }} · {{ r.horizon }} bar —
+      {{ r.n }} benzer pencere, tek tek</summary>
+    <div style="overflow-x:auto;margin-top:6px">
+    <table>
+      <tr><th class="l">Ne zaman</th><th title="Şekil korelasyonu: 1 = birebir">Benzerlik</th>
+          <th title="O pencereden sonra {{ r.horizon }} barda ne olmuş">Sonrası</th></tr>
+      {% for m in r.matches %}
+      <tr><td class="l dim">{{ m.ts|dt }}</td>
+          <td class="dim">{{ '%.2f'|format(m.corr) }}</td>
+          <td class="{{ 'long' if m.fwd > 0 else 'short' }}"><b>{{ '%+.2f'|format(m.fwd) }}%</b></td></tr>
+      {% endfor %}
+    </table>
+    </div>
+  </details>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>🎯 Açık sinyaller <span class="dim" style="text-transform:none">·
+    {{ sig|length }} adet · güçlüden zayıfa</span></h2>
+  <p class="sub">Zayıf olanlar da listeleniyor: sayfa çoğunu gösterir, kanal
+  seçicidir. Telegram'a yalnız <b>yeterli örnek + z eşiği + anlamlı fark</b>
+  üçünü birden geçenler düşer.</p>
+  {% if sig %}
+  {{ sigrows(sig) }}
+  {% else %}
+  <p class="dim">Henüz açık sinyal yok. Arşiv doldukça ve tarama turları
+    attıkça burası dolar — ilk tur için mum arşivinin geriye doldurulması
+    gerekiyor, birkaç saat sürebilir.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>📊 Karne <span class="dim" style="text-transform:none">·
+    bu araç gerçekten tutuyor mu</span></h2>
+  <p class="sub">Üretilen her tahmin kaydedilip <b>vadesinde otomatik
+  notlanıyor</b>. Aracın kendisine güvenip güvenmeyeceğimizin tek dürüst ölçüsü
+  budur — olasılığın kendisi değil.
+  <span class="warn">Aşağıdaki sayı 30-50 kapanmış tahminden önce anlam
+  taşımaz.</span></p>
+
+  <div class="setwrap">
+    <div>
+      <p class="sub"><b>Tümü:</b>
+        {% if rec.rate is not none %}<b class="{{ 'long' if rec.rate >= 55 else ('short' if rec.rate < 45 else 'dim') }}">%{{ rec.rate }}</b>
+          isabet ({{ rec.hit }}✓ / {{ rec.miss }}✗){% else %}<span class="dim">henüz kapanmış tahmin yok</span>{% endif %}
+        · {{ rec.open }} açık{% if rec.unresolvable %} · {{ rec.unresolvable }} ölçülemedi{% endif %}</p>
+      <p class="sub"><b>Yalnız kanala düşenler:</b>
+        {% if rec_alerted.rate is not none %}<b class="{{ 'long' if rec_alerted.rate >= 55 else 'short' }}">%{{ rec_alerted.rate }}</b>
+          ({{ rec_alerted.n }} tahmin){% else %}<span class="dim">henüz yok</span>{% endif %}
+        <span class="dim">— asıl merak edilen bu</span></p>
+    </div>
+    <div>
+      <p class="sub" style="margin:0 0 6px"><b>Kalibrasyon</b>
+        <span class="dim">— söylediğimiz ile olan</span></p>
+      <div style="overflow-x:auto">
+      <table>
+        <tr><th class="l">Dediğimiz</th><th>Gerçekleşen</th><th>n</th></tr>
+        {% for b in calib %}
+        <tr><td class="l dim">%{{ b.lo }}–{{ b.hi }}</td>
+            <td class="{{ 'dim' if b.rate is none else ('long' if b.rate >= b.lo else 'short') }}">
+              {% if b.rate is not none %}<b>%{{ b.rate }}</b>{% else %}—{% endif %}</td>
+            <td class="dim">{{ b.n }}</td></tr>
+        {% endfor %}
+      </table>
+      </div>
+    </div>
+  </div>
+
+  {% if hist %}
+  <p class="sub dim" style="margin-top:12px"><b>Son kapanan tahminler</b></p>
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th class="l">Sembol</th><th>Dilim</th><th>Vade</th>
+        <th>Dediğimiz</th><th>Gerçekleşen</th><th>Sonuç</th><th>Ne zaman</th></tr>
+    {% for h in hist %}
+    <tr>
+      <td class="l"><b>{{ h.coin.split(':')[-1] }}</b></td>
+      <td class="dim">{{ h.tf }}</td><td class="dim">{{ h.horizon }} bar</td>
+      <td class="{{ 'long' if (h.p_up or 50) >= 50 else 'short' }}">
+        {{ '%.0f'|format(h.p_up or 0) }}% {{ 'yukarı' if (h.p_up or 50) >= 50 else 'aşağı' }}</td>
+      <td class="{{ 'long' if (h.measured or 0) > 0 else 'short' }}">{{ '%+.2f'|format(h.measured or 0) }}%</td>
+      <td>{% if h.status == 'hit' %}<b class="long">✓</b>{% else %}<b class="short">✗</b>{% endif %}</td>
+      <td class="dim">{{ h.resolved_ts|dt }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>❓ Nasıl çalışıyor, neye dikkat etmeli?</h2>
+  <p class="sub">Son N barın <b>log getirileri</b> alınıp z-normalize ediliyor;
+  böylece fiyat seviyesi ve oynaklık ölçeği düşüyor, geriye saf şekil kalıyor.
+  Geçmişteki her pencereyle korelasyon hesaplanıyor, <b>yeterince benzeyenler</b>
+  (varsayılan {{ '%.2f'|format(min_corr) }}) alınıyor ve o pencerelerden sonraki
+  hareket toplanıyor.</p>
+  <p class="sub">Dört tuzak bilerek kapatıldı: (1) bir eşleşmenin ileri
+  penceresi sorgu anından <b>önce</b> bitmek zorunda — geleceğe bakmıyoruz;
+  (2) sorgu penceresiyle çakışanlar atılıyor; (3) üst üste binen pencereler tek
+  örnek sayılıyor, yoksa örneklem şişer ve z yalan söyler; (4) "en yakın 50"
+  demek dar bir geçmişte "geçmişin dörtte biri" demek olabilir — bu yüzden
+  bağımsız pencerelerin en fazla %15'i alınıyor.</p>
+  <p class="sub dim">Havuz şu an <b>{{ 'yalnız sembolün kendi geçmişi' if pool == 'self' else pool }}</b>.
+  En saf yorum bu ("bu hisse böyleyken hep şöyle yapardı") ama örneklem küçük
+  kalır ve çoğu satırda "yeterli örnek yok" çıkar. Ayarlardan
+  <code>class</code>'a çevirince aynı sınıfın tüm geçmişi havuza girer.</p>
+</div>
+
+{% endblock %}

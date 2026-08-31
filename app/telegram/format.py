@@ -577,6 +577,45 @@ def equity_vol_alert(e: dict) -> str:
     return "\n".join(lines)
 
 
+def pattern_alert(r: dict) -> str:
+    """Örüntü sinyali — olasılık ASLA taban oransız verilmez.
+
+    "%68 yukarı" tek başına bir iddia; taban %55'se söylediğimiz şey
+    "13 puan fark" olur ve okuyan bunu görmeden değerlendiremez.
+    """
+    sym = (r.get("coin") or "").split(":")[-1]
+    up = (r.get("p_up") or 50) >= 50
+    arrow = "🟢📈" if up else "🔴📉"
+    p = r["p_up"] if up else 100 - r["p_up"]
+    tf, h = r.get("tf"), r.get("horizon")
+    span = f"{h} bar" + (f" ({h}s)" if tf == "1h" else f" ({h * 15}dk)")
+    lines = [
+        f"🔮 <b>{sym}</b> — {tf} grafiğinde geçmiş örüntü eşleşmesi",
+        f"{arrow} <b>%{p:.0f}</b> ihtimalle {'yukarı' if up else 'aşağı'}"
+        f" · sonraki <b>{span}</b>",
+        f"📊 Taban oran %{r.get('base_up') or 0:.0f} →"
+        f" <b>{r.get('edge') or 0:+.0f} puan</b> fark"
+        f" · z={r.get('z') or 0:.1f} · n={r.get('n') or 0} benzer örnek",
+    ]
+    if r.get("med") is not None:
+        lines.append(f"📐 Medyan hareket <b>{r['med']:+.2f}%</b>"
+                     + (f" (çeyrekler {r['q25']:+.1f}% … {r['q75']:+.1f}%)"
+                        if r.get("q25") is not None else ""))
+    rec = r.get("record") or {}
+    if rec.get("rate") is not None:
+        lines.append(f"🎯 Bu aracın sicili: <b>%{rec['rate']}</b> isabet"
+                     f" ({rec['n']} kapanmış tahmin)")
+    else:
+        lines.append("🎯 Bu aracın sicili <b>henüz yok</b> — ilk tahminler "
+                     "vadesini doldurmadı, güvenilirliği ölçülmedi")
+    lines.append("<i>Her turda binin üzerinde kombinasyon taranıyor; z≥2 eşiğini "
+                 "şansa geçenler de olur. Tek dürüst ölçü yukarıdaki sicildir. "
+                 "Yatırım tavsiyesi değildir.</i>")
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    return "\n".join(lines)
+
+
 def offhours_move(m: dict) -> str:
     """Kapalı seans hareketi — kümülatif sapma bandı ya da ani sıçrama.
 
