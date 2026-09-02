@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS addresses(
   first_seen INTEGER, first_deposit_ts INTEGER, last_deposit_ts INTEGER,
   label TEXT, hits INTEGER DEFAULT 0, misses INTEGER DEFAULT 0,
   watchlist INTEGER DEFAULT 0, notes TEXT,
-  entity TEXT                      -- NULL=insan | mm | vault | manual (elle elendi)
+  entity TEXT,                     -- NULL=insan | mm | vault | manual (elle elendi)
+  account_value REAL,              -- HL perp teminatı (tüm dex) — net worth DEĞİL
+  account_ts INTEGER               -- ölçüm anı (bayatlık göstergesi)
 );
 CREATE TABLE IF NOT EXISTS positions_current(
   coin TEXT, address TEXT, ts INTEGER,
@@ -269,6 +271,15 @@ MIGRATIONS = [
     # Eski satırların hepsi kripto turundan geldiği için NULL = 'crypto' okunur
     # (MIGRATIONS yalnız ALTER — geriye dönük UPDATE buraya konmaz).
     "ALTER TABLE vol_events ADD COLUMN market TEXT",
+    # account_value: adresin TÜM dex'lerdeki perp teminatı toplamı. "Net worth"
+    # DEĞİL — spot, vault ve zincir dışı varlıklar dahil değil; başlıkta da öyle
+    # yazıyor. Veri zaten çektiğimiz clearinghouseState/leaderboard yanıtlarının
+    # içindeydi, okumadan atıyorduk: ek API maliyeti yok.
+    "ALTER TABLE addresses ADD COLUMN account_value REAL",
+    # account_ts OPSİYONEL DEĞİL: derin keşif bir adrese 75-125 dakikada bir
+    # uğruyor, yani rakam 2 saate kadar bayat olabilir. Yaşını göstermeden
+    # bakiye yazmak sessizce yanlış bilgi vermektir.
+    "ALTER TABLE addresses ADD COLUMN account_ts INTEGER",
 ]
 
 

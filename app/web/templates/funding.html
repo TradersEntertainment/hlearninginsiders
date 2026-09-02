@@ -7,6 +7,8 @@
 <div style="overflow-x:auto">
 <table>
   <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Yön</th><th>Büyüklük</th>
+      <th title="Adresin HL perp teminatı — 'net worth' değil">HL bakiye</th>
+      <th title="Pozisyon / bakiye — asıl bilgi bu">Poz/Bakiye</th>
       <th title="Funding'den günlük {{ 'gider' if paying else 'gelir' }}">$/gün</th></tr>
   {% for p in rows %}
   <tr>
@@ -15,6 +17,8 @@
       {%- if p.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}</td>
     <td class="{{ p.side }}">{{ 'LONG' if p.side == 'long' else 'SHORT' }}</td>
     <td class="dim">{{ p.notional|usd }}</td>
+    <td>{{ m.equity_cell(p.account_value, p.account_ts) }}</td>
+    <td>{{ m.equity_pct(p.account_value, p.notional) }}</td>
     <td class="{{ 'short' if paying else 'long' }}"><b>{{ (p.daily|abs)|usd }}</b></td>
   </tr>
   {% endfor %}

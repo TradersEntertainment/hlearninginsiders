@@ -175,6 +175,39 @@ Maliyet: sembol başına turda 1 istek. İki radar birlikte ~200 sembol / 5 daki
 ≈ **40 rpm**, bütçe 350 rpm. Her biri kendi Ayarlar grubundan ayrı ayrı
 kapatılabilir (maliyet sıfırlanır).
 
+## Cüzdan Bakiyesi Kolonu
+
+Pozisyon tablolarında **HL bakiye** ve **Poz/Bakiye** kolonları var. Asıl bilgi
+ikincisidir: $890K'lık bir pozisyon $50M'lik hesapta kıpırdanma, $171K'lık bir
+pozisyon $200K'lık hesapta **her şeyini ortaya koymak** demektir. Notional tek
+başına bu ayrımı yapamaz; insider şüphesinin konusu ikincisidir.
+
+**Ek API maliyeti yok.** Veri zaten çektiğimiz iki yanıtın içindeydi ve
+okumadan atıyorduk: `clearinghouseState` her dex için `marginSummary.
+accountValue` döndürüyor, `leaderboard` da her satırda `accountValue` taşıyor
+(onu yalnız sıralamak için okuyup çöpe atıyorduk). İkisi de artık işleniyor —
+leaderboard sayesinde binlerce dev hesabın bakiyesi derin keşfin onlara
+uğramasını beklemeden geliyor.
+
+**Bu "net worth" DEĞİLDİR.** `accountValue` = perp teminatı. Spot bakiyesi,
+vault'lar ve zincir dışı varlıklar dahil değil; kolon başlığı ve tooltip bunu
+söylüyor. Spot dahil etmek adres başına +1 istek demekti (derin keşif turunun
+maliyetini ~ikiye katlardı), bilerek yapılmadı.
+
+Üç kural arayüzde:
+
+- **Bilinmiyor ≠ sıfır.** Ölçmediğimiz adres `—` gösterir, 0 değil. 0 yazmak
+  hem "hesap boş" izlenimi verirdi hem oranı sonsuza götürürdü.
+- **Bayatlık görünür.** Derin keşif bir adrese 75-125 dakikada bir uğruyor;
+  3 saatten eski ölçüm `⏳` ile işaretlenir.
+- **Kapsama sayılır.** Tablo altında *"N/M satırda bakiye biliniyor"* yazar;
+  aynı sayı `/tani`'da da var. Kolonun yarısı baştan boş olacak (yalnız derin
+  keşfin uğradığı ve leaderboard'daki adresler) — bu bir arıza değil, ve
+  hangisi olduğu ekrandan anlaşılsın diye sayılıyor.
+
+**İnsider skoru bu değişiklikten etkilenmedi**; oran şimdilik yalnız kolon.
+İstenirse "pozisyon hesabın %X'i" ayrı bir skor sinyali olarak eklenebilir.
+
 ## Örüntü Bulucu: `/orintu`
 
 "Şu anki grafik şekli geçmişte olduğunda sonra ne olmuş?" — **analog

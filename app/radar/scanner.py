@@ -37,8 +37,39 @@ async def _leaderboard_addrs(client: HLClient, top_n: int) -> list[str]:
     addrs = [r.get("ethAddress", "").lower()
              for r in rows[:LEADERBOARD_CACHE_SIZE] if r.get("ethAddress")]
     await kv_set("leaderboard", {"ts": now(), "addrs": addrs})
-    log.info("leaderboard yenilendi: %d adres", len(addrs))
+    # accountValue ZATEN elimizde (yukarıda sıralamak için okuduk) ama şimdiye
+    # kadar atıyorduk. Binlerce dev hesabın bakiyesi böylece derin keşfin
+    # onlara uğramasını BEKLEMEDEN geliyor — ek API isteği yok.
+    n_acct = await _store_leaderboard_equity(rows[:LEADERBOARD_CACHE_SIZE])
+    log.info("leaderboard yenilendi: %d adres (%d bakiye)", len(addrs), n_acct)
     return addrs[:top_n]
+
+
+async def _store_leaderboard_equity(rows: list[dict]) -> int:
+    """Leaderboard'daki accountValue'ları işle.
+
+    force=False: bu değer YALNIZ ana dex'i biliyor; clearinghouse ölçümü tüm
+    dex'leri kapsadığı için daha otoriter. O yüzden ancak daha taze olduğunda
+    ya da hiç ölçüm yokken yazılır.
+    """
+    from .sweeper import upsert_account_value
+    ts, n = now(), 0
+    for r in rows:
+        addr = (r.get("ethAddress") or "").lower()
+        if not addr:
+            continue
+        try:
+            av = float(r.get("accountValue") or 0)
+        except (TypeError, ValueError):
+            continue
+        if av <= 0:
+            continue
+        try:
+            if await upsert_account_value(addr, av, ts, force=False):
+                n += 1
+        except Exception as e:
+            log.debug("leaderboard bakiyesi yazılamadı (%s): %s", addr, e)
+    return n
 
 
 async def candidates(cfg: Config, client: HLClient, coin: str) -> list[str]:

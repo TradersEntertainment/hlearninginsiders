@@ -269,6 +269,19 @@ async def _subsystems(cfg) -> list[str]:
                    + (f"{_dur(now() - int(last_full))} önce" if last_full else "YOK (ilk tur sürüyor)")
                    + (f" · hl yazma hatası {sw['hl_err']}" if sw.get("hl_err") else "")
                    + (f"\n       ⚠️ HATA: {sw['err_msg']}" if sw.get("err_msg") else ""))
+    # Bakiye kapsaması: kolon boşsa sebebi "bozuk" mu "henüz uğramadık" mı,
+    # ancak bu sayı söyler.
+    try:
+        from .radar.sweeper import account_coverage
+        ac = await account_coverage()
+        out.append(f"  cüzdan bakiyesi: {_num(ac['known'])}/{_num(ac['n'])} adreste var"
+                   f" · {_num(ac['stale'])} tanesi 3 saatten eski"
+                   + (f" · son ölçüm {_dur(now() - int(ac['newest']))} önce"
+                      if ac.get("newest") else " · HİÇ ÖLÇÜM YOK")
+                   + (f" · bu turda {sw['acct_written']} yazıldı"
+                      if sw.get("acct_written") is not None else ""))
+    except Exception as e:
+        out.append(f"  cüzdan bakiyesi okunamadı ({type(e).__name__}: {e})")
     pf = await kv_get("hl_prime_fail_ts")
     if pf:
         out.append(f"  ⚠️ dev tarama (prime) hatada — {_dur(now() - int(pf))} önce damgalandı")

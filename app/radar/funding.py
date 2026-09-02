@@ -53,7 +53,8 @@ async def ranking(cfg=None, top: int = TOP_PAYERS) -> dict:
         # En çok ödeyenler için tek tek pozisyonlar (maliyet coin'in oranıyla
         # çarpılacağı için oranı bilmeden süzemiyoruz; makul bir tavanla al).
         cur = await conn.execute(
-            """SELECT p.coin, p.address, p.side, p.notional, t.symbol, a.watchlist
+            """SELECT p.coin, p.address, p.side, p.notional, t.symbol, a.watchlist,
+                      a.account_value, a.account_ts
                FROM positions_current p
                LEFT JOIN tickers t ON t.coin = p.coin
                LEFT JOIN addresses a ON a.address = p.address

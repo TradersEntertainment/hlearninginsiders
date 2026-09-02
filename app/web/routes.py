@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import pathlib
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -91,6 +92,21 @@ def _posage(p):
 
 
 templates.env.filters.update(usd=_usd, px=_px, age=_age, dt=_dt, posage=_posage)
+
+
+def _stale_acct(ts) -> bool:
+    """Bakiye ölçümü bayat mı? Eşik sweeper'da tanımlı — tek yerde dursun."""
+    from ..radar.sweeper import ACCOUNT_STALE_SEC
+    try:
+        return bool(ts) and (int(time.time()) - int(ts)) > ACCOUNT_STALE_SEC
+    except (TypeError, ValueError):
+        return False
+
+
+templates.env.globals["stale_acct"] = _stale_acct
+# `select('stale_ts')` şablonda bayat ölçümleri saymak için — Jinja testleri
+# filtre zincirinde kullanılabildiği için sayaç tek satırda kalıyor.
+templates.env.tests["stale_ts"] = _stale_acct
 
 router = APIRouter()
 
@@ -722,7 +738,10 @@ async def coin_page(request: Request, symbol: str):
     mark = summ.get("mark")
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT * FROM positions_current WHERE coin=? ORDER BY notional DESC LIMIT 100",
+            """SELECT p.*, a.account_value, a.account_ts
+               FROM positions_current p
+               LEFT JOIN addresses a ON a.address = p.address
+               WHERE p.coin=? ORDER BY p.notional DESC LIMIT 100""",
             (coin,))
         rows = [dict(r) for r in await cur.fetchall()]
         cur = await conn.execute(

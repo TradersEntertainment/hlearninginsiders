@@ -228,6 +228,8 @@
   </div>
   <table id="postable">
     <tr><th>#</th><th>Skor</th><th class="l">Adres</th><th>Yön</th><th>Notional</th>
+        <th title="Adresin HL perp teminatı (tüm dex toplamı). Spot/vault dahil DEĞİL — 'net worth' değildir">HL bakiye</th>
+        <th title="Pozisyon / bakiye. ASIL SAYI BU: $890K'lık pozisyon $50M'lik hesapta kıpırdanma, $171K'lık pozisyon $200K'lık hesapta her şeyini ortaya koymaktır">Poz/Bakiye</th>
         <th>Entry</th><th>Kald.</th><th>Liq</th><th>uPnL</th>
         <th title="pozisyonun ilk açılışı">Açılış</th>
         <th title="pozisyona son ekleme">Son ➕</th>
@@ -240,6 +242,8 @@
       <td class="l">{{ m.addr(p.address, k) }}</td>
       <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
+      <td>{{ m.equity_cell(p.account_value, p.account_ts) }}</td>
+      <td>{{ m.equity_pct(p.account_value, p.notional) }}</td>
       <td>{{ p.entry_px|px }}</td>
       <td>{{ p.leverage|int }}x</td>
       <td>{{ p.liq_px|px }}</td>
@@ -251,6 +255,7 @@
     </tr>
     {% endfor %}
   </table>
+  {{ m.equity_note(rows) }}
   {% elif scanning %}<p class="dim">🐋 İlk tarama sürüyor — birazdan burada olacaklar…</p>
   {% else %}<p class="dim">Havuzda bu coin için açık pozisyon bulunamadı (havuz büyüdükçe dolar).</p>{% endif %}
 </div>

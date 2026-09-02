@@ -114,7 +114,8 @@ async def players(anchor_ts: int, limit: int = PLAYERS_LIMIT) -> dict:
         cur = await conn.execute(
             """SELECT p.coin, p.address, p.side, p.notional, p.score, p.leverage,
                       p.entry_px, COALESCE(p.opened_ts, p.first_seen_ts) op_ts,
-                      t.symbol, a.watchlist, a.hits, a.misses
+                      t.symbol, a.watchlist, a.hits, a.misses,
+                      a.account_value, a.account_ts
                FROM positions_current p
                LEFT JOIN tickers t ON t.coin = p.coin
                LEFT JOIN addresses a ON a.address = p.address

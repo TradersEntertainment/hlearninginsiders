@@ -45,7 +45,8 @@ async def dominants(cfg: Config) -> list[dict]:
             """SELECT p.*, t.symbol,
                       COALESCE(a.entity,'') entity,
                       COALESCE(a.hits,0) hits, COALESCE(a.misses,0) misses,
-                      COALESCE(a.watchlist,0) watchlist
+                      COALESCE(a.watchlist,0) watchlist,
+                      a.account_value, a.account_ts
                FROM positions_current p
                JOIN tickers t ON t.coin = p.coin
                LEFT JOIN addresses a ON a.address = p.address

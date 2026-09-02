@@ -91,6 +91,8 @@
       <div style="overflow-x:auto">
       <table>
         <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Büyüklük</th>
+            <th title="Adresin HL perp teminatı — 'net worth' değil">HL bakiye</th>
+            <th title="Pozisyon / bakiye — asıl bilgi bu">Poz/Bakiye</th>
             <th title="Kaldıraç">Kald.</th><th title="İnsider şüphe skoru">Skor</th><th>Ne zaman</th></tr>
         {% for p in rows %}
         <tr>
@@ -98,6 +100,8 @@
           <td class="l">{{ m.addr(p.address, k, 6) }}
             {%- if p.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}</td>
           <td><b>{{ p.notional|usd }}</b></td>
+          <td>{{ m.equity_cell(p.account_value, p.account_ts) }}</td>
+          <td>{{ m.equity_pct(p.account_value, p.notional) }}</td>
           <td class="dim">{{ p.leverage|int }}x</td>
           <td class="dim">{{ p.score or 0 }}</td>
           <td class="dim">{{ p.op_ts|dt }}</td>

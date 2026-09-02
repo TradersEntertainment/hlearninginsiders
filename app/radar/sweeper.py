@@ -28,6 +28,13 @@ from .scanner import _leaderboard_addrs
 
 log = logging.getLogger("radar.sweeper")
 
+# Bu turda kaç adrese bakiye yazıldı — sweep_stats'a düşüyor. Bakiye kolonu
+# boş kalırsa "yazılmıyor mu, adres mi görülmedi" sorusu buradan cevaplanır.
+_acct_written = [0]
+# Bakiye ölçümü bundan eskiyse arayüzde ⏳ ile işaretlenir. Derin keşif turu
+# 75-125 dakika sürdüğü için 3 saat makul bir "hâlâ temsili" sınırı.
+ACCOUNT_STALE_SEC = 3 * 3600
+
 TR = ZoneInfo("Europe/Istanbul")
 
 HARVEST_COINS_PER_CYCLE = 6   # tur başına recentTrades çekilecek coin sayısı
@@ -71,6 +78,28 @@ async def build_pools(cfg: Config, client: HLClient) -> tuple[list[str], list[st
             seen.add(a)
             cold.append(a)
     return hot, cold
+
+
+def parse_account_value(resp) -> float | None:
+    """Tüm dex'lerdeki `marginSummary.accountValue` toplamı — HL perp teminatı.
+
+    BU "NET WORTH" DEĞİL: spot bakiyesi, vault'lar ve zincir dışı varlıklar
+    dahil değil. Arayüz de öyle etiketliyor.
+
+    None döner ki 0 YAZILMASIN: "bilmiyoruz" ile "hesap boş" apayrı şeyler ve
+    0 yazmak pozisyon/bakiye oranını sonsuza götürürdü.
+    """
+    total, seen = 0.0, False
+    for state in _iter_states(resp):
+        ms = state.get("marginSummary")
+        if not isinstance(ms, dict):
+            continue
+        try:
+            total += float(ms.get("accountValue") or 0)
+            seen = True
+        except (TypeError, ValueError):
+            continue
+    return total if seen else None
 
 
 def _parse_equity_positions(resp, coin_set: set[str],
@@ -263,6 +292,30 @@ async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int,
                 (ts, addr))
 
 
+async def upsert_account_value(addr: str, value: float | None, ts: int,
+                               force: bool = True) -> bool:
+    """Bakiyeyi yaz. `force=False` ise YALNIZ mevcut ölçüm daha eskiyse yazar.
+
+    Öncelik kuralı: clearinghouse ölçümü tüm dex'leri kapsadığı için otoriter
+    (force=True); leaderboard değeri yalnız ana dex'i bildiği için ancak daha
+    taze olduğunda ya da hiç ölçüm yokken yazılır (force=False).
+    """
+    if value is None:
+        return False
+    q = ("UPDATE addresses SET account_value=?, account_ts=? WHERE address=?"
+         + ("" if force else " AND COALESCE(account_ts,0) < ?"))
+    args = [float(value), int(ts), addr] + ([] if force else [int(ts)])
+    async with db() as conn:
+        cur = await conn.execute(q, tuple(args))
+        if cur.rowcount:
+            return True
+        # Adres henüz addresses'ta yoksa (leaderboard'dan yeni geldi) oluştur.
+        cur = await conn.execute(
+            "INSERT OR IGNORE INTO addresses(address, first_seen, account_value,"
+            " account_ts) VALUES(?,?,?,?)", (addr, ts, float(value), int(ts)))
+        return (cur.rowcount or 0) > 0
+
+
 async def _upsert_address(addr: str, positions: dict[str, dict], ts: int) -> None:
     async with db() as conn:
         for coin, p in positions.items():
@@ -347,6 +400,13 @@ async def probe_address(cfg: Config, client: HLClient, addr: str) -> int:
     await _upsert_address(addr, positions, ts)
     await _upsert_hl(addr, _parse_all_positions(resp, _hl_floor(cfg)), ts,
                      held=set(_parse_all_positions(resp, 0)))
+    # AYRI TRY: bakiye bir bonus: ayrıştırması patlarsa pozisyon yazımı — turun
+    # asıl işi — etkilenmesin.
+    try:
+        if await upsert_account_value(addr, parse_account_value(resp), ts):
+            _acct_written[0] += 1
+    except Exception as e:
+        log.debug("bakiye yazılamadı (%s): %s", addr, e)
     return len(positions)
 
 
@@ -500,9 +560,26 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
                                  "batch_positions": n_pos,
                                  "ok": n_ok, "err": n_err, "hl_err": n_hlerr,
                                  "err_msg": last_err[0] if last_err else "",
+                                 "acct_written": _acct_written[0],
+                                 "acct_known": await account_coverage(),
                                  **budget, "ts": ts})
+    _acct_written[0] = 0
     return {"hot": len(hot), "cold": len(cold), "positions": n_pos,
             "ok": n_ok, "err": n_err}
+
+
+async def account_coverage() -> dict:
+    """Kaç adreste bakiye biliniyor, kaçı bayat. Kolonun yarısı boşsa sebebi
+    "bozuk" değil "henüz uğramadık" — bunu göstermeden ayırt edilemez."""
+    ts = now()
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) n, SUM(account_value IS NOT NULL) known,"
+            " SUM(account_ts < ?) stale, MAX(account_ts) newest"
+            " FROM addresses", (ts - ACCOUNT_STALE_SEC,))
+        r = await cur.fetchone()
+    return {"n": r["n"] or 0, "known": r["known"] or 0,
+            "stale": r["stale"] or 0, "newest": r["newest"] or 0}
 
 
 async def harvest_trades(cfg: Config, client: HLClient) -> int:

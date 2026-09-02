@@ -12,3 +12,46 @@
 {% set s = sym_map.get(c) -%}
 {% if s %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% else %}{{ c }}{% endif %}
 {%- endmacro %}
+
+{# ── Cüzdan bakiyesi + pozisyon/bakiye oranı ─────────────────────────────────
+   Asıl bilgi ORANDIR: $890K'lık pozisyon $50M'lik hesapta kıpırdanma, $171K'lık
+   pozisyon $200K'lık hesapta her şeyini ortaya koymaktır. Notional tek başına
+   bunu söylemez.
+
+   Üç kural:
+   • Bakiye BİLİNMİYORSA "—" — sıfır DEĞİL. "Bilmiyoruz" ile "parası yok" ayrı
+     şeyler, ve sıfırla bölmeye de girmeyiz.
+   • Ölçüm bayatsa ⏳ — derin keşif bir adrese 75-125 dakikada bir uğruyor,
+     yaşını göstermeden rakam yazmak sessizce yanıltmaktır.
+   • Yüzde metni ASCII kalsın: base.html'deki parseCell U+2212'yi tanımıyor,
+     tanımazsa o kolon metin gibi sıralanır. #}
+{% macro equity_cell(av, ts) -%}
+{% if av %}<span class="dim" title="HL perp teminatı (tüm dex toplamı) — spot,
+vault ve zincir dışı varlıklar DAHİL DEĞİL, yani 'net worth' değildir{% if ts %}
+· ölçüm: {{ ts|dt }}{% endif %}">{{ av|usd }}{% if stale_acct(ts) %} ⏳{% endif %}</span>
+{%- else %}<span class="dim" title="Bu adresin bakiyesini henüz ölçmedik — derin
+keşif ona uğrayınca ya da leaderboard'a girince dolar">—</span>{% endif %}
+{%- endmacro %}
+
+{% macro equity_pct(av, ntl) -%}
+{% if av and av > 0 and ntl %}
+  {%- set p = (ntl / av * 100) -%}
+  <b class="{{ 'short' if p >= 100 else ('long' if p >= 50 else 'dim') }}"
+     title="Pozisyon büyüklüğünün hesap değerine oranı. %100'ü aşabilir:
+kaldıraçla hesabından büyük pozisyon taşınıyor demektir">{{ '%.0f'|format(p) }}%</b>
+{%- else %}<span class="dim">—</span>{% endif %}
+{%- endmacro %}
+
+{# Tablo altı kapsama satırı. Kolonun yarısı boş olacak (yalnız derin keşfin
+   uğradığı ve leaderboard'daki adreslerde bakiye var) — bunu SAYMAZSAK
+   "bozuk mu?" sorusu doğar ve cevabı kodun içinde saklı kalır. #}
+{% macro equity_note(rows) -%}
+{% set known = rows | selectattr('account_value') | list | length -%}
+{% set stale = rows | selectattr('account_value') | selectattr('account_ts')
+                    | map(attribute='account_ts') | select('stale_ts') | list | length -%}
+<p class="sub dim">💰 {{ known }}/{{ rows|length }} satırda HL bakiyesi biliniyor
+  {%- if stale %} · {{ stale }} tanesi 3 saatten eski (⏳){% endif %}.
+  Bakiye yalnız derin keşfin uğradığı ve leaderboard'daki adreslerde var; tur
+  ilerledikçe dolar. <b>Bu rakam "net worth" değildir</b> — HL perp teminatı,
+  spot/vault dahil değil.</p>
+{%- endmacro %}

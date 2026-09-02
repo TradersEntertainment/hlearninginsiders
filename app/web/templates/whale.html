@@ -7,6 +7,13 @@
   <p><code>{{ address }}</code>
     · <a href="https://hypurrscan.io/address/{{ address }}" target="_blank">hypurrscan ↗</a></p>
   <span class="stat">Sicil: <b>{{ arow.get('hits', 0) }}✓ / {{ arow.get('misses', 0) }}✗</b></span>
+  {% if arow.get('account_value') %}<span class="stat"
+     title="Tüm dex'lerdeki perp teminatı toplamı. Spot, vault ve zincir dışı
+varlıklar DAHİL DEĞİL — 'net worth' değildir">HL bakiye:
+    <b>{{ arow.account_value|usd }}</b>{% if stale_acct(arow.get('account_ts')) %} ⏳{% endif %}
+    <span class="dim">({{ arow.account_ts|age }} önce ölçüldü)</span></span>
+  {%- else %}<span class="stat dim" title="Derin keşif bu adrese henüz uğramadı
+ve leaderboard'da da yok">HL bakiye: bilinmiyor</span>{% endif %}
   {% if arow.get('watchlist') %}<span class="stat">⭐ <b>Watchlist'te</b></span>{% endif %}
   {% if arow.get('entity') %}<span class="stat warn">{{ {'mm':'🤖 Market maker','vault':'🏦 Vault','manual':'🚫 Elle elendi'}.get(arow.entity, arow.entity) }} — skorlama/alert dışı</span>{% endif %}
   {% if arow.get('first_deposit_ts') %}<span class="stat">İlk fonlama: <b>{{ arow.first_deposit_ts|dt }}</b></span>{% endif %}

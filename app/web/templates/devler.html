@@ -13,6 +13,8 @@
   <td class="{{ p.side }}"><b>{{ 'LONG' if p.side == 'long' else 'SHORT' }}</b></td>
   <td><b>{{ '—' if p.closed else p.notional|usd }}</b></td>
   <td class="{{ 'warn' if p.peak_notional and p.peak_notional > (p.notional or 0) * 1.2 else 'dim' }}">{{ p.peak_notional|usd }}</td>
+  <td>{{ m.equity_cell(p.account_value, p.account_ts) }}</td>
+  <td>{{ m.equity_pct(p.account_value, p.notional) }}</td>
   <td>{{ p.entry_px|px }}</td>
   <td>{{ '%.0f'|format(p.leverage or 0) }}x</td>
   <td>{{ p.liq_px|px }}</td>
@@ -78,6 +80,8 @@
   <table id="bigtable">
     <tr><th class="l">Coin</th><th class="l">Adres</th><th>Yön</th><th>Boyut</th>
         <th title="Gördüğümüz en büyük hâli">Zirve</th>
+        <th title="Adresin HL perp teminatı (tüm dex toplamı). Spot/vault dahil DEĞİL — 'net worth' değildir">HL bakiye</th>
+        <th title="Pozisyon / bakiye. ASIL SAYI BU: aynı $500K, $50M'lik hesapta kıpırdanma, $600K'lık hesapta her şeyini ortaya koymaktır">Poz/Bakiye</th>
         <th>Giriş</th><th>Kald.</th><th>Liq</th><th>uPnL</th>
         <th title="Bu pozisyonu ilk gördüğümüz an">Görülme</th><th>Durum</th></tr>
     {% for p in big_live %}{{ bigrow(p, 'live') }}{% endfor %}
@@ -115,6 +119,8 @@
   <div style="overflow-x:auto">
   <table>
     <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Yön</th><th>Boyut</th>
+        <th title="Adresin HL perp teminatı (tüm dex toplamı). Spot/vault dahil DEĞİL — 'net worth' değildir">HL bakiye</th>
+        <th title="Pozisyon / bakiye. ASIL SAYI BU: aynı $500K, $50M'lik hesapta kıpırdanma, $600K'lık hesapta her şeyini ortaya koymaktır">Poz/Bakiye</th>
         <th title="Bu pozisyon tüm açık pozisyonların yüzde kaçı">OI payı</th>
         <th title="Hissenin son 24 saatlik işlem hacmi">24h hacim</th>
         <th title="Pozisyon, günlük hacmin kaç katı — yüksekse çıkış çok zor">Hacim katı</th>
@@ -128,6 +134,8 @@
         {% if p.hits %}<span class="dim">{{ p.hits }}✓/{{ p.misses }}✗</span>{% endif %}</td>
       <td class="{{ p.side }}"><b>{{ 'LONG' if p.side=='long' else 'SHORT' }}</b></td>
       <td><b>{{ p.notional|usd }}</b></td>
+      <td>{{ m.equity_cell(p.account_value, p.account_ts) }}</td>
+      <td>{{ m.equity_pct(p.account_value, p.notional) }}</td>
       <td>{% if p.oi_share is not none %}
         <div class="oibar ihit" data-side="{{ p.side }}"
              data-tip="{{ p.symbol }} · bu pozisyon {{ p.notional|usd }}{% if p.oi_ntl %} / toplam OI {{ p.oi_ntl|usd }}{% endif %} = açık pozisyonun %{{ '%.1f'|format(p.oi_share) }}'i{% if p.szi %} · {{ '%.0f'|format(p.szi|abs) }} adet{% endif %}{% if p.liq_px %} · liq {{ p.liq_px|px }}{% endif %}{% if p.upnl %} · uPnL {{ p.upnl|usd }}{% endif %}">

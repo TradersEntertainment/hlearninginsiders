@@ -16,8 +16,12 @@ from ..db import db, kv_get
 
 log = logging.getLogger("radar.bigpos")
 
-COLS = ("coin, address, dex, side, szi, entry_px, leverage, liq_px, upnl,"
-        " notional, ts, first_seen_ts, peak_notional, peak_ts, closed_ts")
+COLS = ("h.coin, h.address, h.dex, h.side, h.szi, h.entry_px, h.leverage,"
+        " h.liq_px, h.upnl, h.notional, h.ts, h.first_seen_ts, h.peak_notional,"
+        " h.peak_ts, h.closed_ts, a.account_value, a.account_ts")
+# Bakiye `addresses`'tan geliyor; LEFT JOIN çünkü her adrese henüz uğramadık
+# ve bilinmeyen bakiye satırı DÜŞÜRMEMELİ.
+FROM_HL = "hl_positions h LEFT JOIN addresses a ON a.address = h.address"
 
 
 # Ana dex'in "büyük" tanımı hisse tarafından ÇOK farklı: xyz:NVDA'da $1M dev,
@@ -87,9 +91,9 @@ async def live_big(limit: int = 150, min_ntl: float = 0) -> list[dict]:
     """Şu an AÇIK en büyük pozisyonlar (tüm Hyperliquid)."""
     async with db() as conn:
         cur = await conn.execute(
-            f"SELECT {COLS} FROM hl_positions"
-            " WHERE closed_ts IS NULL AND notional >= ?"
-            " ORDER BY notional DESC LIMIT ?", (min_ntl, limit))
+            f"SELECT {COLS} FROM {FROM_HL}"
+            " WHERE h.closed_ts IS NULL AND h.notional >= ?"
+            " ORDER BY h.notional DESC LIMIT ?", (min_ntl, limit))
         rows = [dict(r) for r in await cur.fetchall()]
     return _decorate(rows, await _sym_map())
 
@@ -98,8 +102,8 @@ async def record_big(limit: int = 150, min_ntl: float = 0) -> list[dict]:
     """Şimdiye kadar GÖRDÜĞÜMÜZ en büyükler — kapanmışlar dahil."""
     async with db() as conn:
         cur = await conn.execute(
-            f"SELECT {COLS} FROM hl_positions WHERE peak_notional >= ?"
-            " ORDER BY peak_notional DESC LIMIT ?", (min_ntl, limit))
+            f"SELECT {COLS} FROM {FROM_HL} WHERE h.peak_notional >= ?"
+            " ORDER BY h.peak_notional DESC LIMIT ?", (min_ntl, limit))
         rows = [dict(r) for r in await cur.fetchall()]
     return _decorate(rows, await _sym_map())
 
