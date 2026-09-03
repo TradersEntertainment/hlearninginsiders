@@ -325,7 +325,8 @@ def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg,
 
 def whale_fill_alert(coin: str, addr: str, side: str, price: float,
                      notional: float, is_watch: bool, record: tuple,
-                     taker_ratio: float | None = None, n_parts: int = 1) -> str:
+                     taker_ratio: float | None = None, n_parts: int = 1,
+                     brief: dict | None = None) -> str:
     sym = coin.split(":")[-1]
     act = "🟢 ALIŞ" if side == "buy" else "🔴 SATIŞ"
     hits, misses = record
@@ -350,6 +351,7 @@ def whale_fill_alert(coin: str, addr: str, side: str, price: float,
         lines.append(f"🧩 Tek emir {n_parts} parçaya bölünmüş (toplam yukarıda)")
     if hits or misses:
         lines.append(f"🎯 Sicil: {hits} doğru / {misses} yanlış")
+    lines += what_happened(brief)
     if is_listed(sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
@@ -528,6 +530,91 @@ def wall_gone(w: dict) -> str:
             " daha rahat hareket edebilir.</i>")
 
 
+# Manşet emojisi verdict'e bağlı: mesaja bakan kişi tek karakterden ne
+# olduğunu anlasın diye. Sıra ÖNEMLİ — "SHORT kapanmış" içinde "kapan" geçtiği
+# için long kapanışından SONRA denenirse yanlış eşleşir.
+_VERDICT_ICON = (
+    ("yeni SHORT", "📉"), ("LONG kapan", "🩸"), ("yeni LONG", "📈"),
+    ("SHORT kapan", "🔥"), ("el değiş", "🔄"),
+)
+
+# Kırılım boşsa SEBEBİ söylenir. "Adres yok" tek başına yanıltıcı: kullanıcı
+# "kimse almamış" diye okur, oysa çoğu zaman biz bakmıyoruzdur.
+_EMPTY_TEXT = {
+    "not_listening": "👥 Adres kırılımı yok — bu coini canlı DİNLEMİYORUZ",
+    "below_floor": "👥 {floor} üstü tek işlem yok — hacim küçük parçalardan gelmiş",
+    "unknown": "👥 Adres kırılımı yok (dinleme durumu bilinmiyor)",
+}
+
+
+def _verdict_icon(v: str) -> str:
+    for needle, icon in _VERDICT_ICON:
+        if needle in (v or ""):
+            return icon
+    return "❔"
+
+
+def what_happened(b: dict | None) -> list[str]:
+    """'Ne oldu' özetini alarm satırlarına çevir. SAF — veri `window_brief`'ten.
+
+    İki katman: OI okuması (manşet — bir alışın 'açtı mı kapattı mı' olduğunu
+    yalnız açık pozisyon söyler) ve en büyük adreslerin ne yaptığı.
+
+    Veri yoksa UYDURMAZ: verdict "belirsiz" kalır, boş kırılımın sebebi
+    yazılır, pozisyonu bilinmeyen adres "bilinmiyor" der.
+    """
+    if not b:
+        return []
+    out: list[str] = []
+    v = b.get("verdict") or "belirsiz"
+    head = f"{_verdict_icon(v)} <b>{esc(v[:1].upper() + v[1:])}</b>"
+    why = b.get("why")
+    if why:
+        head += f" — {esc(why)}"
+    # Ölçüm penceresi genişletildiyse SÖYLE: bu, kovanın değil şu kadar
+    # dakikanın okuması. Sessiz kalmak okumayı olduğundan keskin gösterirdi.
+    if b.get("widened") and b.get("span"):
+        head += f" · <i>OI ölçümü {int(b['span']) // 60 or 1}dk penceresinde</i>"
+    out.append(head)
+
+    if b.get("n_addr"):
+        tk = b.get("taker_pct")
+        # PENCERE HER MESAJDA YAZILI. Whale alarmında başlıktaki tutar partinin
+        # toplamı, buradaki ise penceredeki kayıtlı akış — ikisi meşru olarak
+        # farklı çıkar ve pencere yazılmazsa mesaj kendi kendisiyle çelişiyor
+        # gibi okunur. Kapalı seans bant tetiğinde ise alarmın penceresi (hafta
+        # sonu) ile kırılımın penceresi (son 1 saat) zaten farklı.
+        line = (f"👥 son {b.get('minutes') or 1}dk · {b['n_addr']} adres ·"
+                f" alım <b>{usd(b.get('buy'))}</b>"
+                f" / satım <b>{usd(b.get('sell'))}</b>")
+        net = b.get("net") or 0
+        line += f" · net {'+' if net >= 0 else '−'}{usd(abs(net))}"
+        if tk is not None:
+            line += f" · taker %{tk:.0f}"
+        out.append(line)
+        for r in b.get("top") or []:
+            n = r.get("net") or 0
+            pos = r.get("pos") or {}
+            side = pos.get("side")
+            pos_s = (f"{'LONG' if side == 'long' else 'SHORT'} "
+                     f"{usd(pos.get('notional'))}" if side else "—")
+            inf = r.get("infer") or {}
+            lab = esc(inf.get("label") or "bilinmiyor")
+            out.append(f"  • {alink(r['address'])} "
+                       f"{'+' if n >= 0 else '−'}{usd(abs(n))} · {pos_s} · {lab}"
+                       + (" ⏳" if inf.get("stale") else ""))
+    else:
+        why_empty = _EMPTY_TEXT.get(b.get("empty_reason") or "unknown")
+        if b.get("before_records"):
+            why_empty = ("👥 Adres kırılımı yok — bu dönemde işlem kaydı "
+                         "tutmuyorduk")
+        if why_empty:
+            out.append(why_empty.format(floor=usd(b.get("floor"))))
+    if b.get("probe_err"):
+        out.append(f"<i>⚠️ canlı profil çekilemedi: {esc(b['probe_err'])[:80]}</i>")
+    return out
+
+
 def crypto_vol_alert(e: dict) -> str:
     """Kripto hacim patlaması — 24 saatin en yüksek 5 dakikası."""
     sym = (e.get("coin") or "").split(":")[-1]
@@ -542,6 +629,7 @@ def crypto_vol_alert(e: dict) -> str:
     ]
     if e.get("day_vol"):
         lines.append(f"📊 24s hacim {usd(e['day_vol'])}")
+    lines += what_happened(e.get("brief"))
     lines.append("<i>Hacim geldi — yönü fiyat değişimi söylüyor. "
                  "Yatırım tavsiyesi değildir.</i>")
     return "\n".join(lines)
@@ -572,6 +660,7 @@ def equity_vol_alert(e: dict) -> str:
                          "yapılamıyor, bu hacim saf perp akışı")
     except Exception:
         pass
+    lines += what_happened(e.get("brief"))
     lines.append("<i>Hacim geldi — yönü fiyat değişimi söylüyor. "
                  "Yatırım tavsiyesi değildir.</i>")
     return "\n".join(lines)
@@ -655,6 +744,10 @@ def offhours_move(m: dict) -> str:
     if m["kind"] == "spike" and not m.get("weekend", True) and m.get("spike_thr"):
         lines.append(f"<i>Hafta içi kapalı pencere — eşik %{m['spike_thr']:g}"
                      f" (hafta sonu daha düşük).</i>")
+    # Bant tetiği bütün hafta sonunu kapsıyor; adres kırılımı orada 60 saatlik
+    # olurdu ve hiçbir şey anlatmazdı — son 1 saate bakılır. Hangi pencereye
+    # bakıldığını `what_happened` kendi akış satırında yazıyor.
+    lines += what_happened(m.get("brief"))
     lines.append("<i>ABD kapalıyken dayanak hisse durur; bu hareket saf perp"
                  " akışıdır. Geri döneceğinin garantisi yok.</i>")
     if is_listed(sym):

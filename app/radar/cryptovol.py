@@ -194,7 +194,11 @@ async def scan(cfg, client, notifier=None) -> dict:
         if await alert_recent("cryptovol", key, cool):
             continue                       # olay kaydedildi ama bildirilmiyor
         from ..telegram import format as fmt
-        text = fmt.crypto_vol_alert({**rec, "coin": coin,
+        from .forensics import alert_brief
+        # Kova [bucket_ts, +5dk]: alarmın konuştuğu pencerenin ta kendisi.
+        brief = await alert_brief(cfg, client, coin, rec["bucket_ts"],
+                             rec["bucket_ts"] + 300)
+        text = fmt.crypto_vol_alert({**rec, "coin": coin, "brief": brief,
                                      "day_vol": vols.get(coin)})
         if await notifier.send("cryptovol", text, priority="high",
                                key=f"{key}:{rec['bucket_ts']}", chat_id=chat):

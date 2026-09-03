@@ -144,7 +144,10 @@ async def scan(cfg, client, notifier=None) -> dict:
         if await alert_recent("equityvol", key, cool):
             continue                       # olay kaydedildi ama bildirilmiyor
         from ..telegram import format as fmt
-        text = fmt.equity_vol_alert({**rec, "coin": coin,
+        from .forensics import alert_brief
+        brief = await alert_brief(cfg, client, coin, rec["bucket_ts"],
+                                  rec["bucket_ts"] + 300)
+        text = fmt.equity_vol_alert({**rec, "coin": coin, "brief": brief,
                                      "day_vol": vols.get(coin)})
         if await notifier.send("equityvol", text, priority="high",
                                key=f"{key}:{rec['bucket_ts']}", chat_id=chat):

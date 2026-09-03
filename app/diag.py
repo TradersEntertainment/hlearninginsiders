@@ -372,6 +372,29 @@ async def _subsystems(cfg) -> list[str]:
                       else " — HENÜZ HİÇ YOK"))
     except Exception as e:
         out.append(f"  ne oldu (adli) okunamadı ({type(e).__name__}: {e})")
+    # Dinleme evreni 30 → 120'ye çıktı ve yakalama tabanı $5K: fill büyümesi
+    # buradan izlenir. Şişerse çare tabanı yükseltmek ya da saklamayı kısmak.
+    try:
+        from .db import db as _db
+        async with _db() as c:
+            cur = await c.execute(
+                "SELECT COUNT(*) n FROM fills WHERE ts >= ?", (now() - 3600,))
+            per_h = (await cur.fetchone())["n"]
+            cur = await c.execute(
+                "SELECT COUNT(*) n FROM fills WHERE ts >= ? AND coin NOT LIKE"
+                " '%:%'", (now() - 3600,))
+            cr_h = (await cur.fetchone())["n"]
+        u = await kv_get("ws_universe") or {}
+        n_cr = len(u.get("crypto") or [])
+        out.append(f"  fill akışı: son 1 saatte {_num(per_h)} satır"
+                   f" ({_num(cr_h)} kripto)"
+                   + (f" · dinlenen {n_cr} kripto + {u.get('equity_n', 0)} hisse"
+                      f", {_dur(now() - int(u['ts']))} önce yazıldı"
+                      if u.get("ts") else
+                      " · dinleme evreni HENÜZ YAZILMADI — alarmlarda 'kim ne"
+                      " aldı' kırılımı 'bilinmiyor' der"))
+    except Exception as e:
+        out.append(f"  fill akışı okunamadı ({type(e).__name__}: {e})")
     tw = await kv_get("twap_stats") or {}
     if tw:
         best = tw.get("best") or {}

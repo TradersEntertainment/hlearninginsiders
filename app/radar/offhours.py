@@ -23,6 +23,11 @@ from . import hourstats, metrics
 
 log = logging.getLogger("radar.offhours")
 
+# Kümülatif bant tetiğinin adres kırılımı için bakılan pencere. Bandın
+# kendisi çıpadan beri (hafta sonu = 60 saat) ölçülür ama "kim aldı"
+# sorusunun 60 saatlik cevabı işe yaramaz; son bir saat sorulur.
+DEV_BRIEF_SEC = 3600
+
 # Çıpa örneği kapanıştan bu kadar eskiyse "bayat" sayılır: metrik görevi o
 # sırada düşmüş olabilir ve sapma yanlış bir taban üstünden hesaplanır.
 # Sessizce yanlış rakam göstermektense satırı işaretliyoruz.
@@ -129,7 +134,7 @@ async def players(anchor_ts: int, limit: int = PLAYERS_LIMIT) -> dict:
             "total": len(rows)}
 
 
-async def check_alerts(cfg, notifier) -> dict:
+async def check_alerts(cfg, notifier, client=None) -> dict:
     """Kapalı seans hareket bildirimleri. İKİ AYRI TETİK:
 
       1) KÜMÜLATİF SAPMA — çıpaya göre |sapma| her yeni `offhours_alert_pct`
@@ -158,6 +163,7 @@ async def check_alerts(cfg, notifier) -> dict:
     için bildirim gürültüdür).
     """
     from ..propr import is_listed as propr_listed
+    from .forensics import alert_brief as _brief
     out = {"dev": 0, "spike": 0, "skipped": "" }
     h = ts_hour(cfg)
     if not hourstats.us_closed(None, h):              # 1. param ref_ts, 2. saat
@@ -200,7 +206,12 @@ async def check_alerts(cfg, notifier) -> dict:
             # olmasaydı savrulma sessizce bastırılırdı.
             key = f"dev:{r['coin']}:{anchor}:{'+' if r['dev'] > 0 else '-'}{band}"
             if not await alert_recent("offhours", key, 30 * 86400):
-                text = fmt_move({**base, "kind": "dev", "pct": r["dev"]})
+                # Bant tetiği bütün hafta sonunu kapsar; 60 saatlik bir adres
+                # kırılımı hiçbir şey anlatmaz. Son bir saate bakılır ve bu
+                # mesajda AÇIKÇA yazılır — okuyan neyi gördüğünü bilsin.
+                brief = await _brief(cfg, client, r["coin"], ts - DEV_BRIEF_SEC, ts)
+                text = fmt_move({**base, "kind": "dev", "pct": r["dev"],
+                                 "brief": brief})
                 await notifier.send("offhours", text, priority="high", key=key)
                 await alert_log("offhours", key, text)
                 out["dev"] += 1
@@ -220,7 +231,8 @@ async def check_alerts(cfg, notifier) -> dict:
         key = f"spike:{r['coin']}"
         if await alert_recent("offhours", key, cool):
             continue
-        text = fmt_move({**base, "kind": "spike", "pct": jump,
+        brief = await _brief(cfg, client, r["coin"], ts - win, ts)
+        text = fmt_move({**base, "kind": "spike", "pct": jump, "brief": brief,
                          "ref_px": ref["mark_px"], "window_min": win // 60})
         await notifier.send("offhours", text, priority="high",
                             key=f"{key}:{ts // cool}")

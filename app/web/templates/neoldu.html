@@ -58,7 +58,12 @@
     → {{ (rep.metrics.last.oi * rep.metrics.last.mark_px)|usd }} ·
     fiyat {{ rep.metrics.first.mark_px|px }} → {{ rep.metrics.last.mark_px|px }}
     <span style="font-size:11px">(ölçümler {{ rep.metrics.first.ts|dt }} ve
-    {{ rep.metrics.last.ts|dt }})</span></p>
+    {{ rep.metrics.last.ts|dt }})</span>
+    {%- if rep.widened %}
+    <br><span class="warn" style="font-size:11px">⤢ Pencerenin içine OI örneği
+      düşmemiş — okuma sonraki örneğe kadar <b>{{ (rep.span // 60) or 1 }}
+      dakikaya</b> genişletildi. Sorduğun aralığın değil, bu aralığın
+      okumasıdır.</span>{% endif %}</p>
   {% endif %}
 
   {# ── veri künyesi ─────────────────────────────────────────────────────── #}

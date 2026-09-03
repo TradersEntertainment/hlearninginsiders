@@ -147,7 +147,7 @@ async def metrics_loop(cfg, client, notifier=None):
                 if notifier is not None:
                     try:
                         from .radar import offhours
-                        await offhours.check_alerts(cfg, notifier)
+                        await offhours.check_alerts(cfg, notifier, client)
                     except Exception:
                         log.exception("kapalı seans alarmı başarısız")
         except Exception as e:

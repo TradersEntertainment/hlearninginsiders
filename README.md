@@ -210,6 +210,66 @@ Sekme ayrıca her tur için pozisyonu, bakiyeyi, **Tur/Bakiye** oranını ve
 **taker %**'sini gösterir: sabırlı bir TWAP genelde pasif kalır, agresif olan
 aceleci demektir.
 
+## Alarmlarda "ne oldu": long mu kapandı, short mu açıldı
+
+`/neoldu` sekmesinin iki katmanı — **OI okuması** (manşet) ve **adres
+kırılımı** — artık Telegram mesajlarının içine de giriyor. Kapsam: **hacim
+(kripto + hisse)**, **kapalı seans** ve **whale pozisyon** alarmları.
+
+```
+🚀 PUMP — 24 saatin en yüksek 5 dakikalık hacmi
+5dk hacim $3.2M · önceki rekorun 1.9×'i · fiyat 0.0045 🔴 -0.40%
+📊 24s hacim $58.6M
+📉 Yeni SHORT açılmış — açık pozisyon arttı, fiyat düştü (OI +1.24%, fiyat -0.40%)
+👥 6 adres · alım $1.2M / satım $0.9M · net +$310K · taker %78
+  • 0x1a2b..9f3c +$420K · LONG $2.1M · long'unu artırdı
+  • 0x77de..01aa −$260K · SHORT $980K · short açtı/artırdı
+```
+
+Özet `forensics.window_brief()`'ten gelir (8 SQLite okuması, sıfır API
+isteği); metne çeviren `format.what_happened()` saf ve senkrondur. Ayar
+kapalıysa ya da bir şey patlarsa `alert_brief()` `None` döner ve **alarm sade
+hâliyle yine gider** — zenginleştirme bir süs, alarmın kendisi ondan önemli.
+
+### Yolda duran iki gerçek engel, ikisi de kapatıldı
+
+**1. OI ölçüm penceresi alarm penceresine eşitti.** `metrics_poll_sec` 300 sn,
+hacim kovası da 300 sn: kovanın içine hiç örnek düşmediğinde `_metrics_around`
+iki ucu aynı satıra çakıyor ve manşet **her seferinde** "belirsiz" çıkıyordu.
+Artık böyle bir çakışmada **ileri** doğru genişletiliyor — kovadan sonraki ilk
+örnek `last` olur, iki uç olayı gerçekten kuşatır. Geriye gitmek işe yaramazdı:
+olaydan *önce* biten bir aralığı ölçmüş olurduk.
+
+Genişletme sınırsız değil (`OI_MAX_SPAN = 1800`). Üç red kuralı, üçü de aynı
+sebeple — **ölçmediğimiz bir şeyi ölçmüş gibi göstermemek**: fark yoksa,
+aralık 30 dakikayı aşıyorsa, ya da ölçüm olayın tamamen öncesinde kalıyorsa
+okuma reddedilir ve "belirsiz" denir. *2 saatlik bir OI hareketini 5 dakikalık
+bir olaya yormak, "belirsiz" demekten daha kötü bir yalandır.* Genişletildiyse
+hem mesaj hem `/neoldu` bunu yazar.
+
+**2. Dinleme evreni alarm evreninden dardı.** Collector 30 kripto coin
+dinliyordu ama `cryptovol` **120** coinde alarm çıkarıyor — PUMP ($58.6M) ve
+ENA ($36.9M) gibi coinlerde adres kırılımı sıfır satır gelirdi.
+`crypto_watch_top` **120**'ye çıkarıldı; ikisi artık eşit tutulmalı.
+Fill büyümesi `/tani`'da **saatlik satır sayısı** olarak izlenir.
+
+### Dürüstlük kuralları
+
+- **Boş kırılımın sebebi söylenir**, üç ayrı cümleyle: *bu coini
+  dinlemiyoruz* · *eşik üstü tek işlem yok* · *dinleme durumu bilinmiyor*.
+  Bunları tek bir boş tabloya indirmek "kimse almadı" diye okunurdu.
+  `listening()` bu yüzden `None` da dönebilir — **bilmemek `False` değildir**.
+- Pozisyonunu görmediğimiz adres **"bilinmiyor"** der, yön uydurulmaz.
+- Alarm anında en büyük `alert_forensics_probe` (vars. 3) adresten yalnız
+  **verisi eksik ya da bayat** olanların defteri canlı çekilir; taze olanı
+  yeniden çekmek bedava değil ve hiçbir şey kazandırmaz. Sonda düşerse hata
+  mesajda görünür, özet yine üretilir.
+- Whale alarmı sonda **atmaz**: `_kick_probes` o adresi zaten hemen sonra
+  çekiyor, ikinci istek israf olurdu. Bayatlık ⏳ ile işaretlenir.
+- Kapalı seans **bant** tetiği bütün hafta sonunu kapsar; 60 saatlik bir adres
+  kırılımı hiçbir şey anlatmaz, o yüzden son 1 saate bakılır ve **pencere
+  mesajda yazılır**.
+
 ## Ne Oldu?: `/neoldu`
 
 Grafikte absürt bir hacim gördüğünde: **sembol + saat aralığı gir**, o

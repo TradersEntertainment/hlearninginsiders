@@ -37,6 +37,11 @@ PX_NOISE_PCT = 0.05
 # Pozisyon ölçümü pencereden bu kadar uzaksa çıkarım bayat sayılır.
 PROFILE_STALE_SEC = 3 * 3600
 MAX_ADDRS = 60
+# OI okuması bu kadar geniş bir pencereye kadar genişletilebilir. Örnekleme
+# 300 sn olduğu için 5 dakikalık bir olayda iki uç sık sık aynı örneğe düşüyor;
+# bir örnek geri gitmek sorunu çözer, ama 30 dakikayı aşan bir farkı olayın
+# kendisine yormak uydurma olur.
+OI_MAX_SPAN = 1800
 # Net, brütün bu oranından küçükse "scalp": adres alıp satmış, pozisyonunu
 # anlamlı biçimde değiştirmemiş. Sıfıra tam eşitlik aramak $95K alıp $92K satan
 # birini "long'unu artırdı" diye etiketliyordu — yanıltıcı.
@@ -77,24 +82,62 @@ def read_oi(oi_chg, px_chg) -> dict:
             "why": f"{w} (OI %{oi_chg:+.2f}, fiyat %{px_chg:+.2f})"}
 
 
-async def _metrics_around(coin: str, t0: int, t1: int) -> dict:
-    """Pencerenin başındaki ve sonundaki metrik örneği."""
-    out = {"first": None, "last": None}
+async def _sample_after(conn, coin: str, ts: int) -> dict | None:
+    cur = await conn.execute(
+        "SELECT * FROM asset_metrics WHERE coin=? AND ts>? ORDER BY ts LIMIT 1",
+        (coin, ts))
+    r = await cur.fetchone()
+    return dict(r) if r else None
+
+
+async def _sample_at(conn, coin: str, ts: int) -> dict | None:
+    cur = await conn.execute(
+        "SELECT * FROM asset_metrics WHERE coin=? AND ts<=? ORDER BY ts DESC LIMIT 1",
+        (coin, ts))
+    r = await cur.fetchone()
+    return dict(r) if r else None
+
+
+async def _metrics_around(coin: str, t0: int, t1: int,
+                          max_span: int = OI_MAX_SPAN) -> dict:
+    """Pencerenin iki ucundaki metrik örneği — gerekirse GENİŞLETİLMİŞ.
+
+    OI 300 saniyede bir örnekleniyor, hacim alarmının kovası da 300 saniye:
+    pencerenin içine hiç örnek düşmediğinde iki uç AYNI satıra çakılıyor ve
+    okuma her seferinde "belirsiz" çıkıyordu. Böyle bir çakışmada pencereden
+    SONRAKİ ilk örnek `last` olarak alınır (`widened`) — böylece iki uç olayı
+    gerçekten kuşatır. Geriye gitmek işe yaramaz: olaydan önce biten bir
+    aralığı ölçmüş olurduk.
+
+    Ama genişletme sınırsız DEĞİL. Üç red kuralı, üçü de aynı sebeple:
+    ölçmediğimiz bir şeyi ölçmüş gibi göstermemek.
+      • `last.ts <= first.ts` → ortada fark yok
+      • `span > max_span`     → 2 saatlik bir OI hareketini 5 dakikalık olaya
+                                yormak, "belirsiz" demekten DAHA KÖTÜ bir yalan
+      • `last.ts < t0`        → ölçüm olayın tamamen ÖNCESİNDE kalmış
+    Reddedilirse `last = None` olur ve `read_oi` "belirsiz" der.
+
+    Alarm anında pencereden sonraki örnek HENÜZ GELMEMİŞ olabilir; o zaman
+    okuma dürüstçe "belirsiz" kalır — uydurmaktansa susmak.
+    """
+    out = {"first": None, "last": None, "widened": False, "span": None}
     async with db() as conn:
-        cur = await conn.execute(
-            "SELECT * FROM asset_metrics WHERE coin=? AND ts<=? ORDER BY ts DESC LIMIT 1",
-            (coin, t0))
-        r = await cur.fetchone()
-        out["first"] = dict(r) if r else None
-        cur = await conn.execute(
-            "SELECT * FROM asset_metrics WHERE coin=? AND ts<=? ORDER BY ts DESC LIMIT 1",
-            (coin, t1))
-        r = await cur.fetchone()
-        out["last"] = dict(r) if r else None
-    # İki uç AYNI örneğe düşüyorsa pencere içinde ölçüm yok demektir; fark
-    # sıfır çıkar ve "el değiştirmiş" gibi YANLIŞ bir okuma üretirdi.
-    if (out["first"] and out["last"]
-            and out["first"]["ts"] == out["last"]["ts"]):
+        out["first"] = await _sample_at(conn, coin, t0)
+        out["last"] = await _sample_at(conn, coin, t1)
+        if (out["first"] and out["last"]
+                and out["first"]["ts"] == out["last"]["ts"]):
+            # İLERİ doğru genişletiyoruz, geri değil: geri gitmek pencerenin
+            # ÖNÜNDE biten bir aralığı ölçerdi ve olayı hiç kapsamazdı.
+            # Olaydan SONRAKİ ilk örnek, iki ucu birlikte olayı kuşatır.
+            out["last"] = await _sample_after(conn, coin, t1)
+            out["widened"] = bool(out["last"])
+    f, l = out["first"], out["last"]
+    if not f or not l:
+        out["last"] = None if not f else out["last"]
+        return out
+    span = int(l["ts"]) - int(f["ts"])
+    out["span"] = span
+    if span <= 0 or span > int(max_span) or int(l["ts"]) < int(t0):
         out["last"] = None
     return out
 
@@ -253,6 +296,9 @@ async def report(coin: str, t0: int, t1: int) -> dict:
         "t0": t0, "t1": t1, "minutes": max(1, (t1 - t0) // 60),
         "metrics": met, "oi_chg": oi_chg, "px_chg": px_chg,
         "oi": read_oi(oi_chg, px_chg),
+        # Ölçüm penceresi genişletildiyse SÖYLENİR: okuma 5 dakikanın değil
+        # bu kadar saniyenin okuması demektir.
+        "widened": bool(met.get("widened")), "span": met.get("span"),
         "n_fills": len(rows), "rows": grouped,
         "buy": sum(g["buy"] for g in grouped),
         "sell": sum(g["sell"] for g in grouped),
@@ -266,15 +312,19 @@ async def report(coin: str, t0: int, t1: int) -> dict:
     }
 
 
-async def refresh_profiles(cfg, client, coin: str, addrs: list[str]) -> dict:
-    """Rapordaki adreslerin defterini ANINDA çek (kullanıcı tetikli).
+async def refresh_profiles(cfg, client, coin: str, addrs: list[str],
+                           cap: int | None = None) -> dict:
+    """Rapordaki adreslerin defterini ANINDA çek (kullanıcı ya da alarm tetikli).
 
     `sweeper.probe_address` yeniden kullanılıyor — aynı yanıt tipi, aynı yazma
     yolu, aynı 'artık tutmuyor' otoritesi. Tavanla sınırlı: adres başına
-    1 istek.
+    1 istek. `cap` verilmezse sayfa tavanı (`forensics_probe_max`) geçerli;
+    alarm yolu kendi (çok daha küçük) tavanını geçirir.
     """
     from .sweeper import probe_address
-    cap = max(1, int(getattr(cfg, "forensics_probe_max", 15)))
+    cap = int(cap if cap is not None else getattr(cfg, "forensics_probe_max", 15))
+    if cap <= 0:
+        return {"tried": 0, "ok": 0, "err": 0, "err_msg": ""}
     out = {"tried": 0, "ok": 0, "err": 0, "err_msg": ""}
     for addr in addrs[:cap]:
         out["tried"] += 1
@@ -287,3 +337,109 @@ async def refresh_profiles(cfg, client, coin: str, addrs: list[str]) -> dict:
                 out["err_msg"] = f"{type(e).__name__}: {e}"
                 log.warning("profil tazelenemedi (%s): %s", addr, e)
     return out
+
+
+async def listening(coin: str) -> bool | None:
+    """Bu coin'in canlı akışını dinliyor muyuz?
+
+    ÜÇ CEVAP, üçü de farklı: `True` dinliyoruz · `False` dinlemiyoruz ·
+    **`None` bilmiyoruz** (collector henüz evrenini yazmadı). `None`'ı `False`
+    saymak "bu coini dinlemiyoruz" diye kesin konuşmak olurdu — oysa tek
+    bildiğimiz, bilmediğimiz.
+
+    Hisse (`xyz:`) perp'lerinin hepsine abone olunuyor; soru yalnız kripto
+    tarafında anlamlı.
+    """
+    if ":" in coin:
+        return True
+    from ..db import kv_get
+    u = await kv_get("ws_universe") or {}
+    coins = u.get("crypto")
+    if not isinstance(coins, list):
+        return None
+    return coin in coins
+
+
+async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
+                       top: int = 3, probe: bool = True,
+                       focus: str | None = None) -> dict:
+    """Alarm mesajına gömülecek "ne oldu" özeti. Saf VERİ döner, metin değil.
+
+    `report()`'un üstüne iki şey ekler:
+      • CANLI SONDA — en büyük adreslerden yalnız pozisyonu EKSİK ya da BAYAT
+        olanların defteri anında çekilir. Taze olanı yeniden çekmek bedava
+        değil ve hiçbir şey kazandırmaz. Sondadan sonra çıkarım yeniden koşar,
+        yani "long'unu artırdı" 2 saat eski veriye değil işlem sonrası gerçek
+        pozisyona dayanır.
+      • BOŞ KIRILIMIN SEBEBİ — "adres yok" tek başına yanıltıcı: dinlemediğimiz
+        bir coin mi, eşik altı işlemler mi, yoksa bilmiyor muyuz? Üçü ayrı.
+
+    Sonda hatası mesajı ASLA düşürmez; `probe_err` dolar, özet yine üretilir.
+    """
+    rep = await report(coin, t0, t1)
+    rows = list(rep["rows"])
+    if focus:
+        # Whale alarmının konusu olan adres, büyüklüğüne bakılmaksızın başta:
+        # mesaj onun hakkında, listenin en büyüğü hakkında değil.
+        rows.sort(key=lambda r: (r["address"] != focus, -r["gross"]))
+    top = max(0, int(top))
+    head = rows[:top]
+
+    probed, probe_err = 0, ""
+    if probe and client and head:
+        cap = int(getattr(cfg, "alert_forensics_probe", 3) or 0)
+        stale = [r["address"] for r in head
+                 if not r.get("pos") or (r.get("infer") or {}).get("stale")]
+        if cap > 0 and stale:
+            try:
+                res = await refresh_profiles(cfg, client, coin, stale, cap=cap)
+                probed, probe_err = res["ok"], res["err_msg"]
+                if res["ok"]:
+                    fresh = await _positions(coin, [r["address"] for r in head])
+                    for r in head:
+                        r["pos"] = fresh.get(r["address"])
+                        r["infer"] = infer(r, r["pos"], t0, t1)
+            except Exception as e:
+                probe_err = f"{type(e).__name__}: {e}"
+                log.warning("alarm sondası düştü (%s): %s", coin, e)
+
+    listen = await listening(coin)
+    empty = ""
+    if not rows:
+        empty = ("below_floor" if listen else
+                 ("unknown" if listen is None else "not_listening"))
+    floor = (getattr(cfg, "min_fill_notional", 0) if ":" in coin
+             else getattr(cfg, "crypto_fill_min_notional", 0))
+    tk = sum(r["tk"] for r in rows), sum(r["known"] for r in rows)
+    return {
+        "coin": coin, "symbol": rep["symbol"], "t0": t0, "t1": t1,
+        "minutes": rep["minutes"],
+        "verdict": rep["oi"]["verdict"], "why": rep["oi"]["why"],
+        "oi_chg": rep["oi_chg"], "px_chg": rep["px_chg"],
+        "widened": rep["widened"], "span": rep["span"],
+        "n_addr": len(rows), "buy": rep["buy"], "sell": rep["sell"],
+        "net": rep["buy"] - rep["sell"],
+        "taker_pct": (tk[0] / tk[1] * 100) if tk[1] > 0 else None,
+        "top": head, "listening": listen, "floor": floor,
+        "probed": probed, "probe_err": probe_err, "empty_reason": empty,
+        "before_records": rep["before_records"],
+    }
+
+
+async def alert_brief(cfg, client, coin: str, t0: int, t1: int,
+                      **kw) -> dict | None:
+    """Alarm yollarının TEK giriş noktası: ayar kapalıysa None, hata da None.
+
+    Zenginleştirme bir SÜS; alarmın kendisi ondan daha önemli. Bir SQL hatası
+    ya da düşen bir sonda yüzünden "PUMP'ta $3.2M döndü" mesajının hiç
+    gitmemesi kabul edilemez — o yüzden burada geniş bir except var ve
+    çağıranlar `None` gördüklerinde sessizce sade mesajı yollar.
+    """
+    if not getattr(cfg, "alert_forensics", True):
+        return None
+    try:
+        kw.setdefault("top", int(getattr(cfg, "alert_forensics_top", 3)))
+        return await window_brief(cfg, client, coin, t0, t1, **kw)
+    except Exception as e:
+        log.warning("alarm özeti çıkarılamadı (%s): %s", coin, e)
+        return None

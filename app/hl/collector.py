@@ -59,15 +59,26 @@ class Collector:
         eq = set(equity)
         crypto = [c for c in await self._crypto_coins() if c not in eq]
         self.crypto_coins = set(crypto)
+        # Neyi DİNLEDİĞİMİZİ dışarı yaz. Alarm zenginleştirmesi bunu okuyup
+        # "bu coinde işlem olmadı" ile "bu coini dinlemiyoruz"u ayırıyor —
+        # ikisini karıştırmak boş bir tabloyu "kimse almadı" diye okutur.
+        try:
+            from ..db import kv_set
+            await kv_set("ws_universe", {"crypto": crypto,
+                                         "equity_n": len(equity),
+                                         "ts": now()})
+        except Exception as e:
+            log.debug("ws_universe yazılamadı: %s", e)
         return equity + crypto
 
     def fill_floor(self, coin: str) -> float:
         """Bu coin'de kaç dolardan büyük işlemler KAYDEDİLSİN.
 
-        Kripto tabanı ayrı ve yüksek: HYPE'ta tek dakikada ~$3.8M dönüyor,
-        hisse eşiği ($5K) burada tozu da yazardı. Kripto fill'leri yalnız
-        "ne oldu" adli incelemesi için saklanır — ALARM ÜRETMEZLER (aşağıdaki
-        _maybe_alert kapısı korunuyor), yoksa ana kanal kripto seline boğulur.
+        Kripto tabanı AYRI bir ayar ama artık hisseyle aynı değerde ($5K):
+        sabırlı bir TWAP'ın dilimleri küçüktür, yüksek eşik onları tamamen
+        görünmez yapıyordu. Kripto fill'leri yalnız "ne oldu" incelemesi ve
+        /twap için saklanır — ALARM ÜRETMEZLER (aşağıdaki _maybe_alert kapısı
+        korunuyor), yoksa ana kanal kripto seline boğulur.
         """
         if coin in self.crypto_coins:
             v = float(getattr(self.cfg, "crypto_fill_min_notional", 0) or 0)
@@ -407,8 +418,15 @@ class Collector:
                 return  # küçük poz/probe — bildirme (cooldown zaten kuruldu)
 
         record = (row["hits"], row["misses"]) if row else (0, 0)
+        # Bu adres zaten `_kick_probes` ile birazdan çekilecek — burada ikinci
+        # kez istek atmak boşuna. Bayat pozisyon çıkarımı ⏳ ile işaretlenir.
+        from ..radar.forensics import alert_brief
+        t1 = now()
+        brief = await alert_brief(self.cfg, None, coin, t1 - 300, t1,
+                                  probe=False, focus=addr)
         text = fmt.whale_fill_alert(coin, addr, side, px, pos_ntl, is_watch, record,
-                                    taker_ratio=taker_ratio, n_parts=n_parts)
+                                    taker_ratio=taker_ratio, n_parts=n_parts,
+                                    brief=brief)
         try:
             prio = "high" if is_watch else "normal"
             await self.notifier.send("whale_fill", text, priority=prio, key=key)

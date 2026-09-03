@@ -233,7 +233,16 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "BTC ve ETH'te bu boyutun altındaki pozisyonlar kaydedilmez — en likit iki markette çıta daha yüksek"},
     "crypto_watch_top": {"type": "int", "label": "Canlı dinlenen kripto coin",
                          "group": "Tarama & performans",
-                         "desc": "Ana dex'te 24h hacme göre ilk kaç coin canlı dinlensin (büyük işlem → adresin defterine anında bak). Bu işlemler fills'e YAZILMAZ, yalnız sonda tetikler. 0 = kripto dinleme kapalı"},
+                         "desc": "Ana dex'te 24h hacme göre ilk kaç coin canlı dinlensin. 'Kripto hacim evren tavanı' ile EŞİT tutulmalı: alarm çıkan ama dinlenmeyen bir coinde 'kim ne aldı' kırılımı boş gelir. 0 = kripto dinleme kapalı"},
+    "alert_forensics": {"type": "bool", "label": "Alarmlara 'ne oldu' detayı",
+                        "group": "Bildirimler",
+                        "desc": "Hacim, kapalı seans ve whale alarmlarına OI okuması (long mu kapandı, short mu açıldı) ve en büyük adreslerin ne yaptığı eklenir. Kapatılırsa mesajlar eski sade hâline döner"},
+    "alert_forensics_top": {"type": "int", "label": "Alarmdaki adres satırı",
+                            "group": "Bildirimler",
+                            "desc": "Mesajda kaç adres gösterilsin. Telegram'da 3-4 satırdan uzun mesaj okunmuyor; tam kırılım için siteye ('ne oldu' sekmesi) bakılır"},
+    "alert_forensics_probe": {"type": "int", "label": "Alarm anı canlı sonda",
+                              "group": "Bildirimler",
+                              "desc": "Alarm başına kaç adresin defteri ANINDA çekilsin (adres başına 1 istek). Pozisyon verisi normalde keşif turuna bağlı ve 2 saate kadar bayat olabilir; bu olmadan 'long'unu artırdı' çıkarımı eski veriye dayanır. 0 = sonda kapalı, bayatlık ⏳ ile işaretlenir"},
     "probe_min_notional_crypto": {"type": "float", "label": "Kripto sonda eşiği ($)",
                                   "group": "Tarama & performans",
                                   "desc": "Ana dex işlemlerinde sondayı tetikleyen boyut. Hisse eşiğinden yüksektir: BTC'de $100K'lık işlem gürültü, ama $2M+ süpüren birinin dev pozisyon taşıması makul"},
@@ -508,7 +517,13 @@ class Config:
         self.probe_min_notional_crypto = float(os.getenv("PROBE_MIN_NOTIONAL_CRYPTO", "2000000"))
         self.hl_crypto_min_usd = float(os.getenv("HL_CRYPTO_MIN_USD", "20000000"))
         self.hl_major_min_usd = float(os.getenv("HL_MAJOR_MIN_USD", "50000000"))
-        self.crypto_watch_top = int(os.getenv("CRYPTO_WATCH_TOP", "30"))
+        # Alarm evreniyle EŞİT (crypto_vol_max_coins): 30'da kalınca alarm
+        # çıkan coinlerin çoğunda adres kırılımı boş geliyordu — dinlemediğimiz
+        # bir coin hakkında "kimse almadı" demek yanlış cevaptır.
+        self.crypto_watch_top = int(os.getenv("CRYPTO_WATCH_TOP", "120"))
+        self.alert_forensics = True
+        self.alert_forensics_top = int(os.getenv("ALERT_FORENSICS_TOP", "3"))
+        self.alert_forensics_probe = int(os.getenv("ALERT_FORENSICS_PROBE", "3"))
         self.show_tradingview = True
         # "Saati gelenler" yayın kanalı — kişisel chat'ten AYRI (bot kanala admin olmalı)
         self.telegram_channel_id = os.getenv("TELEGRAM_CHANNEL_ID", "")
