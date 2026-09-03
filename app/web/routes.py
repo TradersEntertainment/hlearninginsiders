@@ -19,8 +19,8 @@ from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol,
-                     funding, hourstats, lowvol, metrics, offhours, patterns,
-                     pricechart)
+                     forensics, funding, hourstats, lowvol, metrics, offhours,
+                     patterns, pricechart)
 
 log = logging.getLogger("web.routes")
 
@@ -1077,6 +1077,78 @@ async def cryptovol_page(request: Request):
         "missing": eq_st.get("missing") or [],
         "n_missing": eq_st.get("n_missing") or 0,
     })
+
+
+def _parse_window(request: Request) -> tuple[int, int, str]:
+    """`t0`/`t1` epoch ya da `HH:MM` (TSİ, bugün). Varsayılan: son 15 dakika.
+
+    Grafikten okuduğun saati yazacaksın; epoch yazdırmak absürt olurdu.
+    """
+    import time as _t
+    q = request.query_params
+    end = int(_t.time())
+    start = end - 900
+
+    def one(v, ref):
+        v = (v or "").strip()
+        if not v:
+            return None
+        if v.isdigit() and len(v) >= 9:
+            return int(v)
+        try:
+            hh, mm = (v.replace(".", ":").split(":") + ["0"])[:2]
+            d = datetime.fromtimestamp(ref, TR).replace(
+                hour=int(hh), minute=int(mm), second=0, microsecond=0)
+            t = int(d.timestamp())
+            # Girilen saat ileriyse dünü kastetmiştir (gece yarısını aşan
+            # pencere): "23:50" yazıp 00:10'da sorduğunda boş dönmesin.
+            return t - 86400 if t > ref + 3600 else t
+        except (ValueError, TypeError):
+            return None
+
+    t0, t1 = one(q.get("t0"), end), one(q.get("t1"), end)
+    if t0 and t1:
+        return min(t0, t1), max(t0, t1), ""
+    if t0:
+        return t0, t0 + 900, ""
+    if t1:
+        return t1 - 900, t1, ""
+    return start, end, "son 15 dakika (varsayılan)"
+
+
+@router.get("/neoldu")
+async def forensics_page(request: Request):
+    """Ne oldu? — belli bir dakika aralığında kim ne aldı/sattı, açtı mı kapattı mı."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    sym = (request.query_params.get("sym") or "").strip().upper()
+    t0, t1, note = _parse_window(request)
+    rep = None
+    if sym:
+        t = await find_ticker(sym)
+        coin = t["coin"] if t else sym          # kripto coin adı ham geçer
+        rep = await forensics.report(coin, t0, t1)
+        rep["found"] = bool(t)
+    return _render(request, "neoldu.html", {
+        "rep": rep, "sym": sym, "t0": t0, "t1": t1, "note": note,
+        "t0_s": datetime.fromtimestamp(t0, TR).strftime("%H:%M"),
+        "t1_s": datetime.fromtimestamp(t1, TR).strftime("%H:%M"),
+        "probe_max": getattr(cfg, "forensics_probe_max", 15),
+        "crypto_floor": getattr(cfg, "crypto_fill_min_notional", 0),
+    })
+
+
+@router.post("/neoldu/tazele")
+async def forensics_refresh(request: Request):
+    """Rapordaki adreslerin defterini ANINDA çek (kullanıcı tetikli, tavanlı)."""
+    _guard(request)
+    cfg, client = request.app.state.cfg, request.app.state.client
+    body = await request.json()
+    coin = (body.get("coin") or "").strip()
+    addrs = [a for a in (body.get("addrs") or []) if isinstance(a, str)]
+    if not coin or not addrs:
+        return JSONResponse({"error": "coin/addrs gerekli"}, status_code=400)
+    return JSONResponse(await forensics.refresh_profiles(cfg, client, coin, addrs))
 
 
 @router.get("/orintu")

@@ -46,10 +46,12 @@ class Collector:
         """Abone olunacak coin'ler: HIP-3 hisse perp'leri + ana dex'in hacimce
         ilk N kripto coin'i.
 
-        Kripto tarafı SADECE tetikleyicidir (`self.crypto_coins`): oradan gelen
-        işlemler fills'e yazılmaz, balina alarmı üretmez — yalnız profil
-        sondasını uyandırır. Saf bir BTC/ETH balinası eskiden ancak rotasyon
-        sırası ona gelince görülüyordu.
+        Kripto tarafı ALARM üretmez (`self.crypto_coins`) — ana kanalı kripto
+        seline boğmamak için. Ama artık `crypto_fill_min_notional` üstündeki
+        işlemleri fills'e YAZAR: "ne oldu" sekmesi o kayıtlar olmadan "bu
+        hacimde kim ne aldı" sorusunu cevaplayamıyordu. Sonda (probe) da
+        buradan uyanır; saf bir BTC/ETH balinası eskiden ancak rotasyon sırası
+        ona gelince görülüyordu.
         """
         async with db() as conn:
             cur = await conn.execute("SELECT coin FROM tickers")
@@ -58,6 +60,19 @@ class Collector:
         crypto = [c for c in await self._crypto_coins() if c not in eq]
         self.crypto_coins = set(crypto)
         return equity + crypto
+
+    def fill_floor(self, coin: str) -> float:
+        """Bu coin'de kaç dolardan büyük işlemler KAYDEDİLSİN.
+
+        Kripto tabanı ayrı ve yüksek: HYPE'ta tek dakikada ~$3.8M dönüyor,
+        hisse eşiği ($5K) burada tozu da yazardı. Kripto fill'leri yalnız
+        "ne oldu" adli incelemesi için saklanır — ALARM ÜRETMEZLER (aşağıdaki
+        _maybe_alert kapısı korunuyor), yoksa ana kanal kripto seline boğulur.
+        """
+        if coin in self.crypto_coins:
+            v = float(getattr(self.cfg, "crypto_fill_min_notional", 0) or 0)
+            return v if v > 0 else float("inf")   # 0 = kripto kaydı kapalı
+        return float(self.cfg.min_fill_notional)
 
     async def _crypto_coins(self) -> list[str]:
         top = int(getattr(self.cfg, "crypto_watch_top", 0) or 0)
@@ -227,7 +242,7 @@ class Collector:
                     a["known"] += notional
                     if taker:
                         a["tk"] += notional
-                if notional >= self.cfg.min_fill_notional and coin not in self.crypto_coins:
+                if notional >= self.fill_floor(coin):
                     rows.append((coin, tid, addr, side, px, sz, notional, ts, taker))
                     a["wrote"] = True
 
@@ -235,9 +250,7 @@ class Collector:
         # hiçbiri eşiği geçmez ama TOPLAMI $500K olabilir. Böyle bir süpürme için
         # tek sentetik satır yaz (tid deterministik → tekrar teslimde dedupe olur).
         for (coin, addr, side), a in agg.items():
-            if a["wrote"] or a["ntl"] < self.cfg.min_fill_notional or not a["sz"]:
-                continue
-            if coin in self.crypto_coins:
+            if a["wrote"] or a["ntl"] < self.fill_floor(coin) or not a["sz"]:
                 continue
             taker = None
             if a["known"] > 0:
@@ -245,8 +258,9 @@ class Collector:
             rows.append((coin, f"agg{min(a['tids'])}", addr, side,
                          a["pxsz"] / a["sz"], a["sz"], a["ntl"], a["ts"], taker))
 
-        # Kripto akışında rows HER ZAMAN boş kalır; eskiden burada dönülüyordu →
-        # sonda hiç tetiklenmezdi. Yazma bloğu artık koşullu, sonda en sonda.
+        # Kripto akışı da artık satır üretebiliyor (bkz. fill_floor): "ne oldu"
+        # sekmesi o kayıtlar olmadan "kim ne aldı" sorusunu cevaplayamıyordu.
+        # Yazma bloğu koşullu, sonda (probe) en sonda.
         watch: set[str] = set()
         if rows:
             async with db() as conn:

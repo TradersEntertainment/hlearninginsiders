@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}🔎 Ne oldu · HL Radar{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>🔎 Ne oldu? <span class="dim" style="text-transform:none">·
+    belli bir dakika aralığında kim ne aldı, ne sattı</span></h2>
+  <p class="sub">Grafikte absürt bir hacim gördüğünde sembolü ve saat aralığını
+  yaz. İki katman birden gelir: <b>toplam okuma</b> (açık pozisyon değişimi —
+  long mu kapandı, short mu açıldı) ve <b>adres kırılımı</b> (kim ne kadar
+  aldı/sattı, agresör müydü, pozisyonunu ne yaptı).</p>
+  <p class="sub"><b>Neden OI?</b> Bir işlemin "alış" olması <b>açtı</b> demek
+  değildir — bir satış hem long kapatmak hem short açmak olabilir. İkisini
+  ayıran tek şey açık pozisyonun (OI) yönüdür:
+  <span class="dim">OI↑ fiyat↓ = yeni short · OI↓ fiyat↓ = long kapanışı ·
+  OI sabit = el değiştirmiş.</span></p>
+
+  <form method="get" action="/neoldu" style="margin:10px 0;display:flex;
+        gap:8px;flex-wrap:wrap;align-items:center">
+    <input type="text" name="sym" placeholder="sembol: HYPE / NVDA" value="{{ sym }}"
+           style="padding:7px 10px;border-radius:8px;border:1px solid #3a3352;
+                  background:#1b1730;color:inherit;font-size:14px;width:150px">
+    <input type="text" name="t0" placeholder="18:25" value="{{ t0_s }}"
+           style="padding:7px 10px;border-radius:8px;border:1px solid #3a3352;
+                  background:#1b1730;color:inherit;font-size:14px;width:85px">
+    <span class="dim">→</span>
+    <input type="text" name="t1" placeholder="18:35" value="{{ t1_s }}"
+           style="padding:7px 10px;border-radius:8px;border:1px solid #3a3352;
+                  background:#1b1730;color:inherit;font-size:14px;width:85px">
+    {% if k %}<input type="hidden" name="k" value="{{ k[3:] }}">{% endif %}
+    <button type="submit" style="padding:7px 16px;border-radius:8px;border:0;
+            background:#7c5cff;color:#fff;font-weight:600;cursor:pointer">Sor</button>
+    <span class="dim" style="font-size:12px">saatler TSİ{% if note %} · {{ note }}{% endif %}</span>
+  </form>
+</div>
+
+{% if rep %}
+<div class="panel">
+  <h2>{{ rep.symbol }} <span class="dim" style="text-transform:none">·
+    {{ rep.t0|dt }} → {{ rep.t1|dt }} ({{ rep.minutes }} dk)
+    {%- if rep.is_crypto %} · kripto{% else %} · hisse perp{% endif %}</span></h2>
+
+  {% if not rep.found and not rep.is_crypto %}
+  <p class="short">⚠️ <b>{{ rep.symbol }}</b> evrende bulunamadı — ham coin adı
+    olarak denendi.</p>
+  {% endif %}
+
+  {# ── MANŞET: OI okuması ───────────────────────────────────────────────── #}
+  <p style="font-size:17px;margin:12px 0 4px">📊
+    {% if rep.oi.verdict == 'belirsiz' %}<b class="dim">Belirsiz</b>
+    {%- elif 'SHORT açıl' in rep.oi.verdict or 'LONG kapan' in rep.oi.verdict %}<b class="short">{{ rep.oi.verdict }}</b>
+    {%- elif 'el değiş' in rep.oi.verdict %}<b class="dim">{{ rep.oi.verdict }}</b>
+    {%- else %}<b class="long">{{ rep.oi.verdict }}</b>{% endif %}</p>
+  <p class="sub dim">{{ rep.oi.why }}</p>
+  {% if rep.metrics.first and rep.metrics.last %}
+  <p class="sub dim">OI {{ (rep.metrics.first.oi * rep.metrics.first.mark_px)|usd }}
+    → {{ (rep.metrics.last.oi * rep.metrics.last.mark_px)|usd }} ·
+    fiyat {{ rep.metrics.first.mark_px|px }} → {{ rep.metrics.last.mark_px|px }}
+    <span style="font-size:11px">(ölçümler {{ rep.metrics.first.ts|dt }} ve
+    {{ rep.metrics.last.ts|dt }})</span></p>
+  {% endif %}
+
+  {# ── veri künyesi ─────────────────────────────────────────────────────── #}
+  <p class="sub dim">🧾 Bu pencerede <b>{{ rep.n_fills }}</b> işlem kaydımız var ·
+    alım <b class="long">{{ rep.buy|usd }}</b> / satım <b class="short">{{ rep.sell|usd }}</b> ·
+    {{ rep.rows|length }} adres · {{ rep.n_known }} tanesinin pozisyonunu biliyoruz
+    {%- if rep.n_stale %} · <span class="short">{{ rep.n_stale }} çıkarım bayat veriye dayanıyor ⏳</span>{% endif %}.
+    {% if rep.is_crypto %}Kripto işlem kaydı eşiği <b>{{ crypto_floor|usd }}</b>.{% endif %}</p>
+
+  {% if rep.before_records %}
+  <p class="short">📼 <b>Bu pencere kayıt başlangıcından önce.</b>
+    {% if rep.is_crypto %}Kripto işlemlerini yakın zamana kadar HİÇ
+      kaydetmiyorduk (akış yalnız tetikleyiciydi); kayıt
+      {% if rep.records_since %}{{ rep.records_since|dt }}'de başladı{% else %}henüz başlamadı{% endif %}.
+    {% else %}Bu dönem için işlem kaydımız yok.{% endif %}
+    Tablonun boş olması "işlem olmadı" demek DEĞİL, "o an tutmuyorduk" demek.</p>
+  {% endif %}
+</div>
+
+{# ── kim ne yaptı ───────────────────────────────────────────────────────── #}
+<div class="panel">
+  <h2>👥 Kim ne yaptı <span class="dim" style="text-transform:none">·
+    büyükten küçüğe · başlığa tıklayarak sırala</span></h2>
+  {% if rep.rows %}
+  <p class="sub"><b>Taker %</b> = fiyatı süpürerek mi aldı (agresör, aceleci —
+  bilgi taşıyan taraf genelde budur) yoksa pasif emirle mi doldu.
+  <b>Ne yaptı</b> kolonu, adresin bilinen pozisyonuyla penceredeki yönünü
+  karşılaştırır; pozisyonunu hiç görmediğimiz adres için <b>uydurmaz</b>,
+  "bilinmiyor" der.</p>
+
+  <button type="button" id="refresh" data-coin="{{ rep.coin }}"
+          style="padding:7px 14px;border-radius:8px;border:1px solid #3a3352;
+                 background:#241f3d;color:inherit;cursor:pointer;margin-bottom:10px">
+    🔄 Profilleri tazele (en fazla {{ probe_max }} adres)</button>
+  <span id="refmsg" class="sub dim"></span>
+
+  <div style="overflow-x:auto">
+  <table id="whotable">
+    <tr><th class="l">Adres</th>
+        <th title="Penceredeki alım eksi satım">Net</th>
+        <th title="Alım + satım toplamı">Hacim</th>
+        <th title="Kaç ayrı işlem">Parça</th>
+        <th title="Fiyatı süpürerek mi aldı — agresörlük">Taker %</th>
+        <th title="Bu coindeki bilinen açık pozisyonu">Pozisyon</th>
+        <th title="HL perp teminatı — net worth değil">HL bakiye</th>
+        <th title="Pozisyon / bakiye">Poz/Bak.</th>
+        <th class="l">Ne yaptı</th></tr>
+    {% for r in rep.rows %}
+    <tr>
+      <td class="l">{{ m.addr(r.address, k, 6) }}</td>
+      <td class="{{ 'long' if r.net > 0 else ('short' if r.net < 0 else 'dim') }}">
+        <b>{{ '-' if r.net < 0 else '+' }}{{ (r.net|abs)|usd }}</b></td>
+      <td class="dim">{{ r.gross|usd }}</td>
+      <td class="dim">{{ r.n }}</td>
+      <td class="{{ 'short' if r.taker_pct and r.taker_pct >= 70 else 'dim' }}">
+        {% if r.taker_pct is not none %}{{ '%.0f'|format(r.taker_pct) }}%{% else %}—{% endif %}</td>
+      <td class="{{ (r.pos.side if r.pos else '') or 'dim' }}">
+        {% if r.pos and r.pos.side %}{{ 'LONG' if r.pos.side == 'long' else 'SHORT' }}
+          <span class="dim">{{ r.pos.notional|usd }}</span>
+        {%- else %}<span class="dim">—</span>{% endif %}</td>
+      <td>{{ m.equity_cell(r.pos.account_value if r.pos else none,
+                           r.pos.account_ts if r.pos else none) }}</td>
+      <td>{{ m.equity_pct(r.pos.account_value if r.pos else none,
+                          r.pos.notional if r.pos else none) }}</td>
+      <td class="l" title="{{ r.infer.note }}">
+        {% if r.infer.label == 'bilinmiyor' %}<span class="dim">bilinmiyor</span>
+        {%- elif 'açtı' in r.infer.label %}<b class="{{ 'long' if 'long' in r.infer.label else 'short' }}">{{ r.infer.label }}</b>
+        {%- elif 'kapattı' in r.infer.label or 'kırptı' in r.infer.label %}<b class="warn">{{ r.infer.label }}</b>
+        {%- else %}{{ r.infer.label }}{% endif %}
+        {%- if r.infer.stale %} <span title="Pozisyon ölçümü bu pencereden çok eski — çıkarım yanıltıcı olabilir">⏳</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Bu pencerede işlem kaydı yok.
+    {% if rep.is_crypto %}Kripto tarafında yalnız <b>{{ crypto_floor|usd }}</b>
+      üstü işlemler kaydediliyor — daha küçükler hiç yazılmaz.{% endif %}</p>
+  {% endif %}
+</div>
+
+{# ── bağlam ────────────────────────────────────────────────────────────── #}
+{% if rep.ctx.liq or rep.ctx.walls or rep.ctx.alerts or rep.ctx.vol %}
+<div class="panel">
+  <h2>🧩 Aynı pencerede başka ne vardı</h2>
+  {% if rep.ctx.liq %}
+  <p class="sub"><b>💥 Likidasyona yaklaşanlar:</b>
+    {% for l in rep.ctx.liq %}{{ m.addr(l.address, k, 6) }}
+      <span class="{{ l.side }}">{{ l.side }}</span> {{ l.notional|usd }}
+      <span class="dim">(kademe {{ l.stage }}, mesafe %{{ '%.2f'|format(l.last_dist or 0) }})</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}</p>
+  {% endif %}
+  {% if rep.ctx.walls %}
+  <p class="sub"><b>🧱 Emir duvarları:</b>
+    {% for w in rep.ctx.walls %}{{ w.side }} {{ w.notional|usd }} @ {{ w.px_lo|px }}
+      <span class="dim">({{ 'aktif' if w.active else 'çekildi/yendi' }})</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}</p>
+  {% endif %}
+  {% if rep.ctx.vol %}
+  <p class="sub"><b>🚀 Hacim rekoru:</b>
+    {% for v in rep.ctx.vol %}{{ v.notional|usd }} / 5dk
+      <span class="dim">({{ '%.1f'|format(v.ratio or 0) }}× önceki rekor, fiyat {{ '%+.2f'|format(v.chg_pct or 0) }}%)</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}</p>
+  {% endif %}
+  {% if rep.ctx.alerts %}
+  <p class="sub"><b>🔔 Bizim gönderdiğimiz alarmlar:</b>
+    {% for a in rep.ctx.alerts %}<span class="dim">{{ a.ts|dt }}</span> {{ a.kind }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
+
+<div class="panel">
+  <h2>❓ Bu sekme neyi cevaplayabilir, neyi cevaplayamaz?</h2>
+  <p class="sub"><b>Cevaplayabilir:</b> pencerede kimin ne kadar alıp sattığını,
+  agresör olup olmadığını, bilinen pozisyonuyla ne yaptığını (açtı/artırdı/
+  kırptı/kapattı) ve toplamda yeni para mı girdi yoksa pozisyon mu kapandığını.</p>
+  <p class="sub"><b>Cevaplayamaz:</b> eşiğin altındaki işlemleri (kaydedilmiyor),
+  ve kayıt başlangıcından önceki pencereleri. Kripto işlem kaydı yakın zamanda
+  açıldı — ondan öncesi için elimizde <b>hiçbir şey</b> yok, boş tablo bunu
+  gizlemesin diye sayfa ayrıca uyarıyor.</p>
+  <p class="sub dim">Pozisyon verisi derin keşif turuna bağlı (75-125 dk), yani
+  çıkarım bayat olabilir — ⏳ ile işaretlenir. "Profilleri tazele" düğmesi
+  rapordaki adreslerin defterini anında çeker ve çıkarımı düzeltir.</p>
+</div>
+
+<script>
+(function () {
+  var b = document.getElementById('refresh');
+  if (!b) return;
+  b.addEventListener('click', async function () {
+    var msg = document.getElementById('refmsg');
+    var addrs = [].slice.call(document.querySelectorAll('#whotable tr td:first-child a.wl'))
+      .map(function (a) { return a.getAttribute('href').split('/whale/')[1].split('?')[0]; });
+    if (!addrs.length) { msg.textContent = 'adres yok'; return; }
+    b.disabled = true; msg.textContent = 'çekiliyor…';
+    try {
+      var r = await fetch('/neoldu/tazele' + location.search.replace(/^\?/, '?'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coin: b.dataset.coin, addrs: addrs })
+      });
+      var j = await r.json();
+      msg.textContent = j.error ? ('hata: ' + j.error)
+        : (j.ok + '/' + j.tried + ' profil tazelendi'
+           + (j.err ? (' · ' + j.err + ' hata: ' + (j.err_msg || '')) : '')
+           + ' — sayfa yenileniyor');
+      if (!j.error) setTimeout(function () { location.reload(); }, 900);
+    } catch (e) { msg.textContent = 'hata: ' + e; }
+    b.disabled = false;
+  });
+})();
+</script>
+
+{% endblock %}

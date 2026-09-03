@@ -273,6 +273,15 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Uzun bir hareket boyunca her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
     "equity_vol_max_coins": {"type": "int", "label": "Evren tavanı (hisse)", "group": "Hisse hacim",
                              "desc": "Kaç hisse taranacak (PROPR ∩ xyz dex, hacimce büyükten). Her hisse turda 1 istek eder"},
+    "crypto_fill_min_notional": {"type": "float", "label": "Kripto işlem kaydı tabanı ($)",
+                                 "group": "Tarama & performans",
+                                 "desc": "İzlenen kripto coinlerde bu tutarın üstündeki işlemler adresiyle KAYDEDİLİR ('ne oldu' sekmesi bunu okur). Hisse tabanından yüksek: HYPE'ta tek dakikada ~$3.8M dönüyor. 0 = kripto kaydı kapalı. Bu işlemler Telegram'a DÜŞMEZ, yalnız arşivlenir"},
+    "crypto_metrics_enabled": {"type": "bool", "label": "Kripto OI/funding kaydı",
+                               "group": "Tarama & performans",
+                               "desc": "Ana dex metrikleri de örneklenir (poll başına +1 istek, yalnız PROPR'daki coinler saklanır). OI olmadan 'long mu kapandı short mu açıldı' ayrımı YAPILAMAZ"},
+    "forensics_probe_max": {"type": "int", "label": "'Ne oldu' canlı profil tavanı",
+                            "group": "Tarama & performans",
+                            "desc": "'Profilleri tazele' düğmesi en fazla bu kadar adresin defterini anında çeker (adres başına 1 istek). Pozisyon verisi derin keşif turuna bağlı olduğu için 2 saate kadar bayat olabilir; bu buton onu düzeltir"},
     "pattern_enabled": {"type": "bool", "label": "Örüntü bulucu", "group": "Örüntü bulucu",
                         "desc": "Kapatılırsa tarama durur; mum arşivi ayrı ayarla yönetilir"},
     "pattern_pool": {"type": "str", "label": "Eşleştirme havuzu", "group": "Örüntü bulucu",
@@ -441,6 +450,10 @@ class Config:
         # Hisse hacim bildirimlerinin kanalı. Kullanıcı Railway'de bu adla
         # oluşturdu; env-only (chat id'leri EDITABLE_FIELDS'a girmez).
         self.crypto_stocks_id = os.getenv("CRYPTO_STOCKS_ID", "")
+        self.crypto_fill_min_notional = float(
+            os.getenv("CRYPTO_FILL_MIN_NOTIONAL", "25000"))
+        self.crypto_metrics_enabled = True
+        self.forensics_probe_max = int(os.getenv("FORENSICS_PROBE_MAX", "15"))
         self.notify_pattern = True
         self.pattern_enabled = True
         # self = yalnız sembolün kendi geçmişi (kullanıcı tercihi). Dar havuzun

@@ -175,6 +175,62 @@ Maliyet: sembol başına turda 1 istek. İki radar birlikte ~200 sembol / 5 daki
 ≈ **40 rpm**, bütçe 350 rpm. Her biri kendi Ayarlar grubundan ayrı ayrı
 kapatılabilir (maliyet sıfırlanır).
 
+## Ne Oldu?: `/neoldu`
+
+Grafikte absürt bir hacim gördüğünde: **sembol + saat aralığı gir**, o
+pencerede kimin ne aldığını/sattığını ve **açtı mı kapattı mı** çıkarımını gör.
+Saatler TSİ ve `18:25` gibi yazılır (epoch değil).
+
+**Neden OI?** Bir işlemin "alış" olması *açtı* demek değildir — bir satış hem
+long kapatmak hem short açmak olabilir. İkisini ayıran tek şey **açık
+pozisyonun (OI)** yönü:
+
+| OI | Fiyat | Okuma |
+|---|---|---|
+| ↑ | ↓ | yeni **SHORT** açılmış |
+| ↓ | ↓ | **LONG** kapanmış / likide olmuş |
+| ↑ | ↑ | yeni LONG açılmış |
+| ↓ | ↑ | short kapanmış (squeeze) |
+| ~sabit | — | el değiştirmiş, yeni para girmemiş |
+
+Bu okuma **manşet**tir; altında adres kırılımı gelir: kim ne kadar aldı/sattı,
+kaç parçada, **taker oranı** neydi (fiyatı süpüren agresör mü, pasif emirle mi
+doldu — bilgi taşıyan taraf genelde birincisidir), bilinen pozisyonu ve bakiyesi
+ne, ve pozisyonuna göre **ne yaptı**: *long'unu artırdı · long'undan kırptı ·
+yeni short açtı · pozisyonu kapattı · aldı ve sattı (scalp)*.
+
+**İki eksik kapatıldı, ikisi de bu sekmenin varlık şartıydı:**
+
+1. **Kripto işlem kaydı.** `collector` kripto akışını "yalnız tetikleyici"
+   sayıp tek satır fill yazmıyordu — HYPE'ta kimin ne aldığına dair sıfır kayıt
+   vardı. Artık `crypto_fill_min_notional` ($25K) üstü işlemler kaydediliyor.
+   Eşik hisseden yüksek çünkü HYPE'ta tek dakikada ~$3.8M dönüyor.
+   **Bu işlemler Telegram'a DÜŞMEZ** — alarm kapısı bilerek korundu, yoksa ana
+   kanal kripto seline boğulurdu.
+2. **Kripto OI kaydı.** `poll_metrics` yalnız `xyz` dex'ini geziyordu; artık
+   ana dex de örnekleniyor (poll başına +1 istek) ama **yalnız PROPR'daki
+   coinler** saklanıyor — `asset_metrics` 45 gün tutuyor, tüm ana dex gereksiz
+   yer kaplardı.
+
+**Dürüstlük kuralları** (`forensics.py`'nin çoğu bunlarla ilgili):
+
+- **Veri yoksa yorum yok.** OI örneği yoksa ya da hareket gürültü sınırındaysa
+  "belirsiz" denir. %0.05'lik bir OI değişimine "yeni short açıldı" demek
+  uydurmadır.
+- Pencerede ölçüm yoksa iki uç aynı örneğe düşer ve fark 0 çıkardı — bu durum
+  ayrıca yakalanıp "belirsiz" sayılır, yoksa yanlışlıkla "el değiştirmiş"
+  denirdi.
+- Pozisyonunu hiç görmediğimiz adres **"bilinmiyor"**dur; yön uydurulmaz.
+- Pozisyon verisi derin keşif turuna bağlı (75-125 dk); pencereden çok eskiyse
+  çıkarım ⏳ ile işaretlenir. **"Profilleri tazele"** düğmesi rapordaki
+  adreslerin defterini anında çeker (`forensics_probe_max`, vars. 15 adres =
+  15 istek) ve çıkarımı düzeltir.
+- **Kayıt başlangıcından önceki pencere "boş" değildir.** Sayfa "o dönemde
+  kayıt tutulmuyordu" der; boş tablo bunu gizlemesin diye.
+
+Sekme ayrıca aynı penceredeki bağlamı toplar: likidasyona yaklaşanlar, emir
+duvarları, hacim rekoru ve bizim gönderdiğimiz alarmlar.
+
 ## Cüzdan Bakiyesi Kolonu
 
 Pozisyon tablolarında **HL bakiye** ve **Poz/Bakiye** kolonları var. Asıl bilgi

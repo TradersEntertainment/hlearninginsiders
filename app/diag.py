@@ -351,6 +351,27 @@ async def _subsystems(cfg) -> list[str]:
                           else " · henüz kapanmış tahmin yok"))
         except Exception as e:
             out.append(f"       karne okunamadı ({type(e).__name__}: {e})")
+    # "Ne oldu" sekmesinin yakıtı: kripto fill kaydı ve ana dex OI örneği.
+    # İkisi de yeni açıldı; çalışıp çalışmadığı buradan görünsün.
+    try:
+        from .db import db as _db
+        async with _db() as c:
+            cur = await c.execute(
+                "SELECT COUNT(*) n, MIN(ts) a, MAX(ts) b FROM fills"
+                " WHERE coin NOT LIKE '%:%'")
+            f = dict(await cur.fetchone())
+            cur = await c.execute(
+                "SELECT COUNT(DISTINCT coin) n, MAX(ts) b FROM asset_metrics"
+                " WHERE coin NOT LIKE '%:%'")
+            mt = dict(await cur.fetchone())
+        out.append(f"  ne oldu (adli): kripto fill {_num(f['n'])} satır"
+                   + (f" ({_dur(now() - int(f['a']))} önce başladı)" if f["a"]
+                      else " — HENÜZ HİÇ YOK")
+                   + f" · ana dex OI {mt['n']} coin"
+                   + (f", son örnek {_dur(now() - int(mt['b']))} önce" if mt["b"]
+                      else " — HENÜZ HİÇ YOK"))
+    except Exception as e:
+        out.append(f"  ne oldu (adli) okunamadı ({type(e).__name__}: {e})")
     hv = await kv_get("harvest_stats") or {}
     if hv.get("total"):
         out.append(f"  işlem hasadı: {_num(hv['total'])} fill REST'ten toplandı")

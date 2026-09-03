@@ -6,13 +6,20 @@ from ..config import Config
 from ..db import db, now
 from ..hl.client import HLClient
 from ..hl.universe import norm_coin
+from ..propr import is_listed as propr_listed
 
 log = logging.getLogger("radar.metrics")
 
 
 async def poll_metrics(cfg: Config, client: HLClient) -> int:
     n = 0
-    for dex in cfg.equity_dexes:
+    # ANA DEX ("") de geziliyor: kripto OI'si olmadan "long mu kapattılar,
+    # short mu açtılar" sorusu cevaplanamıyor (OI↑fiyat↓ = yeni short,
+    # OI↓fiyat↓ = long kapanışı). Poll başına +1 istek.
+    dexes = list(cfg.equity_dexes)
+    if getattr(cfg, "crypto_metrics_enabled", True):
+        dexes = ["", *dexes]
+    for dex in dexes:
         try:
             data = await client.meta_and_ctxs(dex)
             meta, ctxs = data[0], data[1]
@@ -27,6 +34,11 @@ async def poll_metrics(cfg: Config, client: HLClient) -> int:
                 if not name or is_excluded(name):
                     continue
                 coin = norm_coin(name, dex)
+                # Ana dexte YALNIZ PROPR'daki coinler: tüm ana dex 200+ satır
+                # eder ve asset_metrics 45 gün saklıyor. İzlemediğimiz coinin
+                # OI geçmişini tutmanın kimseye faydası yok.
+                if not dex and not propr_listed(coin):
+                    continue
                 try:
                     mark = float(ctx.get("markPx") or 0)
                     oi = float(ctx.get("openInterest") or 0)
