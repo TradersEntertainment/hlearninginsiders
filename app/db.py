@@ -224,6 +224,20 @@ CREATE TABLE IF NOT EXISTS pattern_signals(
 );
 CREATE INDEX IF NOT EXISTS idx_psig_due ON pattern_signals(status, resolve_ts);
 CREATE INDEX IF NOT EXISTS idx_psig_new ON pattern_signals(ts DESC);
+-- TWAP / düzenli birikim turları. Tespit KENDİ fill kayıtlarımızdan yapılır
+-- (düzenli aralık + benzer dilim boyutu); HL'nin yerel TWAP emri işaretine
+-- bakılmıyor çünkü kendi botuyla dilimleyen biri de aynı şeyi yapıyor ve
+-- aynı derecede ilginç.
+CREATE TABLE IF NOT EXISTS twap_runs(
+  coin TEXT, address TEXT, side TEXT,
+  first_ts INTEGER, last_ts INTEGER,
+  n_slices INTEGER, total REAL, avg_slice REAL, avg_gap REAL,
+  cv_gap REAL, cv_size REAL,
+  taker_pct REAL, ts INTEGER,
+  PRIMARY KEY(coin, address, side, first_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_twap_total ON twap_runs(total DESC);
+CREATE INDEX IF NOT EXISTS idx_twap_last ON twap_runs(last_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_volev_ts ON vol_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logev_ts ON log_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logev_dedupe ON log_events(logger, level, ts DESC);

@@ -273,9 +273,18 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Uzun bir hareket boyunca her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
     "equity_vol_max_coins": {"type": "int", "label": "Evren tavanı (hisse)", "group": "Hisse hacim",
                              "desc": "Kaç hisse taranacak (PROPR ∩ xyz dex, hacimce büyükten). Her hisse turda 1 istek eder"},
+    "twap_min_usd": {"type": "float", "label": "TWAP asgari büyüklük ($)",
+                     "group": "Tarama & performans",
+                     "desc": "Bu tutarın üstündeki düzenli birikimler /twap sekmesinde listelenir. Tespit KENDİ kayıtlarımızdan yapılır: yakalama tabanının altındaki dilimler görünmez"},
+    "twap_window_h": {"type": "int", "label": "TWAP tarama penceresi (saat)",
+                      "group": "Tarama & performans",
+                      "desc": "Kaç saat geriye bakılıp dilimler birleştirilsin. Uzun TWAP'lar için büyük, gürültü için küçük tutulur"},
+    "twap_scan_sec": {"type": "int", "label": "TWAP tarama aralığı (sn)",
+                      "group": "Tarama & performans",
+                      "desc": "Tarama tamamen YEREL (fills tablosu) — API maliyeti yoktur"},
     "crypto_fill_min_notional": {"type": "float", "label": "Kripto işlem kaydı tabanı ($)",
                                  "group": "Tarama & performans",
-                                 "desc": "İzlenen kripto coinlerde bu tutarın üstündeki işlemler adresiyle KAYDEDİLİR ('ne oldu' sekmesi bunu okur). Hisse tabanından yüksek: HYPE'ta tek dakikada ~$3.8M dönüyor. 0 = kripto kaydı kapalı. Bu işlemler Telegram'a DÜŞMEZ, yalnız arşivlenir"},
+                                 "desc": "İzlenen kripto coinlerde bu tutarın üstündeki işlemler adresiyle KAYDEDİLİR ('ne oldu' ve '/twap' sekmeleri bunu okur). Hisse tabanıyla EŞİT tutuldu: sabırlı bir TWAP'ın dilimleri küçüktür, yüksek eşik onları tamamen görünmez yapar. 0 = kripto kaydı kapalı. Bu işlemler Telegram'a DÜŞMEZ, yalnız arşivlenir"},
     "crypto_metrics_enabled": {"type": "bool", "label": "Kripto OI/funding kaydı",
                                "group": "Tarama & performans",
                                "desc": "Ana dex metrikleri de örneklenir (poll başına +1 istek, yalnız PROPR'daki coinler saklanır). OI olmadan 'long mu kapandı short mu açıldı' ayrımı YAPILAMAZ"},
@@ -450,10 +459,16 @@ class Config:
         # Hisse hacim bildirimlerinin kanalı. Kullanıcı Railway'de bu adla
         # oluşturdu; env-only (chat id'leri EDITABLE_FIELDS'a girmez).
         self.crypto_stocks_id = os.getenv("CRYPTO_STOCKS_ID", "")
+        # Hisseyle AYNI taban: sabırlı bir TWAP'ın dilimleri küçük olur
+        # ($5M / 6 saat ≈ $7K) ve yüksek eşik onları tamamen görünmez yapardı —
+        # üstelik kaçırdığımızı bile bilemezdik.
         self.crypto_fill_min_notional = float(
-            os.getenv("CRYPTO_FILL_MIN_NOTIONAL", "25000"))
+            os.getenv("CRYPTO_FILL_MIN_NOTIONAL", "5000"))
         self.crypto_metrics_enabled = True
         self.forensics_probe_max = int(os.getenv("FORENSICS_PROBE_MAX", "15"))
+        self.twap_min_usd = float(os.getenv("TWAP_MIN_USD", "5000000"))
+        self.twap_window_h = int(os.getenv("TWAP_WINDOW_H", "12"))
+        self.twap_scan_sec = int(os.getenv("TWAP_SCAN_SEC", "600"))
         self.notify_pattern = True
         self.pattern_enabled = True
         # self = yalnız sembolün kendi geçmişi (kullanıcı tercihi). Dar havuzun

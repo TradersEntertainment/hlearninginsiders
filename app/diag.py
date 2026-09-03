@@ -372,6 +372,17 @@ async def _subsystems(cfg) -> list[str]:
                       else " — HENÜZ HİÇ YOK"))
     except Exception as e:
         out.append(f"  ne oldu (adli) okunamadı ({type(e).__name__}: {e})")
+    tw = await kv_get("twap_stats") or {}
+    if tw:
+        best = tw.get("best") or {}
+        out.append(f"  twap: {_num(tw.get('groups'))} dizi tarandı"
+                   f" · {tw.get('detected', 0)} düzenli"
+                   f" · {tw.get('big', 0)} eşik üstü"
+                   + (f" · {tw['skipped_mm']} mm/vault elendi"
+                      if tw.get("skipped_mm") else "")
+                   + (f"\n       en büyüğü: {best.get('coin', '')} {best.get('side', '')}"
+                      f" {_num(best.get('total'))}$ / {best.get('n')} dilim"
+                      if best else ""))
     hv = await kv_get("harvest_stats") or {}
     if hv.get("total"):
         out.append(f"  işlem hasadı: {_num(hv['total'])} fill REST'ten toplandı")

@@ -264,13 +264,16 @@ class Collector:
         watch: set[str] = set()
         if rows:
             async with db() as conn:
-                for r in rows:
-                    await conn.execute(
-                        "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,notional,ts,taker)"
-                        " VALUES(?,?,?,?,?,?,?,?,?)", r)
-                    await conn.execute(
-                        "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
-                        " ON CONFLICT(address) DO NOTHING", (r[2], r[7]))
+                # executemany: eşik $5K'ya indiğinde parti başına onlarca satır
+                # gelebiliyor ve bu blok WS'in SICAK YOLUNDA. Tek tek execute
+                # etmek her satır için ayrı bir round-trip demekti.
+                await conn.executemany(
+                    "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,"
+                    "notional,ts,taker) VALUES(?,?,?,?,?,?,?,?,?)", rows)
+                await conn.executemany(
+                    "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
+                    " ON CONFLICT(address) DO NOTHING",
+                    [(r[2], r[7]) for r in rows])
                 self.fills_seen += len(rows)
                 addr_list = list({r[2] for r in rows})
                 q = ",".join("?" * len(addr_list))

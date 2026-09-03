@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}⏳ TWAP · HL Radar{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>⏳ Büyük TWAP / düzenli birikim <span class="dim" style="text-transform:none">·
+    son 48 saat · süren turlar üstte · başlığa tıklayarak sırala</span></h2>
+  <p class="sub">Aynı adres, aynı coin, aynı yönde <b>düzenli aralıklarla</b> ve
+  <b>benzer boyutlarda</b> gelen fill dizisi = TWAP. Birisi piyasayı kaldırmadan
+  sessizce ve planlı giriyor demektir — bu, aceleci tek seferlik bir alımdan
+  farklı bir niyet gösterir.</p>
+  <p class="sub">HL'nin <b>yerel TWAP emri işaretine bakmıyoruz</b>: kendi
+  botuyla dilimleyen biri de tam olarak aynı şeyi yapıyor ve aynı derecede
+  ilginç. Tespit tamamen <b>kendi işlem kayıtlarımızdan</b>, düzenlilik
+  ölçülerek yapılıyor.
+  <span class="warn">Düzenli işlem yapan her bot TWAP gibi görünebilir —
+  market maker/vault etiketli adresler elenir ama hepsi elenemez.
+  Yatırım tavsiyesi değildir.</span></p>
+
+  <p class="sub dim">
+    {{ st.groups or 0 }} adres-coin dizisi tarandı · <b>{{ st.detected or 0 }}</b> düzenli
+    · <b>{{ st.big or 0 }}</b> tanesi eşiği geçti
+    {%- if st.skipped_mm %} · {{ st.skipped_mm }} market maker/vault elendi{% endif %}
+    {%- if st.ts %} · {{ st.ts|dt }}{% endif %} ·
+    eşik <b>{{ min_usd|usd }}</b> · pencere <b>{{ window_h }} saat</b></p>
+
+  {# KÖR NOKTA: bu uyarı olmadan boş sayfa "TWAP yok" gibi okunur, oysa
+     "göremediğimiz TWAP'lar olabilir" demek. #}
+  <p class="sub dim">🕳 <b>Kör nokta:</b> yalnız yakalama eşiğinin üstündeki
+  dilimleri görüyoruz — hisse <b>{{ eq_floor|usd }}</b>, kripto
+  <b>{{ crypto_floor|usd }}</b>. Bunun altına inen çok sabırlı bir TWAP
+  <b>tamamen görünmez</b>dir ve kaçırdığımızı bile bilemeyiz.
+  {% if cov.crypto.n %}Kripto işlem arşivi {{ '{:,}'.format(cov.crypto.n)|replace(',','.') }} satır
+    ({{ cov.crypto.a|dt }}'den beri){% else %}<span class="short">Kripto işlem arşivi HENÜZ BOŞ</span>{% endif %}
+  · hisse {{ '{:,}'.format(cov.equity.n or 0)|replace(',','.') }} satır.</p>
+</div>
+
+<div class="panel">
+  <h2>🎯 Tespit edilen turlar <span class="dim" style="text-transform:none">·
+    {{ rows|length }} adet</span></h2>
+  {% if rows %}
+  <div style="overflow-x:auto">
+  <table>
+    <tr><th class="l">Coin</th><th class="l">Adres</th><th>Yön</th>
+        <th title="Turun toplam büyüklüğü — dilimlerin $ toplamı">Toplam</th>
+        <th title="Kaç dilime bölünmüş">Dilim</th>
+        <th title="Ortalama dilim büyüklüğü">Dilim $</th>
+        <th title="Dilimler arası ortalama süre">Aralık</th>
+        <th title="İlk dilimden sonuncusuna geçen süre">Süre</th>
+        <th title="Fiyatı süpürerek mi aldı — agresörlük">Taker %</th>
+        <th title="Aralıkların ve boyutların değişkenliği: 0 = mükemmel düzenli. Düşükse gerçekten algoritmik">Düzenlilik</th>
+        <th title="Bu coindeki bilinen açık pozisyonu">Pozisyon</th>
+        <th title="HL perp teminatı — net worth değil">HL bakiye</th>
+        <th title="Turun büyüklüğü / bakiye">Tur/Bak.</th>
+        <th>Durum</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td class="l"><b>{{ r.symbol }}</b></td>
+      <td class="l">{{ m.addr(r.address, k, 6) }}
+        {%- if r.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}
+        {%- if r.entity %}<span class="warn" title="{{ r.entity }} etiketli">🤖</span>{% endif %}</td>
+      <td class="{{ 'long' if r.side == 'buy' else 'short' }}">
+        <b>{{ 'ALIM' if r.side == 'buy' else 'SATIM' }}</b></td>
+      <td><b>{{ r.total|usd }}</b></td>
+      <td class="dim">{{ r.n_slices }}</td>
+      <td class="dim">{{ r.avg_slice|usd }}</td>
+      <td class="dim">{{ (r.avg_gap or 0)|int }}sn</td>
+      <td class="dim">{{ ((r.last_ts - r.first_ts) // 60)|int }}dk</td>
+      <td class="{{ 'short' if r.taker_pct and r.taker_pct >= 70 else 'dim' }}">
+        {% if r.taker_pct is not none %}{{ '%.0f'|format(r.taker_pct) }}%{% else %}—{% endif %}</td>
+      <td class="dim" title="cv_gap {{ '%.3f'|format(r.cv_gap or 0) }} · cv_size {{ '%.3f'|format(r.cv_size or 0) }}">
+        {{ '%.2f'|format(((r.cv_gap or 0) + (r.cv_size or 0)) / 2) }}</td>
+      <td class="{{ r.pos_side or 'dim' }}">
+        {% if r.pos_side %}{{ 'LONG' if r.pos_side == 'long' else 'SHORT' }}
+          <span class="dim">{{ r.pos_notional|usd }}</span>
+        {%- else %}<span class="dim">—</span>{% endif %}</td>
+      <td>{{ m.equity_cell(r.account_value, r.account_ts) }}</td>
+      <td>{{ m.equity_pct(r.account_value, r.total) }}</td>
+      <td>{% if r.active %}<b class="long">🔴 sürüyor</b>
+          {%- else %}<span class="dim">bitti · {{ r.last_ts|age }}</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="dim">Eşiği ({{ min_usd|usd }}) geçen TWAP turu görmedik.
+    {% if not cov.crypto.n %}<b>Kripto işlem arşivi henüz boş</b> — kayıt yeni
+      açıldı, birikmesi gerekiyor.{% else %}Bu <b>"TWAP yok" demek değil</b>:
+      eşiğin altındaki dilimlerle çalışan turlar görünmez.{% endif %}</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>❓ Nasıl tespit ediliyor, neye dikkat etmeli?</h2>
+  <p class="sub">Bir dizi, iki ölçü birden düşükse "düzenli" sayılıyor:
+  <b>aralıkların</b> ve <b>dilim boyutlarının</b> değişkenlik katsayısı (ikisi de
+  0.35 altında). İnsan eliyle atılan emirler bu kadar düzenli olmaz; bir
+  algoritma olur. En az {{ 5 }} dilim şart — daha azında "düzenlilik" ölçülemez.</p>
+  <p class="sub"><b>Düzenlilik</b> kolonu ikisinin ortalaması: <b>0'a yakın =
+  saat gibi işleyen bir algoritma</b>, 0.35'e yakın = sınırda. <b>Taker %</b>
+  yüksekse fiyatı süpürerek alıyor — sabırlı bir TWAP genelde pasif kalır,
+  agresif olan aceleci demektir.</p>
+  <p class="sub dim">Yanlış pozitif kaynağı: piyasa yapıcılar ve vault'lar
+  düzenli işlem yapar. <code>entity</code> etiketi olanlar (mm/vault) elenir ama
+  etiketlenmemiş olanlar listeye girebilir — 🤖 işaretine ve düzenlilik
+  değerine bak.</p>
+  <p class="sub dim">Aynı balina işi birden çok cüzdana bölmüş olabilir; şu an
+  her cüzdan ayrı tur sayılıyor. Cüzdan kümeleri (<code>wallet_links</code>)
+  zaten toplanıyor — istenirse turlar küme bazında birleştirilebilir.</p>
+</div>
+
+{% endblock %}

@@ -6,7 +6,6 @@ büyük N pozisyona uygulanır.
 """
 import json
 import logging
-import statistics
 
 from ..config import Config
 from ..db import db, now
@@ -154,25 +153,22 @@ async def _coin_focus(coin: str, address: str) -> bool:
 
 
 async def _twap_fills(coin: str, address: str, side: str) -> int:
-    """Yerel fill'lerden TWAP paterni: düzenli aralık + benzer boyut. Fill sayısı döner."""
+    """Yerel fill'lerden TWAP paterni: düzenli aralık + benzer boyut.
+
+    Ölçüm `twap.detect()`'e devredildi — TEK KAYNAK. İki ayrı uygulama olsaydı
+    biri düzeltilip diğeri unutulur, insider skoru /twap sekmesinden sessizce
+    farklı davranırdı. Buradan dönen değer eskisi gibi FİLL SAYISI.
+    """
+    from .twap import detect
     want = "buy" if side == "long" else "sell"
     since = now() - 48 * 3600
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT ts, sz FROM fills WHERE coin=? AND address=? AND side=? AND ts>=?"
-            " ORDER BY ts", (coin, address, want, since))
-        rows = await cur.fetchall()
-    if len(rows) < 5:
-        return 0
-    ts_list = [r["ts"] for r in rows]
-    sizes = [r["sz"] for r in rows]
-    gaps = [b - a for a, b in zip(ts_list, ts_list[1:])]
-    mg, ms = statistics.mean(gaps), statistics.mean(sizes)
-    if mg <= 0 or ms <= 0:
-        return 0
-    cv_gap = statistics.pstdev(gaps) / mg
-    cv_size = statistics.pstdev(sizes) / ms
-    return len(rows) if (cv_gap < 0.35 and cv_size < 0.35) else 0
+            "SELECT ts, sz, notional FROM fills WHERE coin=? AND address=? AND"
+            " side=? AND ts>=? ORDER BY ts", (coin, address, want, since))
+        rows = [dict(r) for r in await cur.fetchall()]
+    d = detect(rows)
+    return d["n"] if d else 0
 
 
 TAKER_MIN_FILLS = 4   # bu kadar "taker'ı bilinen" fill yoksa oran hesaplanmaz

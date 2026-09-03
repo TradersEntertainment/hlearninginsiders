@@ -20,7 +20,7 @@ from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
-                     patterns, pricechart)
+                     patterns, pricechart, twap)
 
 log = logging.getLogger("web.routes")
 
@@ -1114,6 +1114,22 @@ def _parse_window(request: Request) -> tuple[int, int, str]:
     if t1:
         return t1 - 900, t1, ""
     return start, end, "son 15 dakika (varsayılan)"
+
+
+@router.get("/twap")
+async def twap_page(request: Request):
+    """Büyük TWAP / düzenli birikim turları — birileri sessizce topluyor."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    return _render(request, "twap.html", {
+        "rows": await twap.recent(),
+        "st": await kv_get("twap_stats") or {},
+        "cov": await twap.coverage(),
+        "min_usd": getattr(cfg, "twap_min_usd", 0),
+        "window_h": getattr(cfg, "twap_window_h", 12),
+        "crypto_floor": getattr(cfg, "crypto_fill_min_notional", 0),
+        "eq_floor": getattr(cfg, "min_fill_notional", 0),
+    })
 
 
 @router.get("/neoldu")

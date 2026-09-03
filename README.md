@@ -175,6 +175,41 @@ Maliyet: sembol başına turda 1 istek. İki radar birlikte ~200 sembol / 5 daki
 ≈ **40 rpm**, bütçe 350 rpm. Her biri kendi Ayarlar grubundan ayrı ayrı
 kapatılabilir (maliyet sıfırlanır).
 
+## TWAP Radarı: `/twap`
+
+Aynı adres, aynı coin, aynı yönde **düzenli aralıklarla** ve **benzer
+boyutlarda** gelen fill dizisi = TWAP. Birisi piyasayı kaldırmadan sessizce ve
+planlı giriyor demektir — aceleci tek seferlik bir alımdan farklı bir niyet.
+Eşiği (`twap_min_usd`, vars. **$5M**) geçen turlar sekmede listelenir, **süren
+turlar üstte**.
+
+**HL'nin yerel TWAP emri işaretine bakmıyoruz.** Kendi botuyla dilimleyen biri
+de tam olarak aynı şeyi yapıyor ve aynı derecede ilginç; ayrıca o işaretin
+varlığını doğrulamadan ona bel bağlamak kırılgan olurdu. Tespit tamamen kendi
+işlem kayıtlarımızdan, **düzenlilik ölçülerek** yapılıyor: aralıkların ve dilim
+boyutlarının değişkenlik katsayısı (ikisi de < 0.35), en az 5 dilim.
+
+**Tek kaynak.** Bu ölçü zaten `scorer`'da vardı (insider skorundaki "TWAP
+paterni" sinyali) ama yalnız fill sayısı döndürüyordu. Artık `twap.detect()`
+tek uygulama ve `scorer` onu çağırıyor — iki kopya olsaydı biri düzeltilip
+diğeri unutulur, skor sekmeden sessizce farklı davranırdı.
+
+**Kör nokta, açıkça yazılır:** yalnız yakalama eşiğinin üstündeki dilimleri
+görüyoruz. Bunun altına inen çok sabırlı bir TWAP **tamamen görünmez**dir ve
+kaçırdığımızı bile bilemeyiz. Bu yüzden kripto yakalama tabanı hisseyle
+eşitlendi (**$5K**): $5M'lik bir TWAP 6 saate yayılırsa dilimleri ~$7K olur.
+Bu değişiklik kripto fill satırlarını birkaç katına çıkardığı için WS'in sıcak
+yolundaki yazım `executemany` ile toplu hâle getirildi.
+
+**Yanlış pozitif kaynağı:** piyasa yapıcılar ve vault'lar düzenli işlem yapar.
+`entity` etiketi olanlar (mm/vault) elenir, etiketlenmemiş olanlar listeye
+girebilir — sayfadaki 🤖 işareti ve **düzenlilik** kolonu bunun için var
+(0'a yakın = saat gibi işleyen algoritma).
+
+Sekme ayrıca her tur için pozisyonu, bakiyeyi, **Tur/Bakiye** oranını ve
+**taker %**'sini gösterir: sabırlı bir TWAP genelde pasif kalır, agresif olan
+aceleci demektir.
+
 ## Ne Oldu?: `/neoldu`
 
 Grafikte absürt bir hacim gördüğünde: **sembol + saat aralığı gir**, o
@@ -203,8 +238,8 @@ yeni short açtı · pozisyonu kapattı · aldı ve sattı (scalp)*.
 
 1. **Kripto işlem kaydı.** `collector` kripto akışını "yalnız tetikleyici"
    sayıp tek satır fill yazmıyordu — HYPE'ta kimin ne aldığına dair sıfır kayıt
-   vardı. Artık `crypto_fill_min_notional` ($25K) üstü işlemler kaydediliyor.
-   Eşik hisseden yüksek çünkü HYPE'ta tek dakikada ~$3.8M dönüyor.
+   vardı. Artık `crypto_fill_min_notional` ($5K) üstü işlemler kaydediliyor.
+   Eşik başta $25K'ydı; TWAP radarı için hisseyle eşitlendi (aşağıya bakın).
    **Bu işlemler Telegram'a DÜŞMEZ** — alarm kapısı bilerek korundu, yoksa ana
    kanal kripto seline boğulurdu.
 2. **Kripto OI kaydı.** `poll_metrics` yalnız `xyz` dex'ini geziyordu; artık
