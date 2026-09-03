@@ -270,6 +270,74 @@ Fill büyümesi `/tani`'da **saatlik satır sayısı** olarak izlenir.
   kırılımı hiçbir şey anlatmaz, o yüzden son 1 saate bakılır ve **pencere
   mesajda yazılır**.
 
+## İki pozisyon tablosu, iki ayrı soru
+
+**`hl_positions` = rekor arşivi.** "Gördüğümüz en büyük pozisyonlar." Yazma
+kapısı kademeli (`bigpos.threshold`): HIP-3 hisse **$1M**, BTC/ETH $50M, diğer
+kripto $20M. Kapanan satır silinmez, damgalanır — `/devler` sayfasının bütün
+konusu bu ve geçmişi (zirve, ilk görülme) orada durur.
+
+**`addr_positions` = son bilinen pozisyon, HER BOYUTTA.** 14 gün saklanır
+(`fills_retention_days` ile aynı ayar — işlem kaydı olmayan bir pencere için
+pozisyon fotoğrafı tutmanın faydası yok).
+
+İkisi neden ayrı: "dev pozisyon kim taşıyor" ile "bu adam ne tutuyor" farklı
+sorular. Birleştirmek `/devler`'in "dev" tanımını bozardı.
+
+**Bu tablo neden gerekti.** `/neoldu` raporunda 60 adresin 43'ü "bilinmiyor"
+çıkıyordu ve sebep bir hata değildi: adrese bakmış, defterini çekmiş, her şeyi
+doğru yapmıştık — adam o coinde $1M'dan az tuttuğu için hiçbir şey
+yazılmıyordu. Üstelik satırın notu *"defterini hiç çekmedik, tazele"* diyerek
+**yanlış yönlendiriyordu**: tazelesen de eşik altı yazılmıyordu.
+
+**Veri bedavaydı.** Süpürme (`sweeper.probe_address`, `sweep_batch`,
+`prime_hl`) zaten her adresin TÜM pozisyonlarını ayrıştırıyordu —
+`_parse_all_positions(resp, 0)` — ama yalnız coin adlarını "hâlâ tutuyor mu"
+kümesi olarak alıp gerisini çöpe atıyordu. Artık aynı yanıt iki tabloyu
+birden besliyor; **ek API isteği yok**, üstelik ayrıştırma iki kezden bire indi.
+
+Ölçek zamanla değil **adres evreni kadar** büyür: birincil anahtar
+(coin, adres), her turda üzerine yazılır. ~17.600 adres × ortalama 3-5 pozisyon
+≈ 50-90 bin satır. `/tani` hem satır sayısını hem **adres kapsamasını**
+(son 14 günde işlem yapan kaç adresin defterine uğradık) gösterir.
+
+### Üç ayrı cevap, tek "bilinmiyor" yerine
+
+| Durum | Etiket |
+|---|---|
+| pozisyon biliniyor | gerçek etiket (artırdı · kırptı · açtı · kapattı · scalp) |
+| baktık, bu coinde pozisyonu yok | **"pozisyon taşımıyor"** |
+| defterine hiç uğramadık | **"bilinmiyor"** |
+
+Ortadaki bugün olmayan gerçek bir bilgi: pencerede $1.9M çevirip sonra düz
+kalan bir adres artık "bilmiyoruz" değil, "aldı sattı, taşımıyor" diye okunur.
+Ayıran işaret `addresses.probed_ts` — `addresses` satırının varlığı yetmez,
+collector her fill için bir satır açıyor.
+
+### Yol boyunca düzelen iki yanlış etiket
+
+- **Hayalet etiket:** `closed_ts` pencereden önce ve ±3 saat bandının dışındaysa
+  kod alt dallara düşüp **artık var olmayan** bir pozisyonun yönüyle "long'unu
+  artırdı" diyordu. Artık "pozisyon taşımıyor — bu pencereden ÖNCE kapanmış".
+- **Tek yönlü bayatlık:** `stale` yalnız `t0 - ölçüm > 3s` bakıyordu, yani
+  pencereden *sonra* ölçülmüş bir pozisyon asla ⏳ almıyordu. Üç gün önceki bir
+  pencereyi bugünkü fotoğrafla ölçüp emin konuşuyorduk; artık ölçüm
+  `[t0-3s, t1+3s]` dışındaysa bayat sayılıyor.
+
+### Kapsama: sıra artık işe yarıyor
+
+Süpürmenin soğuk havuzu (`fills`'ten gelen adresler) düz `DISTINCT` ile
+çekiliyordu — `ORDER BY` yoktu, yani sıra rastgeleydi ve imleç her partide
+yeniden kurulan bir listeyi indeksliyordu; bir adrese hiç sıra gelmeyebilirdi.
+Artık **son işlem yapana öncelik** var: adli raporlarda karşımıza çıkanlar tam
+olarak onlar.
+
+"Profilleri tazele" düğmesi de bütçesini bilinmeyene harcıyor. Eskiden listenin
+ilk 15'ini alıyordu — hacimce en büyükleri, yani zaten bildiklerimizi. Sonuç da
+dürüst raporlanıyor: *"15 defter çekildi · 3 pozisyon bulundu · 12 adres
+pozisyon taşımıyor"* — "15/15 tazelendi" deyip satırların yine "bilinmiyor"
+kalması en kafa karıştırıcı hâldi.
+
 ## Ne Oldu?: `/neoldu`
 
 Grafikte absürt bir hacim gördüğünde: **sembol + saat aralığı gir**, o

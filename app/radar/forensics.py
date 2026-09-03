@@ -181,22 +181,42 @@ def group_fills(rows: list[dict]) -> list[dict]:
     return out[:MAX_ADDRS]
 
 
-def infer(a: dict, pos: dict | None, t0: int, t1: int) -> dict:
+def infer(a: dict, pos: dict | None, t0: int, t1: int,
+          probed_ts: int = 0) -> dict:
     """Adresin penceredeki hareketi + bilinen pozisyonu → etiket.
 
     "bilinmiyor" gerçek bir cevaptır: pozisyonunu görmediğimiz adres için
-    yön uydurmak, kullanıcıyı olmayan bir kesinliğe inandırmak olurdu.
+    yön uydurmak, kullanıcıyı olmayan bir kesinliğe inandırmak olurdu. Ama
+    "bilmiyoruz" ile "baktık, taşımıyor" da AYRI cevaplar — `probed_ts` ikisini
+    ayırır ve ikincisi gerçek bir bilgidir.
     """
     if not pos:
-        return {"label": "bilinmiyor", "note": "bu adresin defterini hiç "
-                "çekmedik — 'Profilleri tazele' ile şimdi çekebilirsin",
-                "stale": False}
+        # ÜÇ AYRI CEVAP. Eskiden üçü de "bilinmiyor" diyordu ve not, eşik altı
+        # bir pozisyon için YANLIŞ tavsiye veriyordu ("tazele ile çekebilirsin"
+        # — tazelesen de yazılmıyordu).
+        if not probed_ts:
+            return {"label": "bilinmiyor", "stale": False,
+                    "note": "bu adresin defterini hiç çekmedik —"
+                            " 'Profilleri tazele' ile şimdi çekebilirsin"}
+        return {"label": "pozisyon taşımıyor", "stale": False,
+                "note": "defterine baktık, bu coinde açık pozisyonu yok —"
+                        " alıp satmış ve düz kalmış olabilir"}
     meas = int(pos.get("ts") or 0)
-    stale = bool(meas) and (t0 - meas) > PROFILE_STALE_SEC
+    # BAYATLIK İKİ YÖNLÜ: eskiden yalnız `t0 - meas` bakılıyordu, yani
+    # pencereden SONRA ölçülmüş bir pozisyon asla bayat sayılmıyordu — üç gün
+    # önceki bir pencereyi bugünkü fotoğrafla ölçüp emin konuşuyorduk.
+    stale = bool(meas) and not (t0 - PROFILE_STALE_SEC <= meas
+                                <= t1 + PROFILE_STALE_SEC)
     closed = int(pos.get("closed_ts") or 0)
     if closed and t0 - PROFILE_STALE_SEC <= closed <= t1 + PROFILE_STALE_SEC:
         return {"label": "pozisyonu kapattı", "stale": stale,
                 "note": "kapanış damgası bu pencere civarında"}
+    if closed and closed < t0 - PROFILE_STALE_SEC:
+        # HAYALET ETİKET: eskiden buradan alt dallara düşüp ARTIK OLMAYAN bir
+        # pozisyonun yönüyle "long'unu artırdı" diyordu. Pozisyon pencereden
+        # önce kapanmıştı; o yönle konuşmak uydurma olur.
+        return {"label": "pozisyon taşımıyor", "stale": stale,
+                "note": "bilinen pozisyonu bu pencereden ÖNCE kapanmış"}
     side, first = pos.get("side"), int(pos.get("first_seen_ts") or 0)
     if not side:
         return {"label": "bilinmiyor", "stale": stale, "note": "yön okunamadı"}
@@ -219,16 +239,63 @@ def infer(a: dict, pos: dict | None, t0: int, t1: int) -> dict:
 
 
 async def _positions(coin: str, addrs: list[str]) -> dict:
+    """Adres -> bu coindeki son bilinen pozisyon. İKİ TABLO birleşir.
+
+    `addr_positions` TABAN'dır: her boyutta ve daha eksiksiz. `hl_positions`
+    yalnız kademe üstünü tutar ama `first_seen_ts`/`peak_notional` gibi TARİHÇE
+    orada — "yeni açtı" mı "artırdı" mı ayrımı bunlara bakıyor. İkisi ayrı
+    tablo, tek okuma.
+    """
     if not addrs:
         return {}
     q = ",".join("?" * len(addrs))
+    out: dict[str, dict] = {}
     async with db() as conn:
+        cur = await conn.execute(
+            f"""SELECT p.*, a.account_value, a.account_ts
+                FROM addr_positions p
+                LEFT JOIN addresses a ON a.address = p.address
+                WHERE p.coin=? AND p.address IN ({q})""", (coin, *addrs))
+        for r in await cur.fetchall():
+            out[r["address"]] = dict(r)
         cur = await conn.execute(
             f"""SELECT h.*, a.account_value, a.account_ts
                 FROM hl_positions h
                 LEFT JOIN addresses a ON a.address = h.address
                 WHERE h.coin=? AND h.address IN ({q})""", (coin, *addrs))
-        return {r["address"]: dict(r) for r in await cur.fetchall()}
+        for r in await cur.fetchall():
+            h = dict(r)
+            base = out.get(h["address"])
+            if not base:
+                out[h["address"]] = h
+                continue
+            # Tarihçeyi rekor arşivinden al; anlık değerler tazeyi taşıyan
+            # addr_positions'tan kalsın (o her turda yazılıyor).
+            for k in ("first_seen_ts", "peak_notional", "peak_ts"):
+                if h.get(k) is not None:
+                    base[k] = h[k]
+            if base.get("closed_ts") is None and h.get("closed_ts") is not None \
+                    and int(h["ts"] or 0) > int(base.get("ts") or 0):
+                base["closed_ts"] = h["closed_ts"]
+    return out
+
+
+async def probed(addrs: list[str]) -> dict[str, int]:
+    """Adres -> defterini en son ne zaman çektik (yoksa 0).
+
+    "Hiç uğramadık" ile "uğradık ama bu coinde pozisyonu yok" APAYRI cevaplar;
+    ayıran tek şey bu. `addresses` satırının VARLIĞI yetmez — collector her
+    fill için satır açıyor, o yüzden ölçüt `probed_ts`.
+    """
+    if not addrs:
+        return {}
+    q = ",".join("?" * len(addrs))
+    async with db() as conn:
+        cur = await conn.execute(
+            f"SELECT address, probed_ts FROM addresses WHERE address IN ({q})",
+            tuple(addrs))
+        return {r["address"]: int(r["probed_ts"] or 0)
+                for r in await cur.fetchall()}
 
 
 async def _context(coin: str, t0: int, t1: int) -> dict:
@@ -283,11 +350,14 @@ async def report(coin: str, t0: int, t1: int) -> dict:
 
     rows = await _fills(coin, t0, t1)
     grouped = group_fills(rows)
-    pos = await _positions(coin, [g["address"] for g in grouped])
+    addrs = [g["address"] for g in grouped]
+    pos = await _positions(coin, addrs)
+    prb = await probed(addrs)
     for g in grouped:
         p = pos.get(g["address"])
         g["pos"] = p
-        g["infer"] = infer(g, p, t0, t1)
+        g["probed_ts"] = prb.get(g["address"], 0)
+        g["infer"] = infer(g, p, t0, t1, g["probed_ts"])
 
     since = await fills_since()
     start = since["crypto" if is_crypto else "equity"]
@@ -303,6 +373,12 @@ async def report(coin: str, t0: int, t1: int) -> dict:
         "buy": sum(g["buy"] for g in grouped),
         "sell": sum(g["sell"] for g in grouped),
         "n_known": sum(1 for g in grouped if g["pos"]),
+        # Baktığımız ama pozisyon taşımayan adresler: "bilmiyoruz" DEĞİL,
+        # bilgi. Künye ikisini ayrı saymazsa sayfa hâlâ eksik görünür.
+        "n_flat": sum(1 for g in grouped
+                      if not g["pos"] and g.get("probed_ts")),
+        "n_unseen": sum(1 for g in grouped
+                        if not g["pos"] and not g.get("probed_ts")),
         "n_stale": sum(1 for g in grouped if g["infer"].get("stale")),
         "ctx": await _context(coin, t0, t1),
         # Kayıt başlangıcından ÖNCE bir pencere soruldu mu? "Boş" ile
@@ -320,13 +396,30 @@ async def refresh_profiles(cfg, client, coin: str, addrs: list[str],
     yolu, aynı 'artık tutmuyor' otoritesi. Tavanla sınırlı: adres başına
     1 istek. `cap` verilmezse sayfa tavanı (`forensics_probe_max`) geçerli;
     alarm yolu kendi (çok daha küçük) tavanını geçirir.
+
+    BÜTÇE BİLİNMEYENE HARCANIR. Eskiden gelen listenin ilk N'i alınıyordu, yani
+    hacimce en büyükler — ki onlar zaten bildiğimiz satırlardı; alt sıradaki
+    bilinmeyenlere hiç sıra gelmiyordu. `coin` verilmişse önce o coinde
+    pozisyonu bilinmeyen/bayat olanlar sıraya girer.
     """
     from .sweeper import probe_address
     cap = int(cap if cap is not None else getattr(cfg, "forensics_probe_max", 15))
     if cap <= 0:
-        return {"tried": 0, "ok": 0, "err": 0, "err_msg": ""}
-    out = {"tried": 0, "ok": 0, "err": 0, "err_msg": ""}
-    for addr in addrs[:cap]:
+        return {"tried": 0, "ok": 0, "err": 0, "err_msg": "", "wrote": 0,
+                "flat": 0, "skipped": 0}
+    todo = list(addrs)
+    if coin:
+        known = await _positions(coin, todo)
+        prb = await probed(todo)
+        cut = now() - PROFILE_STALE_SEC
+        def rank(a):
+            if a not in known:
+                return (0, 0) if prb.get(a, 0) < cut else (2, 0)
+            return (1, 0) if int(known[a].get("ts") or 0) < cut else (3, 0)
+        todo.sort(key=rank)                 # 0: hiç bilinmeyen → 3: taze bilinen
+    out = {"tried": 0, "ok": 0, "err": 0, "err_msg": "", "wrote": 0,
+           "flat": 0, "skipped": max(0, len(addrs) - cap)}
+    for addr in todo[:cap]:
         out["tried"] += 1
         try:
             await probe_address(cfg, client, addr)
@@ -336,6 +429,13 @@ async def refresh_profiles(cfg, client, coin: str, addrs: list[str],
             if not out["err_msg"]:
                 out["err_msg"] = f"{type(e).__name__}: {e}"
                 log.warning("profil tazelenemedi (%s): %s", addr, e)
+    # DÜRÜST SONUÇ: "15/15 tazelendi" deyip satırların yine "bilinmiyor"
+    # kalması en kafa karıştırıcı hâldi. Kaçında gerçekten pozisyon çıktığını
+    # sayıp söylüyoruz.
+    if coin and out["ok"]:
+        after = await _positions(coin, todo[:cap])
+        out["wrote"] = len(after)
+        out["flat"] = out["ok"] - len(after)
     return out
 
 
@@ -388,17 +488,25 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
     probed, probe_err = 0, ""
     if probe and client and head:
         cap = int(getattr(cfg, "alert_forensics_probe", 3) or 0)
+        # Yalnız GERÇEKTEN eksik olanı sonda: pozisyonu taze bilinen ya da
+        # "baktık, taşımıyor" diye taze bilinen adresi yeniden çekmek istek
+        # harcar, hiçbir şey kazandırmaz.
+        cut = now() - PROFILE_STALE_SEC
         stale = [r["address"] for r in head
-                 if not r.get("pos") or (r.get("infer") or {}).get("stale")]
+                 if (r.get("infer") or {}).get("stale")
+                 or (not r.get("pos") and int(r.get("probed_ts") or 0) < cut)]
         if cap > 0 and stale:
             try:
                 res = await refresh_profiles(cfg, client, coin, stale, cap=cap)
                 probed, probe_err = res["ok"], res["err_msg"]
                 if res["ok"]:
-                    fresh = await _positions(coin, [r["address"] for r in head])
+                    ha = [r["address"] for r in head]
+                    fresh = await _positions(coin, ha)
+                    fprb = await probed(ha)
                     for r in head:
                         r["pos"] = fresh.get(r["address"])
-                        r["infer"] = infer(r, r["pos"], t0, t1)
+                        r["probed_ts"] = fprb.get(r["address"], 0)
+                        r["infer"] = infer(r, r["pos"], t0, t1, r["probed_ts"])
             except Exception as e:
                 probe_err = f"{type(e).__name__}: {e}"
                 log.warning("alarm sondası düştü (%s): %s", coin, e)

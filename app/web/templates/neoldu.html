@@ -69,9 +69,15 @@
   {# ── veri künyesi ─────────────────────────────────────────────────────── #}
   <p class="sub dim">🧾 Bu pencerede <b>{{ rep.n_fills }}</b> işlem kaydımız var ·
     alım <b class="long">{{ rep.buy|usd }}</b> / satım <b class="short">{{ rep.sell|usd }}</b> ·
-    {{ rep.rows|length }} adres · {{ rep.n_known }} tanesinin pozisyonunu biliyoruz
+    {{ rep.rows|length }} adres · <b>{{ rep.n_known }}</b> tanesinin pozisyonunu biliyoruz
+    {%- if rep.n_flat %} · {{ rep.n_flat }} tanesi baktığımızda pozisyon taşımıyordu{% endif %}
+    {%- if rep.n_unseen %} · <span class="short">{{ rep.n_unseen }} adrese hiç uğramadık</span>{% endif %}
     {%- if rep.n_stale %} · <span class="short">{{ rep.n_stale }} çıkarım bayat veriye dayanıyor ⏳</span>{% endif %}.
     {% if rep.is_crypto %}Kripto işlem kaydı eşiği <b>{{ crypto_floor|usd }}</b>.{% endif %}</p>
+  <p class="sub dim">🗄 Pozisyonlar <b>her boyutta</b> tutuluyor (son 14 gün).
+    Bundan ayrı olarak <b>{{ big_floor|usd }}</b> üstü pozisyonlar rekor arşivine
+    (<code>/devler</code>) girer ve orada geçmişiyle birlikte kalır — iki tablo
+    ayrı, çünkü "dev pozisyon" ile "bu adam ne tutuyor" ayrı sorular.</p>
 
   {% if rep.before_records %}
   <p class="short">📼 <b>Bu pencere kayıt başlangıcından önce.</b>
@@ -91,8 +97,10 @@
   <p class="sub"><b>Taker %</b> = fiyatı süpürerek mi aldı (agresör, aceleci —
   bilgi taşıyan taraf genelde budur) yoksa pasif emirle mi doldu.
   <b>Ne yaptı</b> kolonu, adresin bilinen pozisyonuyla penceredeki yönünü
-  karşılaştırır; pozisyonunu hiç görmediğimiz adres için <b>uydurmaz</b>,
-  "bilinmiyor" der.</p>
+  karşılaştırır ve <b>uydurmaz</b> — pozisyon yoksa iki AYRI cevap verir:
+  <b>"pozisyon taşımıyor"</b> (defterine baktık, bu coinde açığı yok) ve
+  <b>"bilinmiyor"</b> (defterine hiç uğramadık). İkisini tek kelimeye indirmek
+  "kimse bir şey tutmuyor" diye okunurdu.</p>
 
   <button type="button" id="refresh" data-coin="{{ rep.coin }}"
           style="padding:7px 14px;border-radius:8px;border:1px solid #3a3352;
@@ -206,8 +214,13 @@
         body: JSON.stringify({ coin: b.dataset.coin, addrs: addrs })
       });
       var j = await r.json();
+      // DÜRÜST SONUÇ: "15/15 tazelendi" deyip satırların yine "bilinmiyor"
+      // kalması en kafa karıştırıcı hâldi. Kaçında pozisyon çıktığını yaz.
       msg.textContent = j.error ? ('hata: ' + j.error)
-        : (j.ok + '/' + j.tried + ' profil tazelendi'
+        : (j.ok + '/' + j.tried + ' defter çekildi · ' + (j.wrote || 0)
+           + ' pozisyon bulundu'
+           + (j.flat ? (' · ' + j.flat + ' adres pozisyon taşımıyor') : '')
+           + (j.skipped ? (' · ' + j.skipped + ' adres tavan dışında kaldı') : '')
            + (j.err ? (' · ' + j.err + ' hata: ' + (j.err_msg || '')) : '')
            + ' — sayfa yenileniyor');
       if (!j.error) setTimeout(function () { location.reload(); }, 900);

@@ -57,8 +57,13 @@ async def build_pools(cfg: Config, client: HLClient) -> tuple[list[str], list[st
     lb = await _leaderboard_addrs(client, cfg.sweep_leaderboard_top)
     since = now() - cfg.fills_lookback_days * 86400
     async with db() as conn:
+        # SIRA ÖNEMLİ: eskiden düz DISTINCT'ti, yani soğuk havuz rastgele
+        # sırayla geziliyordu ve imleç her partide yeniden kurulan bir listeyi
+        # indeksliyordu — bir adrese hiç sıra gelmeyebiliyordu. Son işlem
+        # yapana öncelik veriyoruz: adli raporlarda karşımıza çıkanlar onlar.
         cur = await conn.execute(
-            "SELECT DISTINCT address FROM fills WHERE ts >= ?", (since,))
+            "SELECT address FROM fills WHERE ts >= ? GROUP BY address"
+            " ORDER BY MAX(ts) DESC", (since,))
         traded = [r["address"] for r in await cur.fetchall()]
         cur = await conn.execute("SELECT DISTINCT address FROM positions_current")
         holders = [r["address"] for r in await cur.fetchall()]
@@ -292,6 +297,68 @@ async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int,
                 (ts, addr))
 
 
+async def _upsert_addr_pos(addr: str, positions: dict[str, dict],
+                           ts: int) -> None:
+    """addr_positions'a yaz: SON BİLİNEN pozisyon, boyut gözetmeksizin.
+
+    `hl_positions` kademe altını hiç yazmadığı için "ne oldu" raporunda
+    adreslerin çoğu "bilinmiyor" çıkıyordu — oysa defterlerini çekmiştik,
+    sadece $1M'ın altında tuttukları için attık. Burası o boşluğu doldurur.
+
+    `positions` EŞİKSİZ liste (`_parse_all_positions(resp, 0)`) olmalı; zaten
+    kapanma tespiti için hesaplanıyor, ek maliyet yok.
+
+    Kapanan SİLİNMEZ, damgalanır: "pozisyonu kapattı" etiketi buna dayanıyor
+    ve silinen satırdan geçmiş geri getirilemez.
+    """
+    rows = [(coin, addr, p["dex"], p["side"], p["szi"], p["entry_px"],
+             p["leverage"], p["liq_px"], p["upnl"], p["notional"], ts)
+            for coin, p in positions.items()]
+    async with db() as conn:
+        if rows:
+            # executemany: bir adres onlarca pozisyon taşıyabilir ve bu blok
+            # süpürme partisinin sıcak yolunda.
+            await conn.executemany(
+                """INSERT INTO addr_positions
+                   (coin,address,dex,side,szi,entry_px,leverage,liq_px,upnl,
+                    notional,ts,closed_ts)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)
+                   ON CONFLICT(coin,address) DO UPDATE SET
+                     dex=excluded.dex, side=excluded.side, szi=excluded.szi,
+                     entry_px=excluded.entry_px, leverage=excluded.leverage,
+                     liq_px=excluded.liq_px, upnl=excluded.upnl,
+                     notional=excluded.notional, ts=excluded.ts,
+                     closed_ts=NULL""", rows)
+        # Adresin artık tutmadıkları: kapandı damgası. Liste EŞİKSİZ olduğu için
+        # burada "eşik altına gerilemiş" diye yanlış kapatma riski YOK.
+        if positions:
+            q = ",".join("?" * len(positions))
+            await conn.execute(
+                f"UPDATE addr_positions SET closed_ts=? WHERE address=?"
+                f" AND closed_ts IS NULL AND coin NOT IN ({q})",
+                (ts, addr, *positions))
+        else:
+            await conn.execute(
+                "UPDATE addr_positions SET closed_ts=? WHERE address=?"
+                " AND closed_ts IS NULL", (ts, addr))
+    async with db() as conn:
+        # Defteri GERÇEKTEN çektik. "hiç uğramadık" ile "uğradık, bu coinde
+        # pozisyonu yok"u ayıran işaret bu.
+        await conn.execute(
+            "INSERT INTO addresses(address, first_seen, probed_ts) VALUES(?,?,?)"
+            " ON CONFLICT(address) DO UPDATE SET probed_ts=excluded.probed_ts",
+            (addr, ts, ts))
+
+
+async def prune_addr_positions(days: int) -> int:
+    """Tazelenmeyeni at. Saklama `fills_retention_days` ile AYNI: işlem kaydı
+    olmayan bir pencere için pozisyon fotoğrafı tutmanın anlamı yok."""
+    async with db() as conn:
+        cur = await conn.execute(
+            "DELETE FROM addr_positions WHERE ts < ?", (now() - int(days) * 86400,))
+        return cur.rowcount or 0
+
+
 async def upsert_account_value(addr: str, value: float | None, ts: int,
                                force: bool = True) -> bool:
     """Bakiyeyi yaz. `force=False` ise YALNIZ mevcut ölçüm daha eskiyse yazar.
@@ -398,8 +465,18 @@ async def probe_address(cfg: Config, client: HLClient, addr: str) -> int:
         return 0                      # bozuk yanıt — mevcut kayıtlara dokunma
     ts = now()
     await _upsert_address(addr, positions, ts)
-    await _upsert_hl(addr, _parse_all_positions(resp, _hl_floor(cfg)), ts,
-                     held=set(_parse_all_positions(resp, 0)))
+    # TEK ayrıştırma: eskiden aynı yanıt iki kez geziliyordu (biri eşikli, biri
+    # eşiksiz). Eşiksiz liste hem kapanma tespitini hem yeni tabloyu besliyor.
+    all_pos = _parse_all_positions(resp, 0)
+    floor = _hl_floor(cfg)
+    await _upsert_hl(addr, {c: p for c, p in all_pos.items()
+                            if p["notional"] >= floor(c)}, ts,
+                     held=set(all_pos))
+    try:
+        await _upsert_addr_pos(addr, all_pos, ts)
+    except Exception:
+        # BONUS yazım: patlarsa turun asıl işi (hl_positions) etkilenmesin.
+        log.exception("addr_positions yazılamadı: %s", addr)
     # AYRI TRY: bakiye bir bonus: ayrıştırması patlarsa pozisyon yazımı — turun
     # asıl işi — etkilenmesin.
     try:
@@ -444,8 +521,12 @@ async def prime_hl(cfg: Config, client: HLClient) -> int:
         async with sem:
             try:
                 resp = await client.clearinghouse_all(addr, _dexes(cfg))
-                pos = _parse_all_positions(resp, _hl_floor(cfg))
-                await _upsert_hl(addr, pos, ts, held=set(_parse_all_positions(resp, 0)))
+                all_pos = _parse_all_positions(resp, 0)      # TEK ayrıştırma
+                floor = _hl_floor(cfg)
+                pos = {c: p for c, p in all_pos.items()
+                       if p["notional"] >= floor(c)}
+                await _upsert_hl(addr, pos, ts, held=set(all_pos))
+                await _upsert_addr_pos(addr, all_pos, ts)
             except Exception as e:
                 if not fail_msg:
                     fail_msg.append(f"{type(e).__name__}: {e}"[:200])
@@ -526,8 +607,12 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
         # Aynı yanıttan TÜM Hyperliquid pozisyonları (ana dex dahil) — ek
         # istek yok, yalnız şimdiye kadar atılan kısmı saklıyoruz.
         try:
-            await _upsert_hl(addr, _parse_all_positions(resp, _hl_floor(cfg)), ts,
-                             held=set(_parse_all_positions(resp, 0)))
+            all_pos = _parse_all_positions(resp, 0)      # TEK ayrıştırma
+            floor = _hl_floor(cfg)
+            await _upsert_hl(addr, {c: p for c, p in all_pos.items()
+                                    if p["notional"] >= floor(c)}, ts,
+                             held=set(all_pos))
+            await _upsert_addr_pos(addr, all_pos, ts)
         except Exception:
             # Sayaç ŞART: bu blok sessizdi, kalıcı bir hata olsa panel sonsuza
             # dek "birazdan dolar" der, kullanıcı bozuk olduğunu asla göremezdi.
@@ -833,6 +918,14 @@ async def maintenance(cfg: Config) -> None:
         n_kv += await prune_hl_records(cfg.hl_records_keep)
     except Exception:
         log.exception("HL rekor budaması başarısız")
+    try:
+        # Saklama fills ile AYNI ayardan: işlem kaydı olmayan bir pencerede
+        # pozisyon fotoğrafı tutmanın faydası yok, iki sabit de tutulmaz.
+        n_ap = await prune_addr_positions(keep)
+        if n_ap:
+            log.info("addr_positions budandı: %d tazelenmemiş satır", n_ap)
+    except Exception:
+        log.exception("addr_positions budaması başarısız")
     try:
         n_tier = await prune_hl_below_tier(cfg)
     except Exception:

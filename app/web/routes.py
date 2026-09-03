@@ -1151,6 +1151,9 @@ async def forensics_page(request: Request):
         "t1_s": datetime.fromtimestamp(t1, TR).strftime("%H:%M"),
         "probe_max": getattr(cfg, "forensics_probe_max", 15),
         "crypto_floor": getattr(cfg, "crypto_fill_min_notional", 0),
+        # Rekor arşivi kademesi — tek kaynağı bigpos.threshold, burada
+        # kopyalanmıyor. Sayfa "neden bazıları /devler'de yok"u yazabilsin.
+        "big_floor": bigpos.threshold(rep["coin"], cfg) if rep else 0,
     })
 
 

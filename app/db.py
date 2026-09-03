@@ -139,6 +139,23 @@ CREATE TABLE IF NOT EXISTS hl_positions(
 );
 CREATE INDEX IF NOT EXISTS idx_hlpos_peak ON hl_positions(peak_notional DESC);
 CREATE INDEX IF NOT EXISTS idx_hlpos_open ON hl_positions(closed_ts, notional DESC);
+-- Son bilinen pozisyon — HER BOYUTTA. hl_positions bir REKOR ARŞİVİ'dir ve
+-- kademe altını ($1M hisse / $20M kripto / $50M BTC-ETH) hiç yazmaz; o yüzden
+-- "ne oldu" raporunda adreslerin çoğu "bilinmiyor" çıkıyordu. Bu tablo o boşluğu
+-- doldurur: süpürme zaten her adresin TÜM pozisyonlarını ayrıştırıyor, biz
+-- eşik altını çöpe atıyorduk. İki tablo AYRI kalmalı — birleştirmek /devler'in
+-- "devler" tanımını bozar.
+-- Zamanla değil ADRES EVRENİ kadar büyür: (coin,adres) anahtarı üzerine yazılır.
+CREATE TABLE IF NOT EXISTS addr_positions(
+  coin TEXT, address TEXT, dex TEXT,
+  side TEXT, szi REAL, entry_px REAL, leverage REAL,
+  liq_px REAL, upnl REAL, notional REAL,
+  ts INTEGER,                           -- son ölçüm (bayatlık göstergesi)
+  closed_ts INTEGER,                    -- artık tutmuyorsa damga; SİLİNMEZ
+  PRIMARY KEY(coin, address)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_addrpos_addr ON addr_positions(address);
+CREATE INDEX IF NOT EXISTS idx_addrpos_ts ON addr_positions(ts);
 -- ---- AI analist ----
 -- LLM ÖNERİR, Python KARAR VERİR. Model hipotez üretir; vadesi gelince aynı
 -- veriden ölçülüp tuttu/tutmadı diye damgalanır. Böylece modelin kendi sicili
@@ -264,6 +281,10 @@ async def db():
 
 # Var olan (canlı) DB'lere kolon ekleyen migration'lar — "zaten var" hatası yutulur
 MIGRATIONS = [
+    # Defteri GERÇEKTEN çektiğimiz an. "bakmadık" ile "baktık ama bu coinde
+    # pozisyonu yok"u ayıran tek güvenilir işaret; account_ts proxy olurdu ama
+    # o yalnız marginSummary gelirse yazılıyor.
+    "ALTER TABLE addresses ADD COLUMN probed_ts INTEGER",
     "ALTER TABLE positions_current ADD COLUMN last_add_ts INTEGER",
     "ALTER TABLE positions_current ADD COLUMN last_trim_ts INTEGER",
     "ALTER TABLE position_snapshots ADD COLUMN last_add_ts INTEGER",

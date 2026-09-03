@@ -395,6 +395,30 @@ async def _subsystems(cfg) -> list[str]:
                       " aldı' kırılımı 'bilinmiyor' der"))
     except Exception as e:
         out.append(f"  fill akışı okunamadı ({type(e).__name__}: {e})")
+    # "Kolon neden boş" sorusunun TEK ölçüsü: işlem yapan kaç ayrı adres var,
+    # kaçının defterine gerçekten uğradık. Hiçbir yerde hesaplanmıyordu.
+    try:
+        from .db import db as _db
+        since = now() - 14 * 86400
+        async with _db() as c:
+            cur = await c.execute("SELECT COUNT(*) n FROM addr_positions")
+            ap = (await cur.fetchone())["n"]
+            cur = await c.execute(
+                "SELECT COUNT(DISTINCT address) n FROM fills WHERE ts>=?", (since,))
+            traders = (await cur.fetchone())["n"]
+            cur = await c.execute(
+                "SELECT COUNT(*) n FROM addresses WHERE probed_ts IS NOT NULL"
+                " AND address IN (SELECT DISTINCT address FROM fills WHERE ts>=?)",
+                (since,))
+            seen = (await cur.fetchone())["n"]
+        pct = (seen / traders * 100) if traders else 0
+        out.append(f"  pozisyon kapsaması: {_num(ap)} satır (her boyut, 14 gün)"
+                   f" · son 14 günde işlem yapan {_num(traders)} adresin"
+                   f" {_num(seen)}'ine ({pct:.0f}%) uğradık"
+                   + ("" if pct >= 50 else
+                      " — kalanlar 'ne oldu' raporunda 'hiç uğramadık' der"))
+    except Exception as e:
+        out.append(f"  pozisyon kapsaması okunamadı ({type(e).__name__}: {e})")
     tw = await kv_get("twap_stats") or {}
     if tw:
         best = tw.get("best") or {}
