@@ -504,9 +504,70 @@ async def index(request: Request):
         "liq_chips": [(100_000, "100K+"), (250_000, "250K+"), (1_000_000, "1M+"),
                       (5_000_000, "5M+"), (30_000_000, "30M+")],
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,
-                  "ws": "🟢 bağlı" if collector and collector.connected else "🔴 kopuk",
+                  "ws_ok": bool(collector and collector.connected),
                   "health_problems": sorted(health_state.keys())},
+        "kpis": _index_kpis(live_events, liq_map, suspicious, ts_now),
+        "max_liq": cfg.max_liq_distance_pct,
+        "wall_min": cfg.wall_min_usd, "wall_window_min": wall_window // 60,
     })
+
+
+def _span(sec: int) -> str:
+    """Kalan süre: '2s 10dk' / '45dk' / '3g 4s' — KPI karosu için kısa."""
+    sec = max(0, int(sec))
+    d, h, m = sec // 86400, sec % 86400 // 3600, sec % 3600 // 60
+    if d:
+        return f"{d}g {h}s"
+    if h:
+        return f"{h}s {m}dk"
+    return f"{m}dk"
+
+
+def _index_kpis(events: list[dict], liq_map: list[dict], suspicious: list[dict],
+                ts_now: int) -> list[dict]:
+    """Ana sayfanın 'şu an' karoları — mevcut bağlamdan, ek sorgu yok.
+
+    Her karo: l (etiket) · v (değer) · s (alt satır) · href. Boş hâl de bir
+    cevaptır ('14 günde bilanço yok'), sessizce atlanmaz."""
+    out = []
+    nxt = next((e for e in events if not e.get("passed")), None)
+    if nxt:
+        out.append({"l": "📅 Sıradaki bilanço", "v": nxt["symbol"],
+                    "s": f"{nxt.get('countdown') or ''} · {nxt.get('icon') or ''} {nxt.get('tsi') or ''} TSİ".strip(" ·"),
+                    "href": f"/t/{nxt['symbol']}"})
+    else:
+        out.append({"l": "📅 Sıradaki bilanço", "v": "—",
+                    "s": "14 günde bilinen bilanço yok", "href": "/gecmis"})
+    if liq_map:
+        x = liq_map[0]
+        out.append({"l": "💥 Patlamaya en yakın", "v": f"%{x['dist']:.1f}",
+                    "s": f"{x['symbol']} {'LONG' if x['side'] == 'long' else 'SHORT'} {_usd(x['notional'])}"
+                         f" · liq {_px(x['liq_px'])}",
+                    "href": f"/t/{x['symbol']}"})
+    else:
+        out.append({"l": "💥 Patlamaya en yakın", "v": "—",
+                    "s": "filtre eşiğinde yakın likidasyon yok", "href": "#liqmap"})
+    if suspicious:
+        top = suspicious[0]
+        out.append({"l": "🚨 Şüpheli pozisyon", "v": str(len(suspicious)),
+                    "s": f"en yüksek skor {top.get('score') or 0} · {top['symbol']} "
+                         f"{'LONG' if top['side'] == 'long' else 'SHORT'} {_usd(top['notional'])}",
+                    "href": "#supheli"})
+    else:
+        out.append({"l": "🚨 Şüpheli pozisyon", "v": "0",
+                    "s": "skoru 40+ açık pozisyon yok — sakin sular", "href": "#supheli"})
+    # Seans: NORMAL seans açık mı; kapalıysa sıradaki normal açılış (uzatılmış
+    # 04:00 seansı DEĞİL — o "açılış" değil, kullanıcı için yanıltıcı).
+    if hourstats.is_market_open(ts_now):
+        out.append({"l": "🌙 ABD borsası", "v": "açık",
+                    "s": "normal seans 09:30–16:00 ET · perp 7/24", "href": "/kapali"})
+    else:
+        opn = hourstats.next_regular_open_ts(ts_now)
+        when = datetime.fromtimestamp(opn, TR).strftime("%a %H:%M")
+        out.append({"l": "🌙 ABD borsası", "v": "kapalı",
+                    "s": f"normal seans {_span(opn - ts_now)} sonra ({when} TSİ) · perp açık",
+                    "href": "/kapali"})
+    return out
 
 
 @router.get("/t/{symbol}")

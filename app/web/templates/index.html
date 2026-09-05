@@ -3,23 +3,417 @@
 {% block title %}{% if suspicious %}🚨 {{ suspicious|length }} şüpheli · {% else %}🐋 {% endif %}HL Insider Radar{% endblock %}
 {% block bodyattrs %} data-refresh="60"{% endblock %}
 {% block content %}
-<div class="panel strip">
-  <span title="Borsanın canlı işlem akışına bağlantı">WS <b>{{ stats.ws }}</b></span>
-  <span title="Takip edilen hisse sayısı">Evren <b>{{ universe|length }}</b></span>
-  <span title="Yakalanan büyük alım-satım sayısı">Fill <b>{{ stats.fills }}</b></span>
-  <span title="Tanınan cüzdan sayısı">Adres <b>{{ stats.addrs }}</b></span>
-  <span title="Daha önce bilanço 'bilmiş' takipteki cüzdanlar">Watchlist <b>{{ stats.watch }}</b></span>
-  {% if stats.health_problems %}<span class="short" title="Bekçi şu görevleri sorunlu görüyor ve kendisi toparlıyor: {{ stats.health_problems|join(', ') }}">⚕️⚠️ <b>{{ stats.health_problems|length }}</b> görev toparlanıyor</span>{% endif %}
-  {% if strip_days %}<span class="warn" title="Yaklaşan bilanço günleri · ☀️ sabah (açılış öncesi) · 🌙 akşam (kapanış sonrası)">📅
-    {%- for d, syms in strip_days.items() %}
-    <b>{{ d }}</b>: {% for s in syms %}<a href="/t/{{ s.symbol }}{{ k }}">{{ s.icon }}{{ s.symbol }}</a>{% if not loop.last %} {% endif %}{% endfor %}{% if not loop.last %} · {% endif %}
-    {%- endfor %}</span>{% endif %}
-  <a href="/gecmis{{ k }}" title="Geçmiş bilançolar ve en iyi biliciler">🗂 geçmiş</a>
+<div class="panel">
+  <h2>📡 Şu an <span class="st">· radarın bir bakışta söyledikleri · kartlara tıkla</span></h2>
+  <div class="kpi">
+    {% for c in kpis %}
+    <a href="{{ c.href if c.href.startswith('#') else c.href ~ k }}"><div class="l">{{ c.l }}</div>
+      <div class="v">{{ c.v }}</div><div class="s">{{ c.s }}</div></a>
+    {% endfor %}
+  </div>
+  <div class="strip">
+    <span class="pill {{ 'ok' if stats.ws_ok else 'bad' }}" title="Borsanın canlı işlem akışına (WS) bağlantı — fill havuzu buradan beslenir">WS {{ 'bağlı' if stats.ws_ok else 'kopuk' }}</span>
+    <span class="dim" title="Takip edilen hisse sayısı">Evren <b>{{ universe|length }}</b></span>
+    <span class="dim" title="Yakalanan büyük alım-satım sayısı">Fill <b>{{ stats.fills }}</b></span>
+    <span class="dim" title="Tanınan cüzdan sayısı">Adres <b>{{ stats.addrs }}</b></span>
+    <span class="dim" title="Daha önce bilanço 'bilmiş' takipteki cüzdanlar">Watchlist <b>{{ stats.watch }}</b></span>
+    {% if stats.health_problems %}<span class="pill warn" title="Bekçi şu görevleri sorunlu görüyor ve kendisi toparlıyor: {{ stats.health_problems|join(', ') }}">⚕️ {{ stats.health_problems|length }} görev toparlanıyor</span>{% endif %}
+    {% if strip_days %}<span class="warn" title="Yaklaşan bilanço günleri · ☀️ sabah (açılış öncesi) · 🌙 akşam (kapanış sonrası)">📅
+      {%- for d, syms in strip_days.items() %}
+      <b>{{ d }}</b>: {% for s in syms %}<a href="/t/{{ s.symbol }}{{ k }}">{{ s.icon }}{{ s.symbol }}</a>{% if not loop.last %} {% endif %}{% endfor %}{% if not loop.last %} · {% endif %}
+      {%- endfor %}</span>{% endif %}
+    <a href="#rehber">❓ nasıl okunur</a>
+    <a href="/gecmis{{ k }}" title="Geçmiş bilançolar ve en iyi biliciler">🗂 geçmiş</a>
+  </div>
 </div>
 
 <div class="panel">
-  <details class="guide" open>
-    <summary>❓ Bu site ne işe yarıyor? Nasıl okunur? (kapatmak için tıkla)</summary>
+  <h2>🎯 Earnings radarı <span class="st">· sıradaki bilançolara balinalar nasıl pozisyonlanmış?</span></h2>
+  {% if ecards %}
+  <p class="sub">Sitenin kalbi burası: yaklaşan her bilanço için balina para dengesi ve düz yorum.
+  Yeşil çubuk = yükselişe oynayan para, kırmızı = düşüşe oynayan para.</p>
+  <div class="ecards">
+    {% for c in ecards %}
+    <div class="ecard">
+      <h3><a href="/t/{{ c.symbol }}{{ k }}">{{ c.symbol }}</a>
+        {% if c.propr %}<span class="pbadge" title="propr.xyz'de listeli — işlem açabilirsin">✅ PROPR</span>{% endif %}
+        <span class="cd {{ 'short' if c.passed else '' }}">{{ c.countdown }}</span></h3>
+      <div title="{{ c.when_txt }}{% if c.et %} · ABD borsası saatiyle {{ c.et }} ET{% endif %}">{{ c.icon }} <b>{{ c.tsi }}</b> TSİ
+        <span class="dim">{% if c.et %}· {{ c.et }} ET {% endif %}· {{ c.when_txt }}{% if not c.exact %} (yaklaşık){% endif %}</span></div>
+      {% if c.passed %}<div class="short"><b>⚠️ AÇIKLANDI — bu bilanço geçti!</b></div>
+      {% elif c.maybe_passed %}<div class="short"><b>⚠️ SABAH AÇIKLANMIŞ OLABİLİR</b>
+        <span class="dim">— saat zayıf kaynaktan; {{ c.alt_tsi }} TSİ ihtimali var. İşlem açmadan doğrula.</span></div>{% endif %}
+      {% if c.note %}<div class="fl">{{ c.note }}</div>{% endif %}
+      <div>Fiyat <b>{{ c.mark|px }}</b>{% if c.px_change is not none %}
+        <span class="{{ 'long' if c.px_change > 0 else 'short' }}">{{ '%+.1f'|format(c.px_change) }}%</span>{% endif %}
+        · OI <b>{{ c.oi_ntl|usd }}</b>{% if c.oi_change is not none %} ({{ '%+.0f'|format(c.oi_change) }}%){% endif %}</div>
+      {% if c.shp is not none %}
+      <div class="ratio ihit" data-pos="{{ 1 if c.shp < 50 else 0 }}"
+           data-tip="{{ c.symbol }} balina duruşu · 🐂 yükseliş {{ c.lo|usd }} (%{{ '%.0f'|format(100 - c.shp) }}) · 🐻 düşüş {{ c.sh|usd }} (%{{ '%.0f'|format(c.shp) }}){% if c.oi_ntl %} · toplam OI {{ c.oi_ntl|usd }}{% endif %}{% if c.top %} · en yüksek skor: {{ c.top.score }} puanlık {{ 'LONG' if c.top.side == 'long' else 'SHORT' }} {{ c.top.notional|usd }}{% endif %}"><div class="rl" style="width:{{ '%.0f'|format(100 - c.shp) }}%"></div><div class="rs" style="width:{{ '%.0f'|format(c.shp) }}%"></div></div>
+      <div class="dim">🐂 {{ c.lo|usd }} yükseliş · 🐻 {{ c.sh|usd }} düşüş</div>
+      {% endif %}
+      <div class="verdict">{{ c.verdict[0] }} {{ c.verdict[1] }}</div>
+      {% for f in c.flags %}<div class="fl">{{ f }}</div>{% endfor %}
+      <div class="mt6"><a href="/t/{{ c.symbol }}{{ k }}">→ balinaları incele</a></div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="kunye">🧾 {{ ecards|length }} bilanço (14 gün) · saatler Nasdaq/Yahoo/Finnhub takvimlerinden, "yaklaşık" yazanlar zayıf kaynaktan ·
+    balina dengesi süpürmede görülen pozisyonların toplamı, MM/vault hariç.</p>
+  {% else %}
+  {{ m.empty(["14 gün içinde bilinen bilanço yok.",
+              "Takvim Nasdaq/Yahoo/Finnhub'dan çekilir; evrendeki sembollerle eşleşmeyen bilançolar burada görünmez. Ufuk ayarlardan değiştirilebilir."]) }}
+  {% endif %}
+</div>
+
+<div class="panel compact" id="liqmap">
+  <h2>💥 Likidasyon haritası <span class="st">· tüm coin'lerde patlamaya en yakın pozisyonlar</span></h2>
+  <p class="sub">Fiyat "liq" seviyesine değerse bu pozisyonlar <b>zorla kapanır (patlar)</b>.
+  En üsttekiler patlamaya en yakın olanlar — patlarsa fiyatı sert oynatabilir. Filtreyle küçük pozisyonları gizle.</p>
+  <div class="chips">
+    {% for v, lbl in liq_chips %}
+    <a href="/?liqmin={{ v|int }}{{ '&key=' + k[5:] if k else '' }}" class="{{ 'on' if liqmin == v else '' }}">{{ lbl }}</a>
+    {% endfor %}
+    <span class="hint">
+      <i class="sw f-liq-long"></i> long liq — fiyat <b>düşerse</b> patlar ·
+      <i class="sw f-liq-short"></i> short liq — fiyat <b>çıkarsa</b> patlar</span>
+  </div>
+  {% if liq_walls %}
+  <div class="walls">🧲 <b>Duvarlar:</b>
+    {% for w in liq_walls %}
+    <span class="wall ihit {{ 'shortliq-t' if w.side == 'short' else 'longliq-t' }}" data-side="{{ w.side }}"
+          data-tip="{{ w.symbol }} {{ 'SHORT' if w.side == 'short' else 'LONG' }} liq duvarı {{ w.total|usd }} · {{ w.count }} pozisyon, ortalama mesafe %{{ '%.1f'|format(w.avg_dist) }}{% if w.mark %} · şimdi {{ w.mark|px }}{% endif %} · fiyat o bölgeye {{ 'çekilirse zorunlu alışlar yukarı' if w.side == 'short' else 'inerse zorunlu satışlar aşağı' }} süpürebilir{% if w.other_total %} · ters yönde {{ w.other_total|usd }} var{% endif %}{% for m in w.members[:3] %} · {{ m.address[:6] }}..{{ m.address[-4:] }} {{ m.notional|usd }} @{{ m.liq_px|px }}{% endfor %}">
+      <a href="/t/{{ w.symbol }}{{ k }}">{{ w.symbol }}</a>
+      {{ 'S' if w.side == 'short' else 'L' }}-duvar <b>{{ w.total|usd }}</b>×{{ w.count }}
+      (%{{ '%.1f'|format(w.avg_dist) }})</span>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if liq_map %}
+  {# Satır-bar: bar boyu = pozisyon $ (listedeki en büyüğe göre), sıra = mesafe #}
+  {% for x in liq_map %}
+  <div class="rb" data-propr="{{ 1 if x.propr else 0 }}" tabindex="0" data-side="{{ x.side }}"
+       data-tip="{{ x.symbol }} {{ 'LONG' if x.side == 'long' else 'SHORT' }} {{ x.notional|usd }} · liq {{ x.liq_px|px }}{% if x.mark %} · şimdi {{ x.mark|px }}{% endif %} · mesafe %{{ '%.2f'|format(x.dist) }} · {{ x.address[:8] }}..{{ x.address[-4:] }}">
+    <span class="k"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
+    <span class="t {{ 'longliq-t' if x.side == 'long' else 'shortliq-t' }}">{{ 'L-LIQ' if x.side == 'long' else 'S-LIQ' }}</span>
+    <span class="tr"><i class="sg {{ 'f-liq-long' if x.side == 'long' else 'f-liq-short' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></i></span>
+    <span class="v">{{ x.notional|usd }}</span>
+    <span class="x">liq {{ x.liq_px|px }}</span>
+    <span class="d {{ 'warn' if x.dist < 5 else 'dim' }}">%{{ '%.1f'|format(x.dist) }}</span>
+    <span class="a">{{ m.addr(x.address, k, 6) }}</span>
+  </div>
+  {% endfor %}
+  <p class="kunye">🧾 {{ liq_map|length }} pozisyon · eşik ≥ {{ liqmin|usd }} · şimdiye ≤ %{{ max_liq|int }} ·
+    kaynak: hisse süpürmesi + ana dex likidasyon radarı · bar boyu = pozisyon $ (listedeki en büyüğe göre), sıra = mesafe ·
+    liq fiyatı son ölçüme ait, teminat değişince kayar.</p>
+  {% else %}
+  {{ m.empty(["Bu filtrede likidasyona yakın pozisyon yok.",
+              "Eşik ≥ " ~ liqmin|usd ~ " ve şimdiye ≤ %" ~ max_liq|int ~ "; filtreyi düşür ya da süpürmenin dolmasını bekle."]) }}
+  {% endif %}
+</div>
+
+<div class="panel compact">
+  <h2>🧱 Emir defteri duvarları <span class="st">· kim fiyatın yanına dev bekleyen emir dizmiş?</span></h2>
+  <p class="sub">Biri fiyatın hemen yanına milyonlarca dolarlık emir dizmiş: fiyatı iter ya da durdurur.
+  Satış duvarı üstte = "buradan yukarı çıkartmam", alış duvarı altta = "buradan aşağı düşürtmem".
+  Sahibi tanıdığımız bir balinaysa yazar; duvar çekilirse (spoof) Telegram'dan haber gelir.</p>
+  {% if book_walls %}
+  {% for x in book_walls %}
+  <div class="rb" data-propr="{{ 1 if x.propr else 0 }}" tabindex="0" data-side="{{ 'short' if x.side == 'ask' else 'long' }}"
+       data-tip="{{ x.symbol }} {{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }} duvarı {{ x.notional|usd }} ({{ '%.0f'|format(x.sz) }} adet) · {{ 'fiyatın ÜSTÜNDE — yukarı çıkışı zorlaştırır' if x.side == 'ask' else 'fiyatın ALTINDA — aşağı inişi zorlaştırır' }} · {{ x.px_lo|px }}–{{ x.px_hi|px }}{% if x.mark_px %} · şimdi {{ x.mark_px|px }}{% endif %} · mesafe %{{ '%.2f'|format(x.dist_pct) }} · zirvesi {{ x.peak_notional|usd }}{% if x.peak_notional and x.notional < x.peak_notional * 0.7 %} ⚠️ zirveden çekilmiş (spoof olabilir){% endif %} · {{ x.first_ts|age }} önce belirdi">
+    <span class="k"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
+    <span class="t {{ 'shortliq-t' if x.side == 'ask' else 'longliq-t' }}">{{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }}</span>
+    <span class="tr"><i class="sg {{ 'f-liq-short' if x.side == 'ask' else 'f-liq-long' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></i></span>
+    <span class="v">{{ x.notional|usd }}</span>
+    <span class="x">{{ x.px_lo|px }}–{{ x.px_hi|px }}</span>
+    <span class="d {{ 'warn' if x.dist_pct < 1 else 'dim' }}">%{{ '%.1f'|format(x.dist_pct) }}</span>
+    <span class="a">{% if x.address %}{{ m.addr(x.address, k, 6) }}{% else %}<span class="dim" title="Defter anonim — tanıdığımız balinaların pozisyonlarıyla eşleşmedi">?</span>{% endif %}</span>
+    <span class="hint">{{ x.first_ts|age }}</span>
+  </div>
+  {% endfor %}
+  <p class="kunye">🧾 {{ book_walls|length }} duvar · eşik ≥ {{ wall_min|usd }} · tazelik penceresi {{ wall_window_min }} dk ·
+    defter anonimdir — sahibi yalnız tanıdığımız bir balinanın pozisyonuyla eşleşirse yazılır ("?" = bilinmiyor) ·
+    çekilen duvar listeden düşer (spoof), Telegram haber verir.</p>
+  {% else %}
+  {{ m.empty(["Şu an eşik üstü bekleyen emir yok.",
+              "Defterler her " ~ wall_window_min ~ " dk penceresinde taranır (eşik ≥ " ~ wall_min|usd ~ "); dev bir emir konduğunda burada belirir."]) }}
+  {% endif %}
+</div>
+
+<div class="panel third compact">
+  <h2>👣 Aktif takipler <span class="st">· izlediğin balinalar pozisyonunu kapatıyor mu?{% if trackers %} · {{ trackers|length }} balina{% endif %}</span></h2>
+  <p class="sub">İzlemeye aldığın balinalar: pozu kapattıkça/büyüttükçe Telegram'a haber gelir.
+  Tam kapanış ve yön değişimi anında bildirilir. Takip <b>pozisyon kapanana kadar</b>
+  sürer — süreyle bitmez; bırakmak için Telegram'dan <code>/birak_N</code>.</p>
+  {% if trackers %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Hisse</th><th class="l">Balina</th><th>Yön</th>
+        <th title="Takibe alındığındaki pozisyon büyüklüğü">Başlangıç</th>
+        <th title="Başlangıca göre ne kadarı kapandı">Durum</th>
+        <th title="Sonraki 'takipteyim, bırakayım mı?' yoklamasına kalan gün — takip bu süreyle BİTMEZ">Yoklama</th></tr>
+    {% for t in trackers %}
+    <tr data-propr="{{ 1 if t.propr else 0 }}">
+      <td class="l"><a href="/t/{{ t.symbol }}{{ k }}"><b>{{ t.symbol }}</b></a>{% if t.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>
+      <td class="l">{{ m.addr(t.address, k, 6) }}</td>
+      <td><span class="{{ t.side }}">{{ 'L' if t.side == 'long' else 'S' }}</span></td>
+      <td>{{ t.base_notional|usd }}</td>
+      <td class="{{ 'short' if t.closed_pct > 1 else ('long' if t.closed_pct < -1 else 'dim') }}">{{ t.prog }}</td>
+      <td class="dim">{{ t.days_left }}g</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">Telegram'dan yönet: <code>/takipler</code> · elle başlat: <code>/takip 0xADRES SEMBOL</code></p>
+  {% else %}
+  {{ m.empty(["Şu an takip edilen balina yok.",
+              "Bilanço geçince bot \"çıkışını izleyeyim mi?\" diye sorar (/takip_N); Telegram'dan /takip 0xADRES SEMBOL ile elle de başlatabilirsin."]) }}
+  {% endif %}
+</div>
+
+<div class="panel third compact">
+  <h2>🕐 Şu saatte beklenenler <span class="st">· TSİ {{ '%02d'|format(tsi_now) }}:00 · bu saatte tarihsel olarak kim yükselmiş? ·
+    <a href="/saatler{{ k }}">tam liste →</a></span></h2>
+  <p class="sub">Bu saatin tarihsel karnesine göre <b>sıralı</b> ilk {{ hot_hours|length or 5 }} yükseliş adayı
+  (son ~90 gün, 1h mumlar). Eşiği geçenler 💪 rozetli. Düşüş tarafı, sonraki saatler ve
+  tam liste <a href="/saatler{{ k }}">🕐 saatler</a> sayfasında.
+  Geçmiş istatistik — garanti değil.</p>
+  {{ m.flash(hot_result) }}
+  {% if hot_hours %}
+  {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">
+    <input type="hidden" name="nxt" value="/">{% endif %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr>{% if is_admin %}<th title="Kanala gönderilecekleri seç"></th>{% endif %}
+        <th class="l">Hisse</th><th title="Bu saatin tarihsel ortalama getirisi">Bu saat ort.</th>
+        <th title="Bu saatte kaç kez yükselmiş">Kazanç</th><th title="Kaç örnek gün">Örnek</th>
+        <th class="l">Damga</th></tr>
+    {% for h in hot_hours %}
+    <tr data-propr="{{ 1 if h.propr else 0 }}">
+      {% if is_admin %}<td><input type="checkbox" name="coins" value="{{ h.coin }}"
+        {% if h.verdict != 'güçlü' %}disabled title="Kanala yalnız 💪 güçlü olanlar gönderilebilir"{% endif %}></td>{% endif %}
+      <td class="l"><a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% if h.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {% if h.closed_heavy %}<span title="Bu hissede getirinin çoğu borsa kapalıyken gelmiş">🌙</span>{% endif %}</td>
+      <td class="long"><b>{{ '%+.2f'|format(h.avg) }}%</b></td>
+      <td>%{{ '%.0f'|format(h.win) }}</td>
+      <td class="dim">{{ h.n }}</td>
+      <td class="l">{% if h.verdict == 'güçlü' %}<span class="long"><b>💪</b></span>
+        {%- else %}<span class="dim">nötr</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">🧾 {{ n_hstats }} hissenin saat istatistiği var{% if hot_rank.thin %} · {{ hot_rank.thin }} hisse az örnekle elendi{% endif %} ·
+    💪 = en az 40 örnek, ort ≥ +%0.10, kazanç ≥ %55 · geçmiş istatistiktir.</p>
+  {% if is_admin %}
+  <div class="btnrow">
+    <button type="submit" {% if not has_channel %}disabled title="Railway'e TELEGRAM_CHANNEL_ID ekle (botu kanala admin yap)"{% endif %}>📣 Seçtiklerimi kanala gönder</button>
+    {% if not has_channel %}<span class="hint">kanal için <code>TELEGRAM_CHANNEL_ID</code> gerekli</span>{% endif %}
+  </div>
+  </form>
+  {% endif %}
+  {% else %}
+  {{ m.empty(["Bu saatte tarihsel ortalaması pozitif olan hisse yok.",
+              ("İstatistikler hazırlanıyor — " ~ n_hstats ~ " hisse hazır, doldukça burası canlanır." if n_hstats < 5 else n_hstats ~ " hissenin istatistiği var; bu saat hiçbirinde tarihsel olarak yukarı değil."),
+              "Düşüş tarafı ve sonraki saatler 🕐 saatler sayfasında."]) }}
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>🌙 Seans karnesi <span class="st">· hareket borsa açıkken mi kapalıyken mi geliyor?{% if session_rows %} · {{ session_rows|length }} hisse{% endif %}</span></h2>
+  <p class="sub">HIP-3 perp'i 7/24 işlem görür, <b>hisse senedi ise kapalıdır</b> — borsa
+  kapalıyken gelen hareket saf perp/balina kaynaklıdır. Yükseliş ve düşüş <b>ayrı</b> sayılır
+  ("%20 çıkıp %18 düştü" ile "%2 gitti" aynı şey değil). <b>Kapalı payı</b> asıl cevaptır:
+  yükselişin yüzde kaçı borsa kapalıyken oluşmuş. Adil kıyas <b>saat başı</b> kolonunda.</p>
+  {% if session_rows %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l stick">Hisse</th>
+        <th title="Borsa KAPALIYKEN biriken yükseliş (bileşik)">🌙 Kapalı ↑</th>
+        <th title="Borsa KAPALIYKEN biriken düşüş (bileşik)">🌙 Kapalı ↓</th>
+        <th class="mh" title="Borsa AÇIKKEN biriken yükseliş">☀️ Açık ↑</th>
+        <th class="mh" title="Borsa AÇIKKEN biriken düşüş">☀️ Açık ↓</th>
+        <th title="Yükselişin yüzde kaçı borsa kapalıyken oluşmuş">Kapalı payı</th>
+        <th title="Saat başına ortalama yükseliş — kapalı / açık (seans uzunluğu farkını nötrler)">Saat başı ↑</th>
+        <th class="mh" title="İstatistiğin kapsadığı gün sayısı">Gün</th></tr>
+    {% for r in session_rows %}
+    <tr data-propr="{{ 1 if r.propr else 0 }}">
+      <td class="l stick"><a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>{% if r.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {% if r.closed_heavy %}<span title="Net getirinin çoğu borsa kapalıyken gelmiş">🌙</span>{% endif %}</td>
+      <td class="long ihit" data-tip="{{ r.symbol }} · borsa kapalıyken toplam yükseliş {{ '%+.1f'|format(r.closed_up) }}% ({{ r.n_closed }} saatlik mum)">{{ '%+.1f'|format(r.closed_up) }}%</td>
+      <td class="short ihit" data-tip="{{ r.symbol }} · borsa kapalıyken toplam düşüş {{ '%+.1f'|format(r.closed_dn) }}% ({{ r.n_closed }} saatlik mum)">{{ '%+.1f'|format(r.closed_dn) }}%</td>
+      <td class="mh long ihit" data-tip="{{ r.symbol }} · borsa açıkken toplam yükseliş {{ '%+.1f'|format(r.open_up) }}% ({{ r.n_open }} saatlik mum)">{{ '%+.1f'|format(r.open_up) }}%</td>
+      <td class="mh short ihit" data-tip="{{ r.symbol }} · borsa açıkken toplam düşüş {{ '%+.1f'|format(r.open_dn) }}% ({{ r.n_open }} saatlik mum)">{{ '%+.1f'|format(r.open_dn) }}%</td>
+      <td class="ihit" data-tip="{% if r.up_share is none %}Hiç yükseliş kaydedilmemiş{% else %}{{ r.symbol }} yükselişinin %{{ '%.0f'|format(r.up_share) }}'i borsa KAPALIYKEN oluşmuş{% endif %}">
+        {% if r.up_share is none %}<span class="dim">—</span>{% else %}<b>%{{ '%.0f'|format(r.up_share) }}</b>{% endif %}</td>
+      <td class="dim ihit" data-tip="Saat başına ortalama yükseliş — kapalı {{ '%+.3f'|format(r.rate_closed_up) }}% / açık {{ '%+.3f'|format(r.rate_open_up) }}%">{{ '%.3f'|format(r.rate_closed_up) }} / {{ '%.3f'|format(r.rate_open_up) }}</td>
+      <td class="mh dim">{{ r.days }}g</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">🧾 {{ session_rows|length }} hisse · son ~90 günün 1 saatlik mumları · seans ayrımı yaklaşıktır
+    (hafta içi 09:00–16:00 ET açık sayılır, resmi tatiller ayrıştırılmaz) · kapalı seans açıktan ~4 kat uzun —
+    toplamlar değil "saat başı" kolonu adil kıyastır · geçmiş istatistiktir, garanti değildir.</p>
+  {% else %}
+  {{ m.empty(["⏳ Seans karnesi hazırlanıyor.",
+              (n_hstats ~ " hissenin saat istatistiği var; seans ayrımı sıradaki tazelemede işlenir (rotasyon coin'leri günde bir gezer)." if n_hstats else "Henüz hiçbir hissenin saat istatistiği yok — ilk tur 90 günlük mumları çekiyor.")]) }}
+  {% endif %}
+</div>
+
+<div class="panel third compact" id="supheli">
+  <h2>🚨 En şüpheliler <span class="st">· skoru 40+ olan açık pozisyonlar</span></h2>
+  <p class="sub">Botun "bu insider olabilir 🤨" dediği pozisyonlar. Skor yükseldikçe şüphe artar.</p>
+  {% if suspicious %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th title="0-100 insider şüphe puanı">Skor</th><th class="l">Hisse</th>
+        <th title="L = yükseliş bahsi, S = düşüş bahsi">Yön</th>
+        <th title="Pozisyonun dolar değeri">Boyut</th>
+        <th title="Pozisyon ne zaman açıldı">Açılış</th></tr>
+    {% for p in suspicious %}
+    <tr data-propr="{{ 1 if p.propr else 0 }}">
+      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else 'b-mid' }}">{{ p.score }}</span></td>
+      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+          {{ m.addr(p.address, k, 6) }}</td>
+      <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
+      <td><b>{{ p.notional|usd }}</b></td>
+      <td>{{ p|posage }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">🧾 skor = taze cüzdan + bilançoya yakınlık + boyut · eşik 40 · MM/vault hesapları hariç.</p>
+  {% else %}{{ m.empty(["Şu an şüpheli pozisyon yok — sakin sular 🌊.", "Skor = taze cüzdan + bilançoya yakınlık + boyut; 40'ı geçen açık pozisyon burada listelenir."]) }}{% endif %}
+</div>
+
+<div class="panel third compact">
+  <h2>🆕 Son açılan büyükler <span class="st">· 72 saatte açılan $1M+ pozisyonlar</span></h2>
+  <p class="sub">Son 3 günde açılmış büyük yeni pozisyonlar. Biri bir şey mi biliyor?</p>
+  {% if recent_big %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Hisse</th><th title="L = yükseliş bahsi, S = düşüş bahsi">Yön</th>
+        <th title="Pozisyonun dolar değeri">Boyut</th>
+        <th title="Pozisyon ne zaman açıldı">Açılış</th>
+        <th title="0-100 insider şüphe puanı">Skor</th></tr>
+    {% for p in recent_big %}
+    <tr data-propr="{{ 1 if p.propr else 0 }}">
+      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+          {{ m.addr(p.address, k, 6) }}</td>
+      <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
+      <td><b>{{ p.notional|usd }}</b></td>
+      <td>{{ p|posage }}</td>
+      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}{{ m.empty(["Son 72 saatte yeni büyük pozisyon yok.", "Açılış anı bilinen (fill'den yakalanan) $1M+ pozisyonlar sayılır; MM/vault hariç."]) }}{% endif %}
+</div>
+
+<div class="panel third compact">
+  <h2>📅 Yaklaşan earnings <span class="st">· 14 gün içindeki bilançolar</span></h2>
+  <p class="sub">Bilanço günleri. Bot açıklamaya ~1 saat kala o hissenin balina raporunu Telegram'a atar.</p>
+  {% if events %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Tarih</th><th class="l">Sembol</th>
+        <th class="l" title="AMC = borsa kapanınca, BMO = borsa açılmadan">Saat</th>
+        <th class="l" title="⏳ bekliyor · 🕐 erken rapor gitti · ✅ raporlandı">Durum</th></tr>
+    {% for e in events %}
+    <tr data-propr="{{ 1 if e.propr else 0 }}">
+      <td class="l {{ 'dim' if e.passed else '' }}">{{ e.date_et[5:] }}</td>
+      <td class="l"><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a>{% if e.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>
+      <td class="l" title="{{ e.when_txt }}{% if not e.exact %} (yaklaşık){% endif %}">{{ e.icon }} {{ e.tsi[6:] }}</td>
+      <td class="l">{% if e.passed %}<span class="short">geçti</span>
+        {%- elif e.maybe_passed %}<span class="short" title="Saat zayıf kaynaktan geliyor — {{ e.alt_tsi }} TSİ'de açıklanmış olabilir">⚠️{{ e.countdown }}?</span>
+        {%- elif e.alerted_t1 %}✅{% elif e.alerted_pre %}🕐{% else %}{{ e.countdown }}{% endif %}{% if e.note %} <span class="warn" title="{{ e.note }}">📝</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}{{ m.empty(["14 günde eşleşen bilanço yok.", "Takvim Nasdaq/Yahoo/Finnhub'dan; evrendeki sembollerle eşleşmeyenler görünmez."]) }}{% endif %}
+</div>
+
+<div class="panel third compact">
+  <h2>🏆 En iyi biliciler <span class="st">· bilanço yönünü bilen cüzdanlar · <a href="/gecmis{{ k }}">tümü →</a></span></h2>
+  <p class="sub">Bilanço yönünü doğru bilen cüzdanlar. 2+ doğru = otomatik ⭐ watchlist + anlık bildirim.</p>
+  {% if winners %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Adres</th><th>Doğru</th><th>Yanlış</th><th class="l">Durum</th></tr>
+    {% for w in winners %}
+    <tr>
+      <td class="l">{{ m.addr(w.address, k, 6) }}</td>
+      <td class="long"><b>{{ w.hits }}</b></td>
+      <td class="short">{{ w.misses }}</td>
+      <td class="l">{% if w.watchlist %}⭐{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}{{ m.empty(["Sicil henüz boş.", "İlk bilanço değerlendirmesiyle (T+24s sonucu) dolmaya başlar; MM/vault hesapları sayılmaz."]) }}{% endif %}
+</div>
+
+<div class="panel half compact">
+  <h2>🗂 Son bilanço arşivi <span class="st">· geçen bilançolarda ne olmuştu · <a href="/gecmis{{ k }}">tümü →</a></span></h2>
+  <p class="sub">Geçmiş bilançolarda öncesinde en büyük poz kimdeydi, haklı çıktı mı.</p>
+  {% if archive %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Tarih</th><th class="l">Hisse</th><th>Hareket</th><th class="l">Not</th></tr>
+    {% for a in archive %}
+    <tr>
+      <td class="l dim">{{ a.date_et[5:] }} {{ {'amc':'🌙','bmo':'☀️'}.get(a.hour_hint,'') }}</td>
+      <td class="l"><a href="/t/{{ a.symbol }}{{ k }}"><b>{{ a.symbol }}</b></a></td>
+      <td class="{{ 'long' if (a.move_pct or 0) > 0 else 'short' }}">{% if a.move_pct is not none %}{{ '%+.1f'|format(a.move_pct) }}%{% else %}-{% endif %}</td>
+      <td class="l dim wrap">{{ a.result_note }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}{{ m.empty(["Arşiv boş.", "Her bilanço T+24 saatte değerlendirilir; ilk sonuçla dolar."]) }}{% endif %}
+</div>
+
+<div class="panel third compact">
+  <h2>🎯 Tek hisse uzmanları <span class="st">· yalnız bir hisseyi işleyen cüzdanlar</span></h2>
+  <p class="sub">Sadece TEK bir hisseyi işleyen cüzdanlar — bir şirketi bu kadar yakından takip eden,
+  içeriden bilgi sahibi olabilir. Sicili tutmaya başladık.</p>
+  {% if specialists %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Adres</th><th class="l">Hisse</th>
+        <th title="Son kayıtlı dönemde kaç büyük işlem yaptı">İşlem</th>
+        <th title="Son kayıtlı dönemin toplam işlem hacmi">Hacim</th>
+        <th title="Kaç bilançoyu doğru/yanlış bildi">Sicil</th><th class="l">Açık poz</th></tr>
+    {% for s in specialists %}
+    <tr data-propr="{{ 1 if s.propr else 0 }}">
+      <td class="l">{{ m.addr(s.address, k) }}{% if s.watchlist %} ⭐{% endif %}</td>
+      <td class="l"><a href="/t/{{ s.symbol }}{{ k }}"><b>{{ s.symbol }}</b></a></td>
+      <td>{{ s.n }}</td>
+      <td>{{ s.vol|usd }}</td>
+      <td>{{ s.hits or 0 }}✓/{{ s.misses or 0 }}✗</td>
+      <td class="l">{% if s.open %}<span class="{{ s.open.side }}">{{ 'L' if s.open.side=='long' else 'S' }}</span> {{ s.open.notional|usd }}{% else %}-{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}{{ m.empty(["Henüz tek-hisse uzmanı yok.", "Son 14 günde işlemlerinin %90+'ı tek bir hissede olan cüzdanlar sayılır; havuz büyüdükçe çıkarlar."]) }}{% endif %}
+</div>
+
+<div class="panel half compact">
+  <h2>🎰 HL hisse perp evreni <span class="st">· {{ universe|length }} sembol · ✅ = propr.xyz'de listeli</span></h2>
+  <p class="sub">Hyperliquid'de kaldıraçlı işlem gören tüm hisseler. Birine tıkla → balinalarını,
+  likidasyon haritasını ve şüphelileri gör.</p>
+  {% if universe %}
+  <div class="tags">{% for t in universe %}<a class="tag" href="/t/{{ t.symbol }}{{ k }}" data-propr="{{ 1 if t.propr else 0 }}">{{ t.symbol }}{% if t.propr %}<span class="pt">✅</span>{% endif %}</a>{% endfor %}</div>
+  {% else %}{{ m.empty(["Evren henüz keşfedilmedi.", "HL meta'sı ilk turda çekilir; ağ hatası varsa 🩺 tanı sayfasında görünür."]) }}{% endif %}
+</div>
+
+<div class="panel">
+  <details class="guide" id="rehber">
+    <summary>❓ Bu site ne işe yarıyor? Nasıl okunur?</summary>
     <div class="body">
       <p>🐋 <b>Kısaca:</b> Hyperliquid borsasında hisselere kaldıraçlı bahis oynanabiliyor.
       Bazı insanlar şirket hakkında bir şeyi <i>herkesten önce</i> öğrenir (bilanço, istifa, anlaşma…)
@@ -45,362 +439,11 @@
         <b>🧱 Duvar</b><span>emir defterine konmuş dev BEKLEYEN emir (henüz pozisyon değil) — fiyatın hemen üstüne satış duvarı diken "yukarı çıkartmam" diyordur; duvar aniden çekilirse blöfmüş (spoof)</span>
         <b>🕐 Saati gelenler</b><span>her hissenin 90 günlük saat haritası çıkarılır (hangi saatte ortalama yükselmiş/düşmüş); ŞU SAATİ tarihsel olarak güçlü olanlar ana sayfada listelenir — MU/NVDA tarzı "yükseliş borsa kapalıyken" desenini de hisse sayfasında görürsün</span>
       </div>
-      <p style="margin-bottom:0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
+      <p class="mb0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
       tablolardaki hisse/cüzdan linklerine tıkla. Bot her şeyi Telegram'a da atar.
       🎨 Sağ üstteki 🌙/🌊 ile tema seçebilirsin — seçimin bu tarayıcıda hatırlanır.</p>
     </div>
   </details>
 </div>
 
-{% if ecards %}
-<div class="panel">
-  <h2>🎯 Earnings radarı <span class="st">· sıradaki bilançolara balinalar nasıl pozisyonlanmış?</span></h2>
-  <p class="sub">Sitenin kalbi burası: yaklaşan her bilanço için balina para dengesi ve düz yorum.
-  Yeşil çubuk = yükselişe oynayan para, kırmızı = düşüşe oynayan para.</p>
-  <div class="ecards">
-    {% for c in ecards %}
-    <div class="ecard">
-      <h3><a href="/t/{{ c.symbol }}{{ k }}">{{ c.symbol }}</a>
-        {% if c.propr %}<span class="pbadge" title="propr.xyz'de listeli — işlem açabilirsin">✅ PROPR</span>{% endif %}
-        <span class="cd {{ 'short' if c.passed else '' }}">{{ c.countdown }}</span></h3>
-      <div title="{{ c.when_txt }}{% if c.et %} · ABD borsası saatiyle {{ c.et }} ET{% endif %}">{{ c.icon }} <b>{{ c.tsi }}</b> TSİ
-        <span class="dim">{% if c.et %}· {{ c.et }} ET {% endif %}· {{ c.when_txt }}{% if not c.exact %} (yaklaşık){% endif %}</span></div>
-      {% if c.passed %}<div class="short"><b>⚠️ AÇIKLANDI — bu bilanço geçti!</b></div>
-      {% elif c.maybe_passed %}<div class="short"><b>⚠️ SABAH AÇIKLANMIŞ OLABİLİR</b>
-        <span class="dim">— saat zayıf kaynaktan; {{ c.alt_tsi }} TSİ ihtimali var. İşlem açmadan doğrula.</span></div>{% endif %}
-      {% if c.note %}<div class="fl">{{ c.note }}</div>{% endif %}
-      <div>Fiyat <b>{{ c.mark|px }}</b>{% if c.px_change is not none %}
-        <span class="{{ 'long' if c.px_change > 0 else 'short' }}">{{ '%+.1f'|format(c.px_change) }}%</span>{% endif %}
-        · OI <b>{{ c.oi_ntl|usd }}</b>{% if c.oi_change is not none %} ({{ '%+.0f'|format(c.oi_change) }}%){% endif %}</div>
-      {% if c.shp is not none %}
-      <div class="ratio ihit" data-pos="{{ 1 if c.shp < 50 else 0 }}"
-           data-tip="{{ c.symbol }} balina duruşu · 🐂 yükseliş {{ c.lo|usd }} (%{{ '%.0f'|format(100 - c.shp) }}) · 🐻 düşüş {{ c.sh|usd }} (%{{ '%.0f'|format(c.shp) }}){% if c.oi_ntl %} · toplam OI {{ c.oi_ntl|usd }}{% endif %}{% if c.top %} · en yüksek skor: {{ c.top.score }} puanlık {{ 'LONG' if c.top.side == 'long' else 'SHORT' }} {{ c.top.notional|usd }}{% endif %}"><div class="rl" style="width:{{ '%.0f'|format(100 - c.shp) }}%"></div><div class="rs" style="width:{{ '%.0f'|format(c.shp) }}%"></div></div>
-      <div class="dim">🐂 {{ c.lo|usd }} yükseliş · 🐻 {{ c.sh|usd }} düşüş</div>
-      {% endif %}
-      <div class="verdict">{{ c.verdict[0] }} {{ c.verdict[1] }}</div>
-      {% for f in c.flags %}<div class="fl">{{ f }}</div>{% endfor %}
-      <div style="margin-top:6px"><a href="/t/{{ c.symbol }}{{ k }}">→ balinaları incele</a></div>
-    </div>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-<div class="panel compact">
-  <h2>💥 Likidasyon haritası <span class="st">· tüm coin'ler · mesafeye göre sıralı</span></h2>
-  <p class="sub">Fiyat "liq" seviyesine değerse bu pozisyonlar <b>zorla kapanır (patlar)</b>.
-  En üsttekiler patlamaya en yakın olanlar — patlarsa fiyatı sert oynatabilir. Filtreyle küçük pozisyonları gizle.</p>
-  <div class="chips">
-    {% for v, lbl in liq_chips %}
-    <a href="/?liqmin={{ v|int }}{{ '&key=' + k[5:] if k else '' }}" class="{{ 'on' if liqmin == v else '' }}">{{ lbl }}</a>
-    {% endfor %}
-    <span class="hint">
-      <i class="sw f-liq-long"></i> long liq — fiyat <b>düşerse</b> patlar ·
-      <i class="sw f-liq-short"></i> short liq — fiyat <b>çıkarsa</b> patlar</span>
-  </div>
-  {% if liq_walls %}
-  <div class="walls">🧲 <b>Duvarlar:</b>
-    {% for w in liq_walls %}
-    <span class="wall ihit {{ 'shortliq-t' if w.side == 'short' else 'longliq-t' }}" data-side="{{ w.side }}"
-          data-tip="{{ w.symbol }} {{ 'SHORT' if w.side == 'short' else 'LONG' }} liq duvarı {{ w.total|usd }} · {{ w.count }} pozisyon, ortalama mesafe %{{ '%.1f'|format(w.avg_dist) }}{% if w.mark %} · şimdi {{ w.mark|px }}{% endif %} · fiyat o bölgeye {{ 'çekilirse zorunlu alışlar yukarı' if w.side == 'short' else 'inerse zorunlu satışlar aşağı' }} süpürebilir{% if w.other_total %} · ters yönde {{ w.other_total|usd }} var{% endif %}{% for m in w.members[:3] %} · {{ m.address[:6] }}..{{ m.address[-4:] }} {{ m.notional|usd }} @{{ m.liq_px|px }}{% endfor %}">
-      <a href="/t/{{ w.symbol }}{{ k }}">{{ w.symbol }}</a>
-      {{ 'S' if w.side == 'short' else 'L' }}-duvar <b>{{ w.total|usd }}</b>×{{ w.count }}
-      (%{{ '%.1f'|format(w.avg_dist) }})</span>{% if not loop.last %} · {% endif %}
-    {% endfor %}
-  </div>
-  {% endif %}
-  {% if liq_map %}
-  {% for x in liq_map %}
-  <div class="lbar" data-propr="{{ 1 if x.propr else 0 }}">
-    <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
-    <span class="lside {{ 'longliq-t' if x.side == 'long' else 'shortliq-t' }}">{{ 'L-LIQ' if x.side == 'long' else 'S-LIQ' }}</span>
-    <div class="ltrack ihit" data-side="{{ x.side }}"
-         data-tip="{{ x.symbol }} {{ 'LONG' if x.side == 'long' else 'SHORT' }} {{ x.notional|usd }} · liq {{ x.liq_px|px }}{% if x.mark %} · şimdi {{ x.mark|px }}{% endif %} · mesafe %{{ '%.2f'|format(x.dist) }} · {{ x.address[:8] }}..{{ x.address[-4:] }}"><div class="lfill {{ 'longliq' if x.side == 'long' else 'shortliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
-    <span class="lval">{{ x.notional|usd }}</span>
-    <span class="lpx">liq {{ x.liq_px|px }}</span>
-    <span class="ldist {{ 'warn' if x.dist < 5 else 'dim' }}">%{{ '%.1f'|format(x.dist) }}</span>
-    {{ m.addr(x.address, k, 6) }}
-  </div>
-  {% endfor %}
-  {% else %}<p class="dim">Bu filtrede likidasyona yakın pozisyon yok — filtreyi düşür ya da taramaların dolmasını bekle.</p>{% endif %}
-</div>
-
-<div class="panel compact">
-  <h2>🧱 Emir defteri duvarları <span class="st">· deftere konmuş dev bekleyen emirler</span></h2>
-  <p class="sub">Biri fiyatın hemen yanına milyonlarca dolarlık emir dizmiş: fiyatı iter ya da durdurur.
-  Satış duvarı üstte = "buradan yukarı çıkartmam", alış duvarı altta = "buradan aşağı düşürtmem".
-  Sahibi tanıdığımız bir balinaysa yazar; duvar çekilirse (spoof) Telegram'dan haber gelir.</p>
-  {% if book_walls %}
-  {% for x in book_walls %}
-  <div class="lbar" data-propr="{{ 1 if x.propr else 0 }}">
-    <span class="lsym"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</span>
-    <span class="lside ihit {{ 'shortliq-t' if x.side == 'ask' else 'longliq-t' }}" data-side="{{ 'short' if x.side == 'ask' else 'long' }}"
-          data-tip="{{ 'fiyatın ÜSTÜNDE satış (short) duvarı' if x.side == 'ask' else 'fiyatın ALTINDA alış (long) duvarı' }} · {{ 'yukarı çıkışı zorlaştırır' if x.side == 'ask' else 'aşağı inişi zorlaştırır' }}">{{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }}</span>
-    <div class="ltrack ihit" data-side="{{ 'short' if x.side == 'ask' else 'long' }}"
-         data-tip="{{ x.symbol }} {{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }} duvarı {{ x.notional|usd }} ({{ '%.0f'|format(x.sz) }} adet) · {{ x.px_lo|px }}–{{ x.px_hi|px }}{% if x.mark_px %} · şimdi {{ x.mark_px|px }}{% endif %} · mesafe %{{ '%.2f'|format(x.dist_pct) }} · zirvesi {{ x.peak_notional|usd }}{% if x.peak_notional and x.notional < x.peak_notional * 0.7 %} ⚠️ zirveden çekilmiş (spoof olabilir){% endif %} · {{ x.first_ts|age }} önce belirdi"><div class="lfill {{ 'shortliq' if x.side == 'ask' else 'longliq' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></div></div>
-    <span class="lval"><b>{{ x.notional|usd }}</b></span>
-    <span class="lpx">{{ x.px_lo|px }}–{{ x.px_hi|px }}</span>
-    <span class="ldist {{ 'warn' if x.dist_pct < 1 else 'dim' }}">%{{ '%.1f'|format(x.dist_pct) }}</span>
-    {% if x.address %}{{ m.addr(x.address, k, 6) }}{% else %}<span class="dim" title="Defter anonim — tanıdığımız balinaların emirleriyle eşleşmedi">?</span>{% endif %}
-    <span class="dim">{{ x.first_ts|age }}</span>
-  </div>
-  {% endfor %}
-  {% else %}<p class="dim">Şu an eşik üstü duvar yok — defterler düzenli taranıyor, dev bir emir konduğunda burada belirir.</p>{% endif %}
-</div>
-
-<div class="panel third compact">
-  <h2>👣 Aktif takipler{% if trackers %} <span class="st">· {{ trackers|length }} balina izleniyor</span>{% endif %}</h2>
-  <p class="sub">İzlemeye aldığın balinalar: pozu kapattıkça/büyüttükçe Telegram'a haber gelir.
-  Tam kapanış ve yön değişimi anında bildirilir. Takip <b>pozisyon kapanana kadar</b>
-  sürer — süreyle bitmez; bırakmak için Telegram'dan <code>/birak_N</code>.</p>
-  {% if trackers %}
-  <table>
-    <tr><th class="l">Hisse</th><th class="l">Balina</th><th>Yön</th>
-        <th title="Takibe alındığındaki pozisyon büyüklüğü">Başlangıç</th>
-        <th title="Başlangıca göre ne kadarı kapandı">Durum</th>
-        <th title="Sonraki 'takipteyim, bırakayım mı?' yoklamasına kalan gün — takip bu süreyle BİTMEZ">Yoklama</th></tr>
-    {% for t in trackers %}
-    <tr data-propr="{{ 1 if t.propr else 0 }}">
-      <td class="l"><a href="/t/{{ t.symbol }}{{ k }}"><b>{{ t.symbol }}</b></a>{% if t.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>
-      <td class="l">{{ m.addr(t.address, k, 6) }}</td>
-      <td><span class="{{ t.side }}">{{ 'L' if t.side == 'long' else 'S' }}</span></td>
-      <td>{{ t.base_notional|usd }}</td>
-      <td class="{{ 'short' if t.closed_pct > 1 else ('long' if t.closed_pct < -1 else 'dim') }}">{{ t.prog }}</td>
-      <td class="dim">{{ t.days_left }}g</td>
-    </tr>
-    {% endfor %}
-  </table>
-  <p class="sub" style="margin-top:6px">Telegram'dan yönet: <code>/takipler</code> ·
-  elle başlat: <code>/takip 0xADRES SEMBOL</code></p>
-  {% else %}
-  <p class="dim">Şu an takip edilen balina yok. Bilanço geçince bot "çıkışını izleyeyim mi?"
-  diye sorar (<code>/takip_N</code>), ya da Telegram'dan <code>/takip 0xADRES SEMBOL</code>
-  ile istediğin balinayı elle takibe alabilirsin.</p>
-  {% endif %}
-</div>
-
-<div class="panel third compact">
-  <h2>🕐 Şu saatte beklenenler <span class="st">· TSİ {{ '%02d'|format(tsi_now) }}:00 ·
-    <a href="/saatler{{ k }}">tam liste →</a></span></h2>
-  <p class="sub">Bu saatin tarihsel karnesine göre <b>sıralı</b> ilk {{ hot_hours|length or 5 }} yükseliş adayı
-  (son ~90 gün, 1h mumlar). Eşiği geçenler 💪 rozetli. Düşüş tarafı, sonraki saatler ve
-  tam liste <a href="/saatler{{ k }}">🕐 saatler</a> sayfasında.
-  Geçmiş istatistik — garanti değil.</p>
-  {{ m.flash(hot_result) }}
-  {% if hot_hours %}
-  {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">
-    <input type="hidden" name="nxt" value="/">{% endif %}
-  <table>
-    <tr>{% if is_admin %}<th title="Kanala gönderilecekleri seç"></th>{% endif %}
-        <th class="l">Hisse</th><th title="Bu saatin tarihsel ortalama getirisi">Bu saat ort.</th>
-        <th title="Bu saatte kaç kez yükselmiş">Kazanç</th><th title="Kaç örnek gün">Örnek</th>
-        <th class="l">Damga</th></tr>
-    {% for h in hot_hours %}
-    <tr data-propr="{{ 1 if h.propr else 0 }}">
-      {% if is_admin %}<td><input type="checkbox" name="coins" value="{{ h.coin }}"
-        {% if h.verdict != 'güçlü' %}disabled title="Kanala yalnız 💪 güçlü olanlar gönderilebilir"{% endif %}></td>{% endif %}
-      <td class="l"><a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>{% if h.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
-        {% if h.closed_heavy %}<span title="Bu hissede getirinin çoğu borsa kapalıyken gelmiş">🌙</span>{% endif %}</td>
-      <td class="long"><b>{{ '%+.2f'|format(h.avg) }}%</b></td>
-      <td>%{{ '%.0f'|format(h.win) }}</td>
-      <td class="dim">{{ h.n }}</td>
-      <td class="l">{% if h.verdict == 'güçlü' %}<span class="long"><b>💪</b></span>
-        {%- else %}<span class="dim">nötr</span>{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% if is_admin %}
-  <div class="btnrow">
-    <button type="submit" {% if not has_channel %}disabled title="Railway'e TELEGRAM_CHANNEL_ID ekle (botu kanala admin yap)"{% endif %}>📣 Seçtiklerimi kanala gönder</button>
-    {% if not has_channel %}<span class="hint">kanal için <code>TELEGRAM_CHANNEL_ID</code> gerekli</span>{% endif %}
-  </div>
-  </form>
-  {% endif %}
-  {% else %}
-  <p class="dim">Bu saatte tarihsel ortalaması pozitif olan hisse yok{% if n_hstats < 5 %} —
-    istatistikler hazırlanıyor ({{ n_hstats }} hisse hazır), doldukça burası canlanır{% endif %}.
-    Düşüş tarafı için <a href="/saatler{{ k }}">🕐 saatler</a>.</p>
-  {% endif %}
-</div>
-
-<div class="panel">
-  <h2>🌙 Seans karnesi <span class="st">· hareket ne zaman geliyor?{% if session_rows %} · {{ session_rows|length }} hisse{% endif %}</span></h2>
-  <p class="sub">HIP-3 perp'i 7/24 işlem görür, <b>hisse senedi ise kapalıdır</b> — borsa
-  kapalıyken gelen hareket saf perp/balina kaynaklıdır. Yükseliş ve düşüş <b>ayrı</b>:
-  net getiri "%20 çıkıp %18 düştü"yü "%2 gitti" gibi gösteriyordu.
-  <b>Kapalı payı</b> asıl cevaptır — yükselişin yüzde kaçı borsa kapalıyken oluşmuş.
-  <span class="warn">Kapalı seans açıktan ~4 kat uzun, o yüzden <b>saat başına</b> kolonu var;
-  adil kıyas orada. Seans ayrımı yaklaşıktır (hafta içi 09:00-16:00 ET açık sayılır;
-  resmi tatiller ayrıştırılmaz). Geçmiş istatistik — garanti değil.</span></p>
-  {% if session_rows %}
-  <p class="sub short">Kolon başlığına tıkla → sırala.</p>
-  <div class="tscroll"><div class="tscroll-x">
-  <table>
-    <tr><th class="l">Hisse</th>
-        <th title="Borsa KAPALIYKEN biriken yükseliş (bileşik)">🌙 Kapalı ↑</th>
-        <th title="Borsa KAPALIYKEN biriken düşüş (bileşik)">🌙 Kapalı ↓</th>
-        <th title="Borsa AÇIKKEN biriken yükseliş">☀️ Açık ↑</th>
-        <th title="Borsa AÇIKKEN biriken düşüş">☀️ Açık ↓</th>
-        <th title="Yükselişin yüzde kaçı borsa kapalıyken oluşmuş">Kapalı payı</th>
-        <th title="Saat başına ortalama yükseliş — kapalı / açık (seans uzunluğu farkını nötrler)">Saat başı ↑</th>
-        <th title="İstatistiğin kapsadığı gün sayısı">Gün</th></tr>
-    {% for r in session_rows %}
-    <tr data-propr="{{ 1 if r.propr else 0 }}">
-      <td class="l"><a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>{% if r.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
-        {% if r.closed_heavy %}<span title="Net getirinin çoğu borsa kapalıyken gelmiş">🌙</span>{% endif %}</td>
-      <td class="long ihit" data-tip="{{ r.symbol }} · borsa kapalıyken toplam yükseliş {{ '%+.1f'|format(r.closed_up) }}% ({{ r.n_closed }} saatlik mum)">{{ '%+.1f'|format(r.closed_up) }}%</td>
-      <td class="short ihit" data-tip="{{ r.symbol }} · borsa kapalıyken toplam düşüş {{ '%+.1f'|format(r.closed_dn) }}% ({{ r.n_closed }} saatlik mum)">{{ '%+.1f'|format(r.closed_dn) }}%</td>
-      <td class="long ihit" data-tip="{{ r.symbol }} · borsa açıkken toplam yükseliş {{ '%+.1f'|format(r.open_up) }}% ({{ r.n_open }} saatlik mum)">{{ '%+.1f'|format(r.open_up) }}%</td>
-      <td class="short ihit" data-tip="{{ r.symbol }} · borsa açıkken toplam düşüş {{ '%+.1f'|format(r.open_dn) }}% ({{ r.n_open }} saatlik mum)">{{ '%+.1f'|format(r.open_dn) }}%</td>
-      <td class="ihit" data-tip="{% if r.up_share is none %}Hiç yükseliş kaydedilmemiş{% else %}{{ r.symbol }} yükselişinin %{{ '%.0f'|format(r.up_share) }}'i borsa KAPALIYKEN oluşmuş{% endif %}">
-        {% if r.up_share is none %}<span class="dim">—</span>{% else %}<b>%{{ '%.0f'|format(r.up_share) }}</b>{% endif %}</td>
-      <td class="dim ihit" data-tip="Saat başına ortalama yükseliş — kapalı {{ '%+.3f'|format(r.rate_closed_up) }}% / açık {{ '%+.3f'|format(r.rate_open_up) }}%">{{ '%.3f'|format(r.rate_closed_up) }} / {{ '%.3f'|format(r.rate_open_up) }}</td>
-      <td class="dim">{{ r.days }}g</td>
-    </tr>
-    {% endfor %}
-  </table>
-  </div></div>
-  {% else %}
-  <p class="dim">⏳ Seans karnesi hazırlanıyor{% if n_hstats %} — {{ n_hstats }} hissenin saat
-  istatistiği var, seans ayrımı sıradaki tazelemede işlenir (rotasyon coin'leri
-  günde bir gezer){% endif %}.</p>
-  {% endif %}
-</div>
-
-<div class="panel third compact">
-  <h2>🚨 En şüpheliler</h2>
-  <p class="sub">Botun "bu insider olabilir 🤨" dediği pozisyonlar. Skor yükseldikçe şüphe artar.</p>
-  {% if suspicious %}
-  <table>
-    <tr><th title="0-100 insider şüphe puanı">Skor</th><th class="l">Hisse</th>
-        <th title="L = yükseliş bahsi, S = düşüş bahsi">Yön</th>
-        <th title="Pozisyonun dolar değeri">Boyut</th>
-        <th title="Pozisyon ne zaman açıldı">Açılış</th></tr>
-    {% for p in suspicious %}
-    <tr data-propr="{{ 1 if p.propr else 0 }}">
-      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else 'b-mid' }}">{{ p.score }}</span></td>
-      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
-          {{ m.addr(p.address, k, 6) }}</td>
-      <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
-      <td><b>{{ p.notional|usd }}</b></td>
-      <td>{{ p|posage }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}<p class="dim">Şu an şüpheli pozisyon yok — sakin sular 🌊</p>{% endif %}
-</div>
-
-<div class="panel third compact">
-  <h2>🆕 Son açılan büyükler <span class="st">· 72h</span></h2>
-  <p class="sub">Son 3 günde açılmış 1M$+ yeni pozisyonlar. Biri bir şey mi biliyor?</p>
-  {% if recent_big %}
-  <table>
-    <tr><th class="l">Hisse</th><th title="L = yükseliş bahsi, S = düşüş bahsi">Yön</th>
-        <th title="Pozisyonun dolar değeri">Boyut</th>
-        <th title="Pozisyon ne zaman açıldı">Açılış</th>
-        <th title="0-100 insider şüphe puanı">Skor</th></tr>
-    {% for p in recent_big %}
-    <tr data-propr="{{ 1 if p.propr else 0 }}">
-      <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
-          {{ m.addr(p.address, k, 6) }}</td>
-      <td class="{{ p.side }}">{{ 'L' if p.side=='long' else 'S' }}</td>
-      <td><b>{{ p.notional|usd }}</b></td>
-      <td>{{ p|posage }}</td>
-      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}<p class="dim">Son 72 saatte yeni büyük pozisyon yok.</p>{% endif %}
-</div>
-
-<div class="panel third compact">
-  <h2>📅 Yaklaşan earnings</h2>
-  <p class="sub">Bilanço günleri. Bot açıklamaya ~1 saat kala o hissenin balina raporunu Telegram'a atar.</p>
-  {% if events %}
-  <table>
-    <tr><th class="l">Tarih</th><th class="l">Sembol</th>
-        <th class="l" title="AMC = borsa kapanınca, BMO = borsa açılmadan">Saat</th>
-        <th class="l" title="⏳ bekliyor · 🕐 erken rapor gitti · ✅ raporlandı">Durum</th></tr>
-    {% for e in events %}
-    <tr data-propr="{{ 1 if e.propr else 0 }}">
-      <td class="l {{ 'dim' if e.passed else '' }}">{{ e.date_et[5:] }}</td>
-      <td class="l"><a href="/t/{{ e.symbol }}{{ k }}"><b>{{ e.symbol }}</b></a>{% if e.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}</td>
-      <td class="l" title="{{ e.when_txt }}{% if not e.exact %} (yaklaşık){% endif %}">{{ e.icon }} {{ e.tsi[6:] }}</td>
-      <td class="l">{% if e.passed %}<span class="short">geçti</span>
-        {%- elif e.maybe_passed %}<span class="short" title="Saat zayıf kaynaktan geliyor — {{ e.alt_tsi }} TSİ'de açıklanmış olabilir">⚠️{{ e.countdown }}?</span>
-        {%- elif e.alerted_t1 %}✅{% elif e.alerted_pre %}🕐{% else %}{{ e.countdown }}{% endif %}{% if e.note %} <span class="warn" title="{{ e.note }}">📝</span>{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}<p class="dim">14 günde eşleşen earnings yok.</p>{% endif %}
-</div>
-
-<div class="panel third compact">
-  <h2>🏆 En iyi biliciler <span class="st">· <a href="/gecmis{{ k }}">tümü →</a></span></h2>
-  <p class="sub">Bilanço yönünü doğru bilen cüzdanlar. 2+ doğru = otomatik ⭐ watchlist + anlık bildirim.</p>
-  {% if winners %}
-  <table>
-    <tr><th class="l">Adres</th><th>Doğru</th><th>Yanlış</th><th class="l">Durum</th></tr>
-    {% for w in winners %}
-    <tr>
-      <td class="l">{{ m.addr(w.address, k, 6) }}</td>
-      <td class="long"><b>{{ w.hits }}</b></td>
-      <td class="short">{{ w.misses }}</td>
-      <td class="l">{% if w.watchlist %}⭐{% else %}—{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}<p class="dim">Sicil henüz boş — ilk bilanço sonucuyla dolmaya başlar.</p>{% endif %}
-</div>
-
-<div class="panel half compact">
-  <h2>🗂 Son bilanço arşivi <span class="st">· <a href="/gecmis{{ k }}">tümü →</a></span></h2>
-  <p class="sub">Geçmiş bilançolarda öncesinde en büyük poz kimdeydi, haklı çıktı mı.</p>
-  {% if archive %}
-  <table>
-    <tr><th class="l">Tarih</th><th class="l">Hisse</th><th>Hareket</th><th class="l">Not</th></tr>
-    {% for a in archive %}
-    <tr>
-      <td class="l dim">{{ a.date_et[5:] }} {{ {'amc':'🌙','bmo':'☀️'}.get(a.hour_hint,'') }}</td>
-      <td class="l"><a href="/t/{{ a.symbol }}{{ k }}"><b>{{ a.symbol }}</b></a></td>
-      <td class="{{ 'long' if (a.move_pct or 0) > 0 else 'short' }}">{% if a.move_pct is not none %}{{ '%+.1f'|format(a.move_pct) }}%{% else %}-{% endif %}</td>
-      <td class="l dim wrap">{{ a.result_note }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}<p class="dim">Arşiv boş — ilk değerlendirme sonrası dolar.</p>{% endif %}
-</div>
-
-<div class="panel third compact">
-  <h2>🎯 Tek hisse uzmanları</h2>
-  <p class="sub">Sadece TEK bir hisseyi işleyen cüzdanlar — bir şirketi bu kadar yakından takip eden,
-  içeriden bilgi sahibi olabilir. Sicili tutmaya başladık.</p>
-  {% if specialists %}
-  <table>
-    <tr><th class="l">Adres</th><th class="l">Hisse</th>
-        <th title="Son kayıtlı dönemde kaç büyük işlem yaptı">İşlem</th>
-        <th title="Son kayıtlı dönemin toplam işlem hacmi">Hacim</th>
-        <th title="Kaç bilançoyu doğru/yanlış bildi">Sicil</th><th class="l">Açık poz</th></tr>
-    {% for s in specialists %}
-    <tr data-propr="{{ 1 if s.propr else 0 }}">
-      <td class="l">{{ m.addr(s.address, k) }}{% if s.watchlist %} ⭐{% endif %}</td>
-      <td class="l"><a href="/t/{{ s.symbol }}{{ k }}"><b>{{ s.symbol }}</b></a></td>
-      <td>{{ s.n }}</td>
-      <td>{{ s.vol|usd }}</td>
-      <td>{{ s.hits or 0 }}✓/{{ s.misses or 0 }}✗</td>
-      <td class="l">{% if s.open %}<span class="{{ s.open.side }}">{{ 'L' if s.open.side=='long' else 'S' }}</span> {{ s.open.notional|usd }}{% else %}-{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}<p class="dim">Henüz tek-hisse uzmanı yok — havuz büyüdükçe çıkarlar.</p>{% endif %}
-</div>
-
-<div class="panel half compact">
-  <h2>🎰 HL hisse perp evreni</h2>
-  <p class="sub">Hyperliquid'de kaldıraçlı işlem gören tüm hisseler. Birine tıkla → balinalarını,
-  likidasyon haritasını ve şüphelileri gör.</p>
-  {% if universe %}
-  <p style="line-height:2">{% for t in universe %}<a href="/t/{{ t.symbol }}{{ k }}">{{ t.symbol }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
-  {% else %}<p class="dim">Evren henüz keşfedilmedi.</p>{% endif %}
-</div>
 {% endblock %}

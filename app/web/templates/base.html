@@ -183,9 +183,9 @@ vertical-align:1px;white-space:nowrap}
 }
 .compact th,.compact td{padding:3px 8px;font-size:12.5px}
 .compact h2{margin-bottom:8px}
-.panel.strip{display:flex;gap:20px;flex-wrap:wrap;align-items:center;
-padding:8px 16px;margin-bottom:14px;font-size:13px}
-.strip b{font-size:14px}
+.strip{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--dim)}
+.kpi+.strip{margin-top:-4px}
+.strip b{font-size:14px;color:var(--fg)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .chips a{border:1.5px solid var(--border);color:var(--dim);padding:4px 12px;
 border-radius:999px;font-size:12px;font-weight:700}
@@ -432,7 +432,7 @@ box-shadow:0 8px 24px rgba(0,0,0,.45);backdrop-filter:blur(8px)}
   header h1{font-size:15px}
   input[type=text]{width:130px}
   .panel{padding:12px;border-radius:14px}
-  .panel.strip{gap:10px;font-size:12px}
+  .strip{gap:10px;font-size:12px}
   /* nav: tek satır, yatay kayar; tema/PROPR düğmeleri ilk satırda kalır */
   .topnav{display:flex;order:9;flex:1 0 100%;gap:2px;overflow-x:auto;scrollbar-width:none;
     margin:0 -12px;padding:2px 24px 2px 12px;-webkit-overflow-scrolling:touch;
@@ -447,9 +447,10 @@ box-shadow:0 8px 24px rgba(0,0,0,.45);backdrop-filter:blur(8px)}
   .prswitch{font-size:12px;padding:2px 7px}
   .kpi{grid-template-columns:repeat(2,1fr);gap:8px}
   .kpi .v{font-size:18px}
+  .kpi .s{white-space:normal;line-height:1.35}
   .rb{height:26px;gap:8px}
   .rb .x{display:none}
-  .rb .a .txt{display:none}
+  .rb .a a:not(.wl){display:none}
   .tscroll.wide::after{content:"← kaydırarak tüm sütunları gör →";display:block;font-size:11px;
     color:var(--dim);padding:4px 0 0;text-align:right}
   .mh{display:none}
