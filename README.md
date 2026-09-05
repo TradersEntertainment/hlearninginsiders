@@ -291,6 +291,57 @@ mesafenin (`max_liq_distance_pct`, vars. %50) dışına düşenler eskiden sessi
 yok oluyordu; artık sayılıp künyede yazılıyor. Likidasyon fiyatları son süpürme
 anına ait; teminat değişince kayar — künye bunu da söyler.
 
+## Tasarım dili — "sessiz, okunur, dürüst"
+
+Likidasyon haritasının dili tüm siteye taşındı. Her panel aynı üçlüyü izler ve
+bileşenler tek yerde (`base.html`) tanımlıdır; şablonda inline stil yalnız
+dinamik `width` için vardır.
+
+**Her panel:** `h2` = emoji + ad + `.st` alt başlık (panelin cevapladığı **soru**:
+"Kim ilk patlar?", "Nereden açtılar?") → veri → altta `.kunye` (🧾 kapsam, eşik,
+tazelik, görmediklerimiz). Panel boşken **kaybolmaz**: `.empty` + neden (henüz
+yok / eşik altı / çekilemedi / pencere kapalı). "Boş" ile "bozuk" ayrımı okuyana
+bırakılmaz.
+
+**Bileşenler:** `.kpi` karoları (bir bakışta sayılar, karo link olabilir) ·
+`.rb` satır-bar (sembol · yön · ray · $ · fiyat · uzaklık · adres; `.rb.cell`
+tablo içi kısa hâli) · `.legend` + `.sw` swatch · `.pill` durum kapsülü ·
+`.alert` bandı (ok/warn/bad/info) · `.tscroll` geniş tablo (telefonda taşınca
+"kaydır" ipucu; `.stick` yapışık sütun) · `.mh` telefonda gizlenen ikincil
+sütun · `details.dtl` tablo ikizi. Dolgular tek adlandırma: `.f-liq-long/.f-liq-short`
+(likidasyon seviyesi, turuncu/mavi), `.f-long/.f-short` ve `.f-up/.f-dn`
+(pozisyon yönü ve +/− polaritesi, mum renkleri).
+
+**Kurallar:** grafik = HTML satır/sütun, SVG yok (yazı her cihazda gerçek
+piksel); her işaret `data-tip="Başlık · satır · satır"` ile anlık ipucu alır ve
+klavyeyle gezilir (`tabindex`); ≥2 seri varsa legend, her grafiğin tablo ikizi
+var; kesikli çizgi yok, tek eksen; metin veri rengi giymez (yön kelimeleri
+`.long/.short`, hata metni `.bad`, uyarı `.warn`). Buton yazısı beyaz/`--btn`
+4.7:1 (AA); çizgi/halka/işaret için ayrı `--btn-line`. Tablo başlıkları
+klavyeyle sıralanır (Tab + Enter, `aria-sort`), `title` yazan her öğe aynı
+ipucu kutusunu kullanır (dokunmatikte de). `prefers-reduced-motion` her
+animasyonu kapatır. Palet sözleşmesi `tests/test_palette.py` ile pinlidir.
+
+### Saat grafiği nasıl okunur — `/t/<sembol>` 🕐
+
+24 sütun, TSİ sırasında, ortada sıfır çizgisi. Yukarı uzayan sütun o saatte
+**tarihsel ortalama yükselmiş**, aşağı uzayan düşmüş; boy = ortalama getiri
+(en büyük |ort| = tam boy). **Soluk sütun = az örnek** (`MIN_N`=40 altı):
+renk işareti, opaklık güveni söyler — soluk yeşil "zayıf pozitif" değil "az
+örnekli pozitif"tir. Alttaki amber bant ABD borsasının açık saatleri (09–16 ET).
+Etiket her 3 saatte (telefonda 6); her sütun tam yükseklikte ipucu hedefi;
+kesin sayılar tablo ikizinde. Veri `hourstats.chart_cols()` (saf).
+
+### Entry haritası nasıl okunur — `/t/<sembol>` 📍
+
+Likidasyon haritasıyla aynı kovalar ve aynı "şimdi" çizgisi; fark: yön,
+girişin **şimdiye göre konumu**dur (taraf değil) ve her satırda iki taraf
+birden var — **short sola, long sağa** uzar, ortak $ ölçeği. Şimdinin
+**üstünden** giren long zararda / short kârda, altından girenlerde tersi;
+özet satırı bunu dolarla söyler ("longların $X'i şimdinin üstünden girmiş").
+Uzak girişler düşmez: son kova gözlenen en uzak girişe uzatılır (uzun süredir
+taşınan kazanan/kaybeden tam da ilginç olanlar). Veri `liqmap.build_entry()`.
+
 ## Alarmlarda "ne oldu": long mu kapandı, short mu açıldı
 
 `/neoldu` sekmesinin iki katmanı — **OI okuması** (manşet) ve **adres
@@ -827,4 +878,13 @@ pip install -r requirements.txt
 cp .env.example .env   # doldur
 uvicorn app.main:app --reload
 # http://localhost:8000
+```
+
+Demo veri, tarama ve testler (repoda; konteyner/ortam sıfırlansa da kalır):
+
+```bash
+DB_PATH=/tmp/demo.db python scripts/seed_demo.py          # 4 hisse, pozisyonlar, bilançolar, liq attack…
+DB_PATH=/tmp/demo.db uvicorn app.main:app --port 8093     # sayfalar VERİLİ hâlde görülür
+python scripts/survey.py --out /tmp/site                  # 17 sayfa × masaüstü/telefon görüntü + özet
+python tests/run.py                                       # pytest yoksa da koşar (pytest de çalışır)
 ```
