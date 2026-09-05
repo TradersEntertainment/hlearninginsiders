@@ -163,6 +163,19 @@ def _levels(rows: list[dict], mark: float | None, field: str,
     return out[:top]
 
 
+def _safe(errs: dict, label: str, fn, *args):
+    """Panel verisi kurucusunu çalıştır; istisna → günlüğe + errs[label], None döner.
+
+    Bir grafiğin veriye takılması (beklenmedik kayıt şekli vb.) tüm sayfayı
+    500'e düşürüyordu. Artık o panel "çizilemedi: <hata>" yazar, sayfa açılır."""
+    try:
+        return fn(*args)
+    except Exception as e:                     # noqa: BLE001 — sınır: panel başına
+        log.exception("panel verisi kurulamadı: %s", label)
+        errs[label] = f"{type(e).__name__}: {e}"[:200]
+        return None
+
+
 def _guard(request: Request) -> str:
     tok = request.app.state.cfg.dashboard_token
     if not tok:
@@ -631,13 +644,23 @@ async def coin_page(request: Request, symbol: str):
                       request.app.state.notifier)
         scanning = True
 
-    # Saat istatistiği: hazırsa göster, yoksa arka planda hazırlat
+    # Saat istatistiği: hazırsa göster, yoksa arka planda hazırlat. Eski şemalı
+    # kayıt (HSTATS_V altı) da ÇİZİLİR ama yenilenmesi tetiklenir — rotasyonun
+    # sırası gelmesini beklemez.
     hst = await kv_get(f"hstats:{coin}")
     hstats_pending = False
     if not hst or (hst.get("empty") and now() - int(hst.get("ts") or 0) > 86400):
         hourstats.kick(cfg, request.app.state.client, coin)
         hstats_pending = hst is None
-    hchart = hourstats.chart_cols(hst)
+    elif int(hst.get("v") or 0) < hourstats.HSTATS_V:
+        hourstats.kick(cfg, request.app.state.client, coin)
+    # Grafik kurucuları: biri veriye takılırsa SAYFA düşmez, o panel hatayı
+    # yazar (dürüstlük: hata gizlenmez, ama tek panel yüzünden 500 de yok).
+    panel_err: dict[str, str] = {}
+    hchart = _safe(panel_err, "hours", hourstats.chart_cols, hst)
+    hmeta = _safe(panel_err, "hours", hourstats.chart_meta, hst) if hchart else None
+    if hchart and not hmeta:
+        hchart = None
     # Mum grafiği: hazır değilse arka planda hazırlat (hourstats ile aynı akış)
     pxrec = await pricechart.get(coin)
     if not pricechart.fresh(pxrec):
@@ -645,12 +668,15 @@ async def coin_page(request: Request, symbol: str):
     pxchart = bool((pxrec or {}).get("candles"))
     now_verdict = None
     if hchart:
-        et_h = datetime.now(hourstats.ET).hour
-        v, b = hourstats.verdict(hst, et_h)
-        now_verdict = {"v": v, "b": b, "tsi_now": datetime.now(TR).hour}
+        try:
+            et_h = datetime.now(hourstats.ET).hour
+            v, b = hourstats.verdict(hst, et_h)
+            now_verdict = {"v": v, "b": b, "tsi_now": datetime.now(TR).hour}
+        except Exception:                      # noqa: BLE001 — legend süsü, sayfa düşmesin
+            log.exception("now_verdict %s", coin)
 
     return _render(request, "coin.html", {
-        "hstats": hst if hchart else None, "hchart": hchart,
+        "hmeta": hmeta, "hchart": hchart, "panel_err": panel_err,
         "hstats_pending": hstats_pending, "now_verdict": now_verdict,
         "ticker": t, "symbol": t["symbol"], "coin": coin, "summ": summ,
         "rows": rows[:50], "liq_rows": liq_rows, "fills": fills, "event": ev,
@@ -659,10 +685,11 @@ async def coin_page(request: Request, symbol: str):
         "tg": request.query_params.get("tg"),
         "has_bot": request.app.state.bot is not None,
         # Entry haritası: giriş fiyatı şimdiye göre nerede (saf modül).
-        "entry": liqmap.build_entry(rows, summ.get("mark")),
+        "entry": _safe(panel_err, "entry", liqmap.build_entry, rows, summ.get("mark")),
         "hs_min_n": hourstats.MIN_N,
         # Likidasyon haritası: kovalı, saf modül (bkz. radar/liqmap.py).
-        "liq": liqmap.build(rows, summ.get("mark"), cfg.max_liq_distance_pct),
+        "liq": _safe(panel_err, "liq", liqmap.build, rows, summ.get("mark"),
+                     cfg.max_liq_distance_pct),
         "bwalls": bwalls,
         "pxchart": pxchart,
         "tv_sym": tv_symbol(t["symbol"]) if cfg.show_tradingview else None,

@@ -272,6 +272,38 @@ def chart_cols(stats: dict | None) -> list[dict] | None:
     return cols
 
 
+def chart_meta(stats: dict | None) -> dict | None:
+    """Saat panelinin künye/legend alanları — kayıt şekli ne olursa olsun.
+
+    kv'deki kayıt eski şemada olabilir (HSTATS_V bump'ından önce hesaplanmış:
+    n_open/n_closed/open_up yok). Şablon bu alanlara doğrudan dokunup
+    UndefinedError ile sayfayı düşürüyordu (/t/GME 500). Burada her alan
+    varsayılanla gelir; mum sayısı n_open+n_closed'a değil saat kovalarının
+    toplamına dayanır (her şemada var)."""
+    if not stats or stats.get("empty") or not stats.get("hours"):
+        return None
+    hours = stats["hours"]
+    n_candles = sum(int(h.get("n") or 0) for h in hours)
+    n_open = stats.get("n_open")
+    n_closed = stats.get("n_closed")
+    if n_open is None or n_closed is None:
+        n_open = sum(int(h.get("n") or 0) for h in hours if 9 <= int(h.get("et", 0)) < 16)
+        n_closed = n_candles - n_open
+    open_ret = stats.get("open_ret")
+    closed_ret = stats.get("closed_ret")
+    return {
+        "days": int(stats.get("days") or 0),
+        "n_candles": n_candles, "n_open": int(n_open), "n_closed": int(n_closed),
+        "open_ret": None if open_ret is None else float(open_ret),
+        "closed_ret": None if closed_ret is None else float(closed_ret),
+        "closed_heavy": (open_ret is not None and closed_ret is not None
+                         and closed_ret > open_ret and closed_ret > 0),
+        "best": list(stats.get("best") or []), "worst": list(stats.get("worst") or []),
+        "old_schema": int(stats.get("v") or 0) < HSTATS_V,
+        "ts": int(stats.get("ts") or 0),
+    }
+
+
 def verdict(stats: dict, et_hour: int) -> tuple[str, dict]:
     """'güçlü' / 'zayıf' / 'nötr' — şu saatin tarihsel karnesi."""
     b = stats["hours"][et_hour % 24]

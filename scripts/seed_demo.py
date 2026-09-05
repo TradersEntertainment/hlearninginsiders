@@ -216,10 +216,15 @@ async def main():
             await c.execute("INSERT INTO alerts_log(kind,key,ts,payload) VALUES(?,?,?,'')", (kind, key, now - 600))
 
     # ---- kv: saat istatistikleri (gerçek compute_stats), künyeler ----
-    for coin in ("xyz:SNDK", "xyz:NVDA", "xyz:MU"):
+    for coin in ("xyz:SNDK", "xyz:NVDA", "xyz:MU", "xyz:WDC"):
         rec = hs.compute_stats(candles(r, coin))
         assert rec, "compute_stats None döndü"
         rec["ts"] = now
+        if coin == "xyz:WDC":
+            # Bilerek ESKİ ŞEMA (HSTATS_V bump'ından önceki kayıt gibi): sayfa
+            # bu hâlde de açılmalı — canlıda /t/GME'yi 500'e düşüren durum.
+            for key in ("n_open", "n_closed", "open_up", "open_dn", "closed_up", "closed_dn", "v"):
+                rec.pop(key, None)
         await dbm.kv_set(f"hstats:{coin}", rec)
     await dbm.kv_set("fills_count", 8)
     await dbm.kv_set("specialists_cache", [

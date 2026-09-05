@@ -70,8 +70,10 @@
 </div>
 
 <div class="panel">
-  <h2>🕐 Hangi saatte ne yapıyor? <span class="st">· {% if hchart %}son {{ hstats.days }} günün 1 saatlik mumlarında saat başına ortalama getiri{% else %}saat başına ortalama getiri{% endif %}</span></h2>
-  {% if hchart %}
+  <h2>🕐 Hangi saatte ne yapıyor? <span class="st">· {% if hchart %}son {{ hmeta.days }} günün 1 saatlik mumlarında saat başına ortalama getiri{% else %}saat başına ortalama getiri{% endif %}</span></h2>
+  {% if panel_err.hours %}
+  <p class="alert bad">⚠️ Saat grafiği çizilemedi — <code>{{ panel_err.hours }}</code>. Kayıt arka planda yenilenir; sunucu günlüğüne bak.</p>
+  {% elif hchart %}
   <p class="sub">Her sütun bir saat (TSİ): yukarı uzayan sütun o saatte tarihsel olarak ortalama
   <b>yükselmiş</b>, aşağı uzayan <b>düşmüş</b>; boy = ortalama getiri. Soluk sütun = az örnek.
   Üzerine gel → kazanç oranı ve örnek sayısı.</p>
@@ -79,9 +81,11 @@
     <span><i class="sw f-up"></i> saat ortalaması yukarı</span>
     <span><i class="sw f-dn"></i> aşağı</span>
     <span><i class="sw f-open"></i> ABD borsası açık (09–16 ET)</span>
-    <span>☀️ açıkken toplam <b class="{{ 'long' if hstats.open_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hstats.open_ret) }}%</b></span>
-    <span>🌙 kapalıyken toplam <b class="{{ 'long' if hstats.closed_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hstats.closed_ret) }}%</b></span>
-    {% if hstats.closed_ret > hstats.open_ret and hstats.closed_ret > 0 %}<span class="warn">→ getirinin çoğu borsa KAPALIYKEN gelmiş 🌙</span>{% endif %}
+    {% if hmeta.open_ret is not none and hmeta.closed_ret is not none %}
+    <span>☀️ açıkken toplam <b class="{{ 'long' if hmeta.open_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hmeta.open_ret) }}%</b></span>
+    <span>🌙 kapalıyken toplam <b class="{{ 'long' if hmeta.closed_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hmeta.closed_ret) }}%</b></span>
+    {% if hmeta.closed_heavy %}<span class="warn">→ getirinin çoğu borsa KAPALIYKEN gelmiş 🌙</span>{% endif %}
+    {% else %}<span class="dim">seans toplamları bu kayıtta yok — yenilenince gelir</span>{% endif %}
     {% if now_verdict %}<span class="ihit" tabindex="0" data-pos="{{ 1 if now_verdict.b.avg >= 0 else 0 }}"
       data-tip="TSİ {{ '%02d'|format(now_verdict.tsi_now) }}:00 tarihsel karnesi · ort {{ '%+.2f'|format(now_verdict.b.avg) }}%/saat · %{{ '%.0f'|format(now_verdict.b.win) }} kazanç · {{ now_verdict.b.n }} örnek">ŞU AN (TSİ {{ '%02d'|format(now_verdict.tsi_now) }}):
       <b class="{{ 'long' if now_verdict.v == 'güçlü' else ('short' if now_verdict.v == 'zayıf' else 'dim') }}">{{ now_verdict.v|upper }}</b> saat</span>{% endif %}
@@ -99,8 +103,8 @@
     {% endfor %}
   </div>
   <p class="sub mt6">En iyi saatler:
-  {% for h in hstats.best %}<b>TSİ {{ '%02d'|format(h.tsi) }}</b> ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% else %}yeterli örnekli saat yok{% endfor %}
-  · en kötü: {% for h in hstats.worst %}TSİ {{ '%02d'|format(h.tsi) }} ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% else %}—{% endfor %}</p>
+  {% for h in hmeta.best %}<b>TSİ {{ '%02d'|format(h.tsi) }}</b> ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% else %}yeterli örnekli saat yok{% endfor %}
+  · en kötü: {% for h in hmeta.worst %}TSİ {{ '%02d'|format(h.tsi) }} ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% else %}—{% endfor %}</p>
   <details class="dtl">
     <summary>📋 tablo olarak gör</summary>
     <div class="tscroll"><div class="tscroll-x">
@@ -116,10 +120,12 @@
     </table>
     </div></div>
   </details>
-  <p class="kunye">🧾 Son {{ hstats.days }} günün 1 saatlik mumları · {{ hstats.n_open + hstats.n_closed }} mum ·
+  <p class="kunye">🧾 Son {{ hmeta.days }} günün 1 saatlik mumları · {{ hmeta.n_candles }} mum ·
     bir saat en az {{ hs_min_n }} örnekle tam renk, azı soluk ·
     ☀️/🌙 ayrımı yaklaşıktır (hafta içi 09:00–16:00 ET; tatiller ayrıştırılmaz) ·
-    geçmiş istatistiktir, garanti değildir.</p>
+    geçmiş istatistiktir, garanti değildir
+    {%- if hmeta.old_schema %} · <span class="warn">kayıt eski şemada — arka planda yenileniyor</span>{% endif %}
+    {%- if hmeta.ts %} · hesaplandı {{ hmeta.ts|age }} önce{% endif %}.</p>
   {% elif hstats_pending %}
   {{ m.empty(["Saat istatistiği hazırlanıyor — 90 günlük mumlar çekiliyor.",
               "Birazdan burada belirir; sayfa kendini yeniler."]) }}
@@ -179,7 +185,9 @@
 
 <div class="panel">
   <h2>📍 Nereden açtılar? <span class="st">· giriş fiyatı şimdiye göre nerede — kim kârda, kim zararda</span></h2>
-  {% if entry %}
+  {% if panel_err.entry %}
+  <p class="alert bad">⚠️ Entry haritası çizilemedi — <code>{{ panel_err.entry }}</code>. Sunucu günlüğüne bak.</p>
+  {% elif entry %}
   <p class="sub">Her satır bir fiyat bandı, ortadaki çizgi güncel fiyat. Sağa uzayan bar o banttan giren
   <b>long</b>'ların toplamı, sola uzayan <b>short</b>'ların; dilimler tek tek pozisyonlar (en büyüğü kökte).
   Şimdinin <b>üstünden</b> giren long zararda, short kârda; altından girenlerde tersi.</p>
@@ -262,7 +270,9 @@
 
 <div class="panel">
   <h2>💥 Likidasyon haritası <span class="st">· fiyat nereye giderse kim patlar</span></h2>
-  {% if liq %}
+  {% if panel_err.liq %}
+  <p class="alert bad">⚠️ Likidasyon haritası çizilemedi — <code>{{ panel_err.liq }}</code>. Sunucu günlüğüne bak.</p>
+  {% elif liq %}
   <p class="sub">Yukarı = fiyat yükselir, aşağı = düşer. Her satır bir fiyat bandı;
   bar o bantta zorla kapanacak pozisyonların <b>toplamı</b>, dilimler tek tek
   pozisyonlar (en büyüğü kökte). Fiyat bir banda değdiğinde o bar patlar ve fiyat

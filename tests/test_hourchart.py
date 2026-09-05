@@ -54,3 +54,28 @@ if __name__ == "__main__":
     for f in (test_24_cols_tsi_order, test_pct_scale_and_sign, test_opacity_floor_and_cap,
               test_open_band_and_labels, test_empty_or_missing_is_none):
         f(); print("✓", f.__name__)
+
+
+def test_chart_meta_old_schema():
+    """HSTATS_V bump'ından önceki kayıt: n_open/n_closed/v yok — sayfa yine çizilmeli."""
+    v1 = {"hours": stats()["hours"], "open_ret": 12.0, "closed_ret": 3.0, "days": 60,
+          "best": [], "worst": [], "ts": 1}
+    m = hs.chart_meta(v1)
+    assert m["old_schema"] is True
+    assert m["n_candles"] == 24 * 80 and m["n_open"] + m["n_closed"] == m["n_candles"]
+    assert m["n_open"] == 7 * 80                 # 09–16 ET = 7 saat kovası
+    assert m["days"] == 60 and m["best"] == [] and m["closed_ret"] == 3.0
+    # daha da eksik kayıt: seans toplamları yok → None (şablon "ölçüm yok" yazar)
+    bare = {"hours": stats()["hours"]}
+    m = hs.chart_meta(bare)
+    assert m["open_ret"] is None and m["closed_heavy"] is False and m["days"] == 0
+
+
+def test_chart_meta_current_schema():
+    v2 = {"hours": stats()["hours"], "open_ret": 1.0, "closed_ret": 5.0, "days": 70,
+          "n_open": 500, "n_closed": 1180, "best": [{"tsi": 1, "avg": 0.2}], "worst": [],
+          "v": hs.HSTATS_V, "ts": 5}
+    m = hs.chart_meta(v2)
+    assert m["old_schema"] is False and m["n_open"] == 500 and m["n_closed"] == 1180
+    assert m["closed_heavy"] is True and m["best"][0]["tsi"] == 1
+    assert hs.chart_meta(None) is None and hs.chart_meta({"empty": True}) is None
