@@ -42,7 +42,10 @@ HOT_PER_BATCH = 30            # parti başına sıcak havuz adedi
 COLD_PER_BATCH = 10           # parti başına soğuk havuz adedi (uzun kuyruk)
 SPEC_INTERVAL = 600           # uzman paneli önbelleği tazeleme aralığı (sn)
 METRICS_RETENTION_D = 45      # asset_metrics emekliliği (evaluator ≤7 gün bakar)
-ALERTS_RETENTION_D = 30       # alerts_log emekliliği (en uzun cooldown 7 gün)
+# alerts_log emekliliği. En uzun dedupe penceresi kapalı seans bandı: 30 gün.
+# Saklama ona TAM EŞİT olamaz — sınırda bir anahtar aynı anda hem 'daha
+# önce gönderildi' hem 'kaydı yok' olurdu. Payla tut.
+ALERTS_RETENTION_D = 45
 AI_RETENTION_D = 60           # ai_runs/ai_observations emekliliği (hipotezler KALICI)
 
 

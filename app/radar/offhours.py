@@ -134,6 +134,174 @@ async def players(anchor_ts: int, limit: int = PLAYERS_LIMIT) -> dict:
             "total": len(rows)}
 
 
+async def alarm_status(cfg, rows: list[dict], anchor: int) -> dict:
+    """Sayfa için: hangi sembol hangi bantta, en son ne oldu.
+
+    "Neden bildirim gelmedi" sorusu bugüne kadar ancak elle SQL ile
+    cevaplanabiliyordu: dedupe satırları (`kind='offhours'`) hiçbir arayüzde
+    görünmüyor, `Notifier.suppressed` okunmuyor, `skipped` sebebi atılıyordu.
+
+    DÖRT AYRI DURUM, dört ayrı `kind`'dan okunur — hepsini "bildirim yok"a
+    indirmek sorunun kendisiydi:
+      sent  → gitti · quiet → sessiz saatte bastırıldı
+      fail  → gönderilemedi (bir sonraki tur yeniden denenecek)
+      ""    → eşiğin altında, denenmedi
+    """
+    from ..db import kv_get
+    band_pct = max(0.01, float(getattr(cfg, "offhours_alert_pct", 0.5)))
+    marks = await band_marks(anchor)
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT kind, key, MAX(ts) ts FROM alerts_log"
+            " WHERE kind IN ('sent:offhours','quiet:offhours','fail:offhours')"
+            "   AND ts >= ? GROUP BY kind, key", (int(anchor),))
+        seen = [dict(r) for r in await cur.fetchall()]
+    last: dict[str, tuple[str, int]] = {}
+    for e in seen:
+        parsed = parse_dev_key(e["key"] or "")
+        if not parsed:
+            continue
+        coin = parsed[0]
+        prev = last.get(coin)
+        if not prev or e["ts"] > prev[1]:
+            last[coin] = (e["kind"].split(":")[0], int(e["ts"]))
+    out = []
+    for r in rows:
+        if not r.get("propr"):
+            continue
+        sign = "+" if r["dev"] > 0 else "-"
+        band = int(abs(r["dev"]) / band_pct)
+        st, when = last.get(r["coin"], ("", 0))
+        out.append({"symbol": r["symbol"], "coin": r["coin"], "dev": r["dev"],
+                    "band": band, "mark": marks.get((r["coin"], sign), 0),
+                    "state": st or ("due" if band else ""), "ts": when})
+    out.sort(key=lambda x: (-x["band"], -abs(x["dev"])))
+    return {"rows": out, "band_pct": band_pct,
+            "stats": await kv_get("offhours_stats") or {}}
+
+
+async def _stats(out: dict) -> dict:
+    """Tur sonucunu kv'ye yaz ve aynen döndür.
+
+    `main.py` bu fonksiyonun dönüşünü ATIYOR; `skipped` sebebi hiçbir yerde
+    görünmüyordu. "Alarm neden gelmedi" sorusunun ilk cevabı burası.
+    """
+    from ..db import kv_set
+    try:
+        await kv_set("offhours_stats", {**out, "ts": hourstats.now()})
+    except Exception:
+        log.debug("offhours_stats yazılamadı", exc_info=True)
+    return out
+
+
+def parse_dev_key(k: str) -> tuple[str, str, int] | None:
+    """`dev:<coin>:<çıpa>:<+|-><bant>` → (coin, yön, bant). Bozuksa None.
+
+    TEK KAYNAK: hem filigran hem sayfa durumu bunu kullanır. Coin'in kendisinde
+    ':' var (`xyz:SNDK`), o yüzden SAĞDAN ayrılıyor — iki ayrı ayrıştırma
+    yazıldığında biri baştan kesip yanlış coin üretmişti.
+    """
+    try:
+        head, tail = k.rsplit(":", 1)              # head: dev:<coin>:<çıpa>
+        coin = head.split(":", 1)[1].rsplit(":", 1)[0]
+        sign, band = tail[0], int(tail[1:])
+    except (ValueError, IndexError):
+        return None
+    return (coin, sign, band) if sign in "+-" and coin else None
+
+
+async def band_marks(anchor: int) -> dict[tuple[str, str], int]:
+    """(coin, yön) -> bu çıpada DUYURULMUŞ en yüksek bant.
+
+    Neden filigran, neden bant başına bağımsız anahtar değil: bant anlık
+    hesaplanıyor (`int(|sapma| / eşik)`) ve fiyat iki ölçüm arasında %0.3'ten
+    %2.1'e sıçrayabiliyor. Bağımsız anahtarlarda o turda YALNIZ bant 4
+    deneniyordu; o da bir kez başarısız olduysa geriye denenecek hiçbir şey
+    kalmıyordu. Filigranda soru "bu bant daha önce denendi mi" değil,
+    "bugüne kadar duyurduğumuzdan YÜKSEK mi" — sıçrama tek mesajla kapanıyor
+    ve başarısız bir gönderim filigranı ilerletmediği için tur tekrar deniyor.
+
+    Tur başına TEK sorgu; `idx_alerts_kind_key` (kind, key, ts) kullanılır.
+    """
+    out: dict[tuple[str, str], int] = {}
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT key FROM alerts_log WHERE kind='offhours' AND ts >= ?"
+            " AND key LIKE 'dev:%'", (int(anchor),))
+        rows = [r["key"] for r in await cur.fetchall()]
+    for k in rows:
+        parsed = parse_dev_key(k)
+        if not parsed:
+            continue
+        coin, sign, band = parsed
+        if band > out.get((coin, sign), 0):
+            out[(coin, sign)] = band
+    return out
+
+
+async def _one(cfg, client, notifier, r, scr, marks, p) -> dict:
+    """Tek sembolün iki tetiği. Hata çağırana taşar — orada sembol yalıtılıyor."""
+    from .forensics import alert_brief as _brief
+    anchor, ts = p["anchor"], p["ts"]
+    out = {"dev": 0, "spike": 0, "failed": 0}
+    base = {"symbol": r["symbol"], "px": r["px"], "base_px": r["base_px"],
+            "anchor_ts": anchor, "oi_chg": r.get("oi_chg"),
+            "weekend_left": scr.get("weekend_left") or 0,
+            "next_reg_ts": scr.get("next_reg_ts"), "weekend": p["weekend"],
+            "spike_thr": p["spike_pct"]}
+
+    # --- 1) kümülatif sapma bandı (yalnız hafta sonu) ---
+    band = int(abs(r["dev"]) / p["band_pct"]) if p["bands_on"] else 0
+    # YÖN filigranda ayrı tutuluyor: +%1.1'den -%1.1'e savrulan bir hisse aynı
+    # bant numarasına düşer ama bu iki AYRI olaydır.
+    sign = "+" if r["dev"] > 0 else "-"
+    if band > marks.get((r["coin"], sign), 0):
+        key = f"dev:{r['coin']}:{anchor}:{sign}{band}"
+        # Bant tetiği bütün hafta sonunu kapsar; 60 saatlik bir adres kırılımı
+        # hiçbir şey anlatmaz. Son bir saate bakılır ve mesajda AÇIKÇA yazılır.
+        brief = await _brief(cfg, client, r["coin"], ts - DEV_BRIEF_SEC, ts)
+        text = fmt_move({**base, "kind": "dev", "pct": r["dev"], "brief": brief})
+        if await notifier.send("offhours", text, priority="high", key=key):
+            # MARKER YALNIZ GİDERSE. Eskiden koşulsuz yazılıyordu: geçici bir
+            # HTTP hatası ya da sessiz saat bastırması o bandı 30 GÜN
+            # susturuyordu ve çıpa hafta sonu boyunca sabit olduğu için hafta
+            # sonunun tamamı sessiz geçiyordu.
+            await alert_log("offhours", key, text)
+            marks[(r["coin"], sign)] = band
+            out["dev"] += 1
+        else:
+            # Görünürlük satırı — dedupe DEĞİL. Bir sonraki tur yeniden dener.
+            await alert_log("fail:offhours", key, text[:200])
+            out["failed"] += 1
+
+    # --- 2) ani hareket (ABD kapalı her saatte) ---
+    if not p["spikes_on"]:
+        return out
+    win, cool = p["win"], p["cool"]
+    ref = await metrics.metric_at(r["coin"], ts - win)
+    # Referans örnek ÇIPADAN ESKİYSE tetikleme: pencere seansın içine taşmış
+    # demektir ve ölçülen şey "kapalıyken sıçrama" değil, seansın oynaklığı.
+    if not ref or int(ref.get("ts") or 0) < anchor or not ref.get("mark_px"):
+        return out
+    jump = _pct(r["px"], ref["mark_px"])
+    if jump is None or abs(jump) < p["spike_pct"]:
+        return out
+    key = f"spike:{r['coin']}"
+    if await alert_recent("offhours", key, cool):
+        return out
+    brief = await _brief(cfg, client, r["coin"], ts - win, ts)
+    text = fmt_move({**base, "kind": "spike", "pct": jump, "brief": brief,
+                     "ref_px": ref["mark_px"], "window_min": win // 60})
+    if await notifier.send("offhours", text, priority="high",
+                           key=f"{key}:{ts // cool}"):
+        await alert_log("offhours", key, text)      # bant dalıyla aynı kural
+        out["spike"] += 1
+    else:
+        await alert_log("fail:offhours", key, text[:200])
+        out["failed"] += 1
+    return out
+
+
 async def check_alerts(cfg, notifier, client=None) -> dict:
     """Kapalı seans hareket bildirimleri. İKİ AYRI TETİK:
 
@@ -163,23 +331,22 @@ async def check_alerts(cfg, notifier, client=None) -> dict:
     için bildirim gürültüdür).
     """
     from ..propr import is_listed as propr_listed
-    from .forensics import alert_brief as _brief
-    out = {"dev": 0, "spike": 0, "skipped": "" }
+    out = {"dev": 0, "spike": 0, "failed": 0, "looked": 0, "skipped": ""}
     h = ts_hour(cfg)
     if not hourstats.us_closed(None, h):              # 1. param ref_ts, 2. saat
         out["skipped"] = "ABD açık"
-        return out
+        return await _stats(out)
     weekend = hourstats.weekend_window(None, h) is not None
     bands_on = weekend or not getattr(cfg, "offhours_alert_weekend_only", True)
     spikes_on = weekend or not getattr(cfg, "offhours_spike_weekend_only", False)
     if not bands_on and not spikes_on:
         out["skipped"] = "hafta sonu değil (iki tetik de hafta sonuna kilitli)"
-        return out
+        return await _stats(out)
 
     scr = await screener(cfg)
     if not scr["closed"]:                     # çıpa/durum tutarsızsa sus
         out["skipped"] = "ABD açık"
-        return out
+        return await _stats(out)
     band_pct = max(0.01, float(getattr(cfg, "offhours_alert_pct", 0.5)))
     # Hafta içi eşiği ayrı: kapalı pencere 16.5 saat, %1 orada sıradan.
     spike_pct = max(0.01, float(
@@ -189,60 +356,34 @@ async def check_alerts(cfg, notifier, client=None) -> dict:
     cool = max(60, int(getattr(cfg, "offhours_spike_cooldown", 1800)))
     anchor, ts = scr["anchor_ts"], hourstats.now()
 
+    marks = await band_marks(anchor)          # (coin, yön) -> duyurulan en yüksek bant
     for r in scr["rows"]:
         if not propr_listed(r["symbol"]):
             continue
-        base = {"symbol": r["symbol"], "px": r["px"], "base_px": r["base_px"],
-                "anchor_ts": anchor, "oi_chg": r.get("oi_chg"),
-                "weekend_left": scr.get("weekend_left") or 0,
-                "next_reg_ts": scr.get("next_reg_ts"), "weekend": weekend,
-                "spike_thr": spike_pct}
+        # SEMBOL BAŞINA YALITIM: eskiden tek bir sembolün biçimlendirme hatası
+        # `for` döngüsünü komple düşürüyordu ve o turdaki DİĞER bütün semboller
+        # sessizce atlanıyordu (dıştaki try log'a yazıp geçiyor).
+        out["looked"] += 1
+        try:
+            n = await _one(cfg, client, notifier, r, scr, marks, dict(
+                band_pct=band_pct, spike_pct=spike_pct, win=win, cool=cool,
+                bands_on=bands_on, spikes_on=spikes_on, weekend=weekend,
+                anchor=anchor, ts=ts))
+        except Exception as e:
+            out["failed"] += 1
+            log.exception("kapalı seans alarmı (%s) başarısız", r["symbol"])
+            await alert_log("fail:offhours", f"dev:{r['coin']}:{anchor}",
+                            f"{type(e).__name__}: {e}")
+            continue
+        out["dev"] += n["dev"]
+        out["spike"] += n["spike"]
+        out["failed"] += n["failed"]
 
-        # --- 1) kümülatif sapma bandı (yalnız hafta sonu) ---
-        band = int(abs(r["dev"]) / band_pct) if bands_on else 0
-        if band >= 1:
-            # YÖN anahtara giriyor: +%1.1'den -%1.1'e savrulan bir hisse aynı
-            # bant numarasına düşer ama bu iki AYRI olaydır — yön anahtarda
-            # olmasaydı savrulma sessizce bastırılırdı.
-            key = f"dev:{r['coin']}:{anchor}:{'+' if r['dev'] > 0 else '-'}{band}"
-            if not await alert_recent("offhours", key, 30 * 86400):
-                # Bant tetiği bütün hafta sonunu kapsar; 60 saatlik bir adres
-                # kırılımı hiçbir şey anlatmaz. Son bir saate bakılır ve bu
-                # mesajda AÇIKÇA yazılır — okuyan neyi gördüğünü bilsin.
-                brief = await _brief(cfg, client, r["coin"], ts - DEV_BRIEF_SEC, ts)
-                text = fmt_move({**base, "kind": "dev", "pct": r["dev"],
-                                 "brief": brief})
-                await notifier.send("offhours", text, priority="high", key=key)
-                await alert_log("offhours", key, text)
-                out["dev"] += 1
-
-        # --- 2) ani hareket (ABD kapalı her saatte) ---
-        if not spikes_on:
-            continue
-        ref = await metrics.metric_at(r["coin"], ts - win)
-        # Referans örnek ÇIPADAN ESKİYSE tetikleme: pencere seansın içine
-        # taşmış demektir ve ölçülen şey "kapalıyken sıçrama" değil, seansın
-        # normal oynaklığı olur.
-        if not ref or int(ref.get("ts") or 0) < anchor or not ref.get("mark_px"):
-            continue
-        jump = _pct(r["px"], ref["mark_px"])
-        if jump is None or abs(jump) < spike_pct:
-            continue
-        key = f"spike:{r['coin']}"
-        if await alert_recent("offhours", key, cool):
-            continue
-        brief = await _brief(cfg, client, r["coin"], ts - win, ts)
-        text = fmt_move({**base, "kind": "spike", "pct": jump, "brief": brief,
-                         "ref_px": ref["mark_px"], "window_min": win // 60})
-        await notifier.send("offhours", text, priority="high",
-                            key=f"{key}:{ts // cool}")
-        await alert_log("offhours", key, text)
-        out["spike"] += 1
-
-    if out["dev"] or out["spike"]:
-        log.info("kapalı seans bildirimi: %d sapma, %d ani hareket",
-                 out["dev"], out["spike"])
-    return out
+    if out["dev"] or out["spike"] or out["failed"]:
+        log.info("kapalı seans bildirimi: %d sapma, %d ani hareket, %d başarısız",
+                 out["dev"], out["spike"], out["failed"])
+    out["anchor_ts"] = anchor
+    return await _stats(out)
 
 
 def ts_hour(cfg):

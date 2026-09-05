@@ -419,6 +419,34 @@ async def _subsystems(cfg) -> list[str]:
                       " — kalanlar 'ne oldu' raporunda 'hiç uğramadık' der"))
     except Exception as e:
         out.append(f"  pozisyon kapsaması okunamadı ({type(e).__name__}: {e})")
+    # Kapalı seans alarmı: "neden gelmedi" sorusunun ilk durağı. Tur sonucu
+    # eskiden main.py tarafından ATILIYORDU, hiçbir yerde görünmüyordu.
+    oh = await kv_get("offhours_stats") or {}
+    if oh:
+        out.append(f"  kapalı seans: {oh.get('looked', 0)} sembol bakıldı"
+                   f" · {oh.get('dev', 0)} bant, {oh.get('spike', 0)} sıçrama"
+                   + (f" · ⚠️ {oh['failed']} GÖNDERİLEMEDİ" if oh.get("failed")
+                      else "")
+                   + (f" · atlandı: {oh['skipped']}" if oh.get("skipped") else "")
+                   + (f" · {_dur(now() - int(oh['ts']))} önce" if oh.get("ts")
+                      else ""))
+    else:
+        out.append("  kapalı seans: alarm turu HENÜZ ÇALIŞMADI")
+    # alerts_log KIND KIRILIMI: bugüne dek yalnız satır sayısı vardı, yani
+    # "gitti" ile "bastırıldı" ile "gönderilemedi" ayırt edilemiyordu.
+    try:
+        from .db import db as _db
+        async with _db() as c:
+            cur = await c.execute(
+                "SELECT kind, COUNT(*) n FROM alerts_log WHERE ts >= ?"
+                " AND (kind LIKE 'sent:%' OR kind LIKE 'quiet:%'"
+                "      OR kind LIKE 'fail:%') GROUP BY kind"
+                " ORDER BY n DESC LIMIT 8", (now() - 86400,))
+            kinds = [f"{r['kind']}={r['n']}" for r in await cur.fetchall()]
+        out.append("  bildirim (24s): " + (" · ".join(kinds) if kinds
+                                           else "hiç gönderim/bastırma yok"))
+    except Exception as e:
+        out.append(f"  bildirim kırılımı okunamadı ({type(e).__name__}: {e})")
     tw = await kv_get("twap_stats") or {}
     if tw:
         best = tw.get("best") or {}

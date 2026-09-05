@@ -338,6 +338,58 @@ dürüst raporlanıyor: *"15 defter çekildi · 3 pozisyon bulundu · 12 adres
 pozisyon taşımıyor"* — "15/15 tazelendi" deyip satırların yine "bilinmiyor"
 kalması en kafa karıştırıcı hâldi.
 
+## Kapalı seans bandı: filigran ve dört durum
+
+Bant alarmı, çıpaya göre sapma her yeni `offhours_alert_pct` (vars. **%0.5**)
+kademesini geçtiğinde bir kez düşer. Kademe takibi artık **filigranla** yapılıyor:
+`(coin, yön) → bu çıpada duyurulmuş en yüksek bant`, ve alarm koşulu
+"bu bant daha önce denendi mi" değil **"duyurduğumuzdan yüksek mi"**.
+
+**Neden değişti — SNDK/MU vakası.** Hafta sonu ikisi de ~%2 yükseldi, `/kapali`
+sapmayı doğru gösteriyordu, ama tek bildirim gitmedi. İki kusur birleşmişti:
+
+1. **Başarısız gönderim de "gönderildi" sayılıyordu.** `notifier.send()`'in
+   dönüşü atılıyor, `alert_log("offhours", key, …)` koşulsuz yazılıyordu — bu
+   tam olarak `alert_recent`'in baktığı satır. `send` beş yoldan `False`
+   dönebiliyor (bot yok · tip kapalı · sessiz saat · chat id yok · **HTTP
+   hatası**). Çıpa hafta sonu boyunca sabit olduğu için (Cumartesi 00:00 TSİ —
+   Pazar gece yarısı bir ABD seansı kapatmaz, doğru davranış) **tek bir
+   başarısız deneme o bandı hafta sonunun tamamı boyunca susturuyordu.**
+2. **Bantlar geri doldurulmuyordu.** `band = int(|sapma| / eşik)` anlık
+   hesaplanıp yalnız o bant deneniyordu. Fiyat iki ölçüm arasında %0.3'ten
+   %2.1'e sıçrarsa sadece bant 4 denenir; o da zehirlendiyse geriye denenecek
+   hiçbir şey kalmaz.
+
+Şimdi **marker yalnız mesaj gerçekten gittiğinde** yazılıyor; gidemezse
+`fail:offhours` satırı düşüyor ve bir sonraki tur (60 sn) yeniden deniyor.
+Filigran sıçramayı da doğal olarak çözüyor: %0.3 → %2.1 **tek** mesaj üretiyor
+ve bandını 4 diye söylüyor. Geri çekilip tekrar yükselen fiyat aynı bandı
+ikinci kez duyurmuyor; yön (`+`/`-`) ayrı filigran, savrulma iki ayrı olay.
+
+### `/kapali` → 🔔 Alarm durumu paneli
+
+"Neden bildirim gelmedi" sorusu artık araştırma gerektirmiyor. Her PROPR
+sembolü için sapma, bant, duyurulan bant ve **dört ayrı durum**:
+
+| Durum | `alerts_log` kind | Anlamı |
+|---|---|---|
+| ✅ gitti | `sent:offhours` | Telegram'a ulaştı |
+| 🔴 gönderilemedi | `fail:offhours` | bir sonraki turda yeniden denenecek |
+| 🔇 bastırıldı | `quiet:offhours` | sessiz saat; sabah özetinde |
+| ⏳ sırada / eşik altı | — | bant henüz duyurulmadı ya da eşik altında |
+
+Panelin başında tur künyesi: son değerlendirme ne zaman, kaç sembol bakıldı,
+kaç bildirim, kaç başarısız, ve **atlandıysa sebebi** (ör. *"hafta sonu değil —
+bantlar hafta sonuna kilitli"*). `check_alerts`'in dönüşü eskiden `main.py`
+tarafından atılıyordu; artık `kv`'ye yazılıp hem sayfada hem `/tani`'da
+görünüyor. `/tani`'ya ayrıca `alerts_log` **kind kırılımı** eklendi — daha önce
+yalnız satır sayısı vardı, yani "gitti" ile "bastırıldı" ayırt edilemiyordu.
+
+**Yan düzeltmeler:** bir sembolün biçimlendirme hatası artık turun tamamını
+düşürmüyor (sembol başına `try`; hata `fail:offhours` olarak görünür), ve
+`ALERTS_RETENTION_D` 30 → **45** — saklama penceresi dedupe penceresine tam
+eşit olduğunda sınırda bir anahtar hem "gönderilmiş" hem "kaydı yok" olabiliyordu.
+
 ## Ne Oldu?: `/neoldu`
 
 Grafikte absürt bir hacim gördüğünde: **sembol + saat aralığı gir**, o
