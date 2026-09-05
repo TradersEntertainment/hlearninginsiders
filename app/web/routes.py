@@ -132,84 +132,6 @@ async def favicon_ico():
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
-# Grafik renklerinin tek kaynağı base.html :root değişkenleri (tema ile uyumlu).
-# Gerçek hex'ler orada: chart #e5484d/#26997b, liq #c47216/#2b8cbe (validator'dan geçen çiftler)
-CHART_SHORT = "var(--chart-short)"
-CHART_LONG = "var(--chart-long)"
-
-
-def _hour_chart(stats: dict | None) -> dict | None:
-    """Saatlik getiri barları: sıfır taban çizgisi, + yeşil / − kırmızı (polarite).
-    Eksen TSİ sırasında; ABD borsası açık saatleri amber alt bantla işaretli."""
-    if not stats or stats.get("empty") or not stats.get("hours"):
-        return None
-    hs = sorted(stats["hours"], key=lambda h: h["tsi"])
-    maxabs = max((abs(h["avg"]) for h in hs), default=0) or 0.01
-    W, H, top, bot, left = 820, 220, 16, 34, 46
-    span_h = H - top - bot
-    y0 = top + span_h / 2
-    scale = (span_h / 2 - 6) / maxabs
-    bw = (W - left - 16) / 24
-    bars = []
-    for i, h in enumerate(hs):
-        v = h["avg"]
-        bh = max(min(abs(v) * scale, span_h / 2 - 4), 1.5)
-        bars.append({
-            "x": round(left + i * bw + 2, 1), "w": round(bw - 4, 1),
-            "y": round((y0 - bh) if v >= 0 else y0, 1), "h": round(bh, 1),
-            "cx": round(left + i * bw + bw / 2, 1),
-            "pos": v >= 0, "open": 9 <= h["et"] < 16,
-            # örneklem güveni: az örnekli saat barı soluk çizilir (aynı görsel
-            # ağırlıkta gösterip 12 örnekli barı 90 örnekli gibi okutmayalım)
-            "op": round(min(1.0, max(0.35, (h["n"] or 0) / hourstats.MIN_N)), 2),
-            # ham değerler: eskiden yalnız hazır 'tip' metni geçiyordu, tarayıcı
-            # tooltip'i onu okuyordu. Anlık tooltip/kılavuz bunları ayrı ayrı
-            # biçimlendirebilsin diye sayılar da taşınır.
-            "tsi": h["tsi"], "et": h["et"], "avg": round(v, 4),
-            "win": round(h["win"], 1), "n": h["n"],
-            "tip": (f"TSİ {h['tsi']:02d}:00 (ET {h['et']:02d}:00) · ort {v:+.2f}%"
-                    f" · %{h['win']:.0f} kazanç · {h['n']} örnek"),
-            "label": f"{h['tsi']:02d}" if h["tsi"] % 3 == 0 else "",
-        })
-    return {"W": W, "H": H, "y0": round(y0, 1), "left": left, "bars": bars,
-            # imleç kılavuzu için eksen ölçeği (JS x → saat çevirir)
-            "top": top, "bot": bot, "bw": round(bw, 3)}
-
-
-
-
-def _label_base(base: float, taken: list[float], gap: float = 13.0) -> float | None:
-    """Çakışmayan yazı tabanı: önce olduğu yer, sonra küçük kaydırmalar.
-
-    Eskiden en büyük pozisyonun etiketi 'şimdi X' yazısının üstüne biniyor ve
-    ikisi de okunmuyordu. Kaydırma da tutmazsa etiket hiç yazılmaz — ipucu
-    zaten üzerine gelince tam bilgiyi veriyor.
-    """
-    for cand in (base, base - gap + 4, base + gap - 4, base - gap, base + gap):
-        if all(abs(cand - t) >= gap for t in taken):
-            return cand
-    return None
-
-
-def _hit_bands(bars: list[dict], pad: float = 8.0) -> None:
-    """Her bar'a çakışmayan bir fare hedefi (hy/hh) ver.
-
-    Bar'lar 6 birim ince; sabit 16 birimlik hedef koyunca üst üste binen
-    hedefler birbirini KAPATIYOR ve sıkışık kümenin üstteki bar'ı hiç
-    yakalanamıyordu. Hedef, komşuya olan boşluğun yarısı kadar büyür
-    (en çok `pad`), böylece hem geniş hem çakışmasız olur.
-    """
-    if not bars:
-        return
-    ys = sorted(bars, key=lambda b: b["y"])
-    for i, b in enumerate(ys):
-        up = (b["y"] - ys[i - 1]["y"]) / 2 if i else pad
-        dn = (ys[i + 1]["y"] - b["y"]) / 2 if i + 1 < len(ys) else pad
-        up, dn = min(pad, max(3.0, up)), min(pad, max(3.0, dn))
-        b["hy"] = round(b["y"] - up, 1)
-        b["hh"] = round(up + dn, 1)
-
-
 def _levels(rows: list[dict], mark: float | None, field: str,
             band_pct: float = 0.5, top: int = 5) -> list[dict]:
     """Fiyat bandına göre kümelenmiş seviyeler — mum grafiğine yatay çizgi.
@@ -239,74 +161,6 @@ def _levels(rows: list[dict], mark: float | None, field: str,
                     "count": b["count"], "label": _usd(b["total"])})
     out.sort(key=lambda x: -x["total"])
     return out[:top]
-
-
-def _entry_chart(rows: list[dict], mark: float | None) -> dict | None:
-    """Entry haritası: her pozisyon, açıldığı fiyat seviyesinde yatay bir bar.
-    Shortlar merkez ekseninin solunda, longlar sağında; bar boyu = notional."""
-    pts = [p for p in rows if p.get("entry_px") and p["notional"] > 0][:40]
-    if not pts or not mark:
-        return None
-    prices = [p["entry_px"] for p in pts] + [mark]
-    lo, hi = min(prices), max(prices)
-    pad = (hi - lo) * 0.07 or lo * 0.01 or 1.0
-    lo, hi = lo - pad, hi + pad
-    W, H, top, bot, left, right = 820, 320, 16, 26, 64, 16
-    cx = left + (W - left - right) / 2
-    half = (W - left - right) / 2 - 10
-
-    def yf(v: float) -> float:
-        return top + (hi - v) / (hi - lo) * (H - top - bot)
-
-    maxn = max(p["notional"] for p in pts)
-    bars = []
-    for p in sorted(pts, key=lambda r: -r["notional"]):
-        w = max(6.0, p["notional"] / maxn * half)
-        y = yf(p["entry_px"])
-        bars.append({"y": round(y, 1), "w": round(w, 1), "side": p["side"],
-                     "x": round(cx - w, 1) if p["side"] == "short" else round(cx, 1),
-                     "addr": p["address"],
-                     "price": p["entry_px"], "notional": p["notional"],
-                     "tip": f"{p['address'][:8]}..{p['address'][-4:]} · "
-                            f"{'SHORT' if p['side'] == 'short' else 'LONG'} "
-                            f"{_usd(p['notional'])} @{_px(p['entry_px'])}"})
-    # aynı seviyeye yığılanları dikeyde hafifçe ayır
-    for side in ("short", "long"):
-        prev = None
-        for b in sorted((b for b in bars if b["side"] == side), key=lambda b: b["y"]):
-            if prev is not None and b["y"] - prev < 7:
-                b["y"] = round(prev + 7, 1)
-            prev = b["y"]
-    for side in ("short", "long"):
-        _hit_bands([b for b in bars if b["side"] == side])
-    # en büyük 3 pozisyona seçici doğrudan etiket
-    labels = []
-    taken = [yf(mark) - 6]      # 'şimdi X' yazısının TABANI da yer kaplıyor
-    for b in bars[:3]:
-        base = _label_base(b["y"] + 3.5, taken)
-        if base is None:
-            continue
-        taken.append(base)
-        short_side = b["side"] == "short"
-        txt = b["tip"].split(" · ")[1]
-        wpx = len(txt) * 6.2
-        if short_side:
-            x, anchor = b["x"] - 6, "end"
-            if x - wpx < 6:                     # solda sığmıyor → bar'ın içine
-                x, anchor = b["x"] + 6, "start"
-        else:
-            x, anchor = b["x"] + b["w"] + 6, "start"
-            if x + wpx > W - 6:                 # sağda sığmıyor → bar'ın içine
-                x, anchor = b["x"] + b["w"] - 6, "end"
-        labels.append({"y": base, "x": x, "anchor": anchor, "text": txt})
-    ticks = [{"v": _px(lo + (hi - lo) * i / 4), "y": round(yf(lo + (hi - lo) * i / 4), 1)}
-             for i in range(5)]
-    return {"W": W, "H": H, "cx": cx, "left": left, "bars": bars, "ticks": ticks,
-            "labels": labels, "mark_y": round(yf(mark), 1), "mark_txt": _px(mark),
-            "lo": lo, "hi": hi, "top": top, "bot": bot,
-            "c_short": CHART_SHORT, "c_long": CHART_LONG,
-            "n_short": sum(1 for b in bars if b["side"] == "short"),
-            "n_long": sum(1 for b in bars if b["side"] == "long")}
 
 
 def _guard(request: Request) -> str:
@@ -722,7 +576,7 @@ async def coin_page(request: Request, symbol: str):
     if not hst or (hst.get("empty") and now() - int(hst.get("ts") or 0) > 86400):
         hourstats.kick(cfg, request.app.state.client, coin)
         hstats_pending = hst is None
-    hchart = _hour_chart(hst)
+    hchart = hourstats.chart_cols(hst)
     # Mum grafiği: hazır değilse arka planda hazırlat (hourstats ile aynı akış)
     pxrec = await pricechart.get(coin)
     if not pricechart.fresh(pxrec):
@@ -743,7 +597,9 @@ async def coin_page(request: Request, symbol: str):
         "scanning": scanning, "max_liq": cfg.max_liq_distance_pct,
         "tg": request.query_params.get("tg"),
         "has_bot": request.app.state.bot is not None,
-        "chart": _entry_chart(rows, summ.get("mark")),
+        # Entry haritası: giriş fiyatı şimdiye göre nerede (saf modül).
+        "entry": liqmap.build_entry(rows, summ.get("mark")),
+        "hs_min_n": hourstats.MIN_N,
         # Likidasyon haritası: kovalı, saf modül (bkz. radar/liqmap.py).
         "liq": liqmap.build(rows, summ.get("mark"), cfg.max_liq_distance_pct),
         "bwalls": bwalls,

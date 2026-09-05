@@ -334,6 +334,34 @@ font-size:var(--fs-s);font-weight:700;white-space:nowrap}
 .tag:hover{border-color:var(--btn-line);color:var(--fg)}
 .tag .pt{color:var(--green);margin-left:4px}
 .card-center{max-width:460px;margin:40px auto}
+/* Saat grafiği: 24 HTML sütun, ortada sıfır çizgisi. Renk = işaret, opaklık =
+   örnek güveni (ayrı kanallar). Alt bant = ABD borsası açık saati. */
+.f-open{background:color-mix(in srgb,var(--amber) 60%,transparent)}
+.hc{display:grid;grid-template-columns:repeat(24,1fr);gap:2px;margin:6px 0 2px;font-variant-numeric:tabular-nums}
+.hc-col{display:flex;flex-direction:column;border-radius:4px;min-width:0;cursor:help;outline:none}
+.hc-up,.hc-dn{height:60px;display:flex;flex-direction:column;justify-content:flex-end}
+.hc-dn{justify-content:flex-start;border-top:1px solid color-mix(in srgb,var(--head) 45%,transparent)}
+.hc-up i,.hc-dn i{display:block;width:100%}
+.hc-up i{border-radius:3px 3px 0 0}.hc-dn i{border-radius:0 0 3px 3px}
+.hc-up i.nz,.hc-dn i.nz{min-height:2px}
+.hc-band{height:3px;margin-top:3px;border-radius:2px}
+.hc-col.open .hc-band{background:color-mix(in srgb,var(--amber) 60%,transparent)}
+.hc-lbl{font-size:var(--fs-xs);color:var(--dim);text-align:center;margin-top:2px;height:14px;line-height:14px;white-space:nowrap}
+.hc-col.hot,.hc-col:focus-visible{background:color-mix(in srgb,var(--fg) 7%,transparent)}
+.hc-col:focus-visible{outline:2px solid var(--btn-line);outline-offset:1px}
+/* Entry haritası: ray ortadan iki yöne — short sola, long sağa (ortak $ ölçeği) */
+.lq-track.div{position:relative;gap:0}
+.lq-track.div::before{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;
+background:color-mix(in srgb,var(--head) 50%,transparent)}
+.lq-empty .lq-track.div::before{display:none}
+.lq-track.div .half{flex:0 0 50%;display:flex;gap:2px;height:100%;min-width:0;overflow:hidden}
+.lq-track.div .half.s{justify-content:flex-end;padding-right:1px}
+.lq-track.div .half.l{padding-left:1px}
+.lq-track.div .half .lq-seg{border-radius:0}
+.lq-track.div .half.s .lq-seg:first-child{border-radius:7px 0 0 7px}
+.lq-track.div .half.l .lq-seg:last-child{border-radius:0 7px 7px 0}
+.lq-row.two .lq-val.sv{width:80px;text-align:right}
+.lq-row.two.hot .lq-seg,.lq-row.two:focus-visible .lq-seg{filter:brightness(1.18)}
 /* tablo ikizi / katlanır ayrıntı: grafiklerin altındaki "📋 tablo olarak gör" */
 details.dtl{margin-top:10px}
 details.dtl>summary{cursor:pointer;color:var(--dim);font-size:12.5px;list-style:none;user-select:none}
@@ -425,6 +453,10 @@ box-shadow:0 8px 24px rgba(0,0,0,.45);backdrop-filter:blur(8px)}
   .tscroll.wide::after{content:"← kaydırarak tüm sütunları gör →";display:block;font-size:11px;
     color:var(--dim);padding:4px 0 0;text-align:right}
   .mh{display:none}
+  .hc-lbl.l3{visibility:hidden}
+  .hc-up,.hc-dn{height:48px}
+  .lq-row.two .lq-dist{width:52px}
+  .lq-row.two .lq-val.sv,.lq-row.two .lq-val{width:54px;font-size:10.5px}
   .lbar{font-size:11.5px;gap:6px;flex-wrap:wrap}
   .lbar .lsym{width:52px}
   .lbar .lside{width:44px}
@@ -536,17 +568,11 @@ footer{padding:18px 22px;color:var(--dim);font-size:12px}
 #itip.t-short{border-left:3px solid var(--liq-short-t)}
 #itip.t-up{border-left:3px solid var(--green)}
 #itip.t-down{border-left:3px solid var(--red-fg)}
-/* Hedefler HTML de olabilir (ana sayfadaki barlar): 'fill' yalnız SVG'de
-   çalışır, o yüzden taban kural HTML'e göre, SVG'ye özel olanlar .ichart altında.
-   .ihit = grafik işareti (vurgu + imleç); başlıktan çevrilen ipuçları yalnız [data-tip]. */
+/* .ihit = grafik işareti (vurgu + imleç); başlıktan çevrilen ipuçları yalnız [data-tip]. */
 .ihit{cursor:help;border-radius:6px}
 .ihit.hot{background:color-mix(in srgb,var(--fg) 9%,transparent)}
 .ihit:focus-visible{outline:2px solid var(--btn-line);outline-offset:2px;background:color-mix(in srgb,var(--accent) 12%,transparent)}
 [data-tip]:not(.ihit):not(th):not(.rb){cursor:help}
-.ichart .ihit{cursor:crosshair;background:none}
-.ichart .ihit:focus-visible{background:none;fill:var(--accent);fill-opacity:.12}
-.ichart .ihit.hot{background:none;fill:var(--fg);fill-opacity:.07}
-.ichart .iguide{pointer-events:none}
 /* Bar'ın kendisi hedefse tıklanabilir hissi vermesin diye yalnız imleç değişir */
 .ltrack.ihit,.ratio.ihit,.oibar.ihit{cursor:help}
 /* Yaklaşan bilanço rozeti — mum grafiğinin sağ üstünde */
@@ -859,61 +885,9 @@ function itipMove(ev){
 function itipHide(){
   if(ITIP) ITIP.className = '';
   if(IHOT){ IHOT.classList.remove('hot'); IHOT = null; }
-  document.querySelectorAll('.ichart .iguide').forEach(function(g){ g.remove(); });
 }
 
 function itipOpen(){ return !!(ITIP && ITIP.classList.contains('on')); }
-
-// İmlecin durduğu seviyenin FİYATI (dikey eksenli haritalar) ya da SAATİ
-// (saat grafiği) — kullanıcının asıl istediği "fiyatı görebilmek" bu.
-function iguide(svg, ev){
-  svg.querySelectorAll('.iguide').forEach(function(g){ g.remove(); });
-  var box = svg.getBoundingClientRect();
-  if(!box.width || !box.height) return;
-  var vb = (svg.getAttribute('viewBox') || '').split(/[ ,]+/).map(Number);
-  if(vb.length < 4) return;
-  var NS = 'http://www.w3.org/2000/svg';
-  var g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'iguide');
-  var mode = svg.getAttribute('data-guide');
-
-  if(mode === 'h'){
-    var sc = (svg.getAttribute('data-scale') || '').split(',').map(Number);
-    if(sc.length < 4 || !(sc[1] > sc[0])) return;
-    var uy = vb[1] + (ev.clientY - box.top) / box.height * vb[3];
-    if(uy < sc[2] || uy > sc[3]) return;                 // çizim alanı dışı
-    var px = sc[1] - (uy - sc[2]) / (sc[3] - sc[2]) * (sc[1] - sc[0]);
-    var ln = document.createElementNS(NS, 'line');
-    ln.setAttribute('x1', vb[0]); ln.setAttribute('x2', vb[0] + vb[2]);
-    ln.setAttribute('y1', uy); ln.setAttribute('y2', uy);
-    ln.setAttribute('stroke', 'var(--accent)'); ln.setAttribute('stroke-opacity', '.5');
-    ln.setAttribute('stroke-dasharray', '4 3'); g.appendChild(ln);
-    // Etiket SOL eksende: sağ kenarda 'şimdi X' yazısı ve bar etiketleri var,
-    // kılavuz fiyatı oraya yazılınca üst üste biniyordu. Fiyatlar zaten solda.
-    var txt = px >= 1000 ? px.toFixed(0) : (px >= 10 ? px.toFixed(2) : px.toFixed(4));
-    var bg = document.createElementNS(NS, 'rect');
-    bg.setAttribute('x', vb[0] + 2); bg.setAttribute('y', uy - 8);
-    bg.setAttribute('width', Math.max(34, txt.length * 7 + 8)); bg.setAttribute('height', 16);
-    bg.setAttribute('rx', 4); bg.setAttribute('fill', 'var(--accent)');
-    g.appendChild(bg);
-    var t = document.createElementNS(NS, 'text');
-    t.setAttribute('x', vb[0] + 6 + Math.max(34, txt.length * 7 + 8) / 2);
-    t.setAttribute('y', uy + 4);
-    t.setAttribute('text-anchor', 'middle'); t.setAttribute('font-size', '11');
-    t.setAttribute('font-weight', '800'); t.setAttribute('fill', 'var(--bg1)');
-    t.textContent = txt;
-    g.appendChild(t);
-  }else if(mode === 'v'){
-    var hit = ev.target.closest ? ev.target.closest('.ihit') : null;
-    if(!hit) return;
-    var hx = +hit.getAttribute('x'), hw = +hit.getAttribute('width');
-    var r2 = document.createElementNS(NS, 'rect');
-    r2.setAttribute('x', hx); r2.setAttribute('y', vb[1]);
-    r2.setAttribute('width', hw); r2.setAttribute('height', vb[3]);
-    r2.setAttribute('fill', 'var(--accent)'); r2.setAttribute('fill-opacity', '.10');
-    g.appendChild(r2);
-  }else return;
-  svg.appendChild(g);
-}
 
 // Hedef = data-tip taşıyan HER öğe (.ihit yalnız grafik işaretinin görsel sınıfı)
 var TIP_SEL = '[data-tip]';
@@ -924,10 +898,8 @@ document.addEventListener('mouseover', function(ev){
 document.addEventListener('mousemove', function(ev){
   IPX = ev.clientX; IPY = ev.clientY;
   var h = ev.target.closest && ev.target.closest(TIP_SEL);
-  if(!h){ if(itipOpen() && !(ev.target.closest && ev.target.closest('.ichart'))) itipHide(); return; }
+  if(!h){ if(itipOpen()) itipHide(); return; }
   itipMove(ev);
-  var svg = h.closest('svg.ichart');
-  if(svg) iguide(svg, ev);
 });
 document.addEventListener('mouseout', function(ev){
   var h = ev.target.closest && ev.target.closest(TIP_SEL);

@@ -240,6 +240,38 @@ def compute_stats(candles: list[dict]) -> dict | None:
     }
 
 
+def chart_cols(stats: dict | None) -> list[dict] | None:
+    """Saat grafiğinin sütunları — SAF, geometri yok (HTML satır/sütun düzeni).
+
+    Her sütun: `pct` = |ort| / en büyük |ort| (bar yüksekliği, %), `pos` = işaret
+    (renk), `op` = örnek güveni (n / MIN_N, taban .35 — az örnekli saat soluk
+    çizilir; renk ve opaklık AYRI kanal: soluk-yeşil "az örnekli pozitif"tir,
+    "zayıf pozitif" değil), `open` = ABD borsası açık saati (09–16 ET, amber
+    bant), `label` her 3 saatte, `l6` = her 6 saatte (telefonda yalnız bunlar).
+    Eksen TSİ sırasında."""
+    if not stats or stats.get("empty") or not stats.get("hours"):
+        return None
+    hs_ = sorted(stats["hours"], key=lambda h: h["tsi"])
+    maxabs = max((abs(h["avg"]) for h in hs_), default=0) or 0.01
+    cols = []
+    for h in hs_:
+        v = float(h["avg"])
+        n = int(h.get("n") or 0)
+        cols.append({
+            "tsi": h["tsi"], "et": h["et"], "avg": round(v, 4),
+            "win": round(float(h["win"]), 1), "n": n,
+            "pct": round(abs(v) / maxabs * 100, 1),
+            "pos": v >= 0, "open": 9 <= h["et"] < 16,
+            "op": round(min(1.0, max(0.35, n / MIN_N)), 2),
+            "label": f"{h['tsi']:02d}" if h["tsi"] % 3 == 0 else "",
+            "l6": h["tsi"] % 6 == 0,
+            "tip": (f"TSİ {h['tsi']:02d}:00 (ET {h['et']:02d}:00) · ort {v:+.2f}%"
+                    f" · %{h['win']:.0f} kazanç · {n} örnek"
+                    + (f" · az örnek (<{MIN_N}) — güven düşük" if n < MIN_N else "")),
+        })
+    return cols
+
+
 def verdict(stats: dict, et_hour: int) -> tuple[str, dict]:
     """'güçlü' / 'zayıf' / 'nötr' — şu saatin tarihsel karnesi."""
     b = stats["hours"][et_hour % 24]
