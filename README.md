@@ -210,6 +210,49 @@ Sekme ayrıca her tur için pozisyonu, bakiyeyi, **Tur/Bakiye** oranını ve
 **taker %**'sini gösterir: sabırlı bir TWAP genelde pasif kalır, agresif olan
 aceleci demektir.
 
+## Likidasyon haritası nasıl okunur — `/t/<sembol>`
+
+**Tek soru:** fiyat hangi yöne, ne kadar giderse kim ve toplam kaç dolar zorla
+kapanır? Eski grafik pozisyon başına bir çizgiydi (40 ince bar, hepsi soldan);
+bir seviyede *ne kadar* birikmiş görünmüyordu, çakışan barlar aşağı itilip
+fiyatını yalan söylüyordu, telefonda yazı 4px'e iniyordu.
+
+**Geometri.** Dikey = fiyat, yukarı = yukarı. Ortada düz "şimdi" çizgisi.
+**Üstü short likidasyonları** (fiyat çıkarsa patlar), **altı long** (düşerse).
+Sezgi geometride; renk (turuncu/mavi = sitenin likidasyon dili, mum
+grafiğindeki çizgilerle aynı) destek.
+
+**Kovalar** şimdiye uzaklığın %'sinde sabit, temiz kenarlı
+(`liqmap.SLOT_EDGES`: 0 · 0.5 · 1 · 2 · 3 · 5 · 7.5 · 10 · 15 · 20 · 30 · 50).
+Yakın bölge ince, uzak bölge kalın ama sınırlar yuvarlak sayı — etiket
+`-1…2%` diye okunur, coinler arası karşılaştırılabilir. Bar = kovadaki toplam $;
+**dilimler** tek tek pozisyonlar, en büyüğü kökte, aralarında 2px boşluk (tek
+balina mı, çok küçük mü bir bakışta). Uçtaki boş kovalar atılır, aradaki uzun
+boş koşular tek sönük satıra katlanır.
+
+**🧲 duvar:** kova tek başına yönün toplamının ≥%25'ini taşıyorsa. **Kalın
+etiket:** duvarlar ve her yönde en yakın dolu kova; gerisi sönük (her satırda
+sayı gürültü olur, ama hizalı sütun bozulmasın diye yine yazılır).
+
+**Kademeli okuma** ("fiyat %2 çıkarsa $X · %5'te $Y · %10'da $Z short patlar")
+kümülatif eğrinin yerine geldi: kümülatif toplam her tekil kovadan büyük olur,
+ikinci bir x-ekseni gerekirdi — çift eksen bir grafiğin en yaygın hatası.
+Kova kenarları 2/5/10'a tam oturduğu için bu sayılar kesindir. Kümülatif
+ayrıca her satırın tooltip'inde ve tablo ikizinde.
+
+**"Sıradaki"** iki sütun: her yönde en yakın 4 pozisyon (adres, $, liq fiyatı,
+uzaklık, kaldıraç). Kimlik burada yaşar; grafik toplamı taşır.
+
+**Neden SVG değil, HTML satırı:** yazı her cihazda gerçek piksel boyutunda kalır
+(mobil sorunu kökten biter), her satır sitenin `.ihit` tooltip sözleşmesiyle
+hover + klavye alır, `iguide`/`data-scale` bağımlılığı kalmaz. Renk çifti
+`validate_palette.js` ile sitenin panel rengine karşı doğrulandı (CVD ΔE 21).
+
+**Dürüstlük:** kova toplamı yalnız süpürmede *görülen* pozisyonlar. Azami
+mesafenin (`max_liq_distance_pct`, vars. %50) dışına düşenler eskiden sessizce
+yok oluyordu; artık sayılıp künyede yazılıyor. Likidasyon fiyatları son süpürme
+anına ait; teminat değişince kayar — künye bunu da söyler.
+
 ## Alarmlarda "ne oldu": long mu kapandı, short mu açıldı
 
 `/neoldu` sekmesinin iki katmanı — **OI okuması** (manşet) ve **adres

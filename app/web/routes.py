@@ -18,7 +18,7 @@ from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol,
+from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol, liqmap,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
                      patterns, pricechart, twap)
 
@@ -136,8 +136,6 @@ async def favicon_ico():
 # Gerçek hex'ler orada: chart #e5484d/#26997b, liq #c47216/#2b8cbe (validator'dan geçen çiftler)
 CHART_SHORT = "var(--chart-short)"
 CHART_LONG = "var(--chart-long)"
-LIQ_LONG = "var(--liq-long)"      # long liq (fiyatın altında)
-LIQ_SHORT = "var(--liq-short)"    # short liq (fiyatın üstünde)
 
 
 def _hour_chart(stats: dict | None) -> dict | None:
@@ -178,76 +176,6 @@ def _hour_chart(stats: dict | None) -> dict | None:
             "top": top, "bot": bot, "bw": round(bw, 3)}
 
 
-def _liq_chart(rows: list[dict], mark: float | None, max_dist_pct: float) -> dict | None:
-    """Likidasyon haritası: her pozisyon, likide olacağı fiyat seviyesinde
-    soldan sağa bir bar (boy = notional). Long liq'ler fiyatın altında (turuncu),
-    short liq'ler üstünde (mavi)."""
-    if not mark:
-        return None
-    pts = []
-    for p in rows:
-        liq = p.get("liq_px")
-        if not liq or p["notional"] <= 0:
-            continue
-        dist = abs(mark - liq) / mark * 100
-        if dist <= max_dist_pct:
-            pts.append({**p, "_dist": dist})
-    pts = pts[:40]
-    if not pts:
-        return None
-    prices = [p["liq_px"] for p in pts] + [mark]
-    lo, hi = min(prices), max(prices)
-    pad = (hi - lo) * 0.07 or lo * 0.01 or 1.0
-    lo, hi = lo - pad, hi + pad
-    W, H, top, bot, left, right = 820, 300, 16, 26, 64, 16
-    span = W - left - right
-
-    def yf(v: float) -> float:
-        return top + (hi - v) / (hi - lo) * (H - top - bot)
-
-    maxn = max(p["notional"] for p in pts)
-    bars = []
-    for p in sorted(pts, key=lambda r: -r["notional"]):
-        w = max(6.0, p["notional"] / maxn * span)
-        bars.append({"y": round(yf(p["liq_px"]), 1), "w": round(w, 1),
-                     "side": p["side"], "addr": p["address"],
-                     # ham fiyat/büyüklük: 'y' aşağıdaki üst üste binme
-                     # ayıklamasında kaydırıldığı için ondan geri hesaplanamaz
-                     "price": p["liq_px"], "notional": p["notional"],
-                     "dist": round(p["_dist"], 2),
-                     "tip": f"{p['address'][:8]}..{p['address'][-4:]} · "
-                            f"{'LONG' if p['side'] == 'long' else 'SHORT'} "
-                            f"{_usd(p['notional'])} → liq {_px(p['liq_px'])}"
-                            f" (mesafe %{p['_dist']:.1f})"})
-    for side in ("short", "long"):
-        prev = None
-        for b in sorted((b for b in bars if b["side"] == side), key=lambda b: b["y"]):
-            if prev is not None and b["y"] - prev < 7:
-                b["y"] = round(prev + 7, 1)
-            prev = b["y"]
-    _hit_bands(bars)   # hepsi 'left'ten başlıyor → hedefler tek eksende ayrışmalı
-    labels = []
-    taken = [yf(mark) - 6]      # 'şimdi X' yazısının TABANI da yer kaplıyor
-    for b in bars[:3]:
-        base = _label_base(b["y"] + 3.5, taken)
-        if base is None:
-            continue
-        taken.append(base)
-        txt = b["tip"].split(" · ")[1].split(" → ")[0]
-        x = left + b["w"] + 6
-        if x + len(txt) * 6.2 > W - 6:          # sığmıyor → bar'ın içine
-            labels.append({"y": base, "x": left + b["w"] - 6,
-                           "anchor": "end", "text": txt})
-        else:
-            labels.append({"y": base, "x": x, "anchor": "start", "text": txt})
-    ticks = [{"v": _px(lo + (hi - lo) * i / 4), "y": round(yf(lo + (hi - lo) * i / 4), 1)}
-             for i in range(5)]
-    return {"W": W, "H": H, "left": left, "bars": bars, "ticks": ticks, "labels": labels,
-            "mark_y": round(yf(mark), 1), "mark_txt": _px(mark),
-            "lo": lo, "hi": hi, "top": top, "bot": bot,
-            "c_long": LIQ_LONG, "c_short": LIQ_SHORT,
-            "n_long": sum(1 for b in bars if b["side"] == "long"),
-            "n_short": sum(1 for b in bars if b["side"] == "short")}
 
 
 def _label_base(base: float, taken: list[float], gap: float = 13.0) -> float | None:
@@ -816,7 +744,8 @@ async def coin_page(request: Request, symbol: str):
         "tg": request.query_params.get("tg"),
         "has_bot": request.app.state.bot is not None,
         "chart": _entry_chart(rows, summ.get("mark")),
-        "liqchart": _liq_chart(rows, summ.get("mark"), cfg.max_liq_distance_pct),
+        # Likidasyon haritası: kovalı, saf modül (bkz. radar/liqmap.py).
+        "liq": liqmap.build(rows, summ.get("mark"), cfg.max_liq_distance_pct),
         "bwalls": bwalls,
         "pxchart": pxchart,
         "tv_sym": tv_symbol(t["symbol"]) if cfg.show_tradingview else None,

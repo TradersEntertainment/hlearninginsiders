@@ -177,42 +177,116 @@
 </div>
 {% endif %}
 
-{% if liqchart %}
+{# ── Likidasyon haritası: fiyat kovalı satır histogramı ──────────────────────
+   Dikey = fiyat (yukarı = yukarı). "şimdi" ortada, düz hairline. Üstü SHORT liq
+   (fiyat çıkarsa patlar), altı LONG (düşerse). Sezgi geometride, renk destek.
+   Kovalar liqmap.SLOT_EDGES; bar boyu = kovadaki toplam $; dilim = pozisyon.
+   Satır düzeni (SVG değil): yazı telefonda küçülmez, her satır .ihit tooltip. #}
+{% macro lqrow(s) -%}
+{% if s.collapsed -%}
+<div class="lq-row lq-empty lq-collapsed" aria-hidden="true"><span class="lq-dist">{{ s.label }}</span><span class="lq-px"></span><span class="lq-track"></span><span class="lq-val">boş</span></div>
+{% elif s.empty -%}
+<div class="lq-row lq-empty" aria-hidden="true"><span class="lq-dist">{{ s.label }}</span><span class="lq-px">{{ s.px_lo|px }}–{{ s.px_hi|px }}</span><span class="lq-track"></span><span class="lq-val"></span></div>
+{% else -%}
+<div class="lq-row ihit{{ ' lq-wall' if s.wall }}{{ ' lq-near' if s.nearest }}" tabindex="0"
+     data-tip="{{ s.tip }}" data-side="{{ s.side }}" role="img" aria-label="{{ s.tip }}">
+  <span class="lq-dist">{{ s.label }}</span>
+  <span class="lq-px">{{ s.px_lo|px }}–{{ s.px_hi|px }}</span>
+  <span class="lq-track">{% for g in s.segs %}<i class="lq-seg lq-{{ s.side }}" style="width:{{ '%.2f'|format(g.wpct) }}%"></i>{% endfor %}</span>
+  <span class="lq-val">{% if s.wall %}🧲 {% endif %}{{ s.total|usd }}</span>
+</div>
+{% endif -%}
+{%- endmacro %}
+
+{% if liq %}
 <div class="panel">
-  <h2>💥 Likidasyon haritası <span style="text-transform:none">· hangi fiyatta kim likide olur</span></h2>
-  <p class="sub">Fiyat hangi seviyeye değerse hangi pozisyon zorla kapanır (patlar)? Patlama anında fiyat o yöne sert itilebilir — "stop avı" burada okunur.</p>
-  <div class="legendrow">
-    <span><i class="sw" style="background:{{ liqchart.c_long }}"></i> Long liq ({{ liqchart.n_long }}) — fiyat düşerse</span>
-    <span><i class="sw" style="background:{{ liqchart.c_short }}"></i> Short liq ({{ liqchart.n_short }}) — fiyat çıkarsa</span>
-    <span class="dim">bar boyu = pozisyon büyüklüğü · kesikli çizgi = güncel fiyat</span>
+  <h2>💥 Likidasyon haritası <span style="text-transform:none">· fiyat nereye giderse kim patlar</span></h2>
+  <p class="sub">Yukarı = fiyat yükselir, aşağı = düşer. Her satır bir fiyat bandı;
+  bar o bantta zorla kapanacak pozisyonların <b>toplamı</b>, dilimler tek tek
+  pozisyonlar (en büyüğü kökte). Fiyat bir banda değdiğinde o bar patlar ve fiyat
+  aynı yöne itilebilir — "stop avı" burada okunur. 🧲 = tek başına yönün
+  {{ (liq.meta.wall_share * 100)|int }}%'inden fazlasını taşıyan duvar.</p>
+
+  <div class="lq-legend">
+    <span><i class="sw lq-sw-short"></i> <b>Short liq</b> — fiyat <b>çıkarsa</b> ·
+      {{ liq.legend.up.n }} poz · <b>{{ liq.legend.up.total|usd }}</b></span>
+    <span><i class="sw lq-sw-long"></i> <b>Long liq</b> — fiyat <b>düşerse</b> ·
+      {{ liq.legend.down.n }} poz · <b>{{ liq.legend.down.total|usd }}</b></span>
   </div>
-  <svg class="ichart" data-guide="h" data-scale="{{ liqchart.lo }},{{ liqchart.hi }},{{ liqchart.top }},{{ liqchart.H - liqchart.bot }}"
-       viewBox="0 0 {{ liqchart.W }} {{ liqchart.H }}" style="width:100%;height:auto"
-       role="img" aria-label="Likidasyon fiyat haritası">
-    {% for t in liqchart.ticks %}
-    <line x1="{{ liqchart.left }}" x2="{{ liqchart.W - 16 }}" y1="{{ t.y }}" y2="{{ t.y }}"
-          stroke="var(--dim)" stroke-opacity=".15"/>
-    <text x="{{ liqchart.left - 8 }}" y="{{ t.y + 4 }}" text-anchor="end"
-          font-size="11" fill="var(--dim)">{{ t.v }}</text>
-    {% endfor %}
-    {% for b in liqchart.bars %}
-    <rect x="{{ liqchart.left }}" y="{{ b.y - 3 }}" width="{{ b.w }}" height="6" rx="3"
-          fill="{{ liqchart.c_long if b.side == 'long' else liqchart.c_short }}"
-          stroke="var(--card-stroke)" stroke-width="1"/>
-    {% endfor %}
-    <line x1="{{ liqchart.left }}" x2="{{ liqchart.W - 16 }}" y1="{{ liqchart.mark_y }}" y2="{{ liqchart.mark_y }}"
-          stroke="var(--head)" stroke-width="1.5" stroke-dasharray="6 4"/>
-    <text x="{{ liqchart.W - 18 }}" y="{{ liqchart.mark_y - 6 }}" text-anchor="end"
-          font-size="11" font-weight="700" fill="var(--head)">şimdi {{ liqchart.mark_txt }}</text>
-    {% for l in liqchart.labels %}
-    <text x="{{ l.x }}" y="{{ l.y }}" text-anchor="{{ l.anchor }}" font-size="11" fill="var(--head)">{{ l.text }}</text>
-    {% endfor %}
-    {% for b in liqchart.bars %}
-    <rect class="ihit" x="{{ liqchart.left }}" y="{{ b.hy }}" width="{{ b.w }}" height="{{ b.hh }}"
-          fill="transparent" data-tip="{{ b.tip }}" data-side="{{ b.side }}"
-          data-addr="{{ b.addr }}" tabindex="0" role="img" aria-label="{{ b.tip }}"/>
-    {% endfor %}
-  </svg>
+
+  {# Kademeli okuma: kümülatif EĞRİ yerine (ikinci eksen gerekirdi) kenarlara
+     tam oturan kesin sayılar. Kümülatif ayrıca tooltip ve tabloda. #}
+  <div class="lq-cascade">
+    <div>↑ Fiyat <b>%2</b> çıkarsa <b>{{ liq.cascade.up[0].total|usd }}</b> ·
+      <b>%5</b>'te <b>{{ liq.cascade.up[1].total|usd }}</b> ·
+      <b>%10</b>'da <b>{{ liq.cascade.up[2].total|usd }}</b> short patlar</div>
+    <div>↓ Fiyat <b>%2</b> düşerse <b>{{ liq.cascade.down[0].total|usd }}</b> ·
+      <b>%5</b>'te <b>{{ liq.cascade.down[1].total|usd }}</b> ·
+      <b>%10</b>'da <b>{{ liq.cascade.down[2].total|usd }}</b> long patlar</div>
+  </div>
+
+  <div class="lq-chart">
+    {% for s in liq.up %}{{ lqrow(s) }}{% endfor %}
+    <div class="lq-now"><span class="lq-pill">şimdi {{ liq.now|px }}</span><i></i></div>
+    {% for s in liq.down %}{{ lqrow(s) }}{% endfor %}
+  </div>
+
+  {# Kimlik burada yaşar; grafik toplamı taşır. #}
+  <div class="lq-next">
+    <div>
+      <h3>↑ Fiyat çıkarsa sırada</h3>
+      {% for p in liq.next.up %}
+      <div class="row"><span class="a">{{ m.addr(p.address, k, 6) }}</span>
+        <span class="short">SHORT</span> <b>{{ p.notional|usd }}</b>
+        <span class="dim lq-at">@ {{ p.liq_px|px }}</span>
+        <span class="dim">+{{ '%.1f'|format(p.dist) }}%</span>
+        {% if p.leverage %}<span class="dim">{{ p.leverage|int }}x</span>{% endif %}</div>
+      {% else %}<div class="row dim">bu yönde bilinen pozisyon yok</div>{% endfor %}
+    </div>
+    <div>
+      <h3>↓ Fiyat düşerse sırada</h3>
+      {% for p in liq.next.down %}
+      <div class="row"><span class="a">{{ m.addr(p.address, k, 6) }}</span>
+        <span class="long">LONG</span> <b>{{ p.notional|usd }}</b>
+        <span class="dim lq-at">@ {{ p.liq_px|px }}</span>
+        <span class="dim">-{{ '%.1f'|format(p.dist) }}%</span>
+        {% if p.leverage %}<span class="dim">{{ p.leverage|int }}x</span>{% endif %}</div>
+      {% else %}<div class="row dim">bu yönde bilinen pozisyon yok</div>{% endfor %}
+    </div>
+  </div>
+
+  {# Erişilebilirlik ikizi: hiçbir değer yalnız tooltip'te yaşamaz. #}
+  <details class="lq-table">
+    <summary>📋 tablo olarak gör</summary>
+    <div style="overflow-x:auto">
+    <table>
+      <tr><th class="l">Yön</th><th class="l">Bant</th><th>Fiyat aralığı</th>
+          <th>Poz</th><th>Toplam</th><th title="Şimdiden bu banda kadar biriken">Kümülatif</th></tr>
+      {% for r in liq.table %}
+      <tr><td class="l {{ 'short' if r.side == 'short' else 'long' }}">{{ 'SHORT' if r.side == 'short' else 'LONG' }}</td>
+          <td class="l">{{ r.label }}</td>
+          <td class="dim">{{ r.px_lo|px }}–{{ r.px_hi|px }}</td>
+          <td>{{ r.n }}</td><td><b>{{ r.total|usd }}</b></td><td class="dim">{{ r.cum|usd }}</td></tr>
+      {% endfor %}
+    </table>
+    </div>
+  </details>
+
+  {# Künye: kova toplamı yalnız GÖRDÜĞÜMÜZ pozisyonlar. Uzağa düşenler eskiden
+     sessizce yok oluyordu; artık sayılıyor. #}
+  <p class="sub dim" style="margin-top:10px">🧾 {{ liq.meta.n }} pozisyon — süpürmede
+    görülenler; eşik altı ve görmediklerimiz dahil değil
+    {%- if liq.meta.dropped_far %} · <b>{{ liq.meta.dropped_far }}</b> pozisyon
+      ({{ liq.meta.far_total|usd }}) %{{ liq.meta.max_dist|int }}'den uzakta, gösterilmiyor{% endif %}
+    {%- if liq.meta.dropped_noliq %} · {{ liq.meta.dropped_noliq }} pozisyonun likidasyon fiyatı yok{% endif %}
+    · likidasyon fiyatları son süpürme anına ait, teminat değişince kayar
+    {%- if liq.meta.latest_ts %} · son ölçüm {{ liq.meta.latest_ts|age }} önce{% endif %}.</p>
+</div>
+{% elif summ.mark %}
+<div class="panel">
+  <h2>💥 Likidasyon haritası</h2>
+  <p class="dim">Likidasyon fiyatı bilinen pozisyon yok — süpürme bu coine henüz
+    uğramamış olabilir.</p>
 </div>
 {% endif %}
 
