@@ -307,6 +307,9 @@ MIGRATIONS = [
     # pozisyonu yok"u ayıran tek güvenilir işaret; account_ts proxy olurdu ama
     # o yalnız marginSummary gelirse yazılıyor.
     "ALTER TABLE addresses ADD COLUMN probed_ts INTEGER",
+    # Liq attack Telegram kapısı: adayın ≤alert_dist içindeki liq toplamı
+    # (sayfa 🔔/🔕 için; NULL = kapıdan önceki kayıt, sayfa yeniden hesaplar)
+    "ALTER TABLE liq_attack_candidates ADD COLUMN near_usd REAL",
     "ALTER TABLE positions_current ADD COLUMN last_add_ts INTEGER",
     "ALTER TABLE positions_current ADD COLUMN last_trim_ts INTEGER",
     "ALTER TABLE position_snapshots ADD COLUMN last_add_ts INTEGER",

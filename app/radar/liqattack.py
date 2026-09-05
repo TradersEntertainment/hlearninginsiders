@@ -205,6 +205,13 @@ async def scan(cfg, client, notifier=None) -> dict:
     max_dist = float(getattr(cfg, "liq_attack_max_dist_pct", 4.0))
     min_score = float(getattr(cfg, "liq_attack_min_score", 2.0))
     cool = int(getattr(cfg, "liq_attack_cooldown", 4 * 3600))
+    # Telegram KAPISI: skor ne olursa olsun, fiyatın alert_dist yakınında
+    # alert_min kadar liq yoksa bildirim gitmez. Sayfa adayı yine gösterir
+    # ("sayfa daha çok gösterir, alarm daha seçici"); %3-4 uzaktaki kümeler
+    # her 4 saatte bir mesaj atıp spam oluyordu.
+    alert_dist = float(getattr(cfg, "liq_attack_alert_dist_pct", 2.0))
+    alert_min = float(getattr(cfg, "liq_attack_alert_min_usd", 1_000_000))
+    out["gated"] = 0
 
     by = await _equity_positions()
     marks = await _marks(list(by))
@@ -236,27 +243,32 @@ async def scan(cfg, client, notifier=None) -> dict:
             s = score_direction(rows, bids, asks, mark, direction, min_usd, max_dist)
             if not s:
                 continue
+            near_usd = sum(p["notional"] for p in liq_within(rows, mark, direction, alert_dist))
             s.update({"coin": coin, "symbol": rows[0]["symbol"], "mark": mark,
                       "dev_close": devs.get(coin), "ts": ts, "weekend_ts": anchor,
-                      "hot": s["score"] >= min_score})
+                      "hot": s["score"] >= min_score,
+                      "near_usd": near_usd, "alert_dist": alert_dist,
+                      "alert_ok": near_usd >= alert_min})
             rows_out.append(s)
     rows_out.sort(key=lambda s: -s["score"])
     out["candidates"] = sum(1 for s in rows_out if s["hot"])
+    out["gated"] = sum(1 for s in rows_out if s["hot"] and not s["alert_ok"])
 
     async with db() as conn:
         await conn.executemany(
             """INSERT INTO liq_attack_candidates(coin,direction,ts,weekend_ts,mark,
-                 dist_pct,liq_usd,cost_usd,score,book_thin,n_pos,target_px,dev_close,hot)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 dist_pct,liq_usd,cost_usd,score,book_thin,n_pos,target_px,dev_close,hot,
+                 near_usd)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [(s["coin"], s["direction"], ts, anchor, s["mark"], s["dist_pct"],
               s["liq_usd"], s["cost_usd"], s["score"], int(s["book_thin"]),
-              s["n_pos"], s["target_px"], s["dev_close"], int(s["hot"]))
+              s["n_pos"], s["target_px"], s["dev_close"], int(s["hot"]), s["near_usd"])
              for s in rows_out])
 
     if notifier is not None:
         chat = getattr(cfg, "liq_attack_chat_id", "") or ""
         for s in rows_out:
-            if not s["hot"]:
+            if not s["hot"] or not s["alert_ok"]:
                 continue
             key = f"attack:{s['coin']}:{s['direction']}:{anchor}"
             if await alert_recent("liqattack", key, cool):
@@ -400,9 +412,17 @@ async def page(cfg) -> dict:
     # Ölçek: liq ve defter barları aynı $ ekseninde — karşılaştırma bu.
     mx = max([max(c["liq_usd"] or 0, c["cost_usd"] or 0) for c in cands] or [1.0])
     by = await _equity_positions() if cands else {}
+    alert_dist = float(getattr(cfg, "liq_attack_alert_dist_pct", 2.0))
+    alert_min = float(getattr(cfg, "liq_attack_alert_min_usd", 1_000_000))
     for c in cands:
         c["liq_w"] = max(1.5, (c["liq_usd"] or 0) / mx * 100)
         c["cost_w"] = max(1.5, (c["cost_usd"] or 0) / mx * 100)
+        # Telegram kapısı: kapıdan önceki kayıtlarda near_usd NULL → şimdiki
+        # pozisyonlarla yeniden hesapla (targets ile aynı kaynak).
+        if c.get("near_usd") is None:
+            c["near_usd"] = sum(p["notional"] for p in
+                                liq_within(by.get(c["coin"], []), c["mark"], c["direction"], alert_dist))
+        c["alert_ok"] = (c["near_usd"] or 0) >= alert_min
         # Hedef pozisyonlar tabloda saklanmıyor (kimlik zaten positions_current'ta);
         # tur anındaki mark ile yeniden bulunur — ucuz ve tek kaynak.
         hit = liq_within(by.get(c["coin"], []), c["mark"], c["direction"], c["dist_pct"])
@@ -410,6 +430,7 @@ async def page(cfg) -> dict:
         c["targets"] = [{"address": p["address"], "notional": p["notional"],
                          "liq_px": p["liq_px"]} for p in hit[:TOP_TARGETS]]
     return {"weekend": wk, "last_ts": last, "cands": cands, "attacks": attacks,
+            "alert_dist": alert_dist, "alert_min": alert_min,
             "rec": await record(cfg),
             "stats": await kv_get("liqattack_stats") or {},
             "next_weekend": next_weekend(None, h)}

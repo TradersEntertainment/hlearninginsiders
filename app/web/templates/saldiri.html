@@ -11,9 +11,11 @@
   Pazartesi fiyat Cuma kapanışına döner. Bu yüzden saldırı <b>öngörülebilir</b> —
   hedef (yakın küme), pencere (ince defter) ve dönüş çıpası önceden belli.</p>
   <p class="sub"><b>Oran</b> = patlayacak $ ÷ fiyatı oraya itmek için yenmesi gereken
-  defter $. <b>{{ '%g'|format(min_score) }}×</b> üstü <b>aday</b>: öne çıkar ve
-  Telegram'a düşer{% if not chat_set %} (ana sohbete — <code>LIQ_ATTACK_CHAT_ID</code>
-  ayarlanırsa kendi kanalına){% endif %}. 🕳 = görünen defter hedefe varmadan bitiyor,
+  defter $. <b>{{ '%g'|format(min_score) }}×</b> üstü <b>aday</b>: sayfada öne çıkar.
+  Telegram'a yalnız <b>kapıyı geçen</b> aday düşer: fiyatın ≤%{{ '%g'|format(alert_dist) }}
+  yakınında ≥ <b>{{ alert_min|usd }}</b> likidasyon (🔔){% if not chat_set %} — ana sohbete,
+  <code>LIQ_ATTACK_CHAT_ID</code> ayarlanırsa kendi kanalına{% endif %}. Uzaktaki küme
+  sayfada kalır, mesaj atmaz (🔕). 🕳 = görünen defter hedefe varmadan bitiyor,
   itmek bundan da ucuz olabilir. <span class="warn">Oran kâr tahmini değil, göreli
   çekicilik. Yatırım tavsiyesi değildir.</span></p>
 
@@ -32,6 +34,7 @@
         {{ lq.stats.books or 0 }} defter çekildi
         {%- if lq.stats.book_err %} · <span class="bad">{{ lq.stats.book_err }} defter hatası</span>{% endif %}
         {%- if lq.stats.failed %} · <span class="bad">{{ lq.stats.failed }} bildirim gönderilemedi</span>{% endif %}
+        {%- if lq.stats.gated %} · {{ lq.stats.gated }} aday bildirim kapısının altında (🔕){% endif %}
       {%- endif %}</span>
     {% elif lq.weekend %}<span class="dim">· ilk tarama bekleniyor (açılıştan ~20 sn sonra)</span>
     {% else %}<span class="dim">· bu hafta sonu henüz tarama olmadı</span>{% endif %}
@@ -65,6 +68,7 @@
     <span><i class="sw f-liq-long"></i>patlayacak $ (long — fiyat düşerse)</span>
     <span><i class="sw f-liq-short"></i>patlayacak $ (short — fiyat çıkarsa)</span>
     <span><i class="sw f-book"></i>yenmesi gereken defter $</span>
+    <span>🔔 Telegram kapısını geçti (≤%{{ '%g'|format(alert_dist) }} içinde ≥ {{ alert_min|usd }} liq) · 🔕 geçemedi, mesaj yok</span>
   </div>
   <div class="tscroll"><div class="tscroll-x">
   <table>
@@ -87,7 +91,10 @@
       <td><b>{{ c.liq_usd|usd }}</b> <span class="dim">{{ c.n_pos }} poz</span></td>
       <td>{{ c.cost_usd|usd }}{% if c.book_thin %} <span title="Görünen defter hedefe varmadan bitiyor — gerçek maliyet bundan büyük olamaz">🕳</span>{% endif %}</td>
       <td><b>{{ '%.1f'|format(c.score) }}×</b>
-        {% if c.hot %}<span class="pill warn">🔥 aday</span>{% endif %}</td>
+        {% if c.hot %}<span class="pill warn">🔥 aday</span>
+          {% if c.alert_ok %}<span class="pill ok" title="Telegram kapısını geçti: ≤%{{ '%g'|format(alert_dist) }} içinde {{ c.near_usd|usd }} liq">🔔</span>
+          {%- else %}<span class="hint" title="Telegram'a gitmedi: ≤%{{ '%g'|format(alert_dist) }} içinde yalnız {{ c.near_usd|usd }} liq (eşik {{ alert_min|usd }})">🔕 ≤%{{ '%g'|format(alert_dist) }}'de {{ c.near_usd|usd }}</span>{% endif %}
+        {% endif %}</td>
       <td class="{{ 'long' if (c.dev_close or 0) > 0 else ('short' if (c.dev_close or 0) < 0 else 'dim') }}">
         {% if c.dev_close is not none %}{{ '%+.2f'|format(c.dev_close) }}%{% else %}—{% endif %}</td>
       <td class="l">{% for t in c.targets %}{{ m.addr(t.address, k, 6) }}
@@ -158,7 +165,8 @@
   <p class="kunye">🧾 Defter = <code>l2Book</code>'un
     görünen seviyeleri, tur anında (hafta sonu her {{ scan_sec // 60 }} dk, aday coin
     başına 1 istek) · pozisyonlar süpürmede görülenler · hedef uzaklık tavanı
-    %{{ '%g'|format(max_dist) }} · küme tabanı {{ min_usd|usd }}. Oran bir üst sınırdır:
+    %{{ '%g'|format(max_dist) }} · küme tabanı {{ min_usd|usd }} · Telegram kapısı ≤%{{ '%g'|format(alert_dist) }}
+    içinde ≥ {{ alert_min|usd }} liq (Ayarlar → Liq attack). Oran bir üst sınırdır:
     defter hedefe varmıyorsa gerçek maliyet daha da düşük.</p>
 </div>
 

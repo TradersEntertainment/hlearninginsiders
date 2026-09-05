@@ -1108,6 +1108,7 @@ async def liq_attack_page(request: Request):
         "min_usd": getattr(cfg, "liq_attack_min_usd", 2_000_000),
         "max_dist": getattr(cfg, "liq_attack_max_dist_pct", 4.0),
         "min_score": getattr(cfg, "liq_attack_min_score", 2.0),
+        "alert_dist": lq["alert_dist"], "alert_min": lq["alert_min"],
         "wk_end_tr": (datetime.fromtimestamp(lq["weekend"][1], TR)
                       if lq["weekend"] else None),
         "wk_left": max(0, int(lq["weekend"][1]) - now()) if lq["weekend"] else 0,

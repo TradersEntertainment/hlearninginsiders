@@ -631,6 +631,9 @@ def liq_attack_alert(s: dict, wk: tuple | None = None) -> str:
     if s.get("book_thin"):
         lines.append("🕳 <b>Görünen defter hedefe varmadan bitiyor</b> — itmek "
                      "bundan da ucuz olabilir")
+    if s.get("near_usd") is not None:
+        lines.append(f"🔔 fiyatın ≤%{s.get('alert_dist', 2):g} yakınında "
+                     f"<b>{usd(s['near_usd'])}</b> liq — bildirim kapısı bu")
     tg = s.get("targets") or []
     if tg:
         lines.append("hedef: " + " · ".join(

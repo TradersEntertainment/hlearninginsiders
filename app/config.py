@@ -243,6 +243,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "liq_attack_min_score": {"type": "float", "label": "Liq attack: aday eşiği (oran)",
                              "group": "Liq attack",
                              "desc": "patlayacak $ / yenmesi gereken defter $ bu oranı geçerse ADAY: sayfada öne çıkar ve Telegram'a düşer. 1 = başabaş, 2 = çekici, 5+ = neredeyse bedava"},
+    "liq_attack_alert_dist_pct": {"type": "float", "label": "Liq attack: bildirim kapısı — mesafe (%)",
+                                  "group": "Liq attack",
+                                  "desc": "Telegram kapısı: fiyatın bu kadar yakınında (aşağıdaki $ kadar) likidasyon yoksa aday Telegram'a DÜŞMEZ — sayfada yine görünür (🔕). Uzak kümeler spam oluyordu"},
+    "liq_attack_alert_min_usd": {"type": "float", "label": "Liq attack: bildirim kapısı — asgari liq ($)",
+                                 "group": "Liq attack",
+                                 "desc": "Yukarıdaki mesafe içinde en az bu kadar $ likidasyon varsa bildirim gider (🔔)"},
     "liq_attack_scan_sec": {"type": "int", "label": "Liq attack: tarama aralığı (sn)",
                             "group": "Liq attack",
                             "desc": "Yalnız hafta sonu çalışır; aday coin başına 1 l2Book isteği"},
@@ -524,6 +530,8 @@ class Config:
         self.liq_attack_min_usd = float(os.getenv("LIQ_ATTACK_MIN_USD", "2000000"))
         self.liq_attack_max_dist_pct = float(os.getenv("LIQ_ATTACK_MAX_DIST_PCT", "4"))
         self.liq_attack_min_score = float(os.getenv("LIQ_ATTACK_MIN_SCORE", "2"))
+        self.liq_attack_alert_dist_pct = float(os.getenv("LIQ_ATTACK_ALERT_DIST_PCT", "2"))
+        self.liq_attack_alert_min_usd = float(os.getenv("LIQ_ATTACK_ALERT_MIN_USD", "1000000"))
         self.liq_attack_scan_sec = int(os.getenv("LIQ_ATTACK_SCAN_SEC", "300"))
         self.liq_attack_cooldown = int(os.getenv("LIQ_ATTACK_COOLDOWN", "14400"))
         self.liq_attack_spike_pct = float(os.getenv("LIQ_ATTACK_SPIKE_PCT", "1.5"))

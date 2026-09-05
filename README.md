@@ -245,6 +245,14 @@ hafta sonu verdiğimiz en yüksek oran" saklanır → **isabet** (önceden
 işaretlenmiş / tüm saldırılar) ve **yanlış alarm** (bitmiş hafta sonlarında
 gerçekleşmeyen adaylar). Karnesiz tahmin sadece histir.
 
+**Telegram kapısı (spam freni).** Aday olmak (skor ≥ 2×) mesaj için yetmez:
+fiyatın **≤%2 yakınında ≥ $1M** likidasyon yoksa bildirim gitmez
+(`liq_attack_alert_dist_pct`, `liq_attack_alert_min_usd`; Ayarlar → Liq attack).
+%3-4 uzaktaki kümeler ince defterde kolayca 2× oran veriyor ve her 4 saatte bir
+mesaj atıyordu. Sayfa adayı yine gösterir: 🔔 = kapıyı geçti (mesaj gitti/gider),
+🔕 = geçemedi; strip'te "N aday bildirim kapısının altında". Mesajda kapının
+değeri yazar ("≤%2 yakınında $X liq").
+
 **Bildirim markerı yalnız gönderim başarılıysa yazılır** — kapalı seans
 bandındaki dersin aynısı; başarısız gönderim cooldown'u yakmaz.
 

@@ -310,3 +310,65 @@ test_detect_record()
 test_wiring()
 test_manual_and_error(); _restore()
 print("\n✅ LIQ ATTACK TESTLERİ GEÇTİ")
+
+
+# ------------------------------------------------ 4b) Telegram kapısı
+def test_alert_gate():
+    """Aday (skor ≥ 2) olmak mesaj için yetmez: ≤alert_dist içinde ≥ alert_min
+    liq yoksa bildirim gitmez, sayfa 🔕 gösterir, stats 'gated' sayar."""
+    async def run():
+        cfg = Config(); cfg.telegram_chat_id = "-1"; cfg.alert_forensics = False
+        cfg.liq_attack_alert_dist_pct = 2.0; cfg.liq_attack_alert_min_usd = 1_000_000
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "la3.db"))
+        now = dbm.now()
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO tickers(coin,symbol) VALUES('xyz:SNDK','SNDK')")
+            await c.execute("INSERT OR REPLACE INTO asset_metrics(coin,ts,mark_px,oi,"
+                            "funding,day_volume) VALUES('xyz:SNDK',?,?,1,0,0)", (now, MARK))
+            # $2.5M long kümesi %3.2 uzakta: ön elemeyi ve skoru geçer, kapıyı GEÇMEZ
+            await c.execute(
+                "INSERT INTO positions_current(coin,address,ts,side,szi,entry_px,"
+                "leverage,liq_px,upnl,notional) VALUES('xyz:SNDK','0xfar',?,'long',1,100,3,?,0,?)",
+                (now, MARK * (1 - 3.2 / 100), 2_500_000))
+        la.hourstats.weekend_window = lambda *a, **k: (T0, T0 + 2 * 86400)
+
+        class C:
+            async def l2_book(self, coin):
+                return {"levels": [[{"px": "99.7", "sz": "500"}, {"px": "97.0", "sz": "500"}],
+                                   [{"px": "100.3", "sz": "500"}]]}
+
+        class Bot:
+            def __init__(self): self.sent = []
+            async def send(self, text, chat_id=None):
+                self.sent.append(text); return True
+        from app.notify import Notifier
+        bot = Bot()
+        out = await la.scan(cfg, C(), Notifier(cfg, bot))
+        assert out["candidates"] == 1 and out["gated"] == 1, out
+        assert out["alerted"] == 0 and bot.sent == [], "uzak küme mesaj attı"
+        pg = await la.page(cfg)
+        c0 = pg["cands"][0]
+        assert c0["hot"] == 1 and c0["alert_ok"] is False and (c0["near_usd"] or 0) == 0, c0
+        assert pg["alert_dist"] == 2.0 and pg["alert_min"] == 1_000_000
+        # %1.5'e $1.2M gelince kapı açılır → mesaj gider, kapının değeri yazar
+        async with dbm.db() as c:
+            await c.execute(
+                "INSERT INTO positions_current(coin,address,ts,side,szi,entry_px,"
+                "leverage,liq_px,upnl,notional) VALUES('xyz:SNDK','0xnear',?,'long',1,100,3,?,0,?)",
+                (now, MARK * (1 - 1.5 / 100), 1_200_000))
+        out2 = await la.scan(cfg, C(), Notifier(cfg, bot))
+        assert out2["alerted"] == 1 and out2["gated"] == 0 and len(bot.sent) == 1, out2
+        assert "≤%2" in bot.sent[0] and "$1.2M</b> liq" in bot.sent[0], bot.sent[0]
+        pg2 = await la.page(cfg)
+        assert pg2["cands"][0]["alert_ok"] is True and abs(pg2["cands"][0]["near_usd"] - 1_200_000) < 1
+        # kapıdan önceki kayıt (near_usd NULL) sayfada yeniden hesaplanır
+        async with dbm.db() as c:
+            await c.execute("UPDATE liq_attack_candidates SET near_usd=NULL")
+        pg3 = await la.page(cfg)
+        assert abs(pg3["cands"][0]["near_usd"] - 1_200_000) < 1 and pg3["cands"][0]["alert_ok"] is True
+        print("✅ kapı) uzak küme aday ama mesaj yok (gated); yakın liq gelince mesaj"
+              " gitti ve kapı değeri yazıldı; eski kayıt sayfada yeniden hesaplandı")
+    try:
+        asyncio.run(run())
+    finally:
+        _restore()   # monkeypatch sızmasın: runner testleri alfabetik koşuyor
