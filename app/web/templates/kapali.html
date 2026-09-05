@@ -27,16 +27,14 @@
       <span class="dim">— dikkat: pencerenin bitişi ABD'nin açılışı DEĞİLDİR,
       açılış {{ reg_tr.strftime('%d.%m %H:%M') }} TSİ</span>{% endif %}
   </p>
-  <p class="sub dim">{{ scr.rows|length }}/{{ scr.n_tickers }} hissede çıpa fiyatı bulundu{%
-    if scr.n_nodata %} · {{ scr.n_nodata }} hissede kapanış anına ait ölçüm yok{% endif %}.
-    Çıpa <b>TSİ'de sabit saat</b> (Ayarlar → ABD kapanış saati); kışın ET 16:00
-    kapanışına denk gelir, yazın bir saat kayar.</p>
-
   {% if scr.n_stale %}
-  <p class="short">⚠️ {{ scr.n_stale }} satırda çıpa örneği kapanıştan <b>30 dakikadan
+  <p class="alert warn">⚠️ {{ scr.n_stale }} satırda çıpa örneği kapanıştan <b>30 dakikadan
     eski</b> (metrik görevi o sırada düşmüş olabilir) — o satırlar ⏳ ile işaretli,
     sapmaları yanıltıcı olabilir.</p>
   {% endif %}
+  <p class="kunye">🧾 {{ scr.rows|length }}/{{ scr.n_tickers }} hissede çıpa fiyatı bulundu{%
+    if scr.n_nodata %} · {{ scr.n_nodata }} hissede kapanış anına ait ölçüm yok{% endif %} ·
+    çıpa TSİ'de sabit saat (Ayarlar → ABD kapanış saati); kışın ET 16:00 kapanışına denk gelir, yazın bir saat kayar.</p>
 </div>
 
 <div class="panel">
@@ -50,9 +48,9 @@
     {%- if al.stats.ts %}Son değerlendirme {{ al.stats.ts|dt }} ·
       {{ al.stats.looked or 0 }} sembol bakıldı ·
       <b>{{ al.stats.dev or 0 }}</b> bant, <b>{{ al.stats.spike or 0 }}</b> sıçrama bildirimi
-      {%- if al.stats.failed %} · <span class="short"><b>{{ al.stats.failed }}</b> gönderilemedi</span>{% endif %}
+      {%- if al.stats.failed %} · <span class="bad"><b>{{ al.stats.failed }}</b> gönderilemedi</span>{% endif %}
       {%- if al.stats.skipped %} · <span class="warn">atlandı: {{ al.stats.skipped }}</span>{% endif %}
-    {%- else %}<span class="short">Alarm turu HENÜZ ÇALIŞMADI</span> — metrik
+    {%- else %}<span class="bad">Alarm turu HENÜZ ÇALIŞMADI</span> — metrik
       toplama durmuş olabilir, <code>/tani</code>'ye bak.{% endif %}</p>
   {% if al.rows %}
   <div class="tscroll"><div class="tscroll-x">
@@ -83,46 +81,44 @@
   </table>
   </div></div>
   {% else %}
-  <p class="dim">PROPR'da listeli sembol için sapma satırı yok.</p>
+  {{ m.empty(["PROPR'da listeli sembol için sapma satırı yok.", "Alarm yalnız işlem açabildiğin (PROPR) semboller için değerlendirilir; çıpa fiyatı bulunan sembol yoksa liste boş kalır."]) }}
   {% endif %}
-  <p class="sub dim">🔁 Gönderim başarısız olursa <b>kayıt düşmez</b> ve bir
-  sonraki turda (60 sn) yeniden denenir. Daha önce bu böyle değildi: başarısız
-  bir deneme de "gönderildi" sayılıyordu ve çıpa hafta sonu boyunca sabit
-  olduğu için o bant hafta sonunun tamamında bir daha denenmiyordu.</p>
+  <p class="kunye">🔁 Gönderim başarısız olursa <b>kayıt düşmez</b> ve bir sonraki turda (60 sn) yeniden denenir —
+    eskiden başarısız deneme "gönderildi" sayılıyor, çıpa hafta sonu boyunca sabit olduğu için o bant bir daha denenmiyordu.</p>
 </div>
 
 <div class="panel">
-  <h2>📊 Kapanıştan beri sapma <span class="st">·
-    en çok kıpırdayan üstte · başlığa tıklayarak sırala</span></h2>
+  <h2>📊 Kapanıştan beri sapma <span class="st">· kapanış fiyatına göre kim ne kadar kıpırdadı · en çok üstte</span></h2>
   {% if scr.rows %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th>
-        <th title="Kapanış anındaki mark fiyatı">Kapanış</th>
+        <th class="mh" title="Kapanış anındaki mark fiyatı">Kapanış</th>
         <th title="{{ 'Şu anki' if scr.closed else 'Son seans açılışındaki' }} mark fiyatı">{{ 'Şu an' if scr.closed else 'Açılışta' }}</th>
         <th title="Kapanışa göre yüzde değişim — bu kolona göre sıralı">Sapma</th>
         <th title="Açık pozisyon (OI) değişimi — sapmaya eşlik ediyor mu?">OI değ.</th>
-        <th title="Günlük hacim">Hacim</th>
+        <th class="mh" title="Günlük hacim">Hacim</th>
         <th title="Bildiğimiz açık pozisyon sayısı / toplam büyüklük">Poz</th></tr>
     {% for r in scr.rows %}
     <tr data-propr="{{ 1 if r.propr else 0 }}">
       <td class="l"><a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>
         {%- if r.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
         {%- if r.stale %} <span title="Çıpa örneği kapanıştan 30dk'dan eski — sapma yanıltıcı olabilir">⏳</span>{% endif %}</td>
-      <td class="dim">{{ r.base_px|px }}</td>
+      <td class="mh dim">{{ r.base_px|px }}</td>
       <td>{{ r.px|px }}</td>
       <td class="{{ 'long' if r.dev > 0 else 'short' }}"><b>{{ '%+.2f'|format(r.dev) }}%</b></td>
       <td class="{% if r.oi_chg %}{{ 'long' if r.oi_chg > 0 else 'short' }}{% else %}dim{% endif %}">
         {% if r.oi_chg is not none %}{{ '%+.1f'|format(r.oi_chg) }}%{% else %}—{% endif %}</td>
-      <td class="dim">{{ r.volume|usd }}</td>
+      <td class="mh dim">{{ r.volume|usd }}</td>
       <td class="dim">{% if r.n_pos %}{{ r.n_pos }} · {{ r.pos_ntl|usd }}{% else %}—{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
   </div></div>
+  <p class="kunye">🧾 çıpa = {{ anchor_tr.strftime('%d.%m %H:%M') }} TSİ kapanışındaki mark ·
+    {{ scr.rows|length }} hisse · ⏳ = çıpa örneği kapanıştan 30 dk'dan eski · sapma bir tahmin değildir, geri döneceğinin garantisi yok.</p>
   {% else %}
-  <p class="dim">Kapanış anına ait fiyat ölçümü bulunamadı — metrik geçmişi
-    henüz kapanışı kapsamıyor olabilir. Birkaç seans sonra burası dolar.</p>
+  {{ m.empty(["Kapanış anına ait fiyat ölçümü bulunamadı.", "Metrik geçmişi henüz kapanışı kapsamıyor olabilir; birkaç seans sonra burası dolar."]) }}
   {% endif %}
 </div>
 
@@ -161,13 +157,13 @@
         {% endfor %}
       </table>
       </div></div>
-      {% else %}<p class="dim">Yok.</p>{% endif %}
+      {% else %}<p class="empty">Bu yönde açan yok.</p>{% endif %}
     </div>
     {% endfor %}
   </div>
+  <p class="kunye">🧾 çıpadan beri açılan, süpürmede görülen pozisyonlar · açılış anı fill'den ya da ilk görülmeden · MM/vault hariç.</p>
   {% else %}
-  <p class="dim">Kapanıştan beri açılan pozisyon görmedik. Derin keşif havuzu
-    turunu tamamladıkça yenileri burada belirir.</p>
+  {{ m.empty(["Kapanıştan beri açılan pozisyon görmedik.", "Derin keşif havuzu turunu tamamladıkça yenileri burada belirir."]) }}
   {% endif %}
 </div>
 

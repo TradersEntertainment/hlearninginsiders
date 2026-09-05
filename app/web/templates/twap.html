@@ -4,8 +4,7 @@
 {% block content %}
 
 <div class="panel">
-  <h2>⏳ Büyük TWAP / düzenli birikim <span class="st">·
-    son 48 saat · süren turlar üstte · başlığa tıklayarak sırala</span></h2>
+  <h2>⏳ Büyük TWAP / düzenli birikim <span class="st">· son 48 saat · kim sessizce dilim dilim biriktiriyor</span></h2>
   <p class="sub">Aynı adres, aynı coin, aynı yönde <b>düzenli aralıklarla</b> ve
   <b>benzer boyutlarda</b> gelen fill dizisi = TWAP. Birisi piyasayı kaldırmadan
   sessizce ve planlı giriyor demektir — bu, aceleci tek seferlik bir alımdan
@@ -18,27 +17,10 @@
   market maker/vault etiketli adresler elenir ama hepsi elenemez.
   Yatırım tavsiyesi değildir.</span></p>
 
-  <p class="sub dim">
-    {{ st.groups or 0 }} adres-coin dizisi tarandı · <b>{{ st.detected or 0 }}</b> düzenli
-    · <b>{{ st.big or 0 }}</b> tanesi eşiği geçti
-    {%- if st.skipped_mm %} · {{ st.skipped_mm }} market maker/vault elendi{% endif %}
-    {%- if st.ts %} · {{ st.ts|dt }}{% endif %} ·
-    eşik <b>{{ min_usd|usd }}</b> · pencere <b>{{ window_h }} saat</b></p>
-
-  {# KÖR NOKTA: bu uyarı olmadan boş sayfa "TWAP yok" gibi okunur, oysa
-     "göremediğimiz TWAP'lar olabilir" demek. #}
-  <p class="sub dim">🕳 <b>Kör nokta:</b> yalnız yakalama eşiğinin üstündeki
-  dilimleri görüyoruz — hisse <b>{{ eq_floor|usd }}</b>, kripto
-  <b>{{ crypto_floor|usd }}</b>. Bunun altına inen çok sabırlı bir TWAP
-  <b>tamamen görünmez</b>dir ve kaçırdığımızı bile bilemeyiz.
-  {% if cov.crypto.n %}Kripto işlem arşivi {{ '{:,}'.format(cov.crypto.n)|replace(',','.') }} satır
-    ({{ cov.crypto.a|dt }}'den beri){% else %}<span class="short">Kripto işlem arşivi HENÜZ BOŞ</span>{% endif %}
-  · hisse {{ '{:,}'.format(cov.equity.n or 0)|replace(',','.') }} satır.</p>
 </div>
 
 <div class="panel">
-  <h2>🎯 Tespit edilen turlar <span class="st">·
-    {{ rows|length }} adet</span></h2>
+  <h2>🎯 Tespit edilen turlar <span class="st">· {{ rows|length }} adet · süren turlar üstte</span></h2>
   {% if rows %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
@@ -84,11 +66,24 @@
   </table>
   </div></div>
   {% else %}
-  <p class="dim">Eşiği ({{ min_usd|usd }}) geçen TWAP turu görmedik.
-    {% if not cov.crypto.n %}<b>Kripto işlem arşivi henüz boş</b> — kayıt yeni
-      açıldı, birikmesi gerekiyor.{% else %}Bu <b>"TWAP yok" demek değil</b>:
-      eşiğin altındaki dilimlerle çalışan turlar görünmez.{% endif %}</p>
+  {{ m.empty(["Eşiği (" ~ min_usd|usd ~ ") geçen TWAP turu görmedik.",
+              ("Kripto işlem arşivi henüz boş — kayıt yeni açıldı, birikmesi gerekiyor." if not cov.crypto.n else "Bu \"TWAP yok\" demek değil: eşiğin altındaki dilimlerle çalışan turlar görünmez.")]) }}
   {% endif %}
+  <p class="kunye">🧾 {{ st.groups or 0 }} adres-coin dizisi tarandı · <b>{{ st.detected or 0 }}</b> düzenli
+    · <b>{{ st.big or 0 }}</b> tanesi eşiği geçti
+    {%- if st.skipped_mm %} · {{ st.skipped_mm }} market maker/vault elendi{% endif %}
+    {%- if st.ts %} · {{ st.ts|dt }}{% endif %} ·
+    eşik <b>{{ min_usd|usd }}</b> · pencere <b>{{ window_h }} saat</b></p>
+
+  {# KÖR NOKTA: bu uyarı olmadan boş sayfa "TWAP yok" gibi okunur, oysa
+     "göremediğimiz TWAP'lar olabilir" demek. #}
+  <p class="kunye">🕳 <b>Kör nokta:</b> yalnız yakalama eşiğinin üstündeki
+  dilimleri görüyoruz — hisse <b>{{ eq_floor|usd }}</b>, kripto
+  <b>{{ crypto_floor|usd }}</b>. Bunun altına inen çok sabırlı bir TWAP
+  <b>tamamen görünmez</b>dir ve kaçırdığımızı bile bilemeyiz.
+  {% if cov.crypto.n %}Kripto işlem arşivi {{ '{:,}'.format(cov.crypto.n)|replace(',','.') }} satır
+    ({{ cov.crypto.a|dt }}'den beri){% else %}<span class="bad">Kripto işlem arşivi HENÜZ BOŞ</span>{% endif %}
+  · hisse {{ '{:,}'.format(cov.equity.n or 0)|replace(',','.') }} satır.</p>
 </div>
 
 <div class="panel">

@@ -17,7 +17,7 @@
   itmek bundan da ucuz olabilir. <span class="warn">Oran kâr tahmini değil, göreli
   çekicilik. Yatırım tavsiyesi değildir.</span></p>
 
-  <div class="la-win">
+  <div class="strip">
     {% if lq.weekend %}
       <span class="pill ok">● pencere AÇIK</span>
       <span class="dim">bitişine <b>{{ wk_left // 3600 }}s {{ wk_left % 3600 // 60 }}dk</b>
@@ -30,12 +30,12 @@
     {% if lq.stats.ts %}<span class="dim">· son tarama {{ lq.stats.ts|dt }}
       {%- if lq.stats.window %} · {{ lq.stats.coins or 0 }} coin ön elemeyi geçti ·
         {{ lq.stats.books or 0 }} defter çekildi
-        {%- if lq.stats.book_err %} · <span class="short">{{ lq.stats.book_err }} defter hatası</span>{% endif %}
-        {%- if lq.stats.failed %} · <span class="short">{{ lq.stats.failed }} bildirim gönderilemedi</span>{% endif %}
+        {%- if lq.stats.book_err %} · <span class="bad">{{ lq.stats.book_err }} defter hatası</span>{% endif %}
+        {%- if lq.stats.failed %} · <span class="bad">{{ lq.stats.failed }} bildirim gönderilemedi</span>{% endif %}
       {%- endif %}</span>
     {% elif lq.weekend %}<span class="dim">· ilk tarama bekleniyor (açılıştan ~20 sn sonra)</span>
     {% else %}<span class="dim">· bu hafta sonu henüz tarama olmadı</span>{% endif %}
-    {% if lq.stats.error %}<span class="short">· ⚠️ son tur hata verdi: {{ lq.stats.error }}</span>{% endif %}
+    {% if lq.stats.error %}<span class="bad">· ⚠️ son tur hata verdi: {{ lq.stats.error }}</span>{% endif %}
     {% if lq.weekend %}
       <button type="button" id="scan-now" class="btn ghost sm">🔄 şimdi tara</button>
       <span id="scan-msg" class="dim"></span>
@@ -59,8 +59,7 @@
 </div>
 
 <div class="panel">
-  <h2>🔥 Adaylar <span class="st">· orana göre ·
-    başlığa tıklayarak sırala</span></h2>
+  <h2>🔥 Adaylar <span class="st">· orana göre · patlayacak $ ÷ yenmesi gereken defter $</span></h2>
   {% if lq.cands %}
   <div class="legend">
     <span><i class="sw f-liq-long"></i>patlayacak $ (long — fiyat düşerse)</span>
@@ -82,9 +81,9 @@
       <td class="l"><a href="/t/{{ c.symbol }}{{ k }}"><b>{{ c.symbol }}</b></a></td>
       <td class="l"><b>{{ '↓' if c.direction == 'down' else '↑' }} %{{ '%.2f'|format(c.dist_pct) }}</b>
         <span class="dim">{{ c.mark|px }} → {{ c.target_px|px }}</span></td>
-      <td class="l"><div class="la-bars">
-        <div class="la-bar {{ 'liq-long' if c.direction == 'down' else 'liq-short' }}" style="width:{{ '%.1f'|format(c.liq_w) }}%"></div>
-        <div class="la-bar book" style="width:{{ '%.1f'|format(c.cost_w) }}%"></div></div></td>
+      <td class="l" data-v="{{ c.liq_usd }}">
+        <div class="rb cell"><span class="tr"><i class="sg {{ 'f-liq-long' if c.direction == 'down' else 'f-liq-short' }}" style="width:{{ '%.1f'|format(c.liq_w) }}%"></i></span></div>
+        <div class="rb cell"><span class="tr"><i class="sg f-book" style="width:{{ '%.1f'|format(c.cost_w) }}%"></i></span></div></td>
       <td><b>{{ c.liq_usd|usd }}</b> <span class="dim">{{ c.n_pos }} poz</span></td>
       <td>{{ c.cost_usd|usd }}{% if c.book_thin %} <span title="Görünen defter hedefe varmadan bitiyor — gerçek maliyet bundan büyük olamaz">🕳</span>{% endif %}</td>
       <td><b>{{ '%.1f'|format(c.score) }}×</b>
@@ -101,22 +100,20 @@
   {# ÜÇ AYRI BOŞLUK: küme yok / defter çekilemedi / henüz taranmadı. Hepsine
      "aday yok" demek, çekilemeyen defteri "hedef yok" diye okutur. #}
   {% if not lq.stats.ts %}
-  <p class="dim">Henüz tarama olmadı — ilk tur açılıştan ~20 sn sonra, ya da
-    yukarıdaki <b>🔄 şimdi tara</b>.</p>
+  {{ m.empty(["Henüz tarama olmadı.", "İlk tur açılıştan ~20 sn sonra, ya da yukarıdaki 🔄 şimdi tara."]) }}
   {% elif lq.stats.coins and not lq.stats.books %}
-  <p class="short">⚠️ {{ lq.stats.coins }} hisse ön elemeyi geçti ama <b>hiçbir
+  <p class="alert bad">⚠️ {{ lq.stats.coins }} hisse ön elemeyi geçti ama <b>hiçbir
     defter çekilemedi</b> — aday hesaplanamadı. Bu "hedef yok" demek DEĞİL;
     <code>/tani</code>'ye bak, sonraki tur yeniden dener.</p>
   {% elif not lq.stats.coins %}
-  <p class="dim">Bu turda hiçbir hissede %{{ '%g'|format(max_dist) }} içinde
-    <b>{{ min_usd|usd }}</b>'lik bir küme yok — itmeye değer hedef görünmüyor.</p>
+  {{ m.empty(["Bu turda itmeye değer hedef görünmüyor.",
+              "Hiçbir hissede %" ~ '%g'|format(max_dist) ~ " içinde " ~ min_usd|usd ~ "'lik bir likidasyon kümesi yok."]) }}
   {% else %}
-  <p class="dim">{{ lq.stats.coins }} hissede küme var ama hiçbirinde oran ölçülemedi
-    ({{ lq.stats.books }} defter çekildi{% if lq.stats.book_err %}, {{ lq.stats.book_err }} hata{% endif %}).</p>
+  {{ m.empty([lq.stats.coins ~ " hissede küme var ama hiçbirinde oran ölçülemedi.",
+              lq.stats.books ~ " defter çekildi" ~ (", " ~ lq.stats.book_err ~ " hata" if lq.stats.book_err else "") ~ "."]) }}
   {% endif %}
   {% else %}
-  <p class="dim">Henüz ölçülmüş bir hafta sonu yok. Radar Cumartesi 00:00 TSİ'de
-    açılır; adaylar burada birikir.</p>
+  {{ m.empty(["Henüz ölçülmüş bir hafta sonu yok.", "Radar Cumartesi 00:00 TSİ'de açılır; adaylar burada birikir."]) }}
   {% endif %}
 </div>
 
@@ -155,9 +152,8 @@
   </table>
   </div></div>
   {% else %}
-  <p class="dim">Henüz tespit edilmiş saldırı yok. Tespit saatte bir, son 21 günün
-    hafta sonlarına bakar; 1 dakikalık fiyat kaydı bu deploy'dan itibaren
-    birikiyor.</p>
+  {{ m.empty(["Henüz tespit edilmiş saldırı yok.",
+              "Tespit saatte bir, son 21 günün hafta sonlarına bakar; 1 dakikalık fiyat kaydı bu deploy'dan itibaren birikiyor."]) }}
   {% endif %}
   <p class="kunye">🧾 Defter = <code>l2Book</code>'un
     görünen seviyeleri, tur anında (hafta sonu her {{ scan_sec // 60 }} dk, aday coin

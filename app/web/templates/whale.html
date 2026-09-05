@@ -3,27 +3,35 @@
 {% block title %}👤 {{ address[:6] }}..{{ address[-4:] }}{% if arow.get('hits') %} {{ arow.hits }}✓{% endif %} · HL Radar{% endblock %}
 {% block content %}
 <div class="panel">
-  <h2>👤 Balina karnesi</h2>
-  <p><code>{{ address }}</code>
-    · <a href="https://hypurrscan.io/address/{{ address }}" target="_blank">hypurrscan ↗</a></p>
-  <span class="stat">Sicil: <b>{{ arow.get('hits', 0) }}✓ / {{ arow.get('misses', 0) }}✗</b></span>
-  {% if arow.get('account_value') %}<span class="stat"
-     title="Tüm dex'lerdeki perp teminatı toplamı. Spot, vault ve zincir dışı
-varlıklar DAHİL DEĞİL — 'net worth' değildir">HL bakiye:
-    <b>{{ arow.account_value|usd }}</b>{% if stale_acct(arow.get('account_ts')) %} ⏳{% endif %}
-    <span class="dim">({{ arow.account_ts|age }} önce ölçüldü)</span></span>
-  {%- else %}<span class="stat dim" title="Derin keşif bu adrese henüz uğramadı
-ve leaderboard'da da yok">HL bakiye: bilinmiyor</span>{% endif %}
-  {% if arow.get('watchlist') %}<span class="stat">⭐ <b>Watchlist'te</b></span>{% endif %}
-  {% if arow.get('entity') %}<span class="stat warn">{{ {'mm':'🤖 Market maker','vault':'🏦 Vault','manual':'🚫 Elle elendi'}.get(arow.entity, arow.entity) }} — skorlama/alert dışı</span>{% endif %}
-  {% if arow.get('first_deposit_ts') %}<span class="stat">İlk fonlama: <b>{{ arow.first_deposit_ts|dt }}</b></span>{% endif %}
-  {% if arow.get('last_deposit_ts') %}<span class="stat">Son fonlama: <b>{{ arow.last_deposit_ts|dt }}</b></span>{% endif %}
-  {% if arow.get('first_seen') %}<span class="stat dim">İlk görülme: {{ arow.first_seen|dt }}</span>{% endif %}
+  <h2>👤 Balina karnesi <span class="st">· bu cüzdan kim, ne taşıdı, haklı çıktı mı</span></h2>
+  <p class="sub mb0"><code>{{ address }}</code>
+    · <a href="https://hypurrscan.io/address/{{ address }}" target="_blank" rel="noopener">hypurrscan ↗</a></p>
+  <div class="kpi">
+    <div><div class="l">Sicil</div><div class="v">{{ arow.get('hits', 0) }}✓ / {{ arow.get('misses', 0) }}✗</div>
+      <div class="s">bilanço yönünü doğru / yanlış bildi</div></div>
+    {% if arow.get('account_value') %}
+    <div class="ihit" tabindex="0" data-tip="Tüm dex'lerdeki perp teminatı toplamı · spot, vault ve zincir dışı varlıklar DAHİL DEĞİL — 'net worth' değildir">
+      <div class="l">HL bakiye</div><div class="v">{{ arow.account_value|usd }}{% if stale_acct(arow.get('account_ts')) %} ⏳{% endif %}</div>
+      <div class="s">{{ arow.account_ts|age }} önce ölçüldü · net worth değil</div></div>
+    {% else %}
+    <div><div class="l">HL bakiye</div><div class="v">—</div><div class="s">derin keşif henüz uğramadı, leaderboard'da da yok</div></div>
+    {% endif %}
+    <div><div class="l">Durum</div>
+      <div class="v">{% if arow.get('entity') %}{{ {'mm':'🤖 MM','vault':'🏦 vault','manual':'🚫 elendi'}.get(arow.entity, arow.entity) }}{% elif arow.get('watchlist') %}⭐ watchlist{% else %}izleniyor{% endif %}</div>
+      <div class="s">{% if arow.get('entity') %}skorlama ve alarm dışı{% elif arow.get('watchlist') %}yeni poz açınca anında bildirim{% else %}sicil oluştukça watchlist'e girer{% endif %}</div></div>
+    <div><div class="l">Fonlama</div>
+      <div class="v">{% if arow.get('last_deposit_ts') %}{{ arow.last_deposit_ts|dt }}{% else %}—{% endif %}</div>
+      <div class="s">{% if arow.get('first_deposit_ts') %}ilk fonlama {{ arow.first_deposit_ts|dt }}{% else %}fonlama geçmişi bilinmiyor{% endif %}</div></div>
+    <div><div class="l">İlk görülme</div>
+      <div class="v">{% if arow.get('first_seen') %}{{ arow.first_seen|dt }}{% else %}—{% endif %}</div>
+      <div class="s">havuza girdiği an</div></div>
+  </div>
 </div>
 
 <div class="panel">
-  <h2>📌 Açık pozisyonlar (canlı)</h2>
+  <h2>📌 Açık pozisyonlar <span class="st">· şu an ne taşıyor — tüm dex'lerden canlı sorgu</span></h2>
   {% if live %}
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Coin</th><th>Yön</th><th>Notional</th><th>Entry</th><th>Kald.</th><th>Liq</th><th>uPnL</th></tr>
     {% for p in live %}
@@ -38,18 +46,24 @@ ve leaderboard'da da yok">HL bakiye: bilinmiyor</span>{% endif %}
     </tr>
     {% endfor %}
   </table>
-  {% if live_fail %}<p class="short">⚠️ {{ live_fail }} dex sorgusu yanıt vermedi —
+  </div></div>
+  {% if live_fail %}<p class="alert warn">⚠️ {{ live_fail }} dex sorgusu yanıt vermedi —
     liste <b>eksik olabilir</b>. Sayfayı birazdan tazele.</p>{% endif %}
+  <p class="kunye">🧾 {{ live|length }} pozisyon · {{ live_dex_n }} dex canlı sorgulandı (hisse dex'leri + ana dex) ·
+    bu sayfa süpürme kaydı değil, sayfa açıldığı anki defter.</p>
   {% elif live_fail and live_fail >= live_dex_n %}
-  <p class="short">⚠️ Hiçbir dex sorgusu yanıt vermedi — <b>"poz yok" demiyoruz</b>,
+  <p class="alert bad">⚠️ Hiçbir dex sorgusu yanıt vermedi — <b>"poz yok" demiyoruz</b>,
     Hyperliquid'e ulaşılamadı. Sayfayı birazdan tazele.</p>
-  {% else %}<p class="dim">Şu an açık pozisyon yok (hisse dex'leri + ana dex){%
-    if live_fail %} — ⚠️ {{ live_fail }} dex sorgusu düştü, eksik olabilir{% endif %}.</p>{% endif %}
+  {% else %}
+  {{ m.empty(["Şu an açık pozisyon yok.",
+              live_dex_n ~ " dex canlı sorgulandı (hisse dex'leri + ana dex)" ~ (" — ⚠️ " ~ live_fail ~ " sorgu düştü, eksik olabilir" if live_fail else "") ~ "."]) }}
+  {% endif %}
 </div>
 
 <div class="panel">
-  <h2>🧩 Bağlantılı cüzdanlar <span class="st">(transfer geçmişinden)</span></h2>
+  <h2>🧩 Bağlantılı cüzdanlar <span class="st">· transfer geçmişinden çıkarılan bağlar — bölünmüş tek balina mı?</span></h2>
   {% if linked %}
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Adres</th><th class="l">Bağ türü</th><th class="l">Son transfer</th></tr>
     {% for l in linked %}
@@ -60,13 +74,15 @@ ve leaderboard'da da yok">HL bakiye: bilinmiyor</span>{% endif %}
     </tr>
     {% endfor %}
   </table>
-  <p class="dim">Aynı kümedeki cüzdanlar aynı yönde pozisyon taşıyorsa bölünmüş tek balina olabilir.</p>
-  {% else %}<p class="dim">Bilinen bağlantı yok (derin tarama yapıldıkça dolar).</p>{% endif %}
+  </div></div>
+  <p class="kunye">🧾 Bağ = aralarında transfer görülen cüzdanlar · aynı kümedekiler aynı yönde pozisyon taşıyorsa bölünmüş tek balina olabilir.</p>
+  {% else %}{{ m.empty(["Bilinen bağlantı yok.", "Bağlar derin keşif ve transfer taramasıyla çıkarılır; tur ilerledikçe dolar."]) }}{% endif %}
 </div>
 
 <div class="panel">
-  <h2>🗂 Geçmiş snapshot'lar</h2>
+  <h2>🗂 Bilanço öncesi anlık görüntüler <span class="st">· bilançolardan önce ne taşıyordu</span></h2>
   {% if snaps %}
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Zaman</th><th class="l">Evre</th><th class="l">Coin</th><th class="l">Earnings</th><th>Yön</th><th>Notional</th><th>Skor</th></tr>
     {% for s in snaps %}
@@ -81,12 +97,14 @@ ve leaderboard'da da yok">HL bakiye: bilinmiyor</span>{% endif %}
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Kayıtlı snapshot yok.</p>{% endif %}
+  </div></div>
+  {% else %}{{ m.empty(["Kayıtlı anlık görüntü yok.", "Bu cüzdan henüz bir bilanço penceresinde (T-1s / öncesi) büyük pozisyon taşımadı."]) }}{% endif %}
 </div>
 
 <div class="panel">
-  <h2>⚡ Son işlemleri</h2>
+  <h2>⚡ Son işlemleri <span class="st">· canlı akıştan yakalanan büyük alım-satımları</span></h2>
   {% if fills %}
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Zaman</th><th class="l">Coin</th><th>Taraf</th><th>Fiyat</th><th>Notional</th></tr>
     {% for f in fills %}
@@ -99,6 +117,8 @@ ve leaderboard'da da yok">HL bakiye: bilinmiyor</span>{% endif %}
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Fill kaydı yok.</p>{% endif %}
+  </div></div>
+  <p class="kunye">🧾 son {{ fills|length }} işlem · yalnız akıştan yakalananlar (eşik üstü) · 14 gün tutulur.</p>
+  {% else %}{{ m.empty(["Fill kaydı yok.", "Yalnız canlı akıştan (WS) yakalanan eşik üstü işlemler kaydedilir, 14 gün tutulur."]) }}{% endif %}
 </div>
 {% endblock %}

@@ -5,8 +5,8 @@
   <h2>🔐 Yönetici girişi</h2>
   <p class="sub">Ayarları değiştirmek ve Telegram mesajı göndermek için şifre gerekir.
   Şifre Railway'de <code>ADMIN_PASSWORD</code> değişkeninde tanımlıdır.</p>
-  {% if err %}<p class="short"><b>✗ Şifre yanlış</b> — tekrar dene.</p>{% endif %}
-  {% if not has_pw %}<p class="warn">⚠️ Henüz şifre tanımlı değil (<code>ADMIN_PASSWORD</code> boş) —
+  {% if err %}<p class="alert bad"><b>✗ Şifre yanlış</b> — tekrar dene.</p>{% endif %}
+  {% if not has_pw %}<p class="alert warn">⚠️ Henüz şifre tanımlı değil (<code>ADMIN_PASSWORD</code> boş) —
   şu an herkes ayarları değiştirebilir.</p>{% endif %}
   <form method="post" action="/login{{ k }}">
     <input type="hidden" name="nxt" value="{{ nxt }}">

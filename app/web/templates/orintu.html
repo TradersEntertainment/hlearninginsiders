@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m %}
 {% block title %}🔮 Örüntü · HL Radar{% endblock %}
 {% block content %}
 
@@ -36,8 +37,7 @@
 {% endmacro %}
 
 <div class="panel">
-  <h2>🔮 Örüntü bulucu <span class="st">·
-    15m + 1h · başlığa tıklayarak sırala</span></h2>
+  <h2>🔮 Örüntü bulucu <span class="st">· şu anki grafik şekli geçmişte olduğunda sonra ne olmuş · 15m + 1h</span></h2>
   <p class="sub">Bir sembolün son barlarının <b>şekli</b> z-normalize edilip
   geçmişte aranıyor; yeterince benzeyen pencerelerden <b>sonra</b> ne olduğu
   toplanıp olasılığa çevriliyor. Şekil normalize olduğu için $220'lık NVDA ile
@@ -56,30 +56,15 @@
     <button type="submit" class="btn sm">Sor</button>
   </form>
 
-  <p class="sub dim">
-    {%- if not enabled %}<span class="short">⏸ Radar kapalı</span> (Ayarlar → Örüntü bulucu). ·
-    {%- else %}{{ st.checked or 0 }} çözümleme · <b>{{ st.strong or 0 }}</b> kayda değer
-      {%- if st.thin %} · {{ st.thin }} tanesinde yeterli örnek yok{% endif %}
-      {%- if st.ts %} · {{ st.ts|dt }}{% endif %} · {% endif %}
-    havuz <b>{{ 'yalnız sembolün kendi geçmişi' if pool == 'self' else pool }}</b> ·
-    asgari benzerlik <b>{{ '%.2f'|format(min_corr) }}</b> ·
-    asgari örnek <b>{{ min_matches }}</b>
-  </p>
-
-  <p class="sub dim">📦 Arşiv: {{ bst.coins or 0 }} sembol · {{ '{:,}'.format(bst.bars or 0)|replace(',','.') }} bar ·
-    {{ bst.deep or 0 }} seri 500+ bar
-    {%- if bst.err %} · <span class="short">{{ bst.err }} hata</span>{% endif %}
-    {%- if bst.ts %} · {{ bst.ts|dt }}{% endif %}</p>
-
   {% if bst.n_empty %}
-  <p class="short">⚠️ <b>{{ bst.n_empty }} sembolde arşiv yok/çok sığ</b>
+  <p class="alert warn">⚠️ <b>{{ bst.n_empty }} sembolde arşiv yok/çok sığ</b>
     ({{ bst.empty|join(', ') }}). Bu semboller için olasılık üretilemez —
     sorun eşiklerde değil <b>veri kaynağında</b>: HL bu perp'lere o dilimde
     mum vermiyor ya da listeleneli çok olmamış olabilir.</p>
   {% endif %}
 
   {% if st.structural %}
-  <p class="short">📐 <b>{{ st.structural }} çözümleme yapısal olarak sonuç
+  <p class="alert warn">📐 <b>{{ st.structural }} çözümleme yapısal olarak sonuç
     veremiyor</b> — arşivin derinliği, asgari örnek sayısını karşılayacak kadar
     bağımsız pencere içermiyor. Havuz <b>yalnız sembolün kendi geçmişi</b>
     olduğu için bu beklenen bir durum. Sekme sürekli boşsa
@@ -88,10 +73,25 @@
   {% endif %}
 
   {% if not has_chat %}
-  <p class="short">⚠️ <b>Kanal tanımlı değil</b> — Railway'e <code>PATTERN_CHAT_ID</code>
+  <p class="alert warn">⚠️ <b>Kanal tanımlı değil</b> — Railway'e <code>PATTERN_CHAT_ID</code>
     ekle (kanalı aç, botu admin yap). Sinyaller burada kaydediliyor ama
     Telegram'a gönderilmiyor.</p>
   {% endif %}
+  <p class="kunye">🧾
+    {%- if not enabled %}<span class="bad">⏸ Radar kapalı</span> (Ayarlar → Örüntü bulucu). ·
+    {%- else %}{{ st.checked or 0 }} çözümleme · <b>{{ st.strong or 0 }}</b> kayda değer
+      {%- if st.thin %} · {{ st.thin }} tanesinde yeterli örnek yok{% endif %}
+      {%- if st.ts %} · {{ st.ts|dt }}{% endif %} · {% endif %}
+    havuz <b>{{ 'yalnız sembolün kendi geçmişi' if pool == 'self' else pool }}</b> ·
+    asgari benzerlik <b>{{ '%.2f'|format(min_corr) }}</b> ·
+    asgari örnek <b>{{ min_matches }}</b>
+  </p>
+
+  <p class="kunye">📦 Arşiv: {{ bst.coins or 0 }} sembol · {{ '{:,}'.format(bst.bars or 0)|replace(',','.') }} bar ·
+    {{ bst.deep or 0 }} seri 500+ bar
+    {%- if bst.err %} · <span class="bad">{{ bst.err }} hata</span>{% endif %}
+    {%- if bst.ts %} · {{ bst.ts|dt }}{% endif %}</p>
+
 </div>
 
 {% if manual %}
@@ -99,7 +99,7 @@
   <h2>🔍 {{ manual.sym }} <span class="st">·
     şu anki grafik geçmişte ne yapmış</span></h2>
   {% if not manual.found %}
-  <p class="short">⚠️ <b>{{ manual.sym }}</b> evrende bulunamadı — sembolü
+  <p class="alert warn">⚠️ <b>{{ manual.sym }}</b> evrende bulunamadı — sembolü
     doğrudan coin adı olarak denedik.</p>
   {% endif %}
   <p class="sub dim">Arşiv derinliği:
@@ -141,23 +141,19 @@
 {% endif %}
 
 <div class="panel">
-  <h2>🎯 Açık sinyaller <span class="st">·
-    {{ sig|length }} adet · güçlüden zayıfa</span></h2>
+  <h2>🎯 Açık sinyaller <span class="st">· {{ sig|length }} adet · güçlüden zayıfa · kayda değer = z ≥ 2</span></h2>
   <p class="sub">Zayıf olanlar da listeleniyor: sayfa çoğunu gösterir, kanal
   seçicidir. Telegram'a yalnız <b>yeterli örnek + z eşiği + anlamlı fark</b>
   üçünü birden geçenler düşer.</p>
   {% if sig %}
   {{ sigrows(sig) }}
   {% else %}
-  <p class="dim">Henüz açık sinyal yok. Arşiv doldukça ve tarama turları
-    attıkça burası dolar — ilk tur için mum arşivinin geriye doldurulması
-    gerekiyor, birkaç saat sürebilir.</p>
+  {{ m.empty(["Henüz açık sinyal yok.", "Arşiv doldukça ve tarama turları attıkça burası dolar — ilk tur için mum arşivinin geriye doldurulması gerekiyor, birkaç saat sürebilir."]) }}
   {% endif %}
 </div>
 
 <div class="panel">
-  <h2>📊 Karne <span class="st">·
-    bu araç gerçekten tutuyor mu</span></h2>
+  <h2>📊 Karne <span class="st">· bu araç gerçekten tutuyor mu</span></h2>
   <p class="sub">Üretilen her tahmin kaydedilip <b>vadesinde otomatik
   notlanıyor</b>. Aracın kendisine güvenip güvenmeyeceğimizin tek dürüst ölçüsü
   budur — olasılığın kendisi değil.
@@ -211,6 +207,8 @@
     {% endfor %}
   </table>
   </div></div>
+  {% else %}
+  {{ m.empty(["Henüz kapanmış tahmin yok.", "Her sinyal vadesinde otomatik notlanır; ilk kapanışlarla burası dolar."]) }}
   {% endif %}
 </div>
 

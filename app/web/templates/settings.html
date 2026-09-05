@@ -2,15 +2,16 @@
 {% block title %}⚙️ Ayarlar · HL Radar{% endblock %}
 {% block content %}
 <div class="panel">
-  <h2>⚙️ Ayarlar</h2>
-  {% if saved %}<p class="okline"><b>✓ Kaydedildi</b> — değişiklikler anında geçerli, deploy gerekmez.</p>{% endif %}
-  {% if bad %}<p class="warn"><b>⚠️ Kaydedilmeyen alan(lar):</b> {{ bad|join(', ') }} — değer anlaşılamadı (sayı alanına harf/nokta mı girdin?). Eski değer korundu.</p>{% endif %}
+  <h2>⚙️ Ayarlar <span class="st">· {{ groups|length }} grup · üstüne gel → ne işe yaradığını gösterir</span></h2>
+  {% if saved %}<p class="alert ok"><b>✓ Kaydedildi</b> — değişiklikler anında geçerli, deploy gerekmez.</p>{% endif %}
+  {% if bad %}<p class="alert warn"><b>⚠️ Kaydedilmeyen alan(lar):</b> {{ bad|join(', ') }} — değer anlaşılamadı (sayı alanına harf/nokta mı girdin?). Eski değer korundu.</p>{% endif %}
   {% if not is_admin %}
-  <p class="warn"><b>🔒 Salt okunur</b> — değişiklik için
+  <p class="alert warn"><b>🔒 Salt okunur</b> — değişiklik için
     <a href="/login{{ '?nxt=/settings' if not k else k + '&nxt=/settings' }}">yönetici girişi</a> gerekir.</p>
   {% elif not has_pw %}
-  <p class="warn">⚠️ <b>Şifre tanımlı değil</b> — Railway'de <code>ADMIN_PASSWORD</code> ayarla.</p>
+  <p class="alert warn">⚠️ <b>Şifre tanımlı değil</b> — Railway'de <code>ADMIN_PASSWORD</code> ayarla.</p>
   {% endif %}
+  <div class="tags">{% for gname, fields in groups.items() %}<a class="tag" href="#g{{ loop.index }}">{{ gname }} <span class="dim">{{ fields|length }}</span></a>{% endfor %}</div>
   {% if is_admin %}
   <div class="btnrow">
     <form method="post" action="/settings/test-telegram{{ k }}">
@@ -19,16 +20,15 @@
     {% if not has_bot %}<span class="hint">bot yok — <code>TELEGRAM_BOT_TOKEN</code> tanımlı değil</span>{% endif %}
     <form method="post" action="/logout{{ k }}"><button type="submit" class="tab">🔓 çıkış</button></form>
     {% if tg == 'ok' %}<span class="long">✓ gitti!</span>
-    {% elif tg == 'err' %}<span class="short">✗ gönderilemedi — token / chat id?</span>{% endif %}
-    <span class="hint">Ayarın üstüne gel → ne işe yaradığını gösterir</span>
+    {% elif tg == 'err' %}<span class="bad">✗ gönderilemedi — token / chat id?</span>{% endif %}
   </div>
   {% endif %}
 </div>
 
 <form method="post" action="/settings{{ k }}">
-<div class="setwrap">
+<div class="setwrap cols">
 {% for gname, fields in groups.items() %}
-<div class="panel setpanel">
+<div class="panel setpanel" id="g{{ loop.index }}">
   <details class="sect" open>
     <summary>{{ '🔔' if gname == 'Bildirimler' else '🎛' }} {{ gname }}
       <span class="dim">({{ fields|length }})</span></summary>

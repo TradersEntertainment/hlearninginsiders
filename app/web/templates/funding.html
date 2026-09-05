@@ -27,27 +27,21 @@
 {% endmacro %}
 
 <div class="panel">
-  <h2>💸 Funding <span class="st">·
-    en yüksek üstte · başlığa tıklayarak sırala</span></h2>
+  <h2>💸 Funding <span class="st">· kim kalabalık tarafta, kim para topluyor · en yüksek üstte</span></h2>
   <p class="sub">Funding bir <b>pozisyonlanma</b> sinyalidir:
   <span class="long">pozitif = longlar shortlara ödüyor</span> (kalabalık long),
   <span class="short">negatif = shortlar longlara ödüyor</span>.
   Hyperliquid funding'i <b>saatlik</b> öder (çoğu borsanın 8 saatliği değil);
   yıllık karşılık <code>oran × 24 × 365</code> — %0.05/saat = %438/yıl.</p>
-  <p class="sub dim">{{ fr.rows|length }}/{{ fr.n_tickers }} hissede funding ölçümü var{%
-    if fr.n_nodata %} · {{ fr.n_nodata }} hissede henüz ölçüm yok{% endif %} ·
-    🔥 = aşırı (|oran| ≥ {{ '%g'|format(fr.extreme * 100) }}%/saat, Ayarlar → Anomali dedektörü) ·
-    🔄 = 24 saatte <b>işaret değiştirmiş</b> (kalabalık taraf dönmüş).</p>
-
   {% if fr.rows %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th>
         <th title="Saatlik funding oranı">%/saat</th>
         <th title="Yıllıklandırılmış: oran × 24 × 365">Yıllık</th>
-        <th title="24 saat öncesine göre saatlik oran farkı">24s değ.</th>
-        <th title="Açık pozisyon değeri (OI × mark)">OI</th>
-        <th title="Günlük hacim">Hacim</th>
+        <th class="mh" title="24 saat öncesine göre saatlik oran farkı">24s değ.</th>
+        <th class="mh" title="Açık pozisyon değeri (OI × mark)">OI</th>
+        <th class="mh" title="Günlük hacim">Hacim</th>
         <th title="Bildiğimiz açık long pozisyonların toplamı">Bilinen long</th>
         <th title="Bildiğimiz açık short pozisyonların toplamı">Bilinen short</th>
         <th title="Bu pozisyonların günlük funding akışı — eksi ödüyor, artı alıyor">Long $/gün</th></tr>
@@ -61,9 +55,9 @@
         <b>{{ '%+.4f'|format(r.hourly) }}%</b></td>
       <td class="{{ 'long' if r.apr > 0 else ('short' if r.apr < 0 else 'dim') }}">
         {{ '%+.1f'|format(r.apr) }}%</td>
-      <td class="dim">{% if r.chg is not none %}{{ '%+.4f'|format(r.chg) }}%{% else %}—{% endif %}</td>
-      <td class="dim">{{ r.oi_usd|usd }}</td>
-      <td class="dim">{{ r.volume|usd }}</td>
+      <td class="mh dim">{% if r.chg is not none %}{{ '%+.4f'|format(r.chg) }}%{% else %}—{% endif %}</td>
+      <td class="mh dim">{{ r.oi_usd|usd }}</td>
+      <td class="mh dim">{{ r.volume|usd }}</td>
       <td class="dim">{% if r.n_long %}{{ r.long_ntl|usd }} <span class="hint">({{ r.n_long }})</span>{% else %}—{% endif %}</td>
       <td class="dim">{% if r.n_short %}{{ r.short_ntl|usd }} <span class="hint">({{ r.n_short }})</span>{% else %}—{% endif %}</td>
       <td class="{{ 'short' if r.long_daily < 0 else ('long' if r.long_daily > 0 else 'dim') }}">
@@ -75,9 +69,12 @@
   </table>
   </div></div>
   {% else %}
-  <p class="dim">Henüz funding ölçümü yok — metrik toplama birkaç tur attıktan
-    sonra burası dolar.</p>
+  {{ m.empty(["Henüz funding ölçümü yok.", "Metrik toplama birkaç tur attıktan sonra burası dolar."]) }}
   {% endif %}
+  <p class="kunye">🧾 {{ fr.rows|length }}/{{ fr.n_tickers }} hissede funding ölçümü var{%
+    if fr.n_nodata %} · {{ fr.n_nodata }} hissede henüz ölçüm yok{% endif %} ·
+    🔥 = aşırı (|oran| ≥ {{ '%g'|format(fr.extreme * 100) }}%/saat, Ayarlar → Anomali dedektörü) ·
+    🔄 = 24 saatte işaret değiştirmiş (kalabalık taraf dönmüş) · bilinen long/short = süpürmede görülen pozisyonlar.</p>
 </div>
 
 <div class="panel">
@@ -85,26 +82,25 @@
     bildiğimiz pozisyonların günlük funding akışı</span></h2>
   <p class="sub">Funding oranı herkeste var; <b>kimin ödediği</b> için oranla
   pozisyon sahibini birleştirmek gerekiyor. Aşağıdaki tutar
-  <code>büyüklük × oran × 24</code>.
-  <span class="warn">Yalnız adres havuzumuzdaki pozisyonlar — gerçek toplam değil,
-  gördüğümüz kadarının <b>alt sınırı</b>.</span></p>
+  <code>büyüklük × oran × 24</code>.</p>
 
   {% if fr.payers or fr.earners %}
   <div class="setwrap">
     <div>
       <p class="h3 short"><b>🔻 En çok ÖDEYENLER</b>
         <span class="dim">({{ fr.payers|length }})</span></p>
-      {% if fr.payers %}{{ payrow(fr.payers, true) }}{% else %}<p class="dim">Yok.</p>{% endif %}
+      {% if fr.payers %}{{ payrow(fr.payers, true) }}{% else %}<p class="empty">Ödeyen bilinen pozisyon yok.</p>{% endif %}
     </div>
     <div>
       <p class="h3 long"><b>🔺 En çok ALANLAR</b>
         <span class="dim">({{ fr.earners|length }})</span></p>
-      {% if fr.earners %}{{ payrow(fr.earners, false) }}{% else %}<p class="dim">Yok.</p>{% endif %}
+      {% if fr.earners %}{{ payrow(fr.earners, false) }}{% else %}<p class="empty">Alan bilinen pozisyon yok.</p>{% endif %}
     </div>
   </div>
+  <p class="kunye">🧾 Yalnız adres havuzumuzdaki pozisyonlar — gerçek toplam değil, gördüğümüz kadarının <b>alt sınırı</b> ·
+    tutar = büyüklük × saatlik oran × 24.</p>
   {% else %}
-  <p class="dim">Bildiğimiz açık pozisyon yok ya da funding sıfır — derin keşif
-    havuzu turunu tamamladıkça burası dolar.</p>
+  {{ m.empty(["Bildiğimiz açık pozisyon yok ya da funding sıfır.", "Derin keşif havuzu turunu tamamladıkça burası dolar."]) }}
   {% endif %}
 </div>
 

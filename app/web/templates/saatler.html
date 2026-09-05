@@ -45,21 +45,21 @@
 
   {% if rank.n_stats %}
     {% if rank.n_strong %}
-    <p class="okline">Bu saatte eşiği geçen <b>{{ rank.n_strong }}</b> hisse var
+    <p class="alert ok">Bu saatte eşiği geçen <b>{{ rank.n_strong }}</b> hisse var
       (💪 = örnek ≥ {{ min_n }} · ortalama ≥ +%{{ hot_mean }} · kazanç ≥ %{{ hot_win|int }}).</p>
     {% else %}
-    <p class="warn">⚠️ Bu saatte istatistiksel olarak <b>güçlü olan yok</b>.
+    <p class="alert warn">⚠️ Bu saatte istatistiksel olarak <b>güçlü olan yok</b>.
       Aşağıdakiler yine de en iyiler — ama <b>sinyal zayıf</b>, rakamlara göre
       işlem açmadan önce örnek sayısına ve kazanç oranına bak.</p>
     {% endif %}
   {% endif %}
-  <p class="sub dim">{{ rank.n_stats }} hissenin istatistiği hazır{% if rank.thin %} ·
-    {{ rank.thin }} hisse bu saatte <b>{{ min_n }} örnekten az</b> olduğu için
-    sıralamaya girmedi (veri biriktikçe katılırlar){% endif %}.</p>
+  <p class="kunye">🧾 {{ rank.n_stats }} hissenin istatistiği hazır{% if rank.thin %} ·
+    {{ rank.thin }} hisse bu saatte {{ min_n }} örnekten az olduğu için sıralamaya girmedi (veri biriktikçe katılırlar){% endif %} ·
+    son ~90 günün 1 saatlik mumları · geçmiş istatistiktir.</p>
 </div>
 
 <div class="panel">
-  <h2>⬆️ Yükselmesi beklenenler{% if rank.up %} <span class="st">· {{ rank.up|length }} hisse</span>{% endif %}</h2>
+  <h2>⬆️ Yükselmesi beklenenler <span class="st">· bu saatte tarihsel ortalaması pozitif olanlar{% if rank.up %} · {{ rank.up|length }} hisse{% endif %}</span></h2>
   {% if rank.up %}
     {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">
       <input type="hidden" name="nxt" value="/saatler">{% endif %}
@@ -73,31 +73,30 @@
     </form>
     {% endif %}
   {% elif rank.n_stats %}
-  <p class="dim">Bu saatte tarihsel ortalaması <b>pozitif</b> olan hisse yok —
-    aşağıdaki düşüş listesine bak.</p>
+  {{ m.empty(["Bu saatte tarihsel ortalaması pozitif olan hisse yok.", "Aşağıdaki düşüş listesine bak."]) }}
   {% else %}
-  <p class="dim">Henüz istatistik yok — saat istatistikleri arka planda hisse hisse
-    hesaplanıyor, doldukça burası canlanır.</p>
+  {{ m.empty(["Henüz istatistik yok.", "Saat istatistikleri arka planda hisse hisse hesaplanıyor (90 günlük mum); doldukça burası canlanır."]) }}
   {% endif %}
 </div>
 
 <div class="panel">
-  <h2>⬇️ Düşmesi beklenenler{% if rank.down %} <span class="st">· {{ rank.down|length }} hisse</span>{% endif %}</h2>
+  <h2>⬇️ Düşmesi beklenenler <span class="st">· bu saatte tarihsel ortalaması negatif olanlar{% if rank.down %} · {{ rank.down|length }} hisse{% endif %}</span></h2>
   <p class="sub">Aynı veri, ters yön. "Bu saatte bir şey beklemiyoruz" ile
   "bu saatte düşmesini bekliyoruz" ayrı şeyler — ikisi karışmasın diye ayrı liste.</p>
   {% if rank.down %}
   {{ hourtable(rank.down, 'down') }}
   {% elif rank.n_stats %}
-  <p class="dim">Bu saatte tarihsel ortalaması negatif olan hisse yok.</p>
+  {{ m.empty(["Bu saatte tarihsel ortalaması negatif olan hisse yok."]) }}
   {% else %}
-  <p class="dim">Henüz istatistik yok.</p>
+  {{ m.empty(["Henüz istatistik yok.", "Saat istatistikleri arka planda hesaplanıyor."]) }}
   {% endif %}
 </div>
 
 <div class="panel">
-  <h2>⏭ Sonraki 6 saat <span class="st">· en yüksek ortalamalı hisse</span></h2>
+  <h2>⏭ Sonraki 6 saat <span class="st">· her saatin tarihsel birincisi hangi hisse</span></h2>
   <p class="sub">"Ne" sorusunun yanına "ne zaman": her saatin tarihsel birincisi.
   💪 o saatte eşiği geçiyor demektir.</p>
+  {% if ahead and ahead|selectattr('symbol')|list %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th>TSİ</th><th>ET</th><th class="l">Birinci</th><th>Bu saat ort.</th></tr>
@@ -114,6 +113,9 @@
     {% endfor %}
   </table>
   </div></div>
+  {% else %}
+  {{ m.empty(["Sonraki 6 saat için birinci çıkaracak istatistik yok.", "Saat istatistikleri doldukça her saatin tarihsel birincisi burada listelenir."]) }}
+  {% endif %}
 </div>
 
 {% endblock %}

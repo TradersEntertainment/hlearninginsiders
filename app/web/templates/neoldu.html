@@ -34,12 +34,12 @@
     {%- if rep.is_crypto %} · kripto{% else %} · hisse perp{% endif %}</span></h2>
 
   {% if not rep.found and not rep.is_crypto %}
-  <p class="short">⚠️ <b>{{ rep.symbol }}</b> evrende bulunamadı — ham coin adı
+  <p class="alert warn">⚠️ <b>{{ rep.symbol }}</b> evrende bulunamadı — ham coin adı
     olarak denendi.</p>
   {% endif %}
 
   {# ── MANŞET: OI okuması ───────────────────────────────────────────────── #}
-  <p style="font-size:17px;margin:12px 0 4px">📊
+  <p class="h3 mt10">📊
     {% if rep.oi.verdict == 'belirsiz' %}<b class="dim">Belirsiz</b>
     {%- elif 'SHORT açıl' in rep.oi.verdict or 'LONG kapan' in rep.oi.verdict %}<b class="short">{{ rep.oi.verdict }}</b>
     {%- elif 'el değiş' in rep.oi.verdict %}<b class="dim">{{ rep.oi.verdict }}</b>
@@ -58,33 +58,38 @@
       okumasıdır.</span>{% endif %}</p>
   {% endif %}
 
-  {# ── veri künyesi ─────────────────────────────────────────────────────── #}
-  <p class="sub dim">🧾 Bu pencerede <b>{{ rep.n_fills }}</b> işlem kaydımız var ·
-    alım <b class="long">{{ rep.buy|usd }}</b> / satım <b class="short">{{ rep.sell|usd }}</b> ·
-    {{ rep.rows|length }} adres · <b>{{ rep.n_known }}</b> tanesinin pozisyonunu biliyoruz
-    {%- if rep.n_flat %} · {{ rep.n_flat }} tanesi baktığımızda pozisyon taşımıyordu{% endif %}
-    {%- if rep.n_unseen %} · <span class="short">{{ rep.n_unseen }} adrese hiç uğramadık</span>{% endif %}
-    {%- if rep.n_stale %} · <span class="short">{{ rep.n_stale }} çıkarım bayat veriye dayanıyor ⏳</span>{% endif %}.
-    {% if rep.is_crypto %}Kripto işlem kaydı eşiği <b>{{ crypto_floor|usd }}</b>.{% endif %}</p>
-  <p class="sub dim">🗄 Pozisyonlar <b>her boyutta</b> tutuluyor (son 14 gün).
-    Bundan ayrı olarak <b>{{ big_floor|usd }}</b> üstü pozisyonlar rekor arşivine
-    (<code>/devler</code>) girer ve orada geçmişiyle birlikte kalır — iki tablo
-    ayrı, çünkü "dev pozisyon" ile "bu adam ne tutuyor" ayrı sorular.</p>
-
+  <div class="kpi">
+    <div><div class="l">İşlem kaydı</div><div class="v">{{ rep.n_fills }}</div><div class="s">{{ rep.rows|length }} adres</div></div>
+    <div><div class="l">Alım</div><div class="v long">{{ rep.buy|usd }}</div><div class="s">penceredeki toplam alış</div></div>
+    <div><div class="l">Satım</div><div class="v short">{{ rep.sell|usd }}</div><div class="s">penceredeki toplam satış</div></div>
+    <div><div class="l">Pozisyonu bilinen</div><div class="v">{{ rep.n_known }}</div>
+      <div class="s">{% if rep.n_unseen %}{{ rep.n_unseen }} adrese hiç uğramadık{% elif rep.n_flat %}{{ rep.n_flat }} tanesi pozisyon taşımıyordu{% else %}tüm adreslerin defteri bakılmış{% endif %}</div></div>
+  </div>
   {% if rep.before_records %}
-  <p class="short">📼 <b>Bu pencere kayıt başlangıcından önce.</b>
+  <p class="alert warn">📼 <b>Bu pencere kayıt başlangıcından önce.</b>
     {% if rep.is_crypto %}Kripto işlemlerini yakın zamana kadar HİÇ
       kaydetmiyorduk (akış yalnız tetikleyiciydi); kayıt
       {% if rep.records_since %}{{ rep.records_since|dt }}'de başladı{% else %}henüz başlamadı{% endif %}.
     {% else %}Bu dönem için işlem kaydımız yok.{% endif %}
     Tablonun boş olması "işlem olmadı" demek DEĞİL, "o an tutmuyorduk" demek.</p>
   {% endif %}
+  {# ── veri künyesi ─────────────────────────────────────────────────────── #}
+  <p class="kunye">🧾 Bu pencerede <b>{{ rep.n_fills }}</b> işlem kaydımız var ·
+    alım <b class="long">{{ rep.buy|usd }}</b> / satım <b class="short">{{ rep.sell|usd }}</b> ·
+    {{ rep.rows|length }} adres · <b>{{ rep.n_known }}</b> tanesinin pozisyonunu biliyoruz
+    {%- if rep.n_flat %} · {{ rep.n_flat }} tanesi baktığımızda pozisyon taşımıyordu{% endif %}
+    {%- if rep.n_unseen %} · <span class="bad">{{ rep.n_unseen }} adrese hiç uğramadık</span>{% endif %}
+    {%- if rep.n_stale %} · <span class="warn">{{ rep.n_stale }} çıkarım bayat veriye dayanıyor ⏳</span>{% endif %}.
+    {% if rep.is_crypto %}Kripto işlem kaydı eşiği <b>{{ crypto_floor|usd }}</b>.{% endif %}</p>
+  <p class="kunye">🗄 Pozisyonlar <b>her boyutta</b> tutuluyor (son 14 gün).
+    Bundan ayrı olarak <b>{{ big_floor|usd }}</b> üstü pozisyonlar rekor arşivine
+    (<code>/devler</code>) girer ve orada geçmişiyle birlikte kalır — iki tablo
+    ayrı, çünkü "dev pozisyon" ile "bu adam ne tutuyor" ayrı sorular.</p>
 </div>
 
 {# ── kim ne yaptı ───────────────────────────────────────────────────────── #}
 <div class="panel">
-  <h2>👥 Kim ne yaptı <span class="st">·
-    büyükten küçüğe · başlığa tıklayarak sırala</span></h2>
+  <h2>👥 Kim ne yaptı <span class="st">· büyükten küçüğe · agresör müydü, pozisyonunu ne yaptı</span></h2>
   {% if rep.rows %}
   <p class="sub"><b>Taker %</b> = fiyatı süpürerek mi aldı (agresör, aceleci —
   bilgi taşıyan taraf genelde budur) yoksa pasif emirle mi doldu.
@@ -138,16 +143,17 @@
   </table>
   </div></div>
   {% else %}
-  <p class="dim">Bu pencerede işlem kaydı yok.
-    {% if rep.is_crypto %}Kripto tarafında yalnız <b>{{ crypto_floor|usd }}</b>
-      üstü işlemler kaydediliyor — daha küçükler hiç yazılmaz.{% endif %}</p>
+  {{ m.empty(["Bu pencerede işlem kaydı yok.",
+              ("Kripto tarafında yalnız " ~ crypto_floor|usd ~ " üstü işlemler kaydediliyor — daha küçükler hiç yazılmaz." if rep.is_crypto else "Hisse tarafında eşik üstü işlemler canlı akıştan kaydedilir; akış o an kopuksa boşluk olur.")]) }}
   {% endif %}
 </div>
 
 {# ── bağlam ────────────────────────────────────────────────────────────── #}
-{% if rep.ctx.liq or rep.ctx.walls or rep.ctx.alerts or rep.ctx.vol %}
 <div class="panel">
-  <h2>🧩 Aynı pencerede başka ne vardı</h2>
+  <h2>🧩 Aynı pencerede başka ne vardı <span class="st">· likidasyon yaklaşanlar, duvarlar, hacim rekoru, alarmlarımız</span></h2>
+  {% if not (rep.ctx.liq or rep.ctx.walls or rep.ctx.alerts or rep.ctx.vol) %}
+  {{ m.empty(["Aynı pencerede başka olay kaydı yok.", "Likidasyon yaklaşması, defter duvarı, hacim rekoru ya da bizim alarmımız o aralıkta düşmemiş."]) }}
+  {% endif %}
   {% if rep.ctx.liq %}
   <p class="sub"><b>💥 Likidasyona yaklaşanlar:</b>
     {% for l in rep.ctx.liq %}{{ m.addr(l.address, k, 6) }}
@@ -172,7 +178,6 @@
     {% for a in rep.ctx.alerts %}<span class="dim">{{ a.ts|dt }}</span> {{ a.kind }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
   {% endif %}
 </div>
-{% endif %}
 {% endif %}
 
 <div class="panel">

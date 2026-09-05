@@ -7,6 +7,7 @@
   <p class="sub">Bilanço öncesi pozisyonu doğru yönde olan cüzdanlar. 2+ doğru bilen otomatik
   watchlist'e (⭐) girer ve yeni poz açtığı anda Telegram'a bildirim düşer — insider avımızın hafızası burası.</p>
   {% if winners %}
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Adres</th><th title="Kaç bilanço yönünü doğru bildi">Doğru</th>
         <th>Yanlış</th><th>İsabet</th><th class="l">Durum</th><th class="l">İlk fonlama</th></tr>
@@ -21,11 +22,13 @@
     </tr>
     {% endfor %}
   </table>
-  {% else %}<p class="dim">Henüz sicil oluşmadı — ilk bilanço değerlendirmesinden sonra dolmaya başlar.</p>{% endif %}
+  </div></div>
+  <p class="kunye">🧾 {{ winners|length }} cüzdan · sicil = bilanço öncesi (T-1s) pozisyonun yönü ile T+24s hareketinin kıyası · MM/vault hesapları hariç.</p>
+  {% else %}{{ m.empty(["Henüz sicil oluşmadı.", "İlk bilanço değerlendirmesinden (T+24s) sonra dolmaya başlar."]) }}{% endif %}
 </div>
 
 <div class="panel">
-  <h2>🗂 Geçmiş bilançolar · arşiv</h2>
+  <h2>🗂 Geçmiş bilançolar <span class="st">· açıklamadan önce kim ne taşıyordu, kim haklı çıktı</span></h2>
   <p class="sub">Her bilanço için: açıklamadan önce en büyük pozisyonlar kimlerdeydi, fiyat ne yaptı,
   kim haklı çıktı. Bot bunu otomatik kaydeder (T-1h anlık görüntüsü + T+24h sonucu).</p>
   {% if rows %}
@@ -53,9 +56,10 @@
       </tr>
       {% endfor %}
     </table>
-    {% else %}<div class="dim">Bu bilanço için önceden pozisyon kaydı yok.</div>{% endif %}
+    {% else %}<p class="empty">Bu bilanço için önceden pozisyon kaydı yok.</p>{% endif %}
   </div>
   {% endfor %}
-  {% else %}<p class="dim">Arşiv henüz boş — ilk bilanço değerlendirmesi tamamlanınca dolar.</p>{% endif %}
+  <p class="kunye">🧾 {{ rows|length }} bilanço · her kart T-1s anlık görüntüsü + T+24s sonucu · pozisyonlar süpürmede görülenler.</p>
+  {% else %}{{ m.empty(["Arşiv henüz boş.", "İlk bilanço değerlendirmesi (T+24s) tamamlanınca dolar."]) }}{% endif %}
 </div>
 {% endblock %}

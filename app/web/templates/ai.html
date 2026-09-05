@@ -13,7 +13,7 @@
   Telegram'a hiçbir şey düşmez.</span></p>
 
   {% if not enabled or not has_key %}
-  <p class="dim">⏳ AI analist çalışmıyor
+  <p class="alert info">⏳ AI analist çalışmıyor
   {%- if not has_key %} — Railway'e <code>AI_API_KEY</code> ekle (Groq'ta bedava anahtar alınır){% endif %}
   {%- if not enabled %}{% if not has_key %} ve{% endif %} <a href="/settings{{ k }}">Ayarlar</a> → AI analist'ten <b>aç</b>
     (ya da Railway'e <code>AI_ENABLED=1</code>){% endif %}.</p>
@@ -22,11 +22,11 @@
   {% if ai_result %}
     {% set parts = ai_result.split(':') %}
     {% if parts[0] == 'ok' %}
-    <p class="okline">✓ Tur çalıştı — <b>{{ parts[1] }}</b> hipotez, <b>{{ parts[2] }}</b> gözlem üretildi.</p>
+    <p class="alert ok">✓ Tur çalıştı — <b>{{ parts[1] }}</b> hipotez, <b>{{ parts[2] }}</b> gözlem üretildi.</p>
     {% elif parts[0] == 'skip' %}
-    <p class="short">Tur atlandı: <b>{{ parts[1] }}</b>{% if parts[1] == 'bütçe' %} — günlük token tavanı doldu, yarın sıfırlanır{% elif parts[1] == 'kapalı' %} — anahtar yok ya da AI kapalı{% elif parts[1] == '429' %} — sağlayıcı hız sınırı, biraz sonra dene{% endif %}.</p>
+    <p class="alert warn">Tur atlandı: <b>{{ parts[1] }}</b>{% if parts[1] == 'bütçe' %} — günlük token tavanı doldu, yarın sıfırlanır{% elif parts[1] == 'kapalı' %} — anahtar yok ya da AI kapalı{% elif parts[1] == '429' %} — sağlayıcı hız sınırı, biraz sonra dene{% endif %}.</p>
     {% else %}
-    <p class="short">✗ Tur başarısız — sebebi aşağıdaki <b>Son turlar</b> tablosundaki <i>Hata</i> kolonunda yazıyor.</p>
+    <p class="alert bad">✗ Tur başarısız — sebebi aşağıdaki <b>Son turlar</b> tablosundaki <i>Hata</i> kolonunda yazıyor.</p>
     {% endif %}
   {% endif %}
 
@@ -40,20 +40,20 @@
   </form>
   {% endif %}
 
-  <p class="h3 mt10">
-    <span class="long"><b>{{ rec.hit }}</b> tuttu</span> ·
-    <span class="short"><b>{{ rec.miss }}</b> tutmadı</span> ·
-    <b>{{ rec.open }}</b> beklemede ·
-    <span class="dim ihit" data-tip="Baz ya da vade verisi olmadığı için ölçülemedi — tuttu/tutmadı sayılmaz, sicile katılmaz">{{ rec.unresolvable }} ölçülemedi</span>
-    {% if rec.rate is not none %} · <b>%{{ rec.rate }} isabet</b>{% endif %}
-  </p>
-  <p class="sub short">Bugün harcanan: <b>{{ budget.tokens }}</b> / {{ budget.cap }} token
-  ({{ budget.calls }} çağrı) · kalan <b>{{ budget.left }}</b>. Tavan dolunca tur atlanır,
-  ertesi gün sıfırlanır.</p>
+  <div class="kpi">
+    <div><div class="l">İsabet</div><div class="v">{% if rec.rate is not none %}%{{ rec.rate }}{% else %}—{% endif %}</div>
+      <div class="s">{{ rec.hit }} tuttu · {{ rec.miss }} tutmadı</div></div>
+    <div><div class="l">Beklemede</div><div class="v">{{ rec.open }}</div><div class="s">vadesi gelmemiş hipotez</div></div>
+    <div class="ihit" tabindex="0" data-tip="Baz ya da vade verisi olmadığı için ölçülemedi — tuttu/tutmadı sayılmaz, sicile katılmaz">
+      <div class="l">Ölçülemedi</div><div class="v">{{ rec.unresolvable }}</div><div class="s">sicile katılmaz</div></div>
+    <div><div class="l">Bugünkü bütçe</div><div class="v">{{ budget.tokens }}</div>
+      <div class="s">/ {{ budget.cap }} token · {{ budget.calls }} çağrı · kalan {{ budget.left }}</div></div>
+  </div>
+  <p class="kunye">🧾 Karne modelin kendi sicilidir: her hipotez vadesinde Python tarafından ölçülür. Token tavanı dolunca tur atlanır, ertesi gün sıfırlanır.</p>
 </div>
 
 <div class="panel">
-  <h2>⏳ Açık hipotezler <span class="st">· sonucu bekleniyor</span></h2>
+  <h2>⏳ Açık hipotezler <span class="st">· model ne iddia etti, vadesi ne zaman</span></h2>
   {% if open_h %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
@@ -73,12 +73,12 @@
   </table>
   </div></div>
   {% else %}
-  <p class="dim">Henüz açık hipotez yok.</p>
+  {{ m.empty(["Henüz açık hipotez yok.", "Her turda model sınanabilir iddialar üretir; ilk tur çalışınca burada belirir."]) }}
   {% endif %}
 </div>
 
 <div class="panel">
-  <h2>🏁 Sonuçlananlar</h2>
+  <h2>🏁 Sonuçlananlar <span class="st">· model ne dedi, tuttu mu</span></h2>
   {% if done_h %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
@@ -99,7 +99,7 @@
   </table>
   </div></div>
   {% else %}
-  <p class="dim">Henüz sonuçlanan hipotez yok — ilkleri vadesi geldiğinde burada belirir.</p>
+  {{ m.empty(["Henüz sonuçlanan hipotez yok.", "İlkleri vadesi geldiğinde burada belirir."]) }}
   {% endif %}
 </div>
 
@@ -115,12 +115,12 @@
     {% endfor %}
   </ul>
   {% else %}
-  <p class="dim">Henüz gözlem yok.</p>
+  {{ m.empty(["Henüz gözlem yok."]) }}
   {% endif %}
 </div>
 
 <div class="panel">
-  <h2>⚙️ Son turlar</h2>
+  <h2>⚙️ Son turlar <span class="st">· çağrı, üretim, token, hata</span></h2>
   {% if runs %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
@@ -133,13 +133,13 @@
       <td class="dim">{{ r.n_obs }}</td>
       <td class="dim">{{ r.n_hyp }}</td>
       <td class="dim">{{ r.tokens_in }}+{{ r.tokens_out }}</td>
-      <td class="l short">{{ r.err or '' }}</td>
+      <td class="l bad">{{ r.err or '' }}</td>
     </tr>
     {% endfor %}
   </table>
   </div></div>
   {% else %}
-  <p class="dim">Henüz tur çalışmadı.</p>
+  {{ m.empty(["Henüz tur çalışmadı.", "Zamanlı tur " ~ interval_h ~ " saatte bir; anahtar ve AI açıksa yukarıdaki ▶️ ile hemen çalıştırılabilir."]) }}
   {% endif %}
 </div>
 
