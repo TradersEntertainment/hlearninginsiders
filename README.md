@@ -210,6 +210,44 @@ Sekme ayrıca her tur için pozisyonu, bakiyeyi, **Tur/Bakiye** oranını ve
 **taker %**'sini gösterir: sabırlı bir TWAP genelde pasif kalır, agresif olan
 aceleci demektir.
 
+## Liq attack radarı: `/saldiri`
+
+**Mekanizma.** Hafta sonu hissenin gerçek fiyatı sabittir (borsa kapalı). Perp
+fiyatını yakın likidasyon kümesine kadar itip patlatan biri için dönüş
+garantidir: Pazartesi fiyat zaten Cuma kapanışına döner. Saldırgan için
+neredeyse risksiz — ve tam da bu yüzden **öngörülebilir**: hedef (yakın küme),
+pencere (hafta sonu, ince defter) ve dönüş çıpası (Cuma kapanışı) önceden belli.
+
+**Skor = patlayacak $ ÷ itmek için yenmesi gereken defter $.**
+- Payda `l2Book`'tan, **canlı**: fiyatı d% itmek için o yöndeki görünen
+  seviyelerin toplam notionali. Görünen defter d'ye **varmadan bitiyorsa** (🕳)
+  itmek neredeyse bedava — en güçlü sinyal. Oran bir üst sınırdır: gerçek
+  maliyet bundan büyük olamaz.
+- Pay likidasyon haritasının verisi: d içinde liq fiyatı olan pozisyonlar.
+- d, %0.25'lik ızgarada `liq_attack_max_dist_pct`'ye (vars. %4) kadar taranır;
+  L(d) ≥ `liq_attack_min_usd` (vars. $2M) olan d'ler arasında oranı maksimize
+  eden seçilir. `liq_attack_min_score` (vars. 2×) üstü **aday**: sayfada 🔥
+  ve Telegram'a düşer (`LIQ_ATTACK_CHAT_ID` env; boşsa ana sohbet).
+- Oran **kâr tahmini değil**, göreli çekicilik — sayfa da mesaj da bunu söyler.
+
+**Yalnız hafta sonu** (kullanıcı tercihi, mekanizmanın gereği): pencere
+dışında istek atılmaz, sayfa son hafta sonunun sonucunu ve karneyi gösterir.
+İstek bütçesi: hafta sonu her 5 dk, yalnız ön elemeyi geçen coin (max_dist
+içinde eşik kadar liq olan) başına 1 `l2Book`.
+
+**Karne — sitedeki her tahminci gibi.** Geçmiş hafta sonlarında gerçekleşen
+saldırılar sonradan tespit edilir: 1 dakikalık mark serisinde referanstan
+≥`liq_attack_spike_pct` sapıp `liq_attack_revert_min` içinde geri dönen hareket
+**ve** o aralıkta liq fiyatı sıçramanın içinde kalan kapanmış pozisyon
+(`addr_positions`, her boyut). Liq onayı olmayan fitil saldırı sayılmaz; geri
+dönmeyen hareket gerçek fiyat hareketidir. Her saldırı için "olaydan ÖNCE o
+hafta sonu verdiğimiz en yüksek oran" saklanır → **isabet** (önceden
+işaretlenmiş / tüm saldırılar) ve **yanlış alarm** (bitmiş hafta sonlarında
+gerçekleşmeyen adaylar). Karnesiz tahmin sadece histir.
+
+**Bildirim markerı yalnız gönderim başarılıysa yazılır** — kapalı seans
+bandındaki dersin aynısı; başarısız gönderim cooldown'u yakmaz.
+
 ## Likidasyon haritası nasıl okunur — `/t/<sembol>`
 
 **Tek soru:** fiyat hangi yöne, ne kadar giderse kim ve toplam kaç dolar zorla

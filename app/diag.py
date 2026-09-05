@@ -447,6 +447,18 @@ async def _subsystems(cfg) -> list[str]:
                                            else "hiç gönderim/bastırma yok"))
     except Exception as e:
         out.append(f"  bildirim kırılımı okunamadı ({type(e).__name__}: {e})")
+    la = await kv_get("liqattack_stats") or {}
+    if la:
+        out.append("  liq attack: "
+                   + (f"pencere AÇIK · {la.get('coins', 0)} coin ön elemeyi geçti"
+                      f" · {la.get('books', 0)} defter · {la.get('candidates', 0)} aday"
+                      f" · {la.get('alerted', 0)} bildirim"
+                      + (f" · ⚠️ {la['failed']} gönderilemedi" if la.get("failed") else "")
+                      + (f" · {la['book_err']} defter hatası" if la.get("book_err") else "")
+                      if la.get("window") else f"pencere kapalı ({la.get('skipped', '')})")
+                   + (f" · {_dur(now() - int(la['ts']))} önce" if la.get("ts") else ""))
+    else:
+        out.append("  liq attack: tur HENÜZ ÇALIŞMADI")
     tw = await kv_get("twap_stats") or {}
     if tw:
         best = tw.get("best") or {}

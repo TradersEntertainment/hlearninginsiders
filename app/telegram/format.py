@@ -615,6 +615,39 @@ def what_happened(b: dict | None) -> list[str]:
     return out
 
 
+def liq_attack_alert(s: dict, wk: tuple | None = None) -> str:
+    """Hafta sonu liq attack adayı: hedef küme, itme maliyeti, oran."""
+    sym = (s.get("symbol") or (s.get("coin") or "").split(":")[-1])
+    down = s.get("direction") == "down"
+    arrow = "↓" if down else "↑"
+    who = "long" if down else "short"
+    lines = [
+        f"🎯 <b>LIQ ATTACK ADAYI</b> — <b>{esc(sym)}</b> {arrow}",
+        f"Fiyatı <b>%{s.get('dist_pct', 0):.2f} {'aşağı' if down else 'yukarı'}</b> "
+        f"itmek ≈ <b>{usd(s.get('cost_usd'))}</b> defter yer; karşılığında "
+        f"<b>{usd(s.get('liq_usd'))}</b> {who} patlar "
+        f"(oran <b>{s.get('score', 0):.1f}×</b>)",
+    ]
+    if s.get("book_thin"):
+        lines.append("🕳 <b>Görünen defter hedefe varmadan bitiyor</b> — itmek "
+                     "bundan da ucuz olabilir")
+    tg = s.get("targets") or []
+    if tg:
+        lines.append("hedef: " + " · ".join(
+            f"{alink(t['address'])} {usd(t['notional'])} @ {px(t['liq_px'])}" for t in tg))
+    ctx = [f"şimdi {px(s.get('mark'))} → hedef {px(s.get('target_px'))}"]
+    if s.get("dev_close") is not None:
+        ctx.append(f"Cuma kapanışından %{s['dev_close']:+.2f}")
+    if wk:
+        left = max(0, int(wk[1]) - now())
+        ctx.append(f"hafta sonu bitişine {left // 3600}s {left % 3600 // 60}dk")
+    lines.append("<i>" + " · ".join(ctx) + "</i>")
+    lines.append("<i>Oran kâr tahmini değil, göreli çekicilik: kim itebilir, ne "
+                 "kadar ucuza. Pazartesi fiyat Cuma kapanışına döner — saldırganın "
+                 "bahsi bu. Yatırım tavsiyesi değildir.</i>")
+    return "\n".join(lines)
+
+
 def crypto_vol_alert(e: dict) -> str:
     """Kripto hacim patlaması — 24 saatin en yüksek 5 dakikası."""
     sym = (e.get("coin") or "").split(":")[-1]

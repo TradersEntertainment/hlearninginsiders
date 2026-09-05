@@ -209,6 +209,22 @@ border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
 .lq-table summary{cursor:pointer;color:var(--dim);font-size:12.5px;list-style:none}
 .lq-table summary::before{content:'▸ ';color:var(--dim)}
 .lq-table[open] summary::before{content:'▾ '}
+.la-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0 14px}
+.la-kpi>div{padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--dim) 7%,transparent)}
+.la-kpi .l{font-size:11.5px;color:var(--dim)}
+.la-kpi .v{font-size:22px;font-weight:800;color:var(--fg);line-height:1.2}
+.la-kpi .s{font-size:11.5px;color:var(--dim)}
+.la-win{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:12.5px;margin:4px 0 10px}
+.la-pill{padding:3px 11px;border-radius:999px;font-weight:800;font-size:11.5px;border:1px solid var(--border)}
+.la-pill.open{color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent)}
+.la-pill.shut{color:var(--dim)}
+.la-pill.hot{color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent);border-color:color-mix(in srgb,var(--amber) 40%,transparent)}
+.la-bars{display:grid;gap:3px;min-width:160px}
+.la-bar{height:9px;border-radius:0 5px 5px 0}
+.la-bar.liq-long{background:var(--liq-long)}.la-bar.liq-short{background:var(--liq-short)}
+.la-bar.book{background:color-mix(in srgb,var(--dim) 45%,transparent)}
+.la-legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:var(--dim);margin:0 0 8px}
+.la-legend i{display:inline-block;width:12px;height:9px;border-radius:0 4px 4px 0;vertical-align:-1px;margin-right:5px}
 .walls{font-size:12.5px;margin-bottom:8px;padding:7px 12px;border-radius:10px;
 background:color-mix(in srgb,var(--liq-long) 7%,transparent);
 border:1px dashed color-mix(in srgb,var(--liq-long) 35%,transparent)}
@@ -418,6 +434,7 @@ details.guidetv[open] summary{margin-bottom:2px}
     <input type="text" name="q" placeholder="ticker ara: SNDK">
     <button type="submit">Ara</button>
   </form>
+  <a href="/saldiri{{ k }}" title="Hafta sonu yakın likidasyonları kim ucuza patlatabilir — liq attack adayları ve karne">🎯 liq attack</a>
   <a href="/twap{{ k }}" title="Büyük TWAP / düzenli birikim turları — birileri sessizce topluyor">⏳ twap</a>
   <a href="/neoldu{{ k }}" title="Belli bir dakika aralığında kim ne aldı, ne sattı, açtı mı kapattı mı">🔎 ne oldu</a>
   <a href="/orintu{{ k }}" title="Şu anki grafik şekli geçmişte olduğunda sonra ne olmuş — olasılık + karne">🔮 örüntü</a>

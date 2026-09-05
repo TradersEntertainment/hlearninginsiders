@@ -18,7 +18,7 @@ from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import find_ticker, get_universe
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol, liqmap,
+from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol, liqattack, liqmap,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
                      patterns, pricechart, twap)
 
@@ -1151,6 +1151,29 @@ async def funding_page(request: Request):
     _guard(request)
     fr = await funding.ranking(request.app.state.cfg)
     return _render(request, "funding.html", {"fr": fr})
+
+
+@router.get("/saldiri")
+async def liq_attack_page(request: Request):
+    """Liq attack radarı — hafta sonu yakın liq kümesini kim ucuza patlatabilir."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    lq = await liqattack.page(cfg)
+    return _render(request, "saldiri.html", {
+        "lq": lq,
+        "min_usd": getattr(cfg, "liq_attack_min_usd", 2_000_000),
+        "max_dist": getattr(cfg, "liq_attack_max_dist_pct", 4.0),
+        "min_score": getattr(cfg, "liq_attack_min_score", 2.0),
+        "wk_end_tr": (datetime.fromtimestamp(lq["weekend"][1], TR)
+                      if lq["weekend"] else None),
+        "wk_left": max(0, int(lq["weekend"][1]) - now()) if lq["weekend"] else 0,
+        "next_tr": datetime.fromtimestamp(lq["next_weekend"], TR),
+        "next_in": max(0, int(lq["next_weekend"]) - now()),
+        "chat_set": bool(getattr(cfg, "liq_attack_chat_id", "")),
+        "spike_pct": getattr(cfg, "liq_attack_spike_pct", 1.5),
+        "revert_min": getattr(cfg, "liq_attack_revert_min", 90),
+        "scan_sec": getattr(cfg, "liq_attack_scan_sec", 300),
+    })
 
 
 @router.get("/kapali")

@@ -234,6 +234,27 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "crypto_watch_top": {"type": "int", "label": "Canlı dinlenen kripto coin",
                          "group": "Tarama & performans",
                          "desc": "Ana dex'te 24h hacme göre ilk kaç coin canlı dinlensin. 'Kripto hacim evren tavanı' ile EŞİT tutulmalı: alarm çıkan ama dinlenmeyen bir coinde 'kim ne aldı' kırılımı boş gelir. 0 = kripto dinleme kapalı"},
+    "liq_attack_min_usd": {"type": "float", "label": "Liq attack: hedef küme tabanı ($)",
+                           "group": "Liq attack",
+                           "desc": "Şimdiye yakın likidasyon kümesi en az bu kadar $ olmalı ki 'itmeye değer' sayılsın"},
+    "liq_attack_max_dist_pct": {"type": "float", "label": "Liq attack: azami hedef uzaklığı (%)",
+                                "group": "Liq attack",
+                                "desc": "Bu mesafeden uzak kümeler hedef sayılmaz — ince defterde bile çok uzağı itmek pahalı"},
+    "liq_attack_min_score": {"type": "float", "label": "Liq attack: aday eşiği (oran)",
+                             "group": "Liq attack",
+                             "desc": "patlayacak $ / yenmesi gereken defter $ bu oranı geçerse ADAY: sayfada öne çıkar ve Telegram'a düşer. 1 = başabaş, 2 = çekici, 5+ = neredeyse bedava"},
+    "liq_attack_scan_sec": {"type": "int", "label": "Liq attack: tarama aralığı (sn)",
+                            "group": "Liq attack",
+                            "desc": "Yalnız hafta sonu çalışır; aday coin başına 1 l2Book isteği"},
+    "liq_attack_cooldown": {"type": "int", "label": "Liq attack: bildirim bekleme (sn)",
+                            "group": "Liq attack",
+                            "desc": "Aynı coin+yön için iki bildirim arası"},
+    "liq_attack_spike_pct": {"type": "float", "label": "Liq attack: geçmiş sıçrama eşiği (%)",
+                             "group": "Liq attack",
+                             "desc": "Karne için: 1 dk'lık fiyat serisinde referanstan bu kadar sapıp geri dönen hareket 'saldırı' adayı (liq onayı da şart)"},
+    "liq_attack_revert_min": {"type": "int", "label": "Liq attack: geri dönüş süresi (dk)",
+                              "group": "Liq attack",
+                              "desc": "Sıçrama bu süre içinde referansa dönmezse gerçek fiyat hareketidir, saldırı değil"},
     "alert_forensics": {"type": "bool", "label": "Alarmlara 'ne oldu' detayı",
                         "group": "Bildirimler",
                         "desc": "Hacim, kapalı seans ve whale alarmlarına OI okuması (long mu kapandı, short mu açıldı) ve en büyük adreslerin ne yaptığı eklenir. Kapatılırsa mesajlar eski sade hâline döner"},
@@ -497,6 +518,17 @@ class Config:
         self.bars_refresh_sec = int(os.getenv("BARS_REFRESH_SEC", "1800"))
         # Örüntü bildirimlerinin kanalı — env-only (chat id kuralı).
         self.pattern_chat_id = os.getenv("PATTERN_CHAT_ID", "")
+        # Liq attack: hafta sonu yakın liq kümesini itmek ucuzsa. Kanal env-only;
+        # boşsa ana sohbete düşer (kullanıcı tercihi).
+        self.liq_attack_chat_id = os.getenv("LIQ_ATTACK_CHAT_ID", "")
+        self.liq_attack_min_usd = float(os.getenv("LIQ_ATTACK_MIN_USD", "2000000"))
+        self.liq_attack_max_dist_pct = float(os.getenv("LIQ_ATTACK_MAX_DIST_PCT", "4"))
+        self.liq_attack_min_score = float(os.getenv("LIQ_ATTACK_MIN_SCORE", "2"))
+        self.liq_attack_scan_sec = int(os.getenv("LIQ_ATTACK_SCAN_SEC", "300"))
+        self.liq_attack_cooldown = int(os.getenv("LIQ_ATTACK_COOLDOWN", "14400"))
+        self.liq_attack_spike_pct = float(os.getenv("LIQ_ATTACK_SPIKE_PCT", "1.5"))
+        self.liq_attack_revert_min = int(os.getenv("LIQ_ATTACK_REVERT_MIN", "90"))
+        self.notify_liqattack = True
         self.offhours_close_hour = int(os.getenv("OFFHOURS_CLOSE_HOUR", "0"))
         self.offhours_alert_weekend_only = True
         self.offhours_alert_pct = float(os.getenv("OFFHOURS_ALERT_PCT", "0.5"))

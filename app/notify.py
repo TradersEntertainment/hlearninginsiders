@@ -28,6 +28,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "offhours":  ("notify_offhours",  "🌙 Kapalı seans hareketi",             "high"),
     "cryptovol": ("notify_cryptovol", "🚀 Kripto hacim patlaması",            "high"),
+    "liqattack": ("notify_liqattack", "🎯 Liq attack adayı (hafta sonu)",     "high"),
     "equityvol": ("notify_equityvol", "📈 Hisse hacim patlaması",             "high"),
     "pattern":   ("notify_pattern",   "🔮 Örüntü sinyali",                    "high"),
     "listing":   ("notify_listing",   "🆕 Yeni hisse listelendi",             "high"),

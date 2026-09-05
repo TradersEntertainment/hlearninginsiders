@@ -156,6 +156,28 @@ CREATE TABLE IF NOT EXISTS addr_positions(
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_addrpos_addr ON addr_positions(address);
 CREATE INDEX IF NOT EXISTS idx_addrpos_ts ON addr_positions(ts);
+-- Liq attack radarı: hafta sonu yakın liq kümesini itmenin maliyeti (defter)
+-- karşısında patlayacak $. Adaylar tur damgasıyla saklanır (karne için), gerçek
+-- saldırılar sonradan tespit edilip 'önceden işaretlemiş miydik' diye ölçülür.
+CREATE TABLE IF NOT EXISTS liq_attack_candidates(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  coin TEXT, direction TEXT,       -- down = long'ları patlat | up = short'ları
+  ts INTEGER, weekend_ts INTEGER,  -- tur anı, hafta sonu çıpası
+  mark REAL, dist_pct REAL, liq_usd REAL, cost_usd REAL, score REAL,
+  book_thin INTEGER,               -- 1 = görünen defter hedefe varmadan bitiyor
+  n_pos INTEGER, target_px REAL, dev_close REAL,
+  hot INTEGER DEFAULT 0            -- 1 = skor eşiği geçti (aday)
+);
+CREATE INDEX IF NOT EXISTS idx_liqatk_ts ON liq_attack_candidates(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_liqatk_key ON liq_attack_candidates(coin, direction, weekend_ts);
+CREATE TABLE IF NOT EXISTS liq_attacks(
+  coin TEXT, ts_start INTEGER, ts_peak INTEGER, ts_end INTEGER,
+  direction TEXT, ref_px REAL, extreme_px REAL, move_pct REAL,
+  liq_usd REAL, n_liq INTEGER,
+  predicted_score REAL,            -- olaydan ÖNCE o hafta sonu verdiğimiz en yüksek skor (NULL = hiç)
+  weekend_ts INTEGER, found_ts INTEGER,
+  PRIMARY KEY(coin, ts_start)
+);
 -- ---- AI analist ----
 -- LLM ÖNERİR, Python KARAR VERİR. Model hipotez üretir; vadesi gelince aynı
 -- veriden ölçülüp tuttu/tutmadı diye damgalanır. Böylece modelin kendi sicili
