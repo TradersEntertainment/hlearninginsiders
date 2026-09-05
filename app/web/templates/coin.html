@@ -5,19 +5,24 @@
 {% block head %}<script src="/static/lightweight-charts.js" defer></script>{% endblock %}
 {% block content %}
 {% if not ticker %}
-<div class="panel"><p><b>{{ symbol }}</b> HL hisse evreninde bulunamadı.
-<a href="/{{ k }}">Evrendeki coin'lere bak</a>.</p></div>
+<div class="panel">
+  {{ m.empty([symbol ~ " HL evreninde bulunamadı — ne HIP-3 hisse ne ana dex kripto.",
+              ("Kripto evreni ilk metrik/hacim turundan sonra gelir (henüz 0 coin biliniyor); yazımı kontrol et ya da birazdan yeniden dene."
+               if not (crypto_n or 0) else
+               (crypto_n ~ " ana dex coini aranabilir — yazımı kontrol et (ör. PUMP, HYPE, kPEPE); hisse sembolleri ana sayfadaki evren listesinde."))]) }}
+  <p class="mt6"><a href="/{{ k }}">← Ana sayfadaki evren listesine bak</a></p>
+</div>
 {% else %}
 {% if scanning %}
 <div class="scanbar"><span class="swimmer">🐋</span> Balinalar aranıyor<span class="dots"></span> veriler kendiliğinden gelecek (sayfa zıplamaz)</div>
 {% endif %}
 <div class="panel">
-  <h2>{{ symbol }} <span class="st">({{ coin }})</span>
+  <h2>{{ symbol }} <span class="st">({{ coin }}{% if kind == 'crypto' %} · ana dex kripto{% endif %})</span>
     {% if propr %}<span class="pbadge"
       title="propr.xyz'de listeli — trade ettiğin platformda işlem açabilirsin">✅ PROPR'da listeli</span>{% endif %}</h2>
   <div class="kpi">
     <div><div class="l">Fiyat (mark)</div><div class="v">{{ summ.mark|px }}</div>
-      <div class="s">{% if summ.px_change_pct is not none %}<b class="{{ 'long' if summ.px_change_pct > 0 else ('short' if summ.px_change_pct < 0 else 'dim') }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</b> · 24 saat{% else %}24 saatlik değişim henüz yok{% endif %}</div></div>
+      <div class="s">{% if summ.px_change_pct is not none %}<b class="{{ 'long' if summ.px_change_pct > 0 else ('short' if summ.px_change_pct < 0 else 'dim') }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</b> · 24 saat{% else %}24 saatlik değişim henüz yok{% endif %}{% if mark_src == 'candle' %} · <span class="warn">fiyat = son mumun kapanışı, metrik yok</span>{% endif %}</div></div>
     <div><div class="l">Açık pozisyon (OI)</div><div class="v">{{ summ.oi_ntl|usd }}</div>
       <div class="s">{% if summ.oi_change_pct is not none %}24 saatte <b>{{ '%+.0f'|format(summ.oi_change_pct) }}%</b>{% if summ.oi_change_pct >= 50 %} ⚠️ hızlı büyüme{% endif %}{% else %}24 saatlik kıyas henüz yok{% endif %}</div></div>
     <div><div class="l">Funding</div>
@@ -32,6 +37,18 @@
     {% endif %}
   </div>
   <div class="btnrow">
+    {% if kind == 'crypto' %}
+    {# Tarama/gönderme hisse hattı (autoscan, earnings raporu) — kriptoda 404
+       verirdi. Kripto satırları süpürmeden gelir; tek eylem defterleri tazelemek. #}
+    <form method="post" action="/t/{{ symbol }}/tazele{{ k }}">
+      <button type="submit" class="btn sm">🔄 Defterleri tazele</button>
+    </form>
+    {% if tz == 'ok' %}<span class="long">✓ Defterler tazelendi</span>
+    {% elif tz == 'skip' %}<span class="hint">az önce tazelendi — 60 sn bekle</span>
+    {% elif tz == 'none' %}<span class="hint">tazelenecek adres yok</span>
+    {% elif tz == 'err' %}<span class="bad">✗ HL'ye ulaşılamadı — logları kontrol et</span>{% endif %}
+    <span class="hint">Pozisyonlar süpürmeden gelir (tur 75–125 dk); tazele en büyük 15 adresin defterini şimdi çeker</span>
+    {% else %}
     <form method="post" action="/t/{{ symbol }}/scan{{ k }}">
       <button type="submit" class="btn sm">⟳ Yeniden tara</button>
     </form>
@@ -45,14 +62,18 @@
     {% endif %}
     {% if tg == 'ok' %}<span class="long">✓ Telegram'a gitti!</span>
     {% elif tg == 'err' %}<span class="bad">✗ Gönderilemedi — token/chat id'yi ve logları kontrol et</span>{% endif %}
+    {% endif %}
     <span class="hint">Long <b>{{ long_total|usd }}</b> / Short <b>{{ short_total|usd }}</b>
-      {% if scanned_ts %} · son tarama {{ scanned_ts|dt }}{% endif %}</span>
+      {% if scanned_ts %} · {{ 'son ölçüm' if kind == 'crypto' else 'son tarama' }} {{ scanned_ts|dt }}{% endif %}</span>
   </div>
 </div>
 
 <div class="panel">
   <h2>🧱 Defterde duvar var mı? <span class="st">· deftere konmuş dev bekleyen emirler · son 15 dk</span></h2>
-  {% if bwalls %}
+  {% if kind == 'crypto' %}
+  {{ m.empty(["Ana dex defterleri taranmıyor — duvar radarı yalnız HIP-3 hisse defterlerinde çalışır.",
+              "Kripto için ayrı bir defter tarayıcısı yok; bu panel burada dursun ki 'bozuk mu?' sorusu doğmasın."]) }}
+  {% elif bwalls %}
   <div class="walls">🧱 <b>Emir defteri duvarı:</b>
     {% for w in bwalls %}
     <span class="wall ihit {{ 'shortliq-t' if w.side == 'ask' else 'longliq-t' }}" data-side="{{ 'short' if w.side == 'ask' else 'long' }}"
@@ -81,6 +102,7 @@
     <span><i class="sw f-up"></i> saat ortalaması yukarı</span>
     <span><i class="sw f-dn"></i> aşağı</span>
     <span><i class="sw f-open"></i> ABD borsası açık (09–16 ET)</span>
+    {% if kind == 'crypto' %}<span class="dim">kripto 7/24 işlem görür — ☀️/🌙 yalnız ABD seansıyla kıyas</span>{% endif %}
     {% if hmeta.open_ret is not none and hmeta.closed_ret is not none %}
     <span>☀️ açıkken toplam <b class="{{ 'long' if hmeta.open_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hmeta.open_ret) }}%</b></span>
     <span>🌙 kapalıyken toplam <b class="{{ 'long' if hmeta.closed_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hmeta.closed_ret) }}%</b></span>
@@ -139,12 +161,20 @@
   <h2>📈 Fiyat grafiği <span class="st">· liq duvarları ve balina girişleri işaretli</span></h2>
   <p class="sub">Hyperliquid perp mumları (1 saatlik). Yatay çizgiler balinaların
   <b>likidasyon duvarları</b> ve <b>giriş seviyeleri</b> — fiyat oraya değerse ne olacağını burada görürsün.
+  Sağdaki yatay bloklar likidasyon haritasının fiyat eksenine izdüşümü: blok uzunluğu o fiyat bandında
+  patlayacak toplam $ (altta long, üstte short); ayrıntı ve adresler aşağıdaki 💥 haritada.
   Alttaki ince şerit o saatin tarihsel karnesi (yeşil = güçlü saat, kırmızı = zayıf).
-  📊 işaretli mumlar geçmiş bilanço günleri.</p>
+  {% if kind != 'crypto' %}📊 işaretli mumlar geçmiş bilanço günleri.{% endif %}</p>
   <div id="pxchart" data-sym="{{ symbol }}{{ k }}"
        data-pending="{{ 0 if pxchart else 1 }}"
       >
     <p class="dim" id="pxmsg">{% if pxchart %}Grafik çiziliyor…{% else %}Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.{% endif %}</p>
+  </div>
+  {# JS bar çizince açar; bar yoksa gizli kalır (harita paneli nedenini zaten yazar) #}
+  <div class="legend pxlegend" hidden>
+    <span><i class="sw f-liq-short"></i> short liq bloğu — fiyat <b>çıkarsa</b> patlar</span>
+    <span><i class="sw f-liq-long"></i> long liq bloğu — fiyat <b>düşerse</b> patlar</span>
+    <span class="dim">blok boyu = banttaki toplam $ · çerçeveli = 🧲 duvar</span>
   </div>
 </div>
 
@@ -365,8 +395,10 @@
 
 <div class="panel">
   <h2>🐋 En büyük pozisyonlar <span class="st">· kim ne kadar koydu, kaçtan girdi, kaç kaldıraçla</span></h2>
-  <p class="sub">Bu hisseye en çok para koyan cüzdanlar. Skor = insider şüphesi (nedenleri sağdaki kolonda;
-  70+ 🚨). Adrese tıkla → cüzdanın tüm karnesi.</p>
+  <p class="sub">{% if kind == 'crypto' %}Bu coine en çok para koyan cüzdanlar — süpürmede görülenler, her boyut.
+  İnsider skoru yok: skor hisse hattına ait (bilanço, taze cüzdan, tek hisse…); sıralama notional.
+  Adrese tıkla → cüzdanın tüm karnesi.{% else %}Bu hisseye en çok para koyan cüzdanlar. Skor = insider şüphesi (nedenleri sağdaki kolonda;
+  70+ 🚨). Adrese tıkla → cüzdanın tüm karnesi.{% endif %}</p>
   {% if rows %}
   <div class="tabs">
     <button type="button" class="tab active" data-f="all">Tümü ({{ rows|length }})</button>
@@ -375,18 +407,20 @@
   </div>
   <div class="tscroll"><div class="tscroll-x">
   <table id="postable">
-    <tr><th>#</th><th>Skor</th><th class="l">Adres</th><th>Yön</th><th>Notional</th>
+    <tr><th>#</th>{% if kind != 'crypto' %}<th>Skor</th>{% endif %}<th class="l">Adres</th><th>Yön</th><th>Notional</th>
         <th class="mh" title="Adresin HL perp teminatı (tüm dex toplamı). Spot/vault dahil DEĞİL — 'net worth' değildir">HL bakiye</th>
         <th class="mh" title="Pozisyon / bakiye. ASIL SAYI BU: $890K'lık pozisyon $50M'lik hesapta kıpırdanma, $171K'lık pozisyon $200K'lık hesapta her şeyini ortaya koymaktır">Poz/Bakiye</th>
         <th class="mh">Entry</th><th class="mh">Kald.</th><th>Liq</th><th>uPnL</th>
+        {% if kind != 'crypto' %}
         <th class="mh" title="pozisyonun ilk açılışı">Açılış</th>
         <th class="mh" title="pozisyona son ekleme">Son ➕</th>
         <th class="mh" title="pozisyondan son kırpma">Son ✂</th>
-        <th class="l">Şüphe nedenleri</th></tr>
+        <th class="l">Şüphe nedenleri</th>
+        {% else %}<th class="mh" title="süpürmenin bu satırı son ölçtüğü an">Ölçüm</th>{% endif %}</tr>
     {% for p in rows %}
     <tr data-side="{{ p.side }}">
       <td class="dim">{{ loop.index }}</td>
-      <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
+      {% if kind != 'crypto' %}<td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>{% endif %}
       <td class="l">{{ m.addr(p.address, k) }}</td>
       <td class="{{ p.side }}">{{ 'LONG' if p.side=='long' else 'SHORT' }}</td>
       <td><b>{{ p.notional|usd }}</b></td>
@@ -396,10 +430,12 @@
       <td class="mh">{{ p.leverage|int }}x</td>
       <td>{{ p.liq_px|px }}</td>
       <td class="{{ 'long' if p.upnl>0 else 'short' }}">{{ p.upnl|usd }}</td>
+      {% if kind != 'crypto' %}
       <td class="mh">{{ p|posage }}</td>
       <td class="mh long">{{ p.last_add_ts|age if p.last_add_ts else '-' }}</td>
       <td class="mh short">{{ p.last_trim_ts|age if p.last_trim_ts else '-' }}</td>
       <td class="l reasons">{{ p.reasons }}</td>
+      {% else %}<td class="mh dim">{{ p.ts|age if p.ts else '-' }} önce</td>{% endif %}
     </tr>
     {% endfor %}
   </table>

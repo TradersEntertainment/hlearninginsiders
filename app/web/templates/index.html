@@ -411,6 +411,15 @@
   {% else %}{{ m.empty(["Evren henüz keşfedilmedi.", "HL meta'sı ilk turda çekilir; ağ hatası varsa 🩺 tanı sayfasında görünür."]) }}{% endif %}
 </div>
 
+<div class="panel half compact">
+  <h2>🪙 Ana dex kripto <span class="st">{% if crypto_tags %}· hacimce ilk {{ crypto_tags|length }} · {{ crypto_n }} coinin tümü aranabilir · ✅ = propr.xyz'de listeli{% else %}· Hyperliquid'in kendi kripto perp'leri{% endif %}</span></h2>
+  <p class="sub">Hyperliquid'in kendi kripto perp'leri (BTC, ETH, HYPE, PUMP…). Birine tıkla → süpürmede görülen
+  pozisyonları, likidasyon haritasını ve mum grafiğini gör. Skor ve bilanço yok — onlar hisse hattına ait.</p>
+  {% if crypto_tags %}
+  <div class="tags">{% for t in crypto_tags %}<a class="tag" href="/t/{{ t.symbol }}{{ k }}" data-propr="{{ 1 if t.propr else 0 }}">{{ t.symbol }}{% if t.propr %}<span class="pt">✅</span>{% endif %}</a>{% endfor %}</div>
+  {% else %}{{ m.empty(["Kripto evreni henüz yüklenmedi.", "Ana dex özeti ilk metrik turunda (≤5 dk) gelir; ağ hatası varsa 🩺 tanı sayfasında görünür."]) }}{% endif %}
+</div>
+
 <div class="panel">
   <details class="guide" id="rehber">
     <summary>❓ Bu site ne işe yarıyor? Nasıl okunur?</summary>

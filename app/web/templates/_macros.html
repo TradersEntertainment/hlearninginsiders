@@ -5,12 +5,13 @@
    href="/whale/{{ a }}{{ k }}" class="wl" title="Bizim balina karnesi (skor, sicil, geçmiş)">🐋</a>
 {%- endmacro %}
 
-{# Coin hücresi: YALNIZ evrende (tickers) olan coin bağlanır. Balina sayfası ana
-   dex'i de tarıyor; BTC/ETH'yi /t/'ye bağlarsak "evrende yok" ölü sayfasına
-   düşer, o yüzden bilinmeyen coin düz metin kalır. #}
+{# Coin hücresi: evrendeki (tickers) coin sembolüyle, ana dex kripto (öneksiz ad)
+   ham adıyla /t/'ye bağlanır — kripto coin sayfası artık var. Evrende olmayan
+   HIP-3 coini (':' içerir, ör. hariç tutulmuş) düz metin kalır: oraya gitmek
+   "evrende yok" ölü sayfasına düşer. #}
 {% macro coin(c, sym_map, k) -%}
 {% set s = sym_map.get(c) -%}
-{% if s %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% else %}{{ c }}{% endif %}
+{% if s %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% elif c and ':' not in c %}<a href="/t/{{ c }}{{ k }}">{{ c }}</a>{% else %}{{ c }}{% endif %}
 {%- endmacro %}
 
 {# ── Cüzdan bakiyesi + pozisyon/bakiye oranı ─────────────────────────────────

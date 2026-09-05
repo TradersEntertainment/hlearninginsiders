@@ -27,6 +27,14 @@ async def poll_metrics(cfg: Config, client: HLClient) -> int:
             log.warning("metaAndAssetCtxs(%s) alınamadı: %s", dex, e)
             continue
         universe = meta.get("universe") or []
+        if not dex:
+            # Aynı yanıt, ek istek yok: kripto liq radarı ve kripto coin sayfası
+            # tüm ana dex'in ŞİMDİKİ fiyatını buradan okur (PROPR filtresi yok).
+            try:
+                from ..hl.universe import store_main_dex_ctx
+                await store_main_dex_ctx(meta, ctxs)
+            except Exception:
+                log.debug("main_dex_ctx yazılamadı", exc_info=True)
         ts = now()
         async with db() as conn:
             for asset, ctx in zip(universe, ctxs):

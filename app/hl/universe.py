@@ -91,6 +91,75 @@ CRYPTO_CACHE_MIN = 50      # eşik ayardan yükseltilirse yeniden istek atmayal�
 MAIN_VOL_KV = "main_dex_volumes"
 MAIN_VOL_TTL = 3600
 
+# Ana dex'in CANLI özeti: coin → mark / OI / funding / 24s hacim / önceki gün
+# fiyatı. `asset_metrics` yalnız PROPR'daki coinleri saklıyor (200+ coinin OI
+# geçmişini tutmanın faydası yok); kripto liq radarı ve kripto coin sayfası
+# ise HER ana dex coininin ŞİMDİKİ fiyatını istiyor — geçmişini değil. Tek kv
+# satırı, metrik döngüsü zaten çektiği yanıttan yazar (ek istek yok).
+MAIN_CTX_KV = "main_dex_ctx"
+MAIN_CTX_TTL = 150
+
+
+def parse_main_dex_ctx(meta, ctxs) -> dict[str, dict]:
+    """metaAndAssetCtxs("") → {coin: {m: mark, oi: adet, f: funding, v: 24s $, p: önceki gün}}.
+
+    `prevDayPx` ilk kez burada okunuyor: yoksa None (24 saatlik değişim boş
+    kalır, uydurulmaz). `openInterest` ADET — $ için mark ile çarpılır
+    (metrics.summary ile aynı).
+    """
+    out: dict[str, dict] = {}
+    for asset, ctx in zip((meta or {}).get("universe") or [], ctxs or []):
+        name = asset.get("name") or ""
+        if not name or asset.get("isDelisted") or ":" in name:
+            continue
+        ctx = ctx or {}
+        try:
+            rec = {"m": float(ctx.get("markPx") or 0),
+                   "oi": float(ctx.get("openInterest") or 0),
+                   "f": float(ctx.get("funding") or 0),
+                   "v": float(ctx.get("dayNtlVlm") or 0)}
+        except (TypeError, ValueError):
+            continue
+        try:
+            rec["p"] = float(ctx.get("prevDayPx")) if ctx.get("prevDayPx") else None
+        except (TypeError, ValueError):
+            rec["p"] = None
+        if rec["m"] > 0:
+            out[name] = rec
+    return out
+
+
+async def store_main_dex_ctx(meta, ctxs) -> dict[str, dict]:
+    """Eldeki yanıttan kv'yi yaz (metrik döngüsü: ek istek yok)."""
+    c = parse_main_dex_ctx(meta, ctxs)
+    if c:
+        await kv_set(MAIN_CTX_KV, {"c": c, "ts": now()})
+    return c
+
+
+async def main_dex_ctx(client: HLClient | None, ttl: int = MAIN_CTX_TTL,
+                       fetch: bool = True) -> dict:
+    """{"c": {coin: …}, "ts"} — kv tazeyse o; değilse (ve `fetch`) tek istekle
+    yenile. İstek düşerse bayat kayıt döner; elde hiçbir şey yoksa HATA fırlatır
+    (sessiz boş "ana dexte coin yok" gibi okunurdu). `fetch=False`: yalnız kv
+    (sayfa yolu — sayfa açılışı HL'ye istek atmaz)."""
+    cached = await kv_get(MAIN_CTX_KV) or {}
+    c = cached.get("c") or {}
+    if c and now() - int(cached.get("ts") or 0) < ttl:
+        return cached
+    if not fetch or client is None:
+        return cached
+    try:
+        data = await client.meta_and_ctxs("")
+        meta, ctxs = data[0], data[1]
+    except Exception as e:
+        log.warning("ana dex ctx alınamadı: %s", e)
+        if not c:
+            raise
+        return cached
+    fresh = await store_main_dex_ctx(meta, ctxs)
+    return {"c": fresh, "ts": now()} if fresh else cached
+
 
 async def main_dex_volumes(client: HLClient, ttl: int = MAIN_VOL_TTL) -> dict:
     """Ana dex'teki TÜM coin'ler → 24 saatlik notional hacim.
@@ -198,3 +267,40 @@ async def find_ticker(symbol_or_coin: str) -> dict | None:
         )
         row = await cur.fetchone()
         return dict(row) if row else None
+
+
+async def crypto_names() -> dict[str, str]:
+    """Ana dex coin adları: BÜYÜK HARF → gerçek ad ('KPEPE' → 'kPEPE').
+
+    Ağ yok, yalnız kv (`main_dex_ctx` ∪ `main_dex_volumes`): sayfa açılışı
+    HL'ye istek atmaz; ikisi de boşsa (ilk açılış, metrik/hacim turu henüz
+    koşmadı) evren boştur ve sayfa bunu söyler.
+    """
+    names: dict[str, str] = {}
+    for key, field in ((MAIN_CTX_KV, "c"), (MAIN_VOL_KV, "vols")):
+        rec = await kv_get(key) or {}
+        for name in (rec.get(field) or {}):
+            if isinstance(name, str) and name and ":" not in name:
+                names.setdefault(name.upper(), name)
+    return names
+
+
+async def resolve_coin(symbol_or_coin: str) -> dict | None:
+    """Sembol → {coin, symbol, dex, kind} — hisse evreni ÖNCE, sonra ana dex kripto.
+
+    Kripto coin `tickers`'a ASLA yazılmaz: `refresh_universe` orada olmayanı
+    budar ve hisse hattının her sorgusu tickers ile JOIN'li — BTC satırı
+    sessizce davranış değiştirirdi. Kripto kimliği yalnız bu dönüş değerinde
+    yaşar. Sembol çakışmasında (aynı ad iki yerde) hisse kazanır.
+    """
+    t = await find_ticker(symbol_or_coin)
+    if t:
+        return {**t, "kind": "equity"}
+    s = (symbol_or_coin or "").strip()
+    if not s or ":" in s:
+        return None
+    from ..assets import is_excluded
+    name = (await crypto_names()).get(s.upper())
+    if not name or is_excluded(name):
+        return None
+    return {"coin": name, "symbol": name, "dex": "", "kind": "crypto"}

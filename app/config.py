@@ -68,6 +68,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                       "desc": "VARSAYILAN KAPALI — sağlık olayları zaten ana sayfa rozetinde + /saglik + /health'te görünür; Telegram'a da istersen aç"},
     "notify_cryptovol": {"type": "bool", "label": "🚀 Kripto hacim patlaması", "group": "Bildirimler",
                          "desc": "PROPR'da listeli bir kripto coin son 24 saatin en yüksek 5 dakikalık hacmine ulaşınca — ayrı kanala gider (CRYPTO_CHAT_ID)"},
+    "notify_cryptoliq": {"type": "bool", "label": "💥 Kripto liq yakını", "group": "Bildirimler",
+                         "desc": "Ana dex kriptoda (BTC/ETH hariç) eşik büyüklüğündeki bir pozisyon likidasyon fiyatına eşik mesafe kadar yaklaşınca — ayrı kanala gider (CRYPTO_CHAT_ID); eşikler 'Kripto liq' grubunda"},
     "notify_equityvol": {"type": "bool", "label": "📈 Hisse hacim patlaması", "group": "Bildirimler",
                          "desc": "PROPR'da listeli bir HİSSE perp'i son 24 saatin en yüksek 5 dakikalık hacmine ulaşınca — ayrı kanala gider (CRYPTO_STOCKS_ID)"},
     "notify_pattern": {"type": "bool", "label": "🔮 Örüntü sinyali", "group": "Bildirimler",
@@ -297,6 +299,16 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Uzun bir yükselişte her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
     "crypto_vol_max_coins": {"type": "int", "label": "Evren tavanı (coin)", "group": "Kripto hacim",
                              "desc": "Kaç coin taranacak (PROPR ∩ ana dex, hacimce büyükten). Her coin turda 1 istek eder"},
+    "crypto_liq_enabled": {"type": "bool", "label": "Kripto liq radarı", "group": "Kripto liq",
+                           "desc": "Kapatılırsa tur hiç çalışmaz; istek maliyeti sıfırlanır"},
+    "crypto_liq_min_usd": {"type": "float", "label": "Asgari pozisyon ($)", "group": "Kripto liq",
+                           "desc": "Bu tutarın altındaki pozisyon bildirilmez (kullanıcı kuralı $500K). Coin sayfasındaki likidasyon haritası her boyutu gösterir — bu yalnız Telegram eşiği"},
+    "crypto_liq_dist_pct": {"type": "float", "label": "Liq mesafesi (%)", "group": "Kripto liq",
+                            "desc": "Likidasyon fiyatı şimdiye bu kadar ya da daha yakınsa bildirim (kullanıcı kuralı %2,5). BTC ve ETH her zaman hariç"},
+    "crypto_liq_poll_sec": {"type": "int", "label": "Tarama aralığı (sn)", "group": "Kripto liq",
+                            "desc": "Turda 1 fiyat isteği (ana dex özeti, metrik döngüsüyle paylaşılır) + bildirilecek her aday adres için 1 canlılık sondası (tur başına en çok 12)"},
+    "crypto_liq_cooldown": {"type": "int", "label": "Pozisyon başına bekleme (sn)", "group": "Kripto liq",
+                            "desc": "Aynı pozisyon bu süre içinde yeniden bildirilmez — fiyat eşiğin etrafında salınınca her tur mesaj olmasın. Aynı coinde YENİ bir pozisyon eşiğe girerse mesaj yine gider (coin başına tek mesaj)"},
     "equity_vol_enabled": {"type": "bool", "label": "Hisse hacim radarı", "group": "Hisse hacim",
                            "desc": "Kapatılırsa hiç mum çekilmez, istek maliyeti sıfırlanır"},
     "equity_vol_poll_sec": {"type": "int", "label": "Tarama aralığı (sn)", "group": "Hisse hacim",
@@ -484,6 +496,13 @@ class Config:
         # Kripto bildirimlerinin gideceği AYRI kanal. Diğer chat/kanal id'leri
         # gibi ENV-ONLY: EDITABLE_FIELDS'a girmez.
         self.crypto_chat_id = os.getenv("CRYPTO_CHAT_ID", "")
+        # Kripto liq yakını (ana dex, BTC/ETH hariç) → aynı kripto kanalı.
+        self.notify_cryptoliq = True
+        self.crypto_liq_enabled = True
+        self.crypto_liq_min_usd = float(os.getenv("CRYPTO_LIQ_MIN_USD", "500000"))
+        self.crypto_liq_dist_pct = float(os.getenv("CRYPTO_LIQ_DIST_PCT", "2.5"))
+        self.crypto_liq_poll_sec = int(os.getenv("CRYPTO_LIQ_POLL_SEC", "120"))
+        self.crypto_liq_cooldown = int(os.getenv("CRYPTO_LIQ_COOLDOWN", "14400"))
         self.notify_equityvol = True
         self.equity_vol_enabled = True
         self.equity_vol_poll_sec = int(os.getenv("EQUITY_VOL_POLL_SEC", "300"))

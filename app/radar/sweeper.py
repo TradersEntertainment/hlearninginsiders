@@ -14,6 +14,7 @@ ve o günden beri işlem yapmamış balinalar WS akışına hiç düşmez — PL
    toplanır (users alanı) → adres havuzu ve zaman çizelgeleri beslenir.
 """
 import asyncio
+import json
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -429,6 +430,7 @@ PRIME_TTL = 24 * 3600      # leaderboard önbelleğiyle aynı ritim
 PRIME_FAIL_TTL = 900       # geçiş tamamen patlarsa bu kadar bekle (fırtına freni)
 PRIME_CONC = 6             # eşzamanlı istek (normal süpürme bütçesini boğmasın)
 PROBE_CONC = 4             # anlık sonda: aynı anda en fazla bu kadar istek
+CRYPTO_CACHE_D = 7         # ana dex coin mum/saat önbelleği: ziyaretsiz bu kadar gün yaşar
 
 _probe_sem: asyncio.Semaphore | None = None
 
@@ -828,9 +830,24 @@ async def prune_coin_cache() -> int:
         if not live:
             return 0                     # evren henüz keşfedilmedi → hiçbir şeyi silme
         cur = await conn.execute(
-            "SELECT k FROM kv WHERE k LIKE 'pxc:%' OR k LIKE 'hstats:%'")
-        keys = [r["k"] for r in await cur.fetchall()]
-        dead = [k for k in keys if k.split(":", 1)[1] not in live]
+            "SELECT k, v FROM kv WHERE k LIKE 'pxc:%' OR k LIKE 'hstats:%'")
+        dead, cut = [], now() - CRYPTO_CACHE_D * 86400
+        for r in await cur.fetchall():
+            coin = r["k"].split(":", 1)[1]
+            if coin in live:
+                continue
+            if ":" not in coin:
+                # Ana dex (kripto) coin sayfası: tickers'ta HİÇ olmaz, sayfa
+                # açıldıkça yazılır. Ziyaret edilmeyeni yaşına göre düşür —
+                # "evrende yok" diye her gece silmek PUMP'ı her sabah yeniden
+                # çektirirdi.
+                try:
+                    ts = int((json.loads(r["v"]) or {}).get("ts") or 0)
+                except Exception:
+                    ts = 0
+                if ts >= cut:
+                    continue
+            dead.append(r["k"])
         for i in range(0, len(dead), 200):
             part = dead[i:i + 200]
             await conn.execute(

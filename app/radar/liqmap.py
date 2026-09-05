@@ -193,6 +193,22 @@ def build(rows: list[dict], mark: float | None, max_dist_pct: float = 50.0) -> d
     }
 
 
+def chart_bars(liq: dict | None) -> list[dict]:
+    """Mum grafiği için kova listesi — `build()` çıktısından, boş ve katlanmış
+    kovalar atlanır. Grafik ve alttaki harita AYNI kovaları çizer (tek kaynak);
+    grafikteki blok boyu = kovadaki toplam $, fiyat aralığı = kovanın kenarları."""
+    if not liq:
+        return []
+    out = []
+    for s in list(liq.get("up") or []) + list(liq.get("down") or []):
+        if s.get("empty") or s.get("collapsed") or not s.get("total"):
+            continue
+        out.append({"side": s["side"], "px_lo": s["px_lo"], "px_hi": s["px_hi"],
+                    "total": s["total"], "n": s["n"], "wall": bool(s.get("wall")),
+                    "label": s["label"]})
+    return out
+
+
 # ── Entry haritası: "nereden açtılar, kim kârda kim zararda?" ────────────────
 # Aynı kova kenarları, aynı satır dili; fark: yön = girişin şimdiye GÖRE konumu
 # (üstü/altı), taraf değil — bir satırda iki taraf birden (short sola, long sağa).

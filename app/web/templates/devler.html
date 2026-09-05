@@ -6,7 +6,7 @@
 <tr data-view="{{ view }}" data-kind="{{ p.kind }}" data-propr="1" class="ihit{{ ' dimrow' if p.closed }}"
     data-side="{{ p.side }}"
     data-tip="{{ p.symbol }} {{ 'LONG' if p.side == 'long' else 'SHORT' }} {{ p.notional|usd }}{% if p.peak_notional and p.peak_notional > p.notional %} · zirvesi {{ p.peak_notional|usd }}{% if p.off_peak %} (şu an %{{ '%.0f'|format(100 - p.off_peak) }}'i){% endif %}{% endif %} · giriş {{ p.entry_px|px }} · {{ '%.0f'|format(p.leverage or 0) }}x{% if p.liq_px %} · liq {{ p.liq_px|px }}{% endif %} · uPnL {{ p.upnl|usd }} · {{ p.first_seen_ts|age }} önce görüldü{% if p.closed %} · KAPANDI ({{ p.closed_ts|dt }}){% endif %} · {{ p.address }}">
-  <td class="l"><b>{% if sym_map.get(p.coin) %}<a href="/t/{{ p.symbol }}{{ k }}">{{ p.symbol }}</a>{% else %}{{ p.symbol }}{% endif %}</b>
+  <td class="l"><b>{% if sym_map.get(p.coin) %}<a href="/t/{{ p.symbol }}{{ k }}">{{ p.symbol }}</a>{% elif p.kind == 'crypto' %}<a href="/t/{{ p.coin }}{{ k }}">{{ p.symbol }}</a>{% else %}{{ p.symbol }}{% endif %}</b>
     {% if p.kind == 'crypto' %}<span class="hint">ana dex</span>
     {% elif not sym_map.get(p.coin) %}<span class="hint" title="evrenimizde yok — {{ p.coin }}">{{ p.dex or 'hip-3' }}</span>{% endif %}</td>
   <td class="l">{{ m.addr(p.address, k, 6) }}</td>

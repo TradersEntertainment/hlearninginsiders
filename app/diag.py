@@ -319,6 +319,19 @@ async def _subsystems(cfg) -> list[str]:
         if vs.get("n_missing"):
             out.append(f"       📋 PROPR listesinde OLMAYAN {vs['n_missing']} perp"
                        f" taranmıyor: {', '.join(vs.get('missing', [])[:15])}")
+    cl = await kv_get("cryptoliq_stats") or {}
+    if cl:
+        out.append("  kripto liq: "
+                   + (f"⚠️ {cl['error']}" if cl.get("error") else
+                      f"{cl.get('positions', 0)} poz ≥ eşik ({cl.get('coins', 0)} coin)"
+                      f" · {cl.get('candidates', 0)} aday · {cl.get('alerted', 0)} bildirim"
+                      + (f" · ⚠️ {cl['failed']} gönderilemedi" if cl.get("failed") else "")
+                      + (f" · {cl['dropped_stale']} bayat düştü" if cl.get("dropped_stale") else "")
+                      + (f" · {cl['probe_deferred']} sonda ertelendi" if cl.get("probe_deferred") else "")
+                      + (f" · ⚠️ {cl['skipped']}" if cl.get("skipped") else ""))
+                   + (f" · {_dur(now() - int(cl['ts']))} önce" if cl.get("ts") else ""))
+    else:
+        out.append("  kripto liq: tur HENÜZ ÇALIŞMADI")
     bs = await kv_get("bars_stats") or {}
     if bs:
         out.append(f"  mum arşivi: {bs.get('coins', '?')} sembol"

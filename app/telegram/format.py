@@ -651,6 +651,56 @@ def liq_attack_alert(s: dict, wk: tuple | None = None) -> str:
     return "\n".join(lines)
 
 
+def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
+                     old: list[dict], dist_pct: float, list_max: int = 6) -> str:
+    """Kripto liq yakını — coin başına TEK mesaj, pozisyonlar yakından uzağa.
+
+    `fresh`: bu mesajla ilk kez bildirilenler (`dist`, `mark`, opsiyonel
+    `verified`/`entity`/`ts`); `old`: eşikte ama daha önce bildirilmiş olanlar
+    (yalnız sayı+toplam). Sonda ile doğrulanmamış satır varsa ölçümün yaşı
+    yazılır — süpürme 75-125 dk'da bir uğruyor, yaşını saklamak yanıltır.
+    """
+    sym = esc((coin or "").split(":")[-1])
+    total = sum(p["notional"] for p in fresh)
+    lines = [f"💥 <b>{sym}</b> — likidasyona ≤%{dist_pct:g} · {len(fresh)} pozisyon"
+             f" · <b>{usd(total)}</b>"]
+    for p in fresh[:list_max]:
+        is_long = p.get("side") == "long"
+        lev = f" · {float(p['leverage']):g}x" if p.get("leverage") else ""
+        ent = {"mm": " 🤖MM", "vault": " 🏦VAULT"}.get(p.get("entity") or "", "")
+        lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
+                     f" · liq {px(p['liq_px'])} (%{p['dist']:.1f} {'altta' if is_long else 'üstte'})"
+                     f"{lev} · 👤 {alink(p['address'])}{ent}")
+    if len(fresh) > list_max:
+        rest = fresh[list_max:]
+        lines.append(f"… +{len(rest)} pozisyon daha · {usd(sum(p['notional'] for p in rest))}")
+    sell = sum(p["notional"] for p in fresh if p.get("side") == "long")
+    buy = sum(p["notional"] for p in fresh if p.get("side") == "short")
+    imp = []
+    if sell:
+        imp.append(f"📉 long'lar patlarsa zorunlu <b>SATIŞ</b> ~{usd(sell)}")
+    if buy:
+        imp.append(f"📈 short'lar patlarsa zorunlu <b>ALIŞ</b> ~{usd(buy)}")
+    if imp:
+        lines.append(" · ".join(imp))
+    if old:
+        lines.append(f"ayrıca {len(old)} pozisyon daha eşikte (daha önce bildirildi)"
+                     f" · {usd(sum(p['notional'] for p in old))}")
+    ctx = [f"şimdi {px(mark)}"]
+    unverified = [p for p in fresh if not p.get("verified")]
+    if not unverified:
+        ctx.append("defterler az önce doğrulandı (canlı)")
+    else:
+        oldest = min(int(p.get("ts") or 0) for p in unverified)
+        ctx.append(f"ölçüm {age_str(oldest)} önce (son süpürme; sonda alınamadı)")
+    ctx.append("havuzdaki adresler — HL'nin tamamı değil")
+    lines.append("<i>" + " · ".join(ctx) + "</i>")
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
 def crypto_vol_alert(e: dict) -> str:
     """Kripto hacim patlaması — 24 saatin en yüksek 5 dakikası."""
     sym = (e.get("coin") or "").split(":")[-1]

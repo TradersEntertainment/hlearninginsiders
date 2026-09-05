@@ -13,7 +13,7 @@ import os
 
 from playwright.async_api import async_playwright
 
-PAGES = [("index", "/"), ("coin", "/t/SNDK"),
+PAGES = [("index", "/"), ("coin", "/t/SNDK"), ("crypto", "/t/PUMP"),
          ("whale", "/whale/" + os.environ.get("WHALE", "0x9e1aab3312d00000000000000000000000000001")),
          ("devler", "/devler"), ("gecmis", "/gecmis"), ("ai", "/ai"), ("tani", "/tani"),
          ("saatler", "/saatler"), ("kapali", "/kapali"), ("funding", "/funding"),

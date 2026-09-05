@@ -536,6 +536,15 @@ details.guidetv[open] summary{margin-bottom:2px}
 .tvbox{margin-top:8px;border-radius:12px;overflow:hidden}
 /* mum kutusu: mum yoksa 360px boşluk bırakma (JS yalnız mum-yok dalında ekler) */
 #pxchart.empty{height:auto!important;min-height:0}
+/* Likidasyon barları — mum grafiğinde, fiyat eksenine hizalı: alttaki haritanın
+   izdüşümü (HL'nin grafiğindeki ısı barları). DOM, canvas değil; tıklanmaz. */
+.lqov{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+#pxchart>.tv-lightweight-charts{position:relative;z-index:1}
+.lqbar{position:absolute;box-sizing:border-box;border-radius:3px 0 0 3px;display:flex;
+  align-items:center;padding-left:5px;font-size:10.5px;line-height:1;color:var(--head);
+  font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
+.lqbar.wall{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--head) 45%,transparent)}
+.pxlegend{margin-top:6px}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
     transition-duration:.01ms!important;scroll-behavior:auto!important}
@@ -557,7 +566,7 @@ details.guidetv[open] summary{margin-bottom:2px}
   <h1><a href="/{{ k }}"><img src="/favicon.svg" alt="" class="wig logo"> HL Insider Radar</a></h1>
   <form action="/{{ k }}" method="get">
     {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
-    <input type="text" name="q" placeholder="ticker ara: SNDK">
+    <input type="text" name="q" placeholder="hisse ya da kripto ara: SNDK, PUMP">
     <button type="submit">Ara</button>
   </form>
   {% set cur = request.url.path if request else '' %}
@@ -941,8 +950,17 @@ function pxTheme(){
 }
 
 function pxDestroy(){
+  if(PXCHART && PXCHART.ro){ try{ PXCHART.ro.disconnect(); }catch(e){} }
   if(PXCHART && PXCHART.chart){ try{ PXCHART.chart.remove(); }catch(e){} }
   PXCHART = null;
+}
+
+function fmtUsd(v){
+  v = +v || 0;
+  if(v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+  if(v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+  if(v >= 1e3) return '$' + Math.round(v / 1e3) + 'K';
+  return '$' + Math.round(v);
 }
 
 async function initPriceChart(){
@@ -979,10 +997,15 @@ async function initPriceChart(){
   var chart = LightweightCharts.createChart(box, Object.assign({
     width: box.clientWidth, height: box.clientHeight, autoSize: true
   }, pxTheme()));
+  // Eksen hassasiyeti fiyatın büyüklüğünden: hisse (≥$10) 2 hane; PUMP/kPEPE
+  // gibi kuruş altı coinlerde varsayılan 2 hane her etiketi "0.00" yapıyordu.
+  var ref = +d.mark || d.candles[d.candles.length - 1].c || 1;
+  var prec = Math.min(8, Math.max(2, 2 - Math.floor(Math.log10(ref))));
   var s = chart.addCandlestickSeries({
     upColor: cssv('--chart-long', '#26997b'), downColor: cssv('--chart-short', '#e5484d'),
     wickUpColor: cssv('--chart-long', '#26997b'), wickDownColor: cssv('--chart-short', '#e5484d'),
-    borderVisible: false
+    borderVisible: false,
+    priceFormat: {type: 'price', precision: prec, minMove: Math.pow(10, -prec)}
   });
   s.setData(d.candles.map(function(c){
     return {time: c.t, open: c.o, high: c.h, low: c.l, close: c.c};
@@ -1099,8 +1122,67 @@ async function initPriceChart(){
     box.appendChild(w);
   }
 
+  // --- Likidasyon barları: alttaki haritanın FİYAT EKSENİNE izdüşümü (HL'nin
+  //     grafiğindeki ısı barları gibi). Kovalar haritayla AYNI (chart.json
+  //     liqmap.build'den üretir); blok boyu = o bantta patlayacak toplam $.
+  //     Overlay DOM: pointer-events yok, grafik etkileşimi bozulmaz; ölçek
+  //     değişince (kaydırma/zoom/boyut/tema) yeniden çizilir. ---
+  var ov = null, ro = null, drawLiq = null;
+  if(d.liq_bars && d.liq_bars.length){
+    ov = document.createElement('div');
+    ov.className = 'lqov';
+    ov.setAttribute('aria-hidden', 'true');
+    // Grafik kökünün ÖNÜNE: mumlar, çizgiler ve etiketler barların üstüne çizilir
+    // (arka plan saydam), HL'nin ısı haritası gibi — bar, mumu örtmez.
+    box.insertBefore(ov, box.firstChild);
+    var bars = d.liq_bars, maxT = 0;
+    bars.forEach(function(b){ if(b.total > maxT) maxT = b.total; });
+    var pend = false;
+    drawLiq = function(){
+      pend = false;
+      var axW = 0, tsH = 0;
+      try{ axW = chart.priceScale('right').width() || 0; }catch(e){}
+      try{ tsH = chart.timeScale().height() || 0; }catch(e){}
+      var paneW = box.clientWidth - axW, paneH = box.clientHeight - tsH;
+      ov.textContent = '';
+      if(paneW <= 0 || paneH <= 0 || !maxT) return;
+      var maxW = Math.max(40, paneW * 0.22);
+      var colL = hexa(cssv('--liq-long', '#c47216'), .45),
+          colS = hexa(cssv('--liq-short', '#2b8cbe'), .45);
+      var frag = document.createDocumentFragment();
+      bars.forEach(function(b){
+        var y1 = s.priceToCoordinate(b.px_hi), y2 = s.priceToCoordinate(b.px_lo);
+        if(y1 === null || y2 === null) return;
+        var top = Math.max(0, Math.min(y1, y2)), bot = Math.min(paneH, Math.max(y1, y2));
+        if(bot <= 0 || top >= paneH || bot - top <= 0) return;   // görünür alan dışı
+        var h = Math.max(2, bot - top - 1), w = Math.max(3, maxW * b.total / maxT);
+        var el = document.createElement('div');
+        el.className = 'lqbar' + (b.wall ? ' wall' : '');
+        el.style.cssText = 'top:' + top + 'px;height:' + h + 'px;width:' + w + 'px;right:' +
+                           (axW + 1) + 'px;background:' + (b.side === 'long' ? colL : colS);
+        if(h >= 12 && w >= 34){
+          var sp = document.createElement('span');
+          sp.textContent = fmtUsd(b.total);
+          el.appendChild(sp);
+        }
+        frag.appendChild(el);
+      });
+      ov.appendChild(frag);
+    };
+    var schedule = function(){ if(pend) return; pend = true; requestAnimationFrame(drawLiq); };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(schedule);
+    if(window.ResizeObserver){ ro = new ResizeObserver(schedule); ro.observe(box); }
+    ['wheel', 'pointerup', 'touchend'].forEach(function(ev){
+      box.addEventListener(ev, schedule, {passive: true});
+    });
+    box.addEventListener('pointermove', function(e){ if(e.buttons) schedule(); }, {passive: true});
+    requestAnimationFrame(function(){ requestAnimationFrame(drawLiq); });
+    var lg = box.parentNode.querySelector('.pxlegend');
+    if(lg) lg.hidden = false;
+  }
+
   chart.timeScale().fitContent();
-  PXCHART = {chart: chart, series: s, box: box};
+  PXCHART = {chart: chart, series: s, box: box, ov: ov, ro: ro, redraw: drawLiq};
 }
 
 function pxRetheme(){
@@ -1110,6 +1192,7 @@ function pxRetheme(){
       upColor: cssv('--chart-long', '#26997b'), downColor: cssv('--chart-short', '#e5484d'),
       wickUpColor: cssv('--chart-long', '#26997b'), wickDownColor: cssv('--chart-short', '#e5484d')
     });
+    if(PXCHART.redraw) PXCHART.redraw();   // bar renkleri temadan okunur
   }
 }
 

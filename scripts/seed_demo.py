@@ -3,7 +3,8 @@
     DB_PATH=/tmp/demo.db python scripts/seed_demo.py
     DB_PATH=/tmp/demo.db python -m uvicorn app.main:app --port 8093
 
-Ne ekler: 4 hisse (SNDK, MU, WDC, NVDA) · SNDK'da 40 likidasyonlu pozisyon
+Ne ekler: 4 hisse (SNDK, MU, WDC, NVDA) + ana dex kripto (PUMP/SOL/BTC/kPEPE/HYPE
+addr_positions, ana dex özeti kv'si, PUMP mum/saat önbelleği) · SNDK'da 40 likidasyonlu pozisyon
 (duvar, uzak, liq'siz) · NVDA'da skorlu şüpheli pozisyonlar · yaklaşan ve
 değerlendirilmiş bilançolar · defter duvarı, takip, liq_watch (kripto) ·
 liq attack adayları + geçmiş saldırılar · kapalı seans alarm kayıtları ·
@@ -26,18 +27,25 @@ from app.radar import hourstats as hs          # noqa: E402
 
 MARK = {"xyz:SNDK": 149.28, "xyz:MU": 118.40, "xyz:WDC": 92.15, "xyz:NVDA": 176.30}
 SYM = {c: c.split(":")[1] for c in MARK}
+# Ana dex kripto: tickers'a GİRMEZ (hisse hattı), yalnız addr_positions + kv özeti.
+CRYPTO_MARK = {"PUMP": 0.00318, "SOL": 168.40, "BTC": 108_900.0, "kPEPE": 0.0098, "HYPE": 41.2,
+               "ETH": 3_940.0, "XRP": 2.41, "DOGE": 0.184, "SUI": 3.12, "FARTCOIN": 0.92,
+               "WLD": 1.31, "ENA": 0.58, "AAVE": 262.0, "LINK": 21.4, "TAO": 412.0, "ZEC": 63.5}
+CRYPTO_VOL = {"BTC": 4.1e9, "ETH": 2.6e9, "SOL": 9.8e8, "HYPE": 7.4e8, "XRP": 4.1e8, "PUMP": 3.3e8,
+              "DOGE": 2.2e8, "SUI": 1.4e8, "kPEPE": 1.2e8, "FARTCOIN": 9.5e7, "ENA": 7.7e7,
+              "WLD": 6.1e7, "AAVE": 5.8e7, "LINK": 5.2e7, "TAO": 4.4e7, "ZEC": 3.9e7}
 
 
 def addr(r):
     return "0x" + f"{r.getrandbits(160):040x}"
 
 
-def candles(r, coin, days=70):
+def candles(r, coin, days=70, mark=None):
     """Sentetik 1 saatlik mumlar: ABD açık saatlerde hafif pozitif, 14-15 ET
     güçlü, 03-04 ET zayıf; kapalı seansta gürültü. compute_stats gerçek."""
     out = []
     t0 = dbm.now() - days * 86400
-    px = MARK[coin] * 0.85
+    px = (mark or MARK[coin]) * 0.85
     for i in range(days * 24):
         t = t0 + i * 3600
         et = datetime.fromtimestamp(t, hs.ET).hour
@@ -205,6 +213,41 @@ async def main():
             "liq_usd,n_liq,predicted_score,weekend_ts,found_ts) VALUES('xyz:WDC',?,?,?,'up',90.20,92.05,"
             "2.05,1450000,2,NULL,?,?)", (past + 30 * 3600, past + 30 * 3600 + 300, past + 30 * 3600 + 2100, past, now))
 
+        # ---- ana dex kripto: addr_positions (her boyut, dex='') + fill'ler ----
+        # PUMP: kripto liq radarının kapısını geçen 2 pozisyon (A $1.2M long %1.8,
+        # B $700K short %2.3), kapı altı/dışı satırlar (küçük, uzak) ve BTC'de
+        # yakın ama HARİÇ dev — sayfa hepsini gösterir, alarm yalnız ikisini.
+        await c.execute("DELETE FROM addr_positions")
+        crypto_rows = [("PUMP", "long", 1_200_000, 1.8, 10, "vault"), ("PUMP", "short", 700_000, 2.3, 20, None),
+                       ("PUMP", "long", 900_000, 1.0, 25, None), ("PUMP", "long", 320_000, 0.7, 40, None),
+                       ("PUMP", "short", 2_100_000, 6.0, 5, None), ("PUMP", "long", 4_000_000, 14.0, 3, None),
+                       ("PUMP", "short", 150_000, 3.4, 10, None), ("PUMP", "long", 260_000, 22.0, 2, None),
+                       ("SOL", "long", 800_000, 9.0, 5, None), ("BTC", "long", 5_000_000, 1.2, 20, None),
+                       ("kPEPE", "short", 600_000, 1.5, 10, None), ("HYPE", "long", 1_400_000, 4.2, 5, None)]
+        pump_addrs = []
+        for coin, side, ntl, dist, lev, entity in crypto_rows:
+            a = addr(r)
+            if coin == "PUMP":
+                pump_addrs.append(a)
+            m = CRYPTO_MARK[coin]
+            liq = m * (1 - dist / 100) if side == "long" else m * (1 + dist / 100)
+            entry = m * r.uniform(0.94, 1.06)
+            await c.execute(
+                "INSERT INTO addr_positions(coin,address,dex,side,szi,entry_px,leverage,liq_px,upnl,"
+                "notional,ts,closed_ts) VALUES(?,?,'',?,?,?,?,?,?,?,?,NULL)",
+                (coin, a, side, ntl / m * (1 if side == "long" else -1), entry, lev, liq,
+                 (m - entry) * ntl / entry * (1 if side == "long" else -1), ntl, now - r.randint(300, 5400)))
+            if entity:
+                await c.execute("INSERT OR REPLACE INTO addresses(address,first_seen,entity,label,"
+                                "account_value,account_ts) VALUES(?,?,?,?,?,?)",
+                                (a, now - 300 * 86400, entity, "hlp?", 48e6, now - 1200))
+        for i in range(6):
+            await c.execute(
+                "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,notional,ts,taker)"
+                " VALUES('PUMP',?,?,?,?,?,?,?,?)",
+                (f"p{i}", pump_addrs[i % 3], r.choice(["buy", "sell"]), CRYPTO_MARK["PUMP"] * r.uniform(0.98, 1.02),
+                 r.uniform(2e7, 9e7), r.uniform(60_000, 400_000), now - r.randint(300, 30 * 3600), r.choice([0, 1])))
+
         # ---- kapalı seans: çıpa fiyatları + alarm kayıtları ----
         anc = hs.last_close_ts(now, 0)
         for coin, dev in (("xyz:SNDK", 2.05), ("xyz:MU", 1.98), ("xyz:NVDA", 0.21)):
@@ -215,9 +258,10 @@ async def main():
                           ("fail:offhours", f"dev:xyz:MU:{anc}:+3")):
             await c.execute("INSERT INTO alerts_log(kind,key,ts,payload) VALUES(?,?,?,'')", (kind, key, now - 600))
 
-    # ---- kv: saat istatistikleri (gerçek compute_stats), künyeler ----
-    for coin in ("xyz:SNDK", "xyz:NVDA", "xyz:MU", "xyz:WDC"):
-        rec = hs.compute_stats(candles(r, coin))
+    # ---- kv: saat istatistikleri (gerçek compute_stats), mumlar, künyeler ----
+    for coin in ("xyz:SNDK", "xyz:NVDA", "xyz:MU", "xyz:WDC", "PUMP"):
+        cs = candles(r, coin, mark=CRYPTO_MARK.get(coin))
+        rec = hs.compute_stats(cs)
         assert rec, "compute_stats None döndü"
         rec["ts"] = now
         if coin == "xyz:WDC":
@@ -226,6 +270,25 @@ async def main():
             for key in ("n_open", "n_closed", "open_up", "open_dn", "closed_up", "closed_dn", "v"):
                 rec.pop(key, None)
         await dbm.kv_set(f"hstats:{coin}", rec)
+        if coin in ("xyz:SNDK", "PUMP"):
+            # Mum önbelleği (pricechart): grafik + liq barları demoda görünsün.
+            # Son mumun kapanışı 'mark'a çekilir ki liq seviyeleri eksene otursun.
+            last30 = cs[-720:]
+            m = CRYPTO_MARK.get(coin) or MARK[coin]
+            k = m / last30[-1]["c"]
+            await dbm.kv_set(f"pxc:{coin}", {"candles": [{"t": x["t"], "o": x["o"] * k, "h": x["h"] * k,
+                                                          "l": x["l"] * k, "c": x["c"] * k} for x in last30],
+                                             "ts": now, "interval": "1h"})
+    # Ana dex özeti (metrik döngüsünün yazdığı) + hacim haritası: kripto sayfası,
+    # arama ve 🪙 etiketler buradan; PUMP'ın fiyatı kv'den gelir (mark_src=ctx).
+    await dbm.kv_set("main_dex_ctx", {"c": {c: {"m": m, "oi": CRYPTO_VOL[c] / m / 24, "f": r.choice([0.0001, -0.00003, 0.0004]),
+                                                "v": CRYPTO_VOL[c], "p": m * r.uniform(0.93, 1.05)}
+                                            for c, m in CRYPTO_MARK.items()}, "ts": now - 90})
+    await dbm.kv_set("main_dex_volumes", {"vols": CRYPTO_VOL, "ts": now - 600})
+    await dbm.kv_set("cryptoliq_stats", {"coins": 4, "positions": 9, "candidates": 3, "fresh": 0, "probed": 2,
+                                         "probe_deferred": 0, "probe_err": 0, "dropped_stale": 0, "alerted": 1,
+                                         "failed": 0, "skipped": "", "chat": True, "ctx_age": 90,
+                                         "top": [{"coin": "PUMP", "n": 2, "total": 1_900_000}], "ts": now - 60})
     await dbm.kv_set("fills_count", 8)
     await dbm.kv_set("specialists_cache", [
         {"address": sndk_addrs[1], "coin": "xyz:SNDK", "symbol": "SNDK", "n": 14, "vol": 6.2e6,

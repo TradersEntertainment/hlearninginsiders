@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from ..config import EDITABLE_FIELDS, convert_value, display_value
 from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import annotate, upcoming_events
-from ..hl.universe import find_ticker, get_universe
+from ..hl.universe import MAIN_CTX_KV, crypto_names, find_ticker, get_universe, resolve_coin
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol, liqattack, liqmap,
@@ -499,12 +499,23 @@ async def index(request: Request):
         r["propr"] = propr_listed(r["symbol"])
     session_rows = session_rows[:20]
 
+    # 🪙 Ana dex kripto etiketleri: hacimce ilk 40 (yalnız kv, ağ yok); tümü
+    # aranabilir. Ana dex özeti (metrik döngüsü, 5 dk) taze ve tam; yoksa hacim
+    # radarının saatlik haritası.
+    ctx_c = (await kv_get(MAIN_CTX_KV) or {}).get("c") or {}
+    vols = ({c: float(v.get("v") or 0) for c, v in ctx_c.items()}
+            or {c: float(v or 0) for c, v in
+                ((await kv_get("main_dex_volumes") or {}).get("vols") or {}).items()})
+    crypto_tags = [{"symbol": c, "propr": propr_listed(c)}
+                   for c, _v in sorted(vols.items(), key=lambda kv: -kv[1])[:40]]
+
     collector = getattr(request.app.state, "collector", None)
     health_state = await kv_get("health_state") or {}
     health_state = {n: st for n, st in health_state.items()
                     if not (st or {}).get("pending")}
     return _render(request, "index.html", {
         "universe": universe, "events": events, "strip_days": strip_days, "ecards": ecards,
+        "crypto_tags": crypto_tags, "crypto_n": len(vols),
         "winners": winners, "archive": archive,
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "liq_map": liq_map, "liqmin": liqmin, "liq_walls": liq_walls,
@@ -583,35 +594,90 @@ def _index_kpis(events: list[dict], liq_map: list[dict], suspicious: list[dict],
     return out
 
 
+async def _coin_data(coin: str, kind: str, cfg) -> tuple[list[dict], dict, str]:
+    """Sayfa ve chart.json'un ORTAK verisi: pozisyon satırları + fiyat özeti.
+
+    kind='equity' → positions_current (tarama hattı, skorlu);
+    kind='crypto' → addr_positions (süpürmeden, HER boyut, skor yok — kripto
+    `tickers`'a girmez, tarama/skor hattı hisseye ait).
+    Grafik ve sayfa aynı satır ve fiyatla konuşsun diye tek yer. Dönüş
+    (rows, summ, mark_src) — mark_src: 'metrics' | 'ctx' | 'candle' | ''.
+    `summ` HER dalda metrics.summary'nin altı anahtarını taşır (şablon
+    `summ.oi_change_pct is not none` → format yapıyor; Undefined patlatır).
+    """
+    if kind != "crypto":
+        async with db() as conn:
+            cur = await conn.execute(
+                """SELECT p.*, a.account_value, a.account_ts
+                   FROM positions_current p
+                   LEFT JOIN addresses a ON a.address = p.address
+                   WHERE p.coin=? ORDER BY p.notional DESC LIMIT 100""",
+                (coin,))
+            rows = [dict(r) for r in await cur.fetchall()]
+        summ = await metrics.summary(coin)
+        return rows, summ, "metrics" if summ.get("mark") else ""
+    async with db() as conn:
+        cur = await conn.execute(
+            """SELECT a.coin, a.address, a.side, a.szi, a.entry_px, a.leverage, a.liq_px,
+                      COALESCE(a.upnl, 0) AS upnl, a.notional, a.ts,
+                      NULL AS opened_ts, NULL AS first_seen_ts, NULL AS last_add_ts,
+                      NULL AS last_trim_ts, NULL AS score, '[]' AS score_reasons,
+                      ad.account_value, ad.account_ts, ad.entity
+               FROM addr_positions a LEFT JOIN addresses ad ON ad.address = a.address
+               WHERE a.coin=? AND a.closed_ts IS NULL AND a.notional > 0
+               ORDER BY a.notional DESC LIMIT 100""", (coin,))
+        rows = [dict(r) for r in await cur.fetchall()]
+    # Fiyat: en TAZE kaynak kazanır — asset_metrics (PROPR coinleri, 24s kıyaslı)
+    # ya da ana dex özeti kv'si (tüm coinler, metrik döngüsü yazar); ikisi de
+    # yoksa son mumun kapanışı (sayfa bunu söyler).
+    summ = await metrics.summary(coin)
+    m_rec = await metrics.latest_metric(coin) if summ.get("mark") else None
+    m_ts = int(m_rec["ts"] or 0) if m_rec else 0
+    rec = await kv_get(MAIN_CTX_KV) or {}
+    c = (rec.get("c") or {}).get(coin) or {}
+    k_ts = int(rec.get("ts") or 0) if c.get("m") else 0
+    if m_ts and m_ts >= k_ts:
+        return rows, summ, "metrics"
+    if k_ts:
+        prev = c.get("p")
+        return rows, {"mark": c["m"], "oi_ntl": (c.get("oi") or 0) * c["m"],
+                      "funding": c.get("f"), "day_volume": c.get("v"),
+                      "oi_change_pct": None,
+                      "px_change_pct": (c["m"] - prev) / prev * 100 if prev else None}, "ctx"
+    empty = {"mark": None, "oi_ntl": None, "funding": None, "day_volume": None,
+             "oi_change_pct": None, "px_change_pct": None}
+    cands = ((await pricechart.get(coin)) or {}).get("candles") or []
+    if cands:
+        return rows, {**empty, "mark": cands[-1]["c"]}, "candle"
+    return rows, empty, ""
+
+
 @router.get("/t/{symbol}")
 async def coin_page(request: Request, symbol: str):
     _guard(request)
-    t = await find_ticker(symbol)
+    t = await resolve_coin(symbol)
     if not t:
-        return _render(request, "coin.html", {"ticker": None, "symbol": symbol.upper()})
-    coin = t["coin"]
-    summ = await metrics.summary(coin)
+        return _render(request, "coin.html", {"ticker": None, "symbol": symbol.upper(),
+                                              "crypto_n": len(await crypto_names())})
+    coin, kind = t["coin"], t.get("kind", "equity")
+    cfg = request.app.state.cfg
+    rows, summ, mark_src = await _coin_data(coin, kind, cfg)
     mark = summ.get("mark")
+    ev, bwalls = None, []
     async with db() as conn:
-        cur = await conn.execute(
-            """SELECT p.*, a.account_value, a.account_ts
-               FROM positions_current p
-               LEFT JOIN addresses a ON a.address = p.address
-               WHERE p.coin=? ORDER BY p.notional DESC LIMIT 100""",
-            (coin,))
-        rows = [dict(r) for r in await cur.fetchall()]
         cur = await conn.execute(
             "SELECT * FROM fills WHERE coin=? ORDER BY ts DESC LIMIT 15", (coin,))
         fills = [dict(r) for r in await cur.fetchall()]
-        cur = await conn.execute(
-            "SELECT * FROM earnings_events WHERE coin=? AND date_et>=date('now','-1 day')"
-            " ORDER BY date_et LIMIT 1", (coin,))
-        ev = await cur.fetchone()
-        ev = annotate([dict(ev)])[0] if ev else None
-        cur = await conn.execute(
-            "SELECT * FROM book_walls WHERE coin=? AND active=1 AND last_ts>=?"
-            " ORDER BY notional DESC", (coin, now() - 900))
-        bwalls = [dict(r) for r in await cur.fetchall()]
+        if kind != "crypto":
+            cur = await conn.execute(
+                "SELECT * FROM earnings_events WHERE coin=? AND date_et>=date('now','-1 day')"
+                " ORDER BY date_et LIMIT 1", (coin,))
+            ev = await cur.fetchone()
+            ev = annotate([dict(ev)])[0] if ev else None
+            cur = await conn.execute(
+                "SELECT * FROM book_walls WHERE coin=? AND active=1 AND last_ts>=?"
+                " ORDER BY notional DESC", (coin, now() - 900))
+            bwalls = [dict(r) for r in await cur.fetchall()]
 
     for p in rows:
         p["reasons"] = ", ".join(json.loads(p.get("score_reasons") or "[]"))
@@ -619,7 +685,6 @@ async def coin_page(request: Request, symbol: str):
             p["liq_dist"] = abs(mark - p["liq_px"]) / mark * 100
         else:
             p["liq_dist"] = None
-    cfg = request.app.state.cfg
     liq_rows = sorted(
         [p for p in rows
          if p["liq_dist"] is not None and p["liq_dist"] <= cfg.max_liq_distance_pct],
@@ -627,32 +692,41 @@ async def coin_page(request: Request, symbol: str):
     lo = sum(p["notional"] for p in rows if p["side"] == "long")
     sh = sum(p["notional"] for p in rows if p["side"] == "short")
 
-    async with db() as conn:
-        cur = await conn.execute("SELECT ts FROM scans WHERE coin=?", (coin,))
-        srow = await cur.fetchone()
-    scanned_ts = srow["ts"] if srow else None
-
-    # Bayatsa arka planda otomatik tara — kullanıcı butona basmak zorunda kalmasın
-    scanning = autoscan.is_scanning(coin)
-    stale = scanned_ts is None or (now() - scanned_ts) > cfg.scan_stale_min * 60
-    if stale and not scanning:
-        from ..radar.report import coin_dex
-        # notifier geç (bot DEĞİL): _alert_new_big notifier.send(kind, priority=,
-        # key=) çağırır; bot geçilince TypeError yutulup sayfa-tetikli 'yeni büyük
-        # poz' alarmı hiç gitmiyordu (arka plan autoscan doğru notifier alıyor).
-        autoscan.kick(cfg, request.app.state.client, coin, coin_dex(coin),
-                      request.app.state.notifier)
-        scanning = True
+    scanned_ts, scanning = None, False
+    if kind != "crypto":
+        async with db() as conn:
+            cur = await conn.execute("SELECT ts FROM scans WHERE coin=?", (coin,))
+            srow = await cur.fetchone()
+        scanned_ts = srow["ts"] if srow else None
+        # Bayatsa arka planda otomatik tara — kullanıcı butona basmak zorunda kalmasın
+        scanning = autoscan.is_scanning(coin)
+        stale = scanned_ts is None or (now() - scanned_ts) > cfg.scan_stale_min * 60
+        if stale and not scanning:
+            from ..radar.report import coin_dex
+            # notifier geç (bot DEĞİL): _alert_new_big notifier.send(kind, priority=,
+            # key=) çağırır; bot geçilince TypeError yutulup sayfa-tetikli 'yeni büyük
+            # poz' alarmı hiç gitmiyordu (arka plan autoscan doğru notifier alıyor).
+            autoscan.kick(cfg, request.app.state.client, coin, coin_dex(coin),
+                          request.app.state.notifier)
+            scanning = True
+    else:
+        # Kripto: tarama hattı YOK (autoscan/scans hisseye ait; kick edilse her
+        # açılışta yeniden koşar ve 10 sn'lik yenileme döngüsüne girerdi).
+        # Satırlar süpürmeden; "son ölçüm" = en taze satırın damgası.
+        scanned_ts = max((int(p.get("ts") or 0) for p in rows), default=0) or None
 
     # Saat istatistiği: hazırsa göster, yoksa arka planda hazırlat. Eski şemalı
     # kayıt (HSTATS_V altı) da ÇİZİLİR ama yenilenmesi tetiklenir — rotasyonun
-    # sırası gelmesini beklemez.
+    # sırası gelmesini beklemez. Kripto kaydını refresh_loop gezmez (yalnız
+    # tickers) → bayatlayınca da buradan tetiklenir.
     hst = await kv_get(f"hstats:{coin}")
     hstats_pending = False
     if not hst or (hst.get("empty") and now() - int(hst.get("ts") or 0) > 86400):
         hourstats.kick(cfg, request.app.state.client, coin)
         hstats_pending = hst is None
     elif int(hst.get("v") or 0) < hourstats.HSTATS_V:
+        hourstats.kick(cfg, request.app.state.client, coin)
+    elif kind == "crypto" and now() - int(hst.get("ts") or 0) > hourstats.STALE_SEC:
         hourstats.kick(cfg, request.app.state.client, coin)
     # Grafik kurucuları: biri veriye takılırsa SAYFA düşmez, o panel hatayı
     # yazar (dürüstlük: hata gizlenmez, ama tek panel yüzünden 500 de yok).
@@ -679,20 +753,21 @@ async def coin_page(request: Request, symbol: str):
         "hmeta": hmeta, "hchart": hchart, "panel_err": panel_err,
         "hstats_pending": hstats_pending, "now_verdict": now_verdict,
         "ticker": t, "symbol": t["symbol"], "coin": coin, "summ": summ,
+        "kind": kind, "mark_src": mark_src,
         "rows": rows[:50], "liq_rows": liq_rows, "fills": fills, "event": ev,
         "long_total": lo, "short_total": sh, "scanned_ts": scanned_ts,
         "scanning": scanning, "max_liq": cfg.max_liq_distance_pct,
-        "tg": request.query_params.get("tg"),
+        "tg": request.query_params.get("tg"), "tz": request.query_params.get("tz"),
         "has_bot": request.app.state.bot is not None,
         # Entry haritası: giriş fiyatı şimdiye göre nerede (saf modül).
-        "entry": _safe(panel_err, "entry", liqmap.build_entry, rows, summ.get("mark")),
+        "entry": _safe(panel_err, "entry", liqmap.build_entry, rows, mark),
         "hs_min_n": hourstats.MIN_N,
         # Likidasyon haritası: kovalı, saf modül (bkz. radar/liqmap.py).
-        "liq": _safe(panel_err, "liq", liqmap.build, rows, summ.get("mark"),
-                     cfg.max_liq_distance_pct),
+        "liq": _safe(panel_err, "liq", liqmap.build, rows, mark, cfg.max_liq_distance_pct),
         "bwalls": bwalls,
         "pxchart": pxchart,
-        "tv_sym": tv_symbol(t["symbol"]) if cfg.show_tradingview else None,
+        "tv_sym": (tv_symbol(t["symbol"]) if cfg.show_tradingview and kind != "crypto"
+                   else None),
         "propr": propr_listed(t["symbol"]),
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
@@ -702,14 +777,16 @@ async def coin_page(request: Request, symbol: str):
 @router.get("/t/{symbol}/chart.json")
 async def coin_chart_json(request: Request, symbol: str):
     """Mum grafiği verisi. Sayfa HTML'ine 720 mum gömmek ilk yüklemeyi
-    şişirirdi — grafik kendi verisini ayrı çeker."""
+    şişirirdi — grafik kendi verisini ayrı çeker. Satırlar ve fiyat sayfayla
+    AYNI kaynaktan (`_coin_data`): grafikteki liq barları alttaki haritanın
+    birebir izdüşümü."""
     _guard(request)
-    t = await find_ticker(symbol)
+    t = await resolve_coin(symbol)
     if not t:
         raise HTTPException(404, "coin yok")
     cfg = request.app.state.cfg
-    coin = t["coin"]
-    summ = await metrics.summary(coin)
+    coin, kind = t["coin"], t.get("kind", "equity")
+    rows, summ, _src = await _coin_data(coin, kind, cfg)
     mark = summ.get("mark")
 
     rec = await pricechart.get(coin)
@@ -720,25 +797,23 @@ async def coin_chart_json(request: Request, symbol: str):
     candles = (rec or {}).get("candles") or []
     if not candles:
         return JSONResponse({"pending": not (rec or {}).get("error"),
-                             "candles": [], "walls": [], "entries": [],
-                             "hours": [], "earnings": None, "mark": mark})
+                             "candles": [], "walls": [], "entries": [], "liq_bars": [],
+                             "hours": [], "earnings": None, "mark": mark, "kind": kind})
 
-    async with db() as conn:
-        cur = await conn.execute(
-            "SELECT * FROM positions_current WHERE coin=? ORDER BY notional DESC LIMIT 100",
-            (coin,))
-        rows = [dict(r) for r in await cur.fetchall()]
-        # Grafiğin kapsadığı aralıktaki AÇIKLANMIŞ bilançolar → mum üstü işareti
-        first_day = datetime.fromtimestamp(candles[0]["t"], hourstats.ET).strftime("%Y-%m-%d")
-        cur = await conn.execute(
-            "SELECT date_et, hour_hint, exact_ts FROM earnings_events"
-            " WHERE coin=? AND evaluated=1 AND date_et>=? ORDER BY date_et",
-            (coin, first_day))
-        past = [dict(r) for r in await cur.fetchall()]
-        cur = await conn.execute(
-            "SELECT * FROM earnings_events WHERE coin=? AND date_et>=date('now','-1 day')"
-            " ORDER BY date_et LIMIT 1", (coin,))
-        nxt = await cur.fetchone()
+    past, nxt = [], None
+    if kind != "crypto":
+        async with db() as conn:
+            # Grafiğin kapsadığı aralıktaki AÇIKLANMIŞ bilançolar → mum üstü işareti
+            first_day = datetime.fromtimestamp(candles[0]["t"], hourstats.ET).strftime("%Y-%m-%d")
+            cur = await conn.execute(
+                "SELECT date_et, hour_hint, exact_ts FROM earnings_events"
+                " WHERE coin=? AND evaluated=1 AND date_et>=? ORDER BY date_et",
+                (coin, first_day))
+            past = [dict(r) for r in await cur.fetchall()]
+            cur = await conn.execute(
+                "SELECT * FROM earnings_events WHERE coin=? AND date_et>=date('now','-1 day')"
+                " ORDER BY date_et LIMIT 1", (coin,))
+            nxt = await cur.fetchone()
 
     from ..earnings.calendar import event_ts_estimate
     past_ts = [ts for ts in (event_ts_estimate(e) for e in past) if ts]
@@ -752,6 +827,9 @@ async def coin_chart_json(request: Request, symbol: str):
             v, _b = hourstats.verdict(hst, h)
             hours.append({"et": h, "v": v})
 
+    # Likidasyon barları: sayfadaki haritayla aynı kovalar (liqmap.build).
+    liq = _safe({}, "liq", liqmap.build, rows, mark, cfg.max_liq_distance_pct)
+
     # HL'ye ulaşılamadığında eski mumlar korunuyor (pricechart._keep_or_mark).
     # Bunu SÖYLEMEZSEK kullanıcı bayat grafiği taze sanır — son mumun yaşını geç.
     last_ts = candles[-1]["t"] if candles else 0
@@ -759,17 +837,51 @@ async def coin_chart_json(request: Request, symbol: str):
         "pending": False,
         "candles": candles,
         "mark": mark,
+        "kind": kind,
         "stale": bool((rec or {}).get("stale")),
         "last_ts": last_ts,
         "age_min": max(0, (now() - last_ts) // 60) if last_ts else None,
         "walls": _levels(rows, mark, "liq_px"),
         "entries": _levels(rows, mark, "entry_px"),
+        "liq_bars": liqmap.chart_bars(liq),
         "hours": hours,
         "earnings": ({"tsi": ev["tsi"], "et": ev.get("et"), "icon": ev["icon"],
                       "when": ev["when_txt"], "countdown": ev["countdown"],
                       "passed": ev["passed"], "ts": ev["report_ts"]} if ev else None),
         "past_earnings": past_ts,
     })
+
+
+@router.post("/t/{symbol}/tazele")
+async def coin_refresh_books(request: Request, symbol: str):
+    """Kripto coin: pozisyon sahiplerinin defterini ŞİMDİ çek.
+
+    Tarama hattı (autoscan/scan) hisseye ait; kripto satırları süpürmeden
+    geliyor ve tur 75-125 dk. `forensics.refresh_profiles` yeniden kullanılır
+    (probe_address, tavanlı: en büyük 15 adres); coin başına 60 sn kilit."""
+    key = _guard(request)
+    t = await resolve_coin(symbol)
+    if not t or t.get("kind") != "crypto":
+        raise HTTPException(404, "kripto coin yok")
+    cfg, client, coin = request.app.state.cfg, request.app.state.client, t["coin"]
+    lock = await kv_get(f"cryptoref:{coin}") or {}
+    res = "skip"
+    if client is None:
+        res = "err"
+    elif now() - int(lock.get("ts") or 0) >= 60:
+        await kv_set(f"cryptoref:{coin}", {"ts": now()})
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT address FROM addr_positions WHERE coin=? AND closed_ts IS NULL"
+                " ORDER BY notional DESC LIMIT 15", (coin,))
+            addrs = [r["address"] for r in await cur.fetchall()]
+        if not addrs:
+            res = "none"
+        else:
+            out = await forensics.refresh_profiles(cfg, client, coin, addrs)
+            res = "ok" if out.get("ok") else "err"
+    q = f"?key={key}&tz={res}" if key else f"?tz={res}"
+    return RedirectResponse(f"/t/{t['symbol']}{q}", status_code=303)
 
 
 @router.post("/t/{symbol}/send")

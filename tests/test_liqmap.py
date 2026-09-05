@@ -218,6 +218,21 @@ def test_scale():
     print("✅ ölçek) en büyük kova %100, hiçbiri %2'nin altında değil")
 
 
+# ------------------------------------------ 12) grafik barları (harita ile aynı kova)
+def test_chart_bars():
+    out = lm.build(fixture(), MARK, 50)
+    bars = lm.chart_bars(out)
+    full = [s for s in out["up"] + out["down"] if not s["empty"] and not s["collapsed"]]
+    assert len(bars) == len(full) and all(b["total"] > 0 for b in bars)
+    assert all(b["px_lo"] < b["px_hi"] for b in bars), "fiyat aralığı düzgün sıralı"
+    assert all(b["px_lo"] >= MARK for b in bars if b["side"] == "short")
+    assert all(b["px_hi"] <= MARK for b in bars if b["side"] == "long")
+    assert abs(sum(b["total"] for b in bars) - sum(s["total"] for s in full)) < 1e-6
+    assert any(b["wall"] for b in bars) == any(s["wall"] for s in full)
+    assert lm.chart_bars(None) == [] and lm.chart_bars({}) == []
+    print("✅ grafik barı) harita kovalarıyla birebir: boş/katlanmış yok, aralık yönlü")
+
+
 test_conservation()
 test_sides_edges()
 test_cascade_exact()
@@ -229,4 +244,5 @@ test_edges()
 test_far_counted()
 test_tip_table()
 test_scale()
+test_chart_bars()
 print("\n✅ LİKİDASYON HARİTASI TESTLERİ GEÇTİ")

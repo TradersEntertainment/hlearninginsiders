@@ -128,6 +128,9 @@ bildirim eşiği ayrı**:
 | 📈 Hisseler | PROPR ∩ **xyz dex** | `CRYPTO_STOCKS_ID` | $10K | **$100K** |
 | 🚀 Kripto | PROPR ∩ **ana dex** | `CRYPTO_CHAT_ID` | $50K | **$250K** |
 
+`CRYPTO_CHAT_ID` aynı zamanda **kripto liq yakını** bildiriminin kanalıdır
+(aşağıda) — Railway'de tanımlı değilse iki kripto bildirimi de gitmez.
+
 Hisse eşiği düşük çünkü hisse perp'leri çok daha ince: SHEIN'in 24 saatlik
 **toplam** hacmi $4.2M'ken patlama mumu ~$150K'ydı. Dördü de Ayarlar'dan ayrı
 değiştirilir (*Hisse hacim* / *Kripto hacim*).
@@ -298,6 +301,60 @@ hover + klavye alır, `iguide`/`data-scale` bağımlılığı kalmaz. Renk çift
 mesafenin (`max_liq_distance_pct`, vars. %50) dışına düşenler eskiden sessizce
 yok oluyordu; artık sayılıp künyede yazılıyor. Likidasyon fiyatları son süpürme
 anına ait; teminat değişince kayar — künye bunu da söyler.
+
+### Grafikte likidasyon barları
+
+Mum grafiğinin sağında, fiyat eksenine hizalı yatay bloklar: **likidasyon
+haritasının fiyat eksenine izdüşümü** (Hyperliquid'in kendi grafiğindeki ısı
+barlarının bizim verimizle çizilmiş hâli). Blok uzunluğu o fiyat bandında
+patlayacak toplam $; alttakiler long (fiyat düşerse), üsttekiler short (fiyat
+çıkarsa); çerçeveli blok haritadaki 🧲 duvar. Kovalar `chart.json`'da aynı
+`liqmap.build` çıktısından üretilir — grafik ve alttaki harita **tek kaynaktan**
+konuşur, biri diğerinden farklı bir şey söyleyemez. Bloklar tıklanmaz (canvas
+üstünde tıklamasız DOM katmanı); adresler ve kümülatif toplamlar haritada.
+Kaydırma/zoom/tema değişince yeniden çizilir; görünür alanın dışındaki bant
+kırpılır, sayısı haritada zaten var.
+
+## Kripto liq yakını: kripto kanalı
+
+Kullanıcı kuralı: **BTC/ETH hariç** ana dex kriptoda **notional ≥ $500K** bir
+pozisyonun likidasyon fiyatı şimdiye **≤ %2,5** yaklaşınca `CRYPTO_CHAT_ID`
+kanalına mesaj (hacim patlamasıyla aynı kanal; kanal boşsa hiçbir yere gitmez,
+ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
+
+- **Kaynak** `addr_positions`: derin keşif her adresin tüm pozisyonlarını her
+  boyutta yazar (rekor arşivi `hl_positions` yalnız ≥$20M kripto tutar, $500K
+  için kördür). Kapsam havuz kadardır — HL'nin tamamı değil; mesaj bunu yazar.
+- **Canlılık sondası.** Süpürme turu 75–125 dk; bir saat önce kapanmış
+  pozisyon için "patlamak üzere" demek yalan olur. Mesajdan önce adayın defteri
+  canlı çekilir (`probe_address`, tur başına en çok 12 adres); kapanmış ya da
+  uzaklaşmış aday düşer, mesaj "defterler az önce doğrulandı" yazar. Sonda
+  alınamazsa ölçümün yaşı yazılır.
+- **Coin başına tek mesaj.** Bir çöküşte 30 pozisyon aynı anda eşiğe girer; 30
+  ayrı mesaj spam'dir. Bekleme **pozisyon** başına (vars. 4 saat): aynı
+  pozisyon yeniden yazılmaz, aynı coinde **yeni** bir pozisyon eşiğe girerse
+  mesaj gider ve eskiler "daha önce bildirildi" diye toplamla anılır.
+- Marker yalnız gönderim başarılıysa; kanal/bot/tip kapalıysa hesap yine
+  yapılır ama sonda atılmaz — `/tani` "kripto liq" satırı nedenini söyler.
+- Fiyat `main_dex_ctx` kv'sinden: metrik döngüsü zaten çektiği ana dex
+  yanıtından yazar (ek istek yok); bayatsa tur kendisi tek istekle tazeler.
+
+## Kripto coin sayfaları: `/t/PUMP`
+
+Ana dex coinleri de aranabilir (`PUMP`, `HYPE`, `kPEPE`… büyük/küçük harf fark
+etmez; sembol iki yerde de varsa **hisse kazanır**). Kripto **`tickers`'a
+yazılmaz** — evren yenileme orada olmayanı budar ve hisse hattının her sorgusu
+tickers ile JOIN'li; kripto kimliği yalnız `resolve_coin`'in dönüşünde yaşar.
+
+Sayfa hisse sayfasının aynısıdır, farkları dürüstçe yazılı: pozisyonlar
+süpürmeden (her boyut, **insider skoru yok** — skor bilanço/taze cüzdan gibi
+hisse sinyallerine ait), tarama/rapor butonları yerine **🔄 defterleri tazele**
+(en büyük 15 adresin defteri şimdi çekilir, coin başına 60 sn'de bir), defter
+duvarı paneli "ana dex taranmıyor" der, bilanço/TradingView yok, saat grafiği
+7/24 notuyla. Fiyat en taze kaynaktan: `asset_metrics` (PROPR coinleri) ya da
+ana dex özeti kv'si; ikisi de yoksa son mumun kapanışı (sayfa söyler). Ana
+sayfadaki 🪙 **Ana dex kripto** paneli hacimce ilk 40'ı listeler; balina ve
+devler sayfalarındaki kripto coinler artık bağlantılıdır.
 
 ## Tasarım dili — "sessiz, okunur, dürüst"
 
