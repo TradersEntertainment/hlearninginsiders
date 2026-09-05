@@ -6,11 +6,11 @@
 <title>{% block title %}HL Insider Radar{% endblock %}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="apple-touch-icon" href="/favicon.svg">
-<meta name="theme-color" content="#1d1730">
+<meta name="theme-color" content="#171322">
 <meta name="description" content="Hyperliquid hisse perp'lerinde earnings öncesi insider şüpheli balina pozisyonlarını yakalar.">
 <script>
 // Tema CSS'ten ÖNCE uygulanır ki sayfa yanlış renkte parlamasın (FOUC yok)
-var THEME_META = {'': '#1d1730', 'okyanus': '#12222f'};
+var THEME_META = {'': '#171322', 'okyanus': '#0f1a26'};  // = --bg1 (tema başına)
 (function(){
   var t = '';
   try{ t = localStorage.getItem('hlr_theme') || ''; }catch(e){}
@@ -27,8 +27,18 @@ var THEME_META = {'': '#1d1730', 'okyanus': '#12222f'};
 :root{
 --bg1:#171322;--bg2:#221b33;--panel:rgba(40,33,60,.92);--panel-solid:40,33,60;
 --border:#3a3153;--fg:#ece7fa;--dim:#a79ec4;--head:#cbbfef;--faint:#6f6590;
---green:#8be9b8;--red:#ff92a8;--red-fg:#ffa9b8;--amber:#ffce8a;--accent:#c3b3ff;--btn:#8f7bff;
+--green:#8be9b8;--red:#ff92a8;--red-fg:#ffa9b8;--amber:#ffce8a;--accent:#c3b3ff;
+/* --btn = buton DOLGUSU (beyaz yazıyla 4.7:1, AA); --btn-line = çizgi/halka/işaret
+   (eski buton moru — panel üstünde 4.7:1, çizgi olarak daha okunur) */
+--btn:#715bef;--btn-line:#8f7bff;
 --btn-fg:#fff;--fg-strong:#fff;
+/* ölçek: yazı 11/12/13/14/15/22 · köşe 6/12/18/pill · boşluk 4'ün katları */
+--fs-xs:11px;--fs-s:12px;--fs-m:13px;--fs-b:14px;--fs-l:15px;--fs-xl:22px;
+--r-s:6px;--r-m:12px;--r-l:18px;--r-pill:999px;
+--sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;
+--dur:.15s;--ease:cubic-bezier(.22,1,.36,1);
+--surface-1:color-mix(in srgb,var(--dim) 7%,transparent);
+--surface-2:color-mix(in srgb,var(--dim) 12%,transparent);
 --blob1:#6a5acd;--blob2:#c04a6b;--blob3:#2e9e6e;
 --header-bg:rgba(30,24,46,.75);--card-bg:rgba(23,19,34,.55);--input-bg:rgba(23,19,34,.8);
 --knob:#e6e0f7;--knob-on:#0f2a1c;--shadow:rgba(0,0,0,.3);
@@ -39,7 +49,7 @@ var THEME_META = {'': '#1d1730', 'okyanus': '#12222f'};
 html[data-theme=okyanus]{
 --bg1:#0f1a26;--bg2:#152a3a;--panel:rgba(23,42,58,.92);--panel-solid:23,42,58;
 --border:#2e4c64;--fg:#e8f1fa;--dim:#97b1c7;--head:#bdd9ef;--faint:#5f7d96;
---green:#7ee8c0;--red:#ff92a4;--red-fg:#ffb3c0;--amber:#ffd48a;--accent:#8fd3ff;--btn:#4290d4;
+--green:#7ee8c0;--red:#ff92a4;--red-fg:#ffb3c0;--amber:#ffd48a;--accent:#8fd3ff;--btn:#2d78bd;--btn-line:#4290d4;
 --blob1:#2a6ab0;--blob2:#1f8a7a;--blob3:#6a5acd;
 --header-bg:rgba(17,32,46,.75);--card-bg:rgba(11,20,30,.55);--input-bg:rgba(11,20,30,.8);
 --knob:#dfeaf5;--knob-on:#0c2418;--card-stroke:#1a3040
@@ -47,7 +57,7 @@ html[data-theme=okyanus]{
 *{box-sizing:border-box}
 html{background:linear-gradient(160deg,var(--bg1),var(--bg2)) fixed}
 body{margin:0;background:transparent;color:var(--fg);
-font:14px/1.6 ui-rounded,"SF Pro Rounded",Manrope,Quicksand,"Segoe UI",system-ui,-apple-system,sans-serif}
+font:14px/1.6 ui-rounded,"SF Pro Rounded","Segoe UI",system-ui,-apple-system,sans-serif}
 /* --- yumuşak arka plan baloncukları --- */
 .blob{position:fixed;border-radius:50%;filter:blur(90px);opacity:.22;z-index:-2;
 animation:drift 36s ease-in-out infinite alternate}
@@ -87,12 +97,12 @@ border-bottom:1px solid var(--border)}
 .tswitch{font-size:15px;padding:2px 7px;border-radius:999px;border:1.5px solid transparent;
 opacity:.5;transition:opacity .15s,border-color .15s}
 .tswitch:hover{opacity:1}
-.tswitch.on{border-color:var(--btn);opacity:1}
+.tswitch.on{border-color:var(--btn-line);opacity:1}
 /* '✅ sadece PROPR' filtresi: işlem açamadığın enstrümanları gizler */
 html[data-propronly] [data-propr="0"]{display:none}
 .prswitch{font-size:13px;padding:2px 9px;border-radius:999px;border:1.5px solid var(--border);
   color:var(--dim);opacity:.75;text-decoration:none;white-space:nowrap}
-.prswitch:hover{opacity:1;border-color:var(--btn)}
+.prswitch:hover{opacity:1;border-color:var(--btn-line)}
 .prswitch.on{background:var(--btn);border-color:var(--btn);color:var(--btn-fg);opacity:1}
 header h1{font-size:17px;margin:0;font-weight:800;letter-spacing:.02em}
 header h1 a{color:var(--fg)}
@@ -100,26 +110,40 @@ header h1 .wig{display:inline-block;animation:bob 2.6s ease-in-out infinite}
 header h1 .logo{width:26px;height:26px;vertical-align:-6px;border-radius:7px}
 @keyframes bob{50%{transform:translateY(-3px) rotate(-6deg)}}
 header form{display:flex;gap:8px}
-input[type=text]{background:var(--input-bg);border:1.5px solid var(--border);
+/* Bölüm navigasyonu: masaüstünde header'ın flex akışına karışır (display:contents),
+   telefonda tek satırda yatay kayar. Aktif sayfa hafif kapsülle işaretli. */
+.topnav{display:contents}
+.topnav a{padding:3px 8px;margin:0 -7px;border-radius:999px;white-space:nowrap}
+.topnav a.on{color:var(--fg);background:color-mix(in srgb,var(--accent) 16%,transparent)}
+input[type=text],input[type=number],input[type=time],input[type=password],.in{
+background:var(--input-bg);border:1.5px solid var(--border);
 color:var(--fg);padding:8px 16px;border-radius:999px;font:inherit;width:180px;
 outline:none;transition:border-color .2s, box-shadow .2s}
-input[type=text]:focus{border-color:var(--btn);box-shadow:0 0 0 4px color-mix(in srgb,var(--btn) 18%,transparent)}
+input[type=text]:focus,input[type=number]:focus,input[type=time]:focus,input[type=password]:focus,.in:focus{
+border-color:var(--btn-line);box-shadow:0 0 0 4px color-mix(in srgb,var(--btn-line) 18%,transparent)}
+/* köşeli/dar girdi (form satırları): pill arama kutusundan ayrı */
+input.sq,.in.sq{border-radius:10px;width:auto;padding:7px 10px}
 input::placeholder{color:var(--faint)}
 button{background:var(--btn);border:none;color:var(--btn-fg);padding:8px 18px;
 border-radius:999px;font:inherit;font-weight:700;cursor:pointer;
 box-shadow:0 4px 14px color-mix(in srgb,var(--btn) 35%,transparent);transition:transform .15s, box-shadow .15s}
 button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 8px 20px color-mix(in srgb,var(--btn) 50%,transparent)}
 button:active{transform:scale(.97)}
+button:disabled,button:disabled:hover{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+.btn.ghost{background:transparent;border:1.5px solid var(--border);color:var(--fg);box-shadow:none}
+.btn.ghost:hover{border-color:var(--btn-line);transform:none;box-shadow:none}
+.btn.sm{padding:5px 12px;font-size:var(--fs-s)}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--btn-line);outline-offset:2px}
 main{padding:18px;max-width:2240px;margin:0 auto}
 .ecards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .ecard{border:1px solid var(--border);border-radius:14px;padding:12px 14px;
 background:var(--card-bg);font-size:12.5px;line-height:1.6}
 .ecard h3{margin:0 0 6px;font-size:14px}
 .ecard h3 .cd{float:right;color:var(--amber);font-size:12px;font-weight:800}
-.ratio{display:flex;height:8px;border-radius:999px;overflow:hidden;margin:4px 0 2px;
-background:color-mix(in srgb,var(--dim) 12%,transparent)}
-.ratio .rl{background:var(--green)}
-.ratio .rs{background:var(--red)}
+.ratio{display:flex;gap:2px;height:10px;border-radius:var(--r-s);overflow:hidden;margin:4px 0 2px;
+background:var(--surface-2)}
+.ratio .rl{background:var(--chart-long)}
+.ratio .rs{background:var(--chart-short)}
 /* sessiz sular: OI payı çubuğu */
 .oibar{position:relative;min-width:92px;height:18px;border-radius:6px;overflow:hidden;
 background:color-mix(in srgb,var(--dim) 12%,transparent)}
@@ -136,26 +160,34 @@ vertical-align:1px;white-space:nowrap}
 .ptick{color:var(--green);font-weight:800;cursor:help}
 .wl{margin-left:5px;font-size:11px;opacity:.55;text-decoration:none}
 .wl:hover{opacity:1}
-.udim{opacity:.42}
 .ecard .fl{color:var(--amber);font-size:12px}
+/* tablet/dar dizüstü: yarım ve üçte-bir paneller ikişer ikişer */
+@media(min-width:760px) and (max-width:1049px){
+  main{display:grid;grid-template-columns:repeat(2,1fr);gap:0 14px;align-items:start}
+  main>*{grid-column:span 2}
+  main>.panel.half,main>.panel.third{grid-column:span 1}
+}
 @media(min-width:1050px){
   main{display:grid;grid-template-columns:repeat(6,1fr);gap:0 14px;align-items:start}
-  main>.panel,main>form{grid-column:span 6}
+  /* main'in HER çocuğu tam satır (eskiden yalnız .panel/form: .scanbar 1/6'ya sıkışıyordu) */
+  main>*{grid-column:span 6}
   main>.panel.half{grid-column:span 3}
   main>.panel.third{grid-column:span 2}
 }
-/* ultrawide: yan yana daha fazla panel */
+/* ultrawide: yarım yine 1/2, üçte-bir 1/4 olur (eskiden ikisi de 1/3'e eşitleniyordu) */
 @media(min-width:1800px){
-  main>.panel.half{grid-column:span 2}
-  main>.panel.third{grid-column:span 2}
+  main{grid-template-columns:repeat(12,1fr)}
+  main>*{grid-column:span 12}
+  main>.panel.half{grid-column:span 6}
+  main>.panel.third{grid-column:span 3}
 }
 .compact th,.compact td{padding:3px 8px;font-size:12.5px}
 .compact h2{margin-bottom:8px}
-.strip{display:flex;gap:20px;flex-wrap:wrap;align-items:center;
-padding:8px 16px!important;margin-bottom:14px!important;font-size:13px}
+.panel.strip{display:flex;gap:20px;flex-wrap:wrap;align-items:center;
+padding:8px 16px;margin-bottom:14px;font-size:13px}
 .strip b{font-size:14px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
-.chips a{border:1.5px solid var(--border);color:var(--dim);padding:2px 12px;
+.chips a{border:1.5px solid var(--border);color:var(--dim);padding:4px 12px;
 border-radius:999px;font-size:12px;font-weight:700}
 .chips a.on{background:var(--btn);border-color:var(--btn);color:var(--btn-fg)}
 .lbar{display:flex;gap:10px;align-items:center;padding:3px 0;font-size:12.5px;
@@ -229,6 +261,82 @@ border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
 background:color-mix(in srgb,var(--liq-long) 7%,transparent);
 border:1px dashed color-mix(in srgb,var(--liq-long) 35%,transparent)}
 .walls .wall{cursor:help;white-space:nowrap}
+/* ══ Ortak bileşenler — tek kaynak. Şablonda inline stil yalnız dinamik width. ══
+   Dolgu sınıfları (tek adlandırma): likidasyon seviyesi turuncu/mavi, pozisyon
+   yönü ve +/− polaritesi mum renkleri (dolgu olarak doğrulanmış çift). */
+.f-liq-long{background:var(--liq-long)}.f-liq-short{background:var(--liq-short)}
+.f-long,.f-up{background:var(--chart-long)}.f-short,.f-dn{background:var(--chart-short)}
+.f-book{background:color-mix(in srgb,var(--dim) 45%,transparent)}.f-acc{background:var(--accent)}
+/* KPI karoları: .l etiket · .v değer · .s alt satır; karo link olabilir */
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:8px 0 14px}
+.kpi>div,.kpi>a{display:block;padding:10px 12px;border-radius:var(--r-m);background:var(--surface-1);color:inherit;min-width:0}
+.kpi>a:hover{background:var(--surface-2);color:inherit}
+.kpi .l,.kpi .s{font-size:var(--fs-xs);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .v{font-size:var(--fs-xl);font-weight:800;color:var(--fg);line-height:1.2;font-variant-numeric:tabular-nums;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Satır-bar: k sembol · t yön · tr ray (sg dilimler) · v $ · x fiyat · d uzaklık · a adres */
+.rb{display:flex;align-items:center;gap:10px;height:24px;padding:0 4px;border-radius:var(--r-s);
+font-size:12.5px;font-variant-numeric:tabular-nums}
+.rb .k{width:64px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rb .t{width:52px;font-weight:800;white-space:nowrap}
+.rb .tr{flex:1;min-width:60px;height:14px;display:flex;gap:2px;background:var(--surface-2);
+border-radius:0 7px 7px 0;overflow:hidden}
+.rb .sg{display:block;height:100%;flex:0 0 auto}
+.rb .sg:last-child{border-radius:0 7px 7px 0}
+.rb .v{width:72px;text-align:right;font-weight:700;white-space:nowrap}
+.rb .x{width:96px;text-align:right;color:var(--dim);white-space:nowrap}
+.rb .d{width:56px;text-align:right;font-weight:800;white-space:nowrap}
+.rb .a{white-space:nowrap}
+.rb[data-tip]{cursor:help}
+.rb.hot .sg,.rb:focus-visible .sg{filter:brightness(1.18)}
+/* tablo hücresi içi kısa varyant (OI payı, liq/defter çifti) */
+.rb.cell{height:18px;gap:6px;padding:0;min-width:120px;font-size:11.5px}
+.rb.cell .tr{height:10px;border-radius:0 5px 5px 0}
+.rb.cell .sg:last-child{border-radius:0 5px 5px 0}
+.rb.cell .v{width:auto;font-weight:600}
+.rb.cell+.rb.cell{margin-top:3px}
+/* legend: ≥2 seri olan her grafiğin üstünde */
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:var(--fs-s);color:var(--dim);margin:2px 0 10px}
+.legend b{color:var(--fg)}
+.legend .sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px}
+/* durum kapsülü */
+.pill{display:inline-block;padding:2px 10px;border-radius:var(--r-pill);font-size:var(--fs-s);font-weight:700;
+border:1px solid var(--border);color:var(--dim);white-space:nowrap;line-height:1.5}
+.pill.ok{color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent);border-color:color-mix(in srgb,var(--green) 35%,transparent)}
+.pill.warn{color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,transparent);border-color:color-mix(in srgb,var(--amber) 35%,transparent)}
+.pill.bad{color:var(--red-fg);background:color-mix(in srgb,var(--red) 12%,transparent);border-color:color-mix(in srgb,var(--red) 35%,transparent)}
+.pill.acc{color:var(--head);background:color-mix(in srgb,var(--accent) 12%,transparent);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+.pill.off{color:var(--dim)}
+/* boş durum: NEDENİYLE. .r satırları = neden */
+.empty{color:var(--dim);font-size:var(--fs-m);margin:2px 0 4px;line-height:1.55}
+.empty b{color:var(--head)}
+.empty .r{display:block;font-size:var(--fs-s)}
+/* künye: panelin ALTINDA — kapsam, eşik, tazelik, görmediklerimiz */
+.kunye{font-size:var(--fs-s);color:var(--dim);margin:10px 0 0;padding-top:8px;line-height:1.5;
+border-top:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
+.kunye b{color:var(--fg)}
+/* geniş tablo sarmalayıcısı: taşınca telefonda 'kaydır' ipucu; .stick opt-in yapışık sütun */
+.tscroll{position:relative}
+.tscroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tscroll .stick{position:sticky;left:0;z-index:1;background:rgb(var(--panel-solid))}
+tr:hover td.stick{background:color-mix(in srgb,var(--accent) 7%,rgb(var(--panel-solid)))}
+/* bildirim bandı */
+.alert{padding:8px 12px;border-radius:var(--r-m);font-size:12.5px;line-height:1.5;margin:0 0 10px;
+border:1px solid var(--border);background:var(--surface-1);color:var(--fg)}
+.alert.ok{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent);background:color-mix(in srgb,var(--green) 8%,transparent)}
+.alert.warn{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,transparent);background:color-mix(in srgb,var(--amber) 8%,transparent)}
+.alert.bad{color:var(--red-fg);border-color:color-mix(in srgb,var(--red) 40%,transparent);background:color-mix(in srgb,var(--red) 8%,transparent)}
+.alert.info{color:var(--head);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+/* sembol çipleri (link) */
+.tags{display:flex;flex-wrap:wrap;gap:6px}
+.tag{border:1.5px solid var(--border);color:var(--fg);padding:3px 11px;border-radius:var(--r-pill);
+font-size:var(--fs-s);font-weight:700;white-space:nowrap}
+.tag:hover{border-color:var(--btn-line);color:var(--fg)}
+.tag .pt{color:var(--green);margin-left:4px}
+.card-center{max-width:460px;margin:40px auto}
+.h3{margin:0 0 6px;font-size:var(--fs-b);font-weight:800;color:var(--head)}
+.hint{font-size:var(--fs-xs);color:var(--dim)}
+.bad{color:var(--red-fg)}
 /* ---- ayarlar ---- */
 .setwrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
 gap:14px;align-items:start;margin-bottom:8px}
@@ -238,14 +346,14 @@ gap:14px;align-items:start;margin-bottom:8px}
 .sect > summary{cursor:pointer;font-weight:800;font-size:14px;color:var(--head);
 list-style:none;user-select:none;padding:2px 0}
 .sect > summary::-webkit-details-marker{display:none}
-.sect > summary::before{content:"▸ ";color:var(--btn)}
+.sect > summary::before{content:"▸ ";color:var(--btn-line)}
 .sect[open] > summary::before{content:"▾ "}
 .sect[open] > summary{margin-bottom:10px;border-bottom:1px dashed var(--border);padding-bottom:8px}
 .togglegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:6px;margin-bottom:10px}
 .trow{display:flex;align-items:center;gap:10px;padding:7px 11px;border-radius:10px;
 border:1px solid var(--border);background:var(--card-bg);cursor:pointer;
 font-size:12.5px;font-weight:600;transition:border-color .15s,background .15s}
-.trow:hover{border-color:var(--btn)}
+.trow:hover{border-color:var(--btn-line)}
 .trow.ison{border-color:color-mix(in srgb,var(--green) 40%,transparent);
 background:color-mix(in srgb,var(--green) 6%,transparent)}
 .trow input{position:absolute;opacity:0;width:0;height:0}
@@ -256,7 +364,7 @@ position:relative;transition:background .18s}
 background:var(--knob);transition:transform .18s}
 .trow input:checked + .sw-track{background:var(--green)}
 .trow input:checked + .sw-track .sw-knob{transform:translateX(16px);background:var(--knob-on)}
-.trow input:focus-visible + .sw-track{box-shadow:0 0 0 3px color-mix(in srgb,var(--btn) 40%,transparent)}
+.trow input:focus-visible + .sw-track{box-shadow:0 0 0 3px color-mix(in srgb,var(--btn-line) 40%,transparent)}
 .trow input:disabled + .sw-track{opacity:.45}
 .valgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:5px 14px}
 .vrow{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12.5px;
@@ -281,7 +389,27 @@ box-shadow:0 8px 24px rgba(0,0,0,.45);backdrop-filter:blur(8px)}
   header h1{font-size:15px}
   input[type=text]{width:130px}
   .panel{padding:12px;border-radius:14px}
-  .strip{gap:10px;font-size:12px}
+  .panel.strip{gap:10px;font-size:12px}
+  /* nav: tek satır, yatay kayar; tema/PROPR düğmeleri ilk satırda kalır */
+  .topnav{display:flex;order:9;flex:1 0 100%;gap:2px;overflow-x:auto;scrollbar-width:none;
+    margin:0 -12px;padding:2px 24px 2px 12px;-webkit-overflow-scrolling:touch;
+    mask-image:linear-gradient(90deg,#000 calc(100% - 22px),transparent)}
+  .topnav::-webkit-scrollbar{display:none}
+  .topnav a{margin:0;flex:0 0 auto;padding:5px 9px}
+  /* 1. satır: logo + tema/PROPR · 2. satır: arama (tam genişlik) · 3. satır: nav */
+  header form{order:5;flex:1 0 100%}
+  header form input[type=text]{flex:1;width:auto;min-width:0}
+  .themes{order:1;margin-left:auto}
+  .mob-hide{display:none}
+  .prswitch{font-size:12px;padding:2px 7px}
+  .kpi{grid-template-columns:repeat(2,1fr);gap:8px}
+  .kpi .v{font-size:18px}
+  .rb{height:26px;gap:8px}
+  .rb .x{display:none}
+  .rb .a .txt{display:none}
+  .tscroll.wide::after{content:"← kaydırarak tüm sütunları gör →";display:block;font-size:11px;
+    color:var(--dim);padding:4px 0 0;text-align:right}
+  .mh{display:none}
   .lbar{font-size:11.5px;gap:6px;flex-wrap:wrap}
   .lbar .lsym{width:52px}
   .lbar .lside{width:44px}
@@ -311,24 +439,28 @@ box-shadow:0 8px 24px rgba(0,0,0,.45);backdrop-filter:blur(8px)}
   .lq-next .row .a{flex:1 0 100%;min-width:0}
   .lq-at{display:none}
 }
-.sub{font-size:12.5px;color:var(--dim);margin:-4px 0 10px;line-height:1.5}
+.sub{font-size:12.5px;color:var(--dim);margin:0 0 10px;line-height:1.5}
+/* prose içindeki link yalnız renkle ayrılmasın (tablo/nav linkleri çizgisiz kalır) */
+.sub a,.guide a,.kunye a,.empty a,.alert a{text-decoration:underline;
+text-decoration-color:color-mix(in srgb,var(--accent) 45%,transparent);text-underline-offset:2px}
 details.guide{cursor:default}
 details.guide summary{cursor:pointer;font-weight:800;color:var(--head);font-size:14px;
 list-style:none;user-select:none}
-details.guide summary::before{content:"▸ ";color:var(--btn)}
+details.guide summary::before{content:"▸ ";color:var(--btn-line)}
 details.guide[open] summary::before{content:"▾ "}
 details.guide .body{margin-top:10px;font-size:13px;line-height:1.7}
 .gloss{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin-top:10px;font-size:12.5px}
 .gloss b{color:var(--accent);white-space:nowrap}
-th[title]{text-decoration:underline dotted color-mix(in srgb,var(--dim) 40%,transparent);text-underline-offset:3px}
-/* sıralanabilir başlıklar */
+th[title],th[data-tip]{text-decoration:underline dotted color-mix(in srgb,var(--dim) 55%,transparent);text-underline-offset:3px}
+/* sıralanabilir başlıklar: üzerine gelince ↕, sıralıysa ▾/▴ (klavye: Tab + Enter) */
 main table th{cursor:pointer;user-select:none}
+main table th:not(.s-asc):not(.s-desc):hover::after{content:" ↕";color:var(--faint)}
 th.s-desc::after{content:" ▾";color:var(--accent)}
 th.s-asc::after{content:" ▴";color:var(--accent)}
-.tabs{display:flex;gap:8px;margin-bottom:10px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .tab{background:transparent;border:1.5px solid var(--border);color:var(--dim);
 padding:4px 14px;border-radius:999px;font-size:12.5px;font-weight:700;box-shadow:none}
-.tab:hover{transform:none;border-color:var(--btn);color:var(--fg);box-shadow:none}
+.tab:hover{transform:none;border-color:var(--btn-line);color:var(--fg);box-shadow:none}
 .tab.active{background:var(--btn);border-color:var(--btn);color:var(--btn-fg)}
 .legendrow{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-bottom:8px}
 .legendrow .sw{display:inline-block;width:12px;height:12px;border-radius:3px;
@@ -337,21 +469,21 @@ vertical-align:-2px;margin-right:5px}
 padding:16px 18px;margin-bottom:18px;overflow-x:auto;
 box-shadow:0 10px 30px var(--shadow);
 animation:pop .45s cubic-bezier(.22,1,.36,1) both}
-.panel:nth-of-type(2){animation-delay:.06s}
-.panel:nth-of-type(3){animation-delay:.12s}
-.panel:nth-of-type(4){animation-delay:.18s}
-.panel:nth-of-type(5){animation-delay:.24s}
+main>.panel:nth-child(2){animation-delay:.06s}
+main>.panel:nth-child(3){animation-delay:.12s}
+main>.panel:nth-child(4){animation-delay:.18s}
+main>.panel:nth-child(5){animation-delay:.24s}
 @keyframes pop{from{opacity:0;transform:translateY(14px) scale(.985)}}
 /* yumuşak yenilemede paneller ZIPLAMASIN — giriş animasyonu yalnız ilk yüklemede */
 main.no-pop .panel{animation:none}
-.panel h2{font-size:13.5px;margin:0 0 12px;color:var(--head);font-weight:800;
-letter-spacing:.04em;border-bottom:1px dashed var(--border);padding-bottom:8px}
+.panel h2{font-size:var(--fs-l);margin:0 0 8px;color:var(--head);font-weight:800;
+letter-spacing:.01em;border-bottom:1px dashed var(--border);padding-bottom:8px}
+/* alt başlık = panelin cevapladığı soru; başlığın ağırlığını ve aralığını taşımaz */
+.panel h2 .st{font-size:var(--fs-s);font-weight:600;color:var(--dim);letter-spacing:0}
 table{border-collapse:collapse;width:100%;white-space:nowrap}
 th,td{padding:6px 10px;text-align:right;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);
 font-variant-numeric:tabular-nums}
-th{color:var(--dim);font-weight:700;font-size:12px;position:sticky;top:0;z-index:1;
-background:linear-gradient(rgba(var(--panel-solid),.99),rgba(var(--panel-solid),.94));
-backdrop-filter:blur(4px)}
+th{color:var(--dim);font-weight:700;font-size:12px}
 th:first-child,td:first-child,th.l,td.l{text-align:left}
 tbody tr,tr{transition:background .15s}
 tr:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
@@ -367,13 +499,12 @@ tr:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .dim{color:var(--dim)}
 .reasons{font-size:12px;color:var(--amber);white-space:normal}
 .warn{color:var(--amber)}
-.scanbar{border:1.5px dashed var(--green);background:color-mix(in srgb,var(--green) 7%,transparent);
-color:var(--green);padding:10px 16px;border-radius:14px;margin-bottom:14px;font-weight:700}
+.scanbar{border:1px solid color-mix(in srgb,var(--green) 40%,transparent);background:color-mix(in srgb,var(--green) 8%,transparent);
+color:var(--green);padding:8px 12px;border-radius:var(--r-m);margin-bottom:14px;font-weight:700}
 .scanbar .swimmer{display:inline-block;animation:bob 1.2s ease-in-out infinite}
 .scanbar .dots::after{content:"";animation:dots 1.5s steps(4,end) infinite}
 @keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
-footer{padding:18px 22px;color:var(--faint);font-size:12px}
-.cursor{display:none}
+footer{padding:18px 22px;color:var(--dim);font-size:12px}
 /* ---- Anlık grafik ipucu: tarayıcının <title> ipucu ~1sn gecikiyor, işletim
    sistemi görünümünde, imleci takip etmiyor ve dokunmatikte hiç çalışmıyordu.
    Kutu body'ye asılır: .panel{overflow-x:auto} mutlak konumluyu kırpıyor. ---- */
@@ -385,15 +516,18 @@ footer{padding:18px 22px;color:var(--faint);font-size:12px}
 #itip.on{opacity:1;visibility:visible}
 #itip b{display:block;color:var(--head);font-size:12.5px;margin-bottom:2px}
 #itip .r{color:var(--dim)}
-#itip.long{border-left:3px solid var(--liq-long-t)}
-#itip.short{border-left:3px solid var(--liq-short-t)}
-#itip.up{border-left:3px solid var(--green)}
-#itip.down{border-left:3px solid var(--red-fg)}
+/* şerit sınıfları t-* — global .long/.short (metin rengi/kalınlığı) ile çakışmasın */
+#itip.t-long{border-left:3px solid var(--liq-long-t)}
+#itip.t-short{border-left:3px solid var(--liq-short-t)}
+#itip.t-up{border-left:3px solid var(--green)}
+#itip.t-down{border-left:3px solid var(--red-fg)}
 /* Hedefler HTML de olabilir (ana sayfadaki barlar): 'fill' yalnız SVG'de
-   çalışır, o yüzden taban kural HTML'e göre, SVG'ye özel olanlar .ichart altında */
-.ihit{cursor:help;outline:none;border-radius:6px}
+   çalışır, o yüzden taban kural HTML'e göre, SVG'ye özel olanlar .ichart altında.
+   .ihit = grafik işareti (vurgu + imleç); başlıktan çevrilen ipuçları yalnız [data-tip]. */
+.ihit{cursor:help;border-radius:6px}
 .ihit.hot{background:color-mix(in srgb,var(--fg) 9%,transparent)}
-.ihit:focus-visible{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.ihit:focus-visible{outline:2px solid var(--btn-line);outline-offset:2px;background:color-mix(in srgb,var(--accent) 12%,transparent)}
+[data-tip]:not(.ihit):not(th):not(.rb){cursor:help}
 .ichart .ihit{cursor:crosshair;background:none}
 .ichart .ihit:focus-visible{background:none;fill:var(--accent);fill-opacity:.12}
 .ichart .ihit.hot{background:none;fill:var(--fg);fill-opacity:.07}
@@ -411,9 +545,12 @@ footer{padding:18px 22px;color:var(--faint);font-size:12px}
 details.guidetv summary::marker{color:var(--accent)}
 details.guidetv[open] summary{margin-bottom:2px}
 .tvbox{margin-top:8px;border-radius:12px;overflow:hidden}
+/* mum kutusu: mum yoksa 360px boşluk bırakma (JS yalnız mum-yok dalında ekler) */
+#pxchart.empty{height:auto!important;min-height:0}
 @media (prefers-reduced-motion: reduce){
-  .blob,.spark,.whale,.wig,.b-hi,.panel,.scanbar .swimmer{animation:none!important}
-  #itip{transition:none}}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important;scroll-behavior:auto!important}
+  .panel{opacity:1;transform:none}}
 </style>
 </head>
 <body{% block bodyattrs %}{% endblock %}>
@@ -434,25 +571,31 @@ details.guidetv[open] summary{margin-bottom:2px}
     <input type="text" name="q" placeholder="ticker ara: SNDK">
     <button type="submit">Ara</button>
   </form>
-  <a href="/saldiri{{ k }}" title="Hafta sonu yakın likidasyonları kim ucuza patlatabilir — liq attack adayları ve karne">🎯 liq attack</a>
-  <a href="/twap{{ k }}" title="Büyük TWAP / düzenli birikim turları — birileri sessizce topluyor">⏳ twap</a>
-  <a href="/neoldu{{ k }}" title="Belli bir dakika aralığında kim ne aldı, ne sattı, açtı mı kapattı mı">🔎 ne oldu</a>
-  <a href="/orintu{{ k }}" title="Şu anki grafik şekli geçmişte olduğunda sonra ne olmuş — olasılık + karne">🔮 örüntü</a>
-  <a href="/hacim{{ k }}" title="Yakın zamanda 24 saatin en yüksek 5dk hacmine ulaşan kripto coin'ler">🚀 hacim</a>
-  <a href="/funding{{ k }}" title="Funding oranına göre sıralı — kim kime ödüyor + balinaların günlük funding maliyeti">💸 funding</a>
-  <a href="/kapali{{ k }}" title="Borsa kapalıyken kapanıştan beri sapanlar + kapalıyken açılan pozisyonlar">🌙 kapalı seans</a>
-  <a href="/saatler{{ k }}" title="Şu saatte yükselmesi/düşmesi beklenenler — tarihsel saat sıralaması">🕐 saatler</a>
-  <a href="/devler{{ k }}" title="Düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri">🐘 sessiz sular</a>
-  <a href="/gecmis{{ k }}" title="Geçmiş bilançolar + en iyi biliciler">🗂 geçmiş</a>
-  <a href="/ai{{ k }}" title="AI analistin hipotezleri ve kendi sicili">🤖 ai</a>
-  <a href="/tani{{ k }}" title="Tam sistem dökümü — düz metin, kopyalayıp gönderilir">🩺 tanı</a>
-  <a href="/settings{{ k }}" title="Ayarlar">⚙️ ayarlar</a>
-  {% if has_pw and not is_admin %}<a href="/login{{ k }}" title="Ayarları değiştirmek için giriş">🔐 giriş</a>{% endif %}
+  {% set cur = request.url.path if request else '' %}
+  {% macro nl(path, tip, label) -%}
+  <a href="{{ path }}{{ k }}" title="{{ tip }}"{% if cur == path or cur.startswith(path + '/') %} class="on" aria-current="page"{% endif %}>{{ label }}</a>
+  {%- endmacro %}
+  <nav class="topnav" aria-label="Bölümler">
+  {{ nl('/saldiri', 'Hafta sonu yakın likidasyonları kim ucuza patlatabilir — liq attack adayları ve karne', '🎯 liq attack') }}
+  {{ nl('/twap', 'Büyük TWAP / düzenli birikim turları — birileri sessizce topluyor', '⏳ twap') }}
+  {{ nl('/neoldu', 'Belli bir dakika aralığında kim ne aldı, ne sattı, açtı mı kapattı mı', '🔎 ne oldu') }}
+  {{ nl('/orintu', 'Şu anki grafik şekli geçmişte olduğunda sonra ne olmuş — olasılık + karne', '🔮 örüntü') }}
+  {{ nl('/hacim', 'Yakın zamanda 24 saatin en yüksek 5dk hacmine ulaşan kripto coin\'ler', '🚀 hacim') }}
+  {{ nl('/funding', 'Funding oranına göre sıralı — kim kime ödüyor + balinaların günlük funding maliyeti', '💸 funding') }}
+  {{ nl('/kapali', 'Borsa kapalıyken kapanıştan beri sapanlar + kapalıyken açılan pozisyonlar', '🌙 kapalı seans') }}
+  {{ nl('/saatler', 'Şu saatte yükselmesi/düşmesi beklenenler — tarihsel saat sıralaması', '🕐 saatler') }}
+  {{ nl('/devler', 'Düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri', '🐘 sessiz sular') }}
+  {{ nl('/gecmis', 'Geçmiş bilançolar + en iyi biliciler', '🗂 geçmiş') }}
+  {{ nl('/ai', 'AI analistin hipotezleri ve kendi sicili', '🤖 ai') }}
+  {{ nl('/tani', 'Tam sistem dökümü — düz metin, kopyalayıp gönderilir', '🩺 tanı') }}
+  {{ nl('/settings', 'Ayarlar', '⚙️ ayarlar') }}
+  {% if has_pw and not is_admin %}{{ nl('/login', 'Ayarları değiştirmek için giriş', '🔐 giriş') }}{% endif %}
+  </nav>
   <span class="themes">
     <a href="#" class="tswitch" data-t="" title="Gece Eriği teması">🌙</a>
     <a href="#" class="tswitch" data-t="okyanus" title="Derin Okyanus teması">🌊</a>
     <a href="#" class="prswitch" id="prswitch"
-       title="Sadece propr.xyz'de listeli (işlem açabildiğin) enstrümanları göster">✅ sadece PROPR</a>
+       title="Sadece propr.xyz'de listeli (işlem açabildiğin) enstrümanları göster">✅ <span class="mob-hide">sadece </span>PROPR</a>
   </span>
 </header>
 <main>{% block content %}{% endblock %}</main>
@@ -465,11 +608,13 @@ var SORT_STATE = null; // {ti, ci, dir} — yumuşak yenileme sonrası geri uygu
 // 3✓/1✗, "21.08 14:30" (tarih), 1504, yoksa metin
 function parseCell(raw){
   var t = (raw || '').replace(/\s+/g, ' ').trim();
-  if(!t || t === '-' || t === '?') return null;
-  // Öncelik ham değer varsa (data-v) — şablonlar sıralama için basabilir
-  var m = t.match(/^[+-]?\$[+-]?([\d.,]+)\s*([MK])?/i);
+  // '≥12h' (posage alt sınırı) sayı gibi sıralansın; '—' da boş demek
+  t = t.replace(/^[≥≤~]\s*/, '');
+  if(!t || t === '-' || t === '?' || t === '—') return null;
+  var m = t.match(/^[+-]?\$[+-]?([\d.,]+)\s*([MKB])?/i);
   if(m){
-    var v = parseFloat(m[1].replace(/,/g, '')) * (m[2] ? (m[2].toUpperCase() === 'M' ? 1e6 : 1e3) : 1);
+    var mult = {M: 1e6, K: 1e3, B: 1e9}[(m[2] || '').toUpperCase()] || 1;
+    var v = parseFloat(m[1].replace(/,/g, '')) * mult;
     if(/^-\$|^\$-/.test(t)) v = -v;
     return v;
   }
@@ -509,7 +654,12 @@ function sortTable(table, ci, dir){
   function rank(v){ return v === null ? 2 : (typeof v === 'number' ? 0 : 1); }
   var keyed = rows.map(function(r, i){
     var td = r.children[ci];
-    return {r: r, i: i, v: parseCell(td ? td.textContent : '')};
+    // Ham değer varsa (data-v) metni ayrıştırmaya gerek yok — karmaşık
+    // hücreler (bar + etiket) ve yıl sınırı geçen tarihler için tek doğru yol.
+    var v = (td && td.dataset.v != null && td.dataset.v !== '')
+      ? parseFloat(td.dataset.v) : parseCell(td ? td.textContent : '');
+    if(typeof v === 'number' && isNaN(v)) v = null;
+    return {r: r, i: i, v: v};
   });
   keyed.sort(function(a, b){
     var ra = rank(a.v), rb = rank(b.v);
@@ -522,22 +672,48 @@ function sortTable(table, ci, dir){
   keyed.forEach(function(k){ parent.appendChild(k.r); });
 }
 
-document.addEventListener('click', function(ev){
-  var th = ev.target.closest('th');
-  if(!th || ev.target.closest('a')) return;
+// Sıralı başlığı işaretle: sınıf (ok) + aria-sort (ekran okuyucu)
+function markSorted(th, dir){
+  th.parentElement.querySelectorAll('th').forEach(function(x){
+    x.classList.remove('s-desc', 's-asc'); x.removeAttribute('aria-sort');
+  });
+  th.classList.add(dir === 'desc' ? 's-desc' : 's-asc');
+  th.setAttribute('aria-sort', dir === 'desc' ? 'descending' : 'ascending');
+}
+
+function sortByTh(th){
   var table = th.closest('table');
   if(!table || !table.closest('main')) return;
   var headRow = th.parentElement;
   var ci = Array.prototype.indexOf.call(headRow.children, th);
   var dir = th.classList.contains('s-desc') ? 'asc' : 'desc';
-  headRow.querySelectorAll('th').forEach(function(x){ x.classList.remove('s-desc', 's-asc'); });
-  th.classList.add(dir === 'desc' ? 's-desc' : 's-asc');
+  markSorted(th, dir);
   sortTable(table, ci, dir);
   // Tabloyu İNDEKSLE değil başlık imzasıyla sakla: koşullu bir panel (ör. 'Saati
   // gelenler') kaybolunca indeksler kayıp sıralama yanlış tabloya uygulanıyordu.
   var hr0 = table.querySelector('tr');
   SORT_STATE = {sig: hr0 ? hr0.textContent.trim() : '', ci: ci, dir: dir};
+}
+
+document.addEventListener('click', function(ev){
+  var th = ev.target.closest('th');
+  if(!th || ev.target.closest('a')) return;
+  sortByTh(th);
 });
+// Klavye: Tab ile başlığa gel, Enter/Space ile sırala (th'ler tabindex alır)
+document.addEventListener('keydown', function(ev){
+  if(ev.key !== 'Enter' && ev.key !== ' ') return;
+  var th = ev.target.closest && ev.target.closest('th');
+  if(!th || ev.target.closest('a') || !th.closest('main')) return;
+  ev.preventDefault();
+  sortByTh(th);
+});
+function initSortable(){
+  document.querySelectorAll('main table th').forEach(function(th){
+    if(!th.hasAttribute('tabindex')) th.tabIndex = 0;
+  });
+}
+initSortable();
 
 // Long/Short sekmeleri — delege edilmiş handler (yumuşak yenileme sonrası da çalışır)
 document.addEventListener('click', function(ev){
@@ -575,6 +751,7 @@ function applyTabs(sel){
     var ok = flt.every(function(p){ return r.dataset[p[0]] === p[1]; });
     r.style.display = ok ? '' : 'none';
   });
+  if(typeof initTscroll === 'function') initTscroll();  // görünen satırlar değişti, genişlik değişebilir
 }
 
 // Tema seçici — 🌙/🌊; seçim bu tarayıcıda hatırlanır, yenilemede korunur
@@ -620,6 +797,7 @@ var ITIP = null, IHOT = null, IPX = 0, IPY = 0;
 
 function itipBox(){
   if(!ITIP){ ITIP = document.createElement('div'); ITIP.id = 'itip';
+             ITIP.setAttribute('role', 'tooltip');
              document.body.appendChild(ITIP); }
   return ITIP;
 }
@@ -627,14 +805,24 @@ function itipBox(){
 function itipShow(el, ev){
   var raw = el.getAttribute('data-tip'); if(!raw) return;
   var box = itipBox();
-  // "0x12ab..cdef · LONG $1.2M → liq 34.56 (mesafe %8.3)" → başlık + satırlar
+  // "0x12ab..cdef · LONG $1.2M → liq 34.56 (mesafe %8.3)" → başlık + satırlar.
+  // Metin DOM'a textContent ile girer (innerHTML değil): ipucu metinleri artık
+  // takvim notu, çıkarım notu gibi dış kaynaklı alanlardan da geliyor.
   var parts = raw.split(' · ');
-  var html = '<b>' + parts[0] + '</b>';
-  for(var i = 1; i < parts.length; i++) html += '<span class="r">' + parts[i] + '</span><br>';
-  box.innerHTML = html;
   var side = el.getAttribute('data-side');
   var pos = el.getAttribute('data-pos');
-  box.className = 'on' + (side ? ' ' + side : (pos === '1' ? ' up' : (pos === '0' ? ' down' : '')));
+  // Grafik işareti değilse (yön/polarite yok) ve tek parça ya da ilk parça uzun
+  // bir cümleyse kalın başlık yok — başlıktan çevrilen açıklamalar düz okunur.
+  var plain = !side && pos == null && (parts.length === 1 || parts[0].length > 40);
+  box.textContent = '';
+  parts.forEach(function(t, i){
+    if(i === 0 && !plain){
+      var b = document.createElement('b'); b.textContent = t; box.appendChild(b); return;
+    }
+    var sp = document.createElement('span'); sp.className = 'r'; sp.textContent = t;
+    box.appendChild(sp); box.appendChild(document.createElement('br'));
+  });
+  box.className = 'on' + (side ? ' t-' + side : (pos === '1' ? ' t-up' : (pos === '0' ? ' t-down' : '')));
   if(IHOT && IHOT !== el) IHOT.classList.remove('hot');
   el.classList.add('hot'); IHOT = el;
   itipMove(ev);
@@ -712,37 +900,39 @@ function iguide(svg, ev){
   svg.appendChild(g);
 }
 
+// Hedef = data-tip taşıyan HER öğe (.ihit yalnız grafik işaretinin görsel sınıfı)
+var TIP_SEL = '[data-tip]';
 document.addEventListener('mouseover', function(ev){
-  var h = ev.target.closest && ev.target.closest('.ihit');
+  var h = ev.target.closest && ev.target.closest(TIP_SEL);
   if(h) itipShow(h, ev);
 });
 document.addEventListener('mousemove', function(ev){
   IPX = ev.clientX; IPY = ev.clientY;
-  var h = ev.target.closest && ev.target.closest('.ihit');
+  var h = ev.target.closest && ev.target.closest(TIP_SEL);
   if(!h){ if(itipOpen() && !(ev.target.closest && ev.target.closest('.ichart'))) itipHide(); return; }
   itipMove(ev);
   var svg = h.closest('svg.ichart');
   if(svg) iguide(svg, ev);
 });
 document.addEventListener('mouseout', function(ev){
-  var h = ev.target.closest && ev.target.closest('.ihit');
-  if(h && !(ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest('.ihit'))) itipHide();
+  var h = ev.target.closest && ev.target.closest(TIP_SEL);
+  if(h && !(ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest(TIP_SEL))) itipHide();
 });
 // Dokunmatik: native <title> hiç çalışmıyordu — dokun/aç, dışarı dokun/kapat
 document.addEventListener('pointerdown', function(ev){
   if(ev.pointerType === 'mouse') return;
-  var h = ev.target.closest && ev.target.closest('.ihit');
+  var h = ev.target.closest && ev.target.closest(TIP_SEL);
   if(h){ itipShow(h, ev); } else if(itipOpen()) itipHide();
 }, {passive: true});
 // Klavye: hedefler tabindex'li — sekme ile gezilince de ipucu açılır
 document.addEventListener('focusin', function(ev){
-  var h = ev.target.closest && ev.target.closest('.ihit');
+  var h = ev.target.closest && ev.target.closest(TIP_SEL);
   if(!h) return;
   var r = h.getBoundingClientRect();
   itipShow(h, {clientX: r.left + r.width / 2, clientY: r.top + r.height / 2});
 });
 document.addEventListener('focusout', function(ev){
-  if(ev.target.closest && ev.target.closest('.ihit')) itipHide();
+  if(ev.target.closest && ev.target.closest(TIP_SEL)) itipHide();
 });
 // Kaydırmada KÖRÜ KÖRÜNE kapatma: grafik canvas'ı yerleşirken sayfa birkaç
 // piksel kayıyor ve imleç hâlâ bar'ın üstündeyken ipucu kayboluyordu. İmlecin
@@ -750,10 +940,38 @@ document.addEventListener('focusout', function(ev){
 addEventListener('scroll', function(){
   if(!itipOpen()) return;
   var el = document.elementFromPoint(IPX, IPY);
-  var h = el && el.closest ? el.closest('.ihit') : null;
+  var h = el && el.closest ? el.closest(TIP_SEL) : null;
   if(!h) itipHide();
   else if(h !== IHOT) itipShow(h, {clientX: IPX, clientY: IPY});
 }, {passive: true});
+
+// ---- title → anlık ipucu: main içindeki her title, aynı kutuyla, dokunmatikte de ----
+// Atlananlar: link/etiket/form denetimi (imleç ve görünümleri bozulmasın) ve
+// disabled buton (Firefox disabled'a mouseover göndermez — açıklama şablonda
+// yanına yazılır). th ve duvar çipleri klavyeyle de gezilebilsin diye tabindex alır.
+var TIPS_ON = false;   // 1b: şablonlardaki title'lar hazır olunca açılır
+function initTips(){
+  document.querySelectorAll('main [title]').forEach(function(el){
+    if(el.matches('a,label,button,input,select,textarea,option,summary') || el.disabled) return;
+    if(el.hasAttribute('data-tip')) return;
+    var t = (el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+    if(!t) return;
+    el.setAttribute('data-tip', t);
+    el.removeAttribute('title');
+    if(!el.hasAttribute('aria-label')) el.setAttribute('aria-label', t);
+    if((el.tagName === 'TH' || el.classList.contains('wall')) && !el.hasAttribute('tabindex')) el.tabIndex = 0;
+  });
+}
+
+// ---- geniş tablo: taşıyorsa .wide (telefonda 'kaydır' ipucu görünür) ----
+function initTscroll(){
+  document.querySelectorAll('.tscroll').forEach(function(w){
+    var x = w.querySelector('.tscroll-x') || w;
+    w.classList.toggle('wide', x.scrollWidth > x.clientWidth + 2);
+  });
+}
+addEventListener('resize', function(){ initTscroll(); }, {passive: true});
+initTscroll();
 
 // ---- Mum grafiği (TradingView Lightweight Charts, depoya gömülü) ----
 // Kütüphane 'defer' yüklenir; panel <main>'de ama [data-keep] sayesinde
@@ -807,15 +1025,20 @@ async function initPriceChart(){
     d = await r.json();
   }catch(e){
     if(msg) msg.textContent = 'Mum verisi alınamadı.';
+    box.classList.add('empty');
     return;
   }
   if(!d.candles || !d.candles.length){
     if(msg) msg.textContent = d.pending
       ? 'Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.'
       : 'Bu coin için mum verisi yok.';
+    box.classList.add('empty');     // 360px boşluk bırakma; mum gelince kalkar
     return;
   }
   if(msg) msg.remove();
+  // Kutu naklediliyor (data-keep): bekleme→hazır geçişinde 'empty' kalırsa
+  // grafik birkaç px yükseklikle kurulur ve autoSize onu orada tutar.
+  box.classList.remove('empty');
 
   var chart = LightweightCharts.createChart(box, Object.assign({
     width: box.clientWidth, height: box.clientHeight, autoSize: true
@@ -1022,7 +1245,9 @@ else initTv();
     var ae = document.activeElement;
     if(ae && (ae.tagName === 'TEXTAREA' ||
               (ae.tagName === 'INPUT' && ae.type !== 'checkbox' && ae.value))) return;
-    if(itipOpen()) return;   // grafik ipucu açıkken içeriği değiştirme
+    // Grafik işareti ipucu açıkken içeriği değiştirme; başlık/adres ipucu
+    // (title'dan çevrilen) yenilemeyi süresiz bloke etmesin.
+    if(itipOpen() && IHOT && IHOT.classList.contains('ihit')) return;
     try{
       var r = await fetch(location.href, {cache: 'no-store'});
       if(!r.ok) return;
@@ -1036,8 +1261,10 @@ else initTv();
         var on = b.querySelector('.tab.active');
         if(on && on.dataset.f) tabSel.push([i, on.dataset.f]);
       });
-      var g = document.querySelector('details.guide');
-      var guideOpen = g ? g.open : null;
+      // <details> açık/kapalı durumu — HEPSİ, sırayla (eskiden yalnız ilk
+      // .guide korunuyor, likidasyon tablosu her yenilemede kapanıyordu)
+      var dets = Array.prototype.map.call(document.querySelectorAll('main details'),
+                                          function(d){ return d.open; });
       var x = scrollX, y = scrollY;
       nm.classList.add('no-pop');  // yenilemede panel giriş animasyonu oynamasın
       // Canlı düğümleri NAKLET: mum grafiği ve TradingView gömülüsü her turda
@@ -1049,10 +1276,8 @@ else initTv();
       });
       cm.replaceWith(nm);
       scrollTo(x, y);
-      if(guideOpen !== null){
-        var ng = document.querySelector('details.guide');
-        if(ng) ng.open = guideOpen;
-      }
+      var nd = document.querySelectorAll('main details');
+      dets.forEach(function(o, i){ if(nd[i] && nd[i].open !== o) nd[i].open = o; });
       var boxes = document.querySelectorAll('.tabs');
       tabSel.forEach(function(p){
         var box = boxes[p[0]]; if(!box) return;
@@ -1074,13 +1299,15 @@ else initTv();
           var hr = tb.querySelector('tr');
           var hth = hr && hr.children[st.ci];
           if(hth && hth.tagName === 'TH'){
-            hth.classList.add(st.dir === 'desc' ? 's-desc' : 's-asc');
+            markSorted(hth, st.dir);
             sortTable(tb, st.ci, st.dir);
           }
         }
       }
       initPriceChart();   // nakledilmiş grafik varsa erken döner
       initTv();
+      initSortable(); initTscroll();
+      if(typeof TIPS_ON !== 'undefined' && TIPS_ON) initTips();
       if(!doc.querySelector('.scanbar') && iv < 45){
         clearInterval(timer); iv = 45; timer = setInterval(tick, iv * 1000);
       }
