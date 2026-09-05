@@ -3,7 +3,7 @@
 {% block title %}🗂 Geçmiş · HL Radar{% endblock %}
 {% block content %}
 <div class="panel">
-  <h2>🏆 En iyi biliciler <span class="dim" style="text-transform:none">· bilanço yönünü doğru tahmin sicili</span></h2>
+  <h2>🏆 En iyi biliciler <span class="st">· bilanço yönünü doğru tahmin sicili</span></h2>
   <p class="sub">Bilanço öncesi pozisyonu doğru yönde olan cüzdanlar. 2+ doğru bilen otomatik
   watchlist'e (⭐) girer ve yeni poz açtığı anda Telegram'a bildirim düşer — insider avımızın hafızası burası.</p>
   {% if winners %}
@@ -30,16 +30,16 @@
   kim haklı çıktı. Bot bunu otomatik kaydeder (T-1h anlık görüntüsü + T+24h sonucu).</p>
   {% if rows %}
   {% for r in rows %}
-  <div class="ecard" style="margin-bottom:12px">
+  <div class="ecard">
     <h3><a href="/t/{{ r.symbol }}{{ k }}">{{ r.symbol }}</a>
-      <span class="dim" style="font-weight:400">{{ r.date_et }}
+      <span class="st">{{ r.date_et }}
         {{ {'amc':'🌙 kapanış sonrası','bmo':'☀️ açılış öncesi'}.get(r.hour_hint,'❓') }}</span>
       {% if r.move_pct is not none %}
       <span class="cd {{ 'long' if r.move_pct > 0 else 'short' }}">{{ '%+.1f'|format(r.move_pct) }}%</span>
       {% endif %}</h3>
     {% if r.result_note %}<div class="verdict">{{ r.result_note }}</div>{% endif %}
     {% if r.pre %}
-    <table style="margin-top:8px">
+    <table>
       <tr><th class="l">Bilanço öncesi en büyük pozlar</th><th>Yön</th><th>Boyut</th><th>Skor</th><th class="l">Sonuç</th></tr>
       {% for p in r.pre %}
       <tr>

@@ -4,7 +4,7 @@
 {% block content %}
 
 {% macro payrow(rows, paying) %}
-<div style="overflow-x:auto">
+<div class="tscroll"><div class="tscroll-x">
 <table>
   <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Yön</th><th>Büyüklük</th>
       <th title="Adresin HL perp teminatı — 'net worth' değil">HL bakiye</th>
@@ -23,11 +23,11 @@
   </tr>
   {% endfor %}
 </table>
-</div>
+</div></div>
 {% endmacro %}
 
 <div class="panel">
-  <h2>💸 Funding <span class="dim" style="text-transform:none">·
+  <h2>💸 Funding <span class="st">·
     en yüksek üstte · başlığa tıklayarak sırala</span></h2>
   <p class="sub">Funding bir <b>pozisyonlanma</b> sinyalidir:
   <span class="long">pozitif = longlar shortlara ödüyor</span> (kalabalık long),
@@ -40,7 +40,7 @@
     🔄 = 24 saatte <b>işaret değiştirmiş</b> (kalabalık taraf dönmüş).</p>
 
   {% if fr.rows %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th>
         <th title="Saatlik funding oranı">%/saat</th>
@@ -64,8 +64,8 @@
       <td class="dim">{% if r.chg is not none %}{{ '%+.4f'|format(r.chg) }}%{% else %}—{% endif %}</td>
       <td class="dim">{{ r.oi_usd|usd }}</td>
       <td class="dim">{{ r.volume|usd }}</td>
-      <td class="dim">{% if r.n_long %}{{ r.long_ntl|usd }} <span style="font-size:11px">({{ r.n_long }})</span>{% else %}—{% endif %}</td>
-      <td class="dim">{% if r.n_short %}{{ r.short_ntl|usd }} <span style="font-size:11px">({{ r.n_short }})</span>{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.n_long %}{{ r.long_ntl|usd }} <span class="hint">({{ r.n_long }})</span>{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.n_short %}{{ r.short_ntl|usd }} <span class="hint">({{ r.n_short }})</span>{% else %}—{% endif %}</td>
       <td class="{{ 'short' if r.long_daily < 0 else ('long' if r.long_daily > 0 else 'dim') }}">
         {# ASCII eksi ŞART: base.html'deki parseCell U+2212'yi tanımıyor,
            o kolon metin gibi sıralanırdı. #}
@@ -73,7 +73,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">Henüz funding ölçümü yok — metrik toplama birkaç tur attıktan
     sonra burası dolar.</p>
@@ -81,7 +81,7 @@
 </div>
 
 <div class="panel">
-  <h2>💸 Funding'i kim ödüyor? <span class="dim" style="text-transform:none">·
+  <h2>💸 Funding'i kim ödüyor? <span class="st">·
     bildiğimiz pozisyonların günlük funding akışı</span></h2>
   <p class="sub">Funding oranı herkeste var; <b>kimin ödediği</b> için oranla
   pozisyon sahibini birleştirmek gerekiyor. Aşağıdaki tutar
@@ -92,12 +92,12 @@
   {% if fr.payers or fr.earners %}
   <div class="setwrap">
     <div>
-      <p class="short" style="margin:0 0 6px;font-size:15px"><b>🔻 En çok ÖDEYENLER</b>
+      <p class="h3 short"><b>🔻 En çok ÖDEYENLER</b>
         <span class="dim">({{ fr.payers|length }})</span></p>
       {% if fr.payers %}{{ payrow(fr.payers, true) }}{% else %}<p class="dim">Yok.</p>{% endif %}
     </div>
     <div>
-      <p class="long" style="margin:0 0 6px;font-size:15px"><b>🔺 En çok ALANLAR</b>
+      <p class="h3 long"><b>🔺 En çok ALANLAR</b>
         <span class="dim">({{ fr.earners|length }})</span></p>
       {% if fr.earners %}{{ payrow(fr.earners, false) }}{% else %}<p class="dim">Yok.</p>{% endif %}
     </div>

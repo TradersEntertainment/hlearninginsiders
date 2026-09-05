@@ -3,7 +3,7 @@
 {% block content %}
 
 {% macro volrows(events) %}
-<div style="overflow-x:auto">
+<div class="tscroll"><div class="tscroll-x">
 <table>
   <tr><th class="l">Sembol</th>
       <th>Ne zaman</th>
@@ -26,7 +26,7 @@
   </tr>
   {% endfor %}
 </table>
-</div>
+</div></div>
 {% endmacro %}
 
 {% macro unitwarn(st) %}
@@ -70,7 +70,7 @@
 {% endmacro %}
 
 <div class="panel">
-  <h2>📈 Hisselerde hacim rekoru <span class="dim" style="text-transform:none">·
+  <h2>📈 Hisselerde hacim rekoru <span class="st">·
     son 48 saat · başlığa tıklayarak sırala</span></h2>
   <p class="sub">PROPR'da listeli bir <b>hisse perp'i</b> (xyz dex) son 24 saatin
   <b>en yüksek 5 dakikalık hacmine</b> ulaştığında buraya düşer. Eşik mutlak bir
@@ -112,7 +112,7 @@
 </div>
 
 <div class="panel">
-  <h2>🚀 Kriptoda hacim rekoru <span class="dim" style="text-transform:none">·
+  <h2>🚀 Kriptoda hacim rekoru <span class="st">·
     son 48 saat · başlığa tıklayarak sırala</span></h2>
   <p class="sub">Aynı dedektör, <b>kripto</b> evreni ve <b>ayrı kanal</b>.
   Kripto/TradFi ayrımı listeden değil <b>ana dex üyeliğinden</b> gelir:

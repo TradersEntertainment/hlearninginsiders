@@ -14,12 +14,13 @@
   {% if is_admin %}
   <div class="btnrow">
     <form method="post" action="/settings/test-telegram{{ k }}">
-      <button type="submit" {% if not has_bot %}disabled title="TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram test mesajı</button>
+      <button type="submit" {% if not has_bot %}disabled{% endif %}>📨 Telegram test mesajı</button>
     </form>
+    {% if not has_bot %}<span class="hint">bot yok — <code>TELEGRAM_BOT_TOKEN</code> tanımlı değil</span>{% endif %}
     <form method="post" action="/logout{{ k }}"><button type="submit" class="tab">🔓 çıkış</button></form>
     {% if tg == 'ok' %}<span class="long">✓ gitti!</span>
     {% elif tg == 'err' %}<span class="short">✗ gönderilemedi — token / chat id?</span>{% endif %}
-    <span class="dim" style="font-size:12px">Ayarın üstüne gel → ne işe yaradığını gösterir</span>
+    <span class="hint">Ayarın üstüne gel → ne işe yaradığını gösterir</span>
   </div>
   {% endif %}
 </div>

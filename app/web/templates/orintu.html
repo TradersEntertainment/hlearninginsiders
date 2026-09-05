@@ -3,7 +3,7 @@
 {% block content %}
 
 {% macro sigrows(rows) %}
-<div style="overflow-x:auto">
+<div class="tscroll"><div class="tscroll-x">
 <table>
   <tr><th class="l">Sembol</th><th>Dilim</th>
       <th title="Eşleşmeden sonra kaç bar ileriye bakıldı">Vade</th>
@@ -32,11 +32,11 @@
   </tr>
   {% endfor %}
 </table>
-</div>
+</div></div>
 {% endmacro %}
 
 <div class="panel">
-  <h2>🔮 Örüntü bulucu <span class="dim" style="text-transform:none">·
+  <h2>🔮 Örüntü bulucu <span class="st">·
     15m + 1h · başlığa tıklayarak sırala</span></h2>
   <p class="sub">Bir sembolün son barlarının <b>şekli</b> z-normalize edilip
   geçmişte aranıyor; yeterince benzeyen pencerelerden <b>sonra</b> ne olduğu
@@ -50,13 +50,10 @@
   <span class="warn">Her turda binin üzerinde kombinasyon taranıyor — z≥2
   eşiğini şansa geçenler de olur. Yatırım tavsiyesi değildir.</span></p>
 
-  <form method="get" action="/orintu" style="margin:10px 0">
-    <input type="text" name="sym" placeholder="sembol sor: NVDA" value="{{ sym }}"
-           style="padding:7px 10px;border-radius:8px;border:1px solid #3a3352;
-                  background:#1b1730;color:inherit;font-size:14px">
+  <form method="get" action="/orintu" class="btnrow">
+    <input type="text" name="sym" class="sq" size="18" placeholder="sembol sor: NVDA" value="{{ sym }}">
     {% if k %}<input type="hidden" name="k" value="{{ k[3:] }}">{% endif %}
-    <button type="submit" style="padding:7px 16px;border-radius:8px;border:0;
-            background:#7c5cff;color:#fff;font-weight:600;cursor:pointer">Sor</button>
+    <button type="submit" class="btn sm">Sor</button>
   </form>
 
   <p class="sub dim">
@@ -99,7 +96,7 @@
 
 {% if manual %}
 <div class="panel">
-  <h2>🔍 {{ manual.sym }} <span class="dim" style="text-transform:none">·
+  <h2>🔍 {{ manual.sym }} <span class="st">·
     şu anki grafik geçmişte ne yapmış</span></h2>
   {% if not manual.found %}
   <p class="short">⚠️ <b>{{ manual.sym }}</b> evrende bulunamadı — sembolü
@@ -115,8 +112,8 @@
 
   {% set bad = manual.rows|rejectattr('p_up')|list %}
   {% if bad %}
-  <p class="sub dim" style="margin-top:10px"><b>Sonuç üretilemeyenler:</b></p>
-  <ul class="sub dim" style="margin:4px 0 0 18px">
+  <p class="sub dim mt10"><b>Sonuç üretilemeyenler:</b></p>
+  <ul class="sub dim list">
     {% for r in bad %}
     <li>{{ r.tf }} · {{ r.horizon }} bar — {{ r.note or 'yeterli benzer örnek yok' }}</li>
     {% endfor %}
@@ -124,10 +121,10 @@
   {% endif %}
 
   {% for r in good if r.matches %}
-  <details style="margin-top:10px">
-    <summary class="sub" style="cursor:pointer">{{ r.tf }} · {{ r.horizon }} bar —
+  <details class="dtl">
+    <summary>{{ r.tf }} · {{ r.horizon }} bar —
       {{ r.n }} benzer pencere, tek tek</summary>
-    <div style="overflow-x:auto;margin-top:6px">
+    <div class="tscroll" style="margin-top:6px"><div class="tscroll-x">
     <table>
       <tr><th class="l">Ne zaman</th><th title="Şekil korelasyonu: 1 = birebir">Benzerlik</th>
           <th title="O pencereden sonra {{ r.horizon }} barda ne olmuş">Sonrası</th></tr>
@@ -137,14 +134,14 @@
           <td class="{{ 'long' if m.fwd > 0 else 'short' }}"><b>{{ '%+.2f'|format(m.fwd) }}%</b></td></tr>
       {% endfor %}
     </table>
-    </div>
+    </div></div>
   </details>
   {% endfor %}
 </div>
 {% endif %}
 
 <div class="panel">
-  <h2>🎯 Açık sinyaller <span class="dim" style="text-transform:none">·
+  <h2>🎯 Açık sinyaller <span class="st">·
     {{ sig|length }} adet · güçlüden zayıfa</span></h2>
   <p class="sub">Zayıf olanlar da listeleniyor: sayfa çoğunu gösterir, kanal
   seçicidir. Telegram'a yalnız <b>yeterli örnek + z eşiği + anlamlı fark</b>
@@ -159,7 +156,7 @@
 </div>
 
 <div class="panel">
-  <h2>📊 Karne <span class="dim" style="text-transform:none">·
+  <h2>📊 Karne <span class="st">·
     bu araç gerçekten tutuyor mu</span></h2>
   <p class="sub">Üretilen her tahmin kaydedilip <b>vadesinde otomatik
   notlanıyor</b>. Aracın kendisine güvenip güvenmeyeceğimizin tek dürüst ölçüsü
@@ -179,9 +176,9 @@
         <span class="dim">— asıl merak edilen bu</span></p>
     </div>
     <div>
-      <p class="sub" style="margin:0 0 6px"><b>Kalibrasyon</b>
+      <p class="sub"><b>Kalibrasyon</b>
         <span class="dim">— söylediğimiz ile olan</span></p>
-      <div style="overflow-x:auto">
+      <div class="tscroll"><div class="tscroll-x">
       <table>
         <tr><th class="l">Dediğimiz</th><th>Gerçekleşen</th><th>n</th></tr>
         {% for b in calib %}
@@ -191,13 +188,13 @@
             <td class="dim">{{ b.n }}</td></tr>
         {% endfor %}
       </table>
-      </div>
+      </div></div>
     </div>
   </div>
 
   {% if hist %}
-  <p class="sub dim" style="margin-top:12px"><b>Son kapanan tahminler</b></p>
-  <div style="overflow-x:auto">
+  <p class="sub dim mt10"><b>Son kapanan tahminler</b></p>
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Sembol</th><th>Dilim</th><th>Vade</th>
         <th>Dediğimiz</th><th>Gerçekleşen</th><th>Sonuç</th><th>Ne zaman</th></tr>
@@ -213,7 +210,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% endif %}
 </div>
 

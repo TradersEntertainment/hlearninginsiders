@@ -7,8 +7,8 @@
     data-side="{{ p.side }}"
     data-tip="{{ p.symbol }} {{ 'LONG' if p.side == 'long' else 'SHORT' }} {{ p.notional|usd }}{% if p.peak_notional and p.peak_notional > p.notional %} · zirvesi {{ p.peak_notional|usd }}{% if p.off_peak %} (şu an %{{ '%.0f'|format(100 - p.off_peak) }}'i){% endif %}{% endif %} · giriş {{ p.entry_px|px }} · {{ '%.0f'|format(p.leverage or 0) }}x{% if p.liq_px %} · liq {{ p.liq_px|px }}{% endif %} · uPnL {{ p.upnl|usd }} · {{ p.first_seen_ts|age }} önce görüldü{% if p.closed %} · KAPANDI ({{ p.closed_ts|dt }}){% endif %} · {{ p.address }}">
   <td class="l"><b>{% if sym_map.get(p.coin) %}<a href="/t/{{ p.symbol }}{{ k }}">{{ p.symbol }}</a>{% else %}{{ p.symbol }}{% endif %}</b>
-    {% if p.kind == 'crypto' %}<span class="dim" style="font-size:10.5px">ana dex</span>
-    {% elif not sym_map.get(p.coin) %}<span class="dim" style="font-size:10.5px" title="evrenimizde yok — {{ p.coin }}">{{ p.dex or 'hip-3' }}</span>{% endif %}</td>
+    {% if p.kind == 'crypto' %}<span class="hint">ana dex</span>
+    {% elif not sym_map.get(p.coin) %}<span class="hint" title="evrenimizde yok — {{ p.coin }}">{{ p.dex or 'hip-3' }}</span>{% endif %}</td>
   <td class="l">{{ m.addr(p.address, k, 6) }}</td>
   <td class="{{ p.side }}"><b>{{ 'LONG' if p.side == 'long' else 'SHORT' }}</b></td>
   <td><b>{{ '—' if p.closed else p.notional|usd }}</b></td>
@@ -46,7 +46,7 @@
 </div>
 
 <div class="panel">
-  <h2>🌍 Hyperliquid'in en büyükleri <span class="dim" style="text-transform:none">·
+  <h2>🌍 Hyperliquid'in en büyükleri <span class="st">·
     derinlikten bağımsız · ana dex + tüm HIP-3 · <b>{{ big_stats.open }}</b> açık kayıt</span></h2>
   <p class="sub">Hacim/OI filtresi <b>yok</b> — ham büyüklük sıralaması.
   <b>Canlı</b> şu an açık olanlar; <b>Rekorlar</b> şimdiye kadar gördüğümüz en büyük hâlleri
@@ -76,7 +76,7 @@
     <button type="button" class="tab" data-f="crypto">₿ Kripto</button>
     <button type="button" class="tab" data-f="equity">📈 Hisse/emtia</button>
   </div>
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table id="bigtable">
     <tr><th class="l">Coin</th><th class="l">Adres</th><th>Yön</th><th>Boyut</th>
         <th title="Gördüğümüz en büyük hâli">Zirve</th>
@@ -87,7 +87,7 @@
     {% for p in big_live %}{{ bigrow(p, 'live') }}{% endfor %}
     {% for p in big_rec %}{{ bigrow(p, 'rec') }}{% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   {# Boş durum TEŞHİS etsin: "henüz değil" ile "bozuk" ayırt edilebilsin #}
   {% if not big_stats.started %}
@@ -106,17 +106,17 @@
 </div>
 
 <div class="panel">
-  <h2>🐘 Sessiz sularda devler <span class="dim" style="text-transform:none">· düşük hacimli hisselerdeki büyük pozisyonlar + OI hakimleri · <b>{{ n_humans }}</b> pozisyon</span></h2>
+  <h2>🐘 Sessiz sularda devler <span class="st">· düşük hacimli hisselerdeki büyük pozisyonlar + OI hakimleri · <b>{{ n_humans }}</b> pozisyon</span></h2>
   <p class="sub">Hacim {{ max_vol|usd }}/gün altı VEYA tek başına OI'nin %{{ '%g'|format(min_share) }}+'i ·
   OI payına göre sıralı · kolon başlığına tıkla → sırala</p>
   <div class="chips">
     {% for v, lbl in min_chips %}
     <a href="/devler?min={{ v|int }}{{ '&key=' + k[5:] if k else '' }}" class="{{ 'on' if minv == v else '' }}">{{ lbl }}</a>
     {% endfor %}
-    <span class="dim" style="font-size:12px;align-self:center">boyut filtresi — kalabalık listede küçükleri gizle</span>
+    <span class="hint">boyut filtresi — kalabalık listede küçükleri gizle</span>
   </div>
   {% if humans %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Yön</th><th>Boyut</th>
         <th title="Adresin HL perp teminatı (tüm dex toplamı). Spot/vault dahil DEĞİL — 'net worth' değildir">HL bakiye</th>
@@ -154,7 +154,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% if n_humans > 400 %}<p class="dim">İlk 400 gösteriliyor ({{ n_humans }} toplam) — üstteki boyut filtresiyle daralt.</p>{% endif %}
   {% else %}
   <p class="dim">Bu filtrede pozisyon yok. Derin keşif süpürmesi evreni dolaştıkça burası dolar —
@@ -164,10 +164,10 @@
 
 {% if bots %}
 <div class="panel">
-  <h2>🤖 Market maker / vault envanteri <span class="dim" style="text-transform:none">· insider DEĞİL, bilgi amaçlı · {{ n_bots }} pozisyon</span></h2>
+  <h2>🤖 Market maker / vault envanteri <span class="st">· insider DEĞİL, bilgi amaçlı · {{ n_bots }} pozisyon</span></h2>
   <p class="sub">Piyasa yapıcılar düşük hacimli hisselerde ister istemez büyük envanter taşır —
   skorlanmaz, bildirilmez, sicile girmez. Yine de "OI'nin kalanı kimde?" sorusunun cevabı burada.</p>
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Tür</th><th>Yön</th><th>Boyut</th>
         <th>OI payı</th><th>24h hacim</th></tr>
@@ -183,7 +183,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
 </div>
 {% endif %}
 {% endblock %}

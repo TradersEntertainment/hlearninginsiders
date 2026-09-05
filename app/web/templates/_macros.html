@@ -55,3 +55,18 @@ kaldıraçla hesabından büyük pozisyon taşınıyor demektir">{{ '%.0f'|forma
   ilerledikçe dolar. <b>Bu rakam "net worth" değildir</b> — HL perp teminatı,
   spot/vault dahil değil.</p>
 {%- endmacro %}
+
+{# ── Kanal gönderimi sonucu (index + saatler aynı 5 dal) ─────────────────── #}
+{% macro flash(result) -%}
+{% if result == 'ok' %}<p class="alert ok">✓ Seçtiklerin kanala gitti!</p>
+{% elif result == 'err_ch' %}<p class="alert bad">Kanal tanımlı değil — Railway'e <code>TELEGRAM_CHANNEL_ID</code> ekle (botu kanala admin yap).</p>
+{% elif result == 'err_bot' %}<p class="alert bad">Bot aktif değil — Railway'e <code>TELEGRAM_BOT_TOKEN</code> ekle (kanal tanımlı ama bot yok).</p>
+{% elif result == 'err_empty' %}<p class="alert warn">Göndermek için en az bir <b>💪 güçlü</b> hisse seç.</p>
+{% elif result == 'err' %}<p class="alert bad">✗ Gönderilemedi — kanal id'sini ve botun kanal yetkisini kontrol et.</p>{% endif %}
+{%- endmacro %}
+
+{# ── Boş durum: ilk satır ne yok, sonrakiler NEDEN (henüz yok / eşik altı /
+   çekilemedi). "Boş" ile "bozuk" ayrımı okuyana bırakılmaz. ─────────────── #}
+{% macro empty(lines) -%}
+<p class="empty">{% for l in lines %}{% if loop.first %}{{ l }}{% else %}<span class="r">{{ l }}</span>{% endif %}{% endfor %}</p>
+{%- endmacro %}

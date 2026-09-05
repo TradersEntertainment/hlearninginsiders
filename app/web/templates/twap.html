@@ -4,7 +4,7 @@
 {% block content %}
 
 <div class="panel">
-  <h2>⏳ Büyük TWAP / düzenli birikim <span class="dim" style="text-transform:none">·
+  <h2>⏳ Büyük TWAP / düzenli birikim <span class="st">·
     son 48 saat · süren turlar üstte · başlığa tıklayarak sırala</span></h2>
   <p class="sub">Aynı adres, aynı coin, aynı yönde <b>düzenli aralıklarla</b> ve
   <b>benzer boyutlarda</b> gelen fill dizisi = TWAP. Birisi piyasayı kaldırmadan
@@ -37,10 +37,10 @@
 </div>
 
 <div class="panel">
-  <h2>🎯 Tespit edilen turlar <span class="dim" style="text-transform:none">·
+  <h2>🎯 Tespit edilen turlar <span class="st">·
     {{ rows|length }} adet</span></h2>
   {% if rows %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Coin</th><th class="l">Adres</th><th>Yön</th>
         <th title="Turun toplam büyüklüğü — dilimlerin $ toplamı">Toplam</th>
@@ -82,7 +82,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">Eşiği ({{ min_usd|usd }}) geçen TWAP turu görmedik.
     {% if not cov.crypto.n %}<b>Kripto işlem arşivi henüz boş</b> — kayıt yeni

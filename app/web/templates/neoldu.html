@@ -4,7 +4,7 @@
 {% block content %}
 
 <div class="panel">
-  <h2>🔎 Ne oldu? <span class="dim" style="text-transform:none">·
+  <h2>🔎 Ne oldu? <span class="st">·
     belli bir dakika aralığında kim ne aldı, ne sattı</span></h2>
   <p class="sub">Grafikte absürt bir hacim gördüğünde sembolü ve saat aralığını
   yaz. İki katman birden gelir: <b>toplam okuma</b> (açık pozisyon değişimi —
@@ -16,28 +16,20 @@
   <span class="dim">OI↑ fiyat↓ = yeni short · OI↓ fiyat↓ = long kapanışı ·
   OI sabit = el değiştirmiş.</span></p>
 
-  <form method="get" action="/neoldu" style="margin:10px 0;display:flex;
-        gap:8px;flex-wrap:wrap;align-items:center">
-    <input type="text" name="sym" placeholder="sembol: HYPE / NVDA" value="{{ sym }}"
-           style="padding:7px 10px;border-radius:8px;border:1px solid #3a3352;
-                  background:#1b1730;color:inherit;font-size:14px;width:150px">
-    <input type="text" name="t0" placeholder="18:25" value="{{ t0_s }}"
-           style="padding:7px 10px;border-radius:8px;border:1px solid #3a3352;
-                  background:#1b1730;color:inherit;font-size:14px;width:85px">
+  <form method="get" action="/neoldu" class="btnrow">
+    <input type="text" name="sym" class="sq" size="16" placeholder="sembol: HYPE / NVDA" value="{{ sym }}">
+    <input type="text" name="t0" class="sq" size="6" placeholder="18:25" value="{{ t0_s }}">
     <span class="dim">→</span>
-    <input type="text" name="t1" placeholder="18:35" value="{{ t1_s }}"
-           style="padding:7px 10px;border-radius:8px;border:1px solid #3a3352;
-                  background:#1b1730;color:inherit;font-size:14px;width:85px">
+    <input type="text" name="t1" class="sq" size="6" placeholder="18:35" value="{{ t1_s }}">
     {% if k %}<input type="hidden" name="k" value="{{ k[3:] }}">{% endif %}
-    <button type="submit" style="padding:7px 16px;border-radius:8px;border:0;
-            background:#7c5cff;color:#fff;font-weight:600;cursor:pointer">Sor</button>
-    <span class="dim" style="font-size:12px">saatler TSİ{% if note %} · {{ note }}{% endif %}</span>
+    <button type="submit" class="btn sm">Sor</button>
+    <span class="hint">saatler TSİ{% if note %} · {{ note }}{% endif %}</span>
   </form>
 </div>
 
 {% if rep %}
 <div class="panel">
-  <h2>{{ rep.symbol }} <span class="dim" style="text-transform:none">·
+  <h2>{{ rep.symbol }} <span class="st">·
     {{ rep.t0|dt }} → {{ rep.t1|dt }} ({{ rep.minutes }} dk)
     {%- if rep.is_crypto %} · kripto{% else %} · hisse perp{% endif %}</span></h2>
 
@@ -57,10 +49,10 @@
   <p class="sub dim">OI {{ (rep.metrics.first.oi * rep.metrics.first.mark_px)|usd }}
     → {{ (rep.metrics.last.oi * rep.metrics.last.mark_px)|usd }} ·
     fiyat {{ rep.metrics.first.mark_px|px }} → {{ rep.metrics.last.mark_px|px }}
-    <span style="font-size:11px">(ölçümler {{ rep.metrics.first.ts|dt }} ve
+    <span class="hint">(ölçümler {{ rep.metrics.first.ts|dt }} ve
     {{ rep.metrics.last.ts|dt }})</span>
     {%- if rep.widened %}
-    <br><span class="warn" style="font-size:11px">⤢ Pencerenin içine OI örneği
+    <br><span class="warn hint">⤢ Pencerenin içine OI örneği
       düşmemiş — okuma sonraki örneğe kadar <b>{{ (rep.span // 60) or 1 }}
       dakikaya</b> genişletildi. Sorduğun aralığın değil, bu aralığın
       okumasıdır.</span>{% endif %}</p>
@@ -91,7 +83,7 @@
 
 {# ── kim ne yaptı ───────────────────────────────────────────────────────── #}
 <div class="panel">
-  <h2>👥 Kim ne yaptı <span class="dim" style="text-transform:none">·
+  <h2>👥 Kim ne yaptı <span class="st">·
     büyükten küçüğe · başlığa tıklayarak sırala</span></h2>
   {% if rep.rows %}
   <p class="sub"><b>Taker %</b> = fiyatı süpürerek mi aldı (agresör, aceleci —
@@ -103,12 +95,11 @@
   "kimse bir şey tutmuyor" diye okunurdu.</p>
 
   <button type="button" id="refresh" data-coin="{{ rep.coin }}"
-          style="padding:7px 14px;border-radius:8px;border:1px solid #3a3352;
-                 background:#241f3d;color:inherit;cursor:pointer;margin-bottom:10px">
+          class="btn ghost sm">
     🔄 Profilleri tazele (en fazla {{ probe_max }} adres)</button>
   <span id="refmsg" class="sub dim"></span>
 
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table id="whotable">
     <tr><th class="l">Adres</th>
         <th title="Penceredeki alım eksi satım">Net</th>
@@ -145,7 +136,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">Bu pencerede işlem kaydı yok.
     {% if rep.is_crypto %}Kripto tarafında yalnız <b>{{ crypto_floor|usd }}</b>

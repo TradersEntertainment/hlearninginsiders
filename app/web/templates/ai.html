@@ -4,7 +4,7 @@
 {% block content %}
 
 <div class="panel">
-  <h2>🤖 AI analist <span class="dim" style="text-transform:none">·
+  <h2>🤖 AI analist <span class="st">·
     {% if not enabled %}kapalı{% elif not has_key %}anahtar yok{% else %}{{ model }} · {{ interval_h }} saatte bir{% endif %}</span></h2>
   <p class="sub">Model veriyi okuyup <b>sınanabilir</b> hipotez üretir; vadesi gelince
   <b>Python ölçer</b> ve tuttu/tutmadı diye damgalar. Aşağıdaki karne modelin kendi
@@ -31,16 +31,16 @@
   {% endif %}
 
   {% if is_admin %}
-  <form method="post" action="/ai/run{{ k }}" class="btnrow" style="margin-top:8px">
-    <button type="submit" {% if not enabled or not has_key %}disabled
-      title="Önce AI_API_KEY ekle ve AI analisti aç"{% else %}
+  <form method="post" action="/ai/run{{ k }}" class="btnrow">
+    <button type="submit" {% if not enabled or not has_key %}disabled{% else %}
       title="Zamanlı turu beklemeden şimdi çalıştır — anahtarın doğru mu hemen görürsün"{% endif %}>
       ▶️ Şimdi çalıştır</button>
-    <span class="dim" style="font-size:12px">Günlük token tavanı burada da geçerlidir.</span>
+    {% if not enabled or not has_key %}<span class="hint">önce <code>AI_API_KEY</code> ekle ve AI analisti aç</span>{% endif %}
+    <span class="hint">Günlük token tavanı burada da geçerlidir.</span>
   </form>
   {% endif %}
 
-  <p style="margin:10px 0 4px;font-size:15px">
+  <p class="h3 mt10">
     <span class="long"><b>{{ rec.hit }}</b> tuttu</span> ·
     <span class="short"><b>{{ rec.miss }}</b> tutmadı</span> ·
     <b>{{ rec.open }}</b> beklemede ·
@@ -53,9 +53,9 @@
 </div>
 
 <div class="panel">
-  <h2>⏳ Açık hipotezler <span class="dim" style="text-transform:none">· sonucu bekleniyor</span></h2>
+  <h2>⏳ Açık hipotezler <span class="st">· sonucu bekleniyor</span></h2>
   {% if open_h %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">İddia</th><th class="l">Konu</th><th class="l">Ölçüt</th>
         <th title="Kayıt anındaki değer">Baz</th><th>Vade</th><th>Güven</th></tr>
@@ -71,7 +71,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">Henüz açık hipotez yok.</p>
   {% endif %}
@@ -80,7 +80,7 @@
 <div class="panel">
   <h2>🏁 Sonuçlananlar</h2>
   {% if done_h %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th>Sonuç</th><th class="l">İddia</th><th class="l">Konu</th>
         <th class="l">Ölçüt</th><th title="Vadede ölçülen değer">Ölçülen</th><th>Ne zaman</th></tr>
@@ -97,18 +97,18 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">Henüz sonuçlanan hipotez yok — ilkleri vadesi geldiğinde burada belirir.</p>
   {% endif %}
 </div>
 
 <div class="panel">
-  <h2>💭 Gözlemler <span class="dim" style="text-transform:none">· ölçülmez, sicile girmez</span></h2>
+  <h2>💭 Gözlemler <span class="st">· ölçülmez, sicile girmez</span></h2>
   <p class="sub">Modelin sınanabilir bir ölçüte bağlayamadığı notlar. Serbestçe
   konuşabilsin diye tutuluyor ama <b>karneye sayılmaz</b>.</p>
   {% if obs %}
-  <ul style="margin:0;padding-left:18px;line-height:1.55">
+  <ul class="list">
     {% for o in obs %}
     <li><span class="dim">{{ o.ts|dt }}</span>
       {% if o.subject %}<b>{{ o.subject.split(':')[-1] }}</b> — {% endif %}{{ o.text }}</li>
@@ -122,7 +122,7 @@
 <div class="panel">
   <h2>⚙️ Son turlar</h2>
   {% if runs %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th>Zaman</th><th>Durum</th><th>Gözlem</th><th>Hipotez</th>
         <th title="girdi + çıktı">Token</th><th class="l">Hata</th></tr>
@@ -137,7 +137,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">Henüz tur çalışmadı.</p>
   {% endif %}

@@ -4,7 +4,7 @@
 {% block content %}
 
 <div class="panel">
-  <h2>🌙 Kapalı seans <span class="dim" style="text-transform:none">·
+  <h2>🌙 Kapalı seans <span class="st">·
     {% if scr.weekend %}HAFTA SONU
     {%- elif scr.closed %}ABD kapalı · açılışa {{ (scr.next_reg_ts - scr.measure_ts) // 3600 }}s
       {{ ((scr.next_reg_ts - scr.measure_ts) % 3600) // 60 }}dk
@@ -16,7 +16,7 @@
   <span class="warn">Sapma bir tahmin değildir: geri döneceğinin garantisi yok,
   yatırım tavsiyesi değildir.</span></p>
 
-  <p style="margin:8px 0 4px">
+  <p class="mt6 mb0">
     <b>Çıpa:</b> {{ anchor_tr.strftime('%d.%m %H:%M') }} TSİ
     <span class="dim">({{ anchor_et.strftime('%a %H:%M') }} ET — ABD kapanışı)</span>
     {% if scr.closed %} · <b>{{ (scr.closed_for // 3600) }}s {{ (scr.closed_for % 3600) // 60 }}dk</b> boyunca kapalı
@@ -40,7 +40,7 @@
 </div>
 
 <div class="panel">
-  <h2>🔔 Alarm durumu <span class="dim" style="text-transform:none">·
+  <h2>🔔 Alarm durumu <span class="st">·
     bildirim geldi mi, gelmediyse neden</span></h2>
   <p class="sub">Bant alarmı <b>{{ '%.1f'|format(al.band_pct) }}%</b>'lik her yeni
   kademede bir kez düşer. <b>Bant</b> şu anki sapmanın kaçıncı kademede olduğu,
@@ -55,7 +55,7 @@
     {%- else %}<span class="short">Alarm turu HENÜZ ÇALIŞMADI</span> — metrik
       toplama durmuş olabilir, <code>/tani</code>'ye bak.{% endif %}</p>
   {% if al.rows %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th><th>Sapma</th>
         <th title="Şu anki sapmanın kaçıncı kademede olduğu">Bant</th>
@@ -81,7 +81,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">PROPR'da listeli sembol için sapma satırı yok.</p>
   {% endif %}
@@ -92,10 +92,10 @@
 </div>
 
 <div class="panel">
-  <h2>📊 Kapanıştan beri sapma <span class="dim" style="text-transform:none">·
+  <h2>📊 Kapanıştan beri sapma <span class="st">·
     en çok kıpırdayan üstte · başlığa tıklayarak sırala</span></h2>
   {% if scr.rows %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th>
         <th title="Kapanış anındaki mark fiyatı">Kapanış</th>
@@ -119,7 +119,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">Kapanış anına ait fiyat ölçümü bulunamadı — metrik geçmişi
     henüz kapanışı kapsamıyor olabilir. Birkaç seans sonra burası dolar.</p>
@@ -127,7 +127,7 @@
 </div>
 
 <div class="panel">
-  <h2>🌙 Kapalıyken açılan pozisyonlar <span class="dim" style="text-transform:none">·
+  <h2>🌙 Kapalıyken açılan pozisyonlar <span class="st">·
     {{ who.total }} pozisyon · çıpadan beri</span></h2>
   <p class="sub">Borsa kapalıyken pozisyon açan, dayanak hisseyle işlem yapamaz —
   ya perp'e özel bir görüşü var ya da açılışı bekliyor. "Hafta sonu kimler
@@ -137,10 +137,10 @@
   <div class="setwrap">
     {% for side, rows, label in (('long', who.long, '🟢 LONG açanlar'), ('short', who.short, '🔴 SHORT açanlar')) %}
     <div>
-      <p class="{{ side }}" style="margin:0 0 6px;font-size:15px"><b>{{ label }}</b>
+      <p class="h3 {{ side }}"><b>{{ label }}</b>
         <span class="dim">({{ rows|length }})</span></p>
       {% if rows %}
-      <div style="overflow-x:auto">
+      <div class="tscroll"><div class="tscroll-x">
       <table>
         <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Büyüklük</th>
             <th title="Adresin HL perp teminatı — 'net worth' değil">HL bakiye</th>
@@ -160,7 +160,7 @@
         </tr>
         {% endfor %}
       </table>
-      </div>
+      </div></div>
       {% else %}<p class="dim">Yok.</p>{% endif %}
     </div>
     {% endfor %}

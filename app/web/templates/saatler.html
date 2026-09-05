@@ -4,7 +4,7 @@
 {% block content %}
 
 {% macro hourtable(rows, dir) %}
-<div style="overflow-x:auto">
+<div class="tscroll"><div class="tscroll-x">
 <table>
   <tr>{% if is_admin and dir == 'up' %}<th title="Kanala gönderilecekleri seç"></th>{% endif %}
       <th class="l">Hisse</th>
@@ -30,22 +30,18 @@
   </tr>
   {% endfor %}
 </table>
-</div>
+</div></div>
 {% endmacro %}
 
 <div class="panel">
-  <h2>🕐 Şu saatte ne bekliyoruz? <span class="dim" style="text-transform:none">·
+  <h2>🕐 Şu saatte ne bekliyoruz? <span class="st">·
     TSİ {{ '%02d'|format(tsi_now) }}:00 · ET {{ '%02d'|format(et_now) }}:00</span></h2>
   <p class="sub">Son ~90 günün 1 saatlik mumlarından, <b>bu saat kovasının</b> tarihsel
   karnesi. Bu bir <b>sıralama</b>dır, tahmin değil: geçmişte bu saatte ne olduğunu
   söyler, gelecekte ne olacağını değil.
   <span class="warn">Geçmiş istatistik — garanti değil, yatırım tavsiyesi değildir.</span></p>
 
-  {% if hot_result == 'ok' %}<p class="okline">✓ Seçtiklerin kanala gitti!</p>
-  {% elif hot_result == 'err_ch' %}<p class="short">Kanal tanımlı değil — Railway'e <code>TELEGRAM_CHANNEL_ID</code> ekle (botu kanala admin yap).</p>
-  {% elif hot_result == 'err_bot' %}<p class="short">Bot aktif değil — Railway'e <code>TELEGRAM_BOT_TOKEN</code> ekle (kanal tanımlı ama bot yok).</p>
-  {% elif hot_result == 'err_empty' %}<p class="warn">Göndermek için en az bir <b>💪 güçlü</b> hisse seç.</p>
-  {% elif hot_result == 'err' %}<p class="short">✗ Gönderilemedi — kanal id'sini ve botun kanal yetkisini kontrol et.</p>{% endif %}
+  {{ m.flash(hot_result) }}
 
   {% if rank.n_stats %}
     {% if rank.n_strong %}
@@ -63,7 +59,7 @@
 </div>
 
 <div class="panel">
-  <h2>⬆️ Yükselmesi beklenenler{% if rank.up %} <span class="dim" style="text-transform:none">· {{ rank.up|length }} hisse</span>{% endif %}</h2>
+  <h2>⬆️ Yükselmesi beklenenler{% if rank.up %} <span class="st">· {{ rank.up|length }} hisse</span>{% endif %}</h2>
   {% if rank.up %}
     {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">
       <input type="hidden" name="nxt" value="/saatler">{% endif %}
@@ -71,7 +67,7 @@
     {% if is_admin %}
     <div class="btnrow">
       <button type="submit" {% if not has_channel %}disabled title="Railway'e TELEGRAM_CHANNEL_ID ekle (botu kanala admin yap)"{% endif %}>📣 Seçtiklerimi kanala gönder</button>
-      <span class="dim" style="font-size:12px">Kanala yalnız <b>💪 güçlü</b> olanlar gider —
+      <span class="hint">Kanala yalnız <b>💪 güçlü</b> olanlar gider —
         zayıf sinyali sayfada göstermek başka, yayınlamak başka.</span>
     </div>
     </form>
@@ -86,7 +82,7 @@
 </div>
 
 <div class="panel">
-  <h2>⬇️ Düşmesi beklenenler{% if rank.down %} <span class="dim" style="text-transform:none">· {{ rank.down|length }} hisse</span>{% endif %}</h2>
+  <h2>⬇️ Düşmesi beklenenler{% if rank.down %} <span class="st">· {{ rank.down|length }} hisse</span>{% endif %}</h2>
   <p class="sub">Aynı veri, ters yön. "Bu saatte bir şey beklemiyoruz" ile
   "bu saatte düşmesini bekliyoruz" ayrı şeyler — ikisi karışmasın diye ayrı liste.</p>
   {% if rank.down %}
@@ -99,10 +95,10 @@
 </div>
 
 <div class="panel">
-  <h2>⏭ Sonraki 6 saat <span class="dim" style="text-transform:none">· en yüksek ortalamalı hisse</span></h2>
+  <h2>⏭ Sonraki 6 saat <span class="st">· en yüksek ortalamalı hisse</span></h2>
   <p class="sub">"Ne" sorusunun yanına "ne zaman": her saatin tarihsel birincisi.
   💪 o saatte eşiği geçiyor demektir.</p>
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th>TSİ</th><th>ET</th><th class="l">Birinci</th><th>Bu saat ort.</th></tr>
     {% for a in ahead %}
@@ -117,7 +113,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
 </div>
 
 {% endblock %}

@@ -4,7 +4,7 @@
 {% block content %}
 
 <div class="panel">
-  <h2>🎯 Liq attack radarı <span class="dim" style="text-transform:none">·
+  <h2>🎯 Liq attack radarı <span class="st">·
     hafta sonu yakın likidasyonları kim ucuza patlatabilir</span></h2>
   <p class="sub">Hafta sonu hissenin gerçek fiyatı <b>sabit</b> (borsa kapalı).
   Perp fiyatını yakın likidasyon kümesine kadar itip patlatanın dönüşü garanti:
@@ -19,11 +19,11 @@
 
   <div class="la-win">
     {% if lq.weekend %}
-      <span class="la-pill open">● pencere AÇIK</span>
+      <span class="pill ok">● pencere AÇIK</span>
       <span class="dim">bitişine <b>{{ wk_left // 3600 }}s {{ wk_left % 3600 // 60 }}dk</b>
         ({{ wk_end_tr.strftime('%a %H:%M') }} TSİ)</span>
     {% else %}
-      <span class="la-pill shut">○ pencere kapalı</span>
+      <span class="pill off">○ pencere kapalı</span>
       <span class="dim">sonraki: <b>{{ next_tr.strftime('%a %d.%m %H:%M') }}</b> TSİ
         ({{ next_in // 3600 }}s sonra) — aşağısı son hafta sonunun sonucu</span>
     {% endif %}
@@ -37,15 +37,13 @@
     {% else %}<span class="dim">· bu hafta sonu henüz tarama olmadı</span>{% endif %}
     {% if lq.stats.error %}<span class="short">· ⚠️ son tur hata verdi: {{ lq.stats.error }}</span>{% endif %}
     {% if lq.weekend %}
-      <button type="button" id="scan-now" style="padding:5px 12px;border-radius:999px;border:1px solid var(--border);
-              background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--fg);font-weight:700;
-              font-size:12px;cursor:pointer">🔄 şimdi tara</button>
+      <button type="button" id="scan-now" class="btn ghost sm">🔄 şimdi tara</button>
       <span id="scan-msg" class="dim"></span>
     {% endif %}
   </div>
 
   {% set hot = lq.cands|selectattr('hot')|list %}
-  <div class="la-kpi">
+  <div class="kpi">
     <div><div class="l">Aday</div><div class="v">{{ hot|length }}</div>
       <div class="s">{{ lq.cands|length }} coin-yön ölçüldü</div></div>
     <div><div class="l">En yüksek oran</div>
@@ -61,15 +59,15 @@
 </div>
 
 <div class="panel">
-  <h2>🔥 Adaylar <span class="dim" style="text-transform:none">· orana göre ·
+  <h2>🔥 Adaylar <span class="st">· orana göre ·
     başlığa tıklayarak sırala</span></h2>
   {% if lq.cands %}
-  <div class="la-legend">
-    <span><i class="la-bar liq-long"></i>patlayacak $ (long — fiyat düşerse)</span>
-    <span><i class="la-bar liq-short"></i>patlayacak $ (short — fiyat çıkarsa)</span>
-    <span><i class="la-bar book"></i>yenmesi gereken defter $</span>
+  <div class="legend">
+    <span><i class="sw f-liq-long"></i>patlayacak $ (long — fiyat düşerse)</span>
+    <span><i class="sw f-liq-short"></i>patlayacak $ (short — fiyat çıkarsa)</span>
+    <span><i class="sw f-book"></i>yenmesi gereken defter $</span>
   </div>
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th>
         <th class="l" title="Fiyatı hangi yöne, hedef seviyeye kadar">Hedef</th>
@@ -90,7 +88,7 @@
       <td><b>{{ c.liq_usd|usd }}</b> <span class="dim">{{ c.n_pos }} poz</span></td>
       <td>{{ c.cost_usd|usd }}{% if c.book_thin %} <span title="Görünen defter hedefe varmadan bitiyor — gerçek maliyet bundan büyük olamaz">🕳</span>{% endif %}</td>
       <td><b>{{ '%.1f'|format(c.score) }}×</b>
-        {% if c.hot %}<span class="la-pill hot">🔥 aday</span>{% endif %}</td>
+        {% if c.hot %}<span class="pill warn">🔥 aday</span>{% endif %}</td>
       <td class="{{ 'long' if (c.dev_close or 0) > 0 else ('short' if (c.dev_close or 0) < 0 else 'dim') }}">
         {% if c.dev_close is not none %}{{ '%+.2f'|format(c.dev_close) }}%{% else %}—{% endif %}</td>
       <td class="l">{% for t in c.targets %}{{ m.addr(t.address, k, 6) }}
@@ -98,7 +96,7 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% elif lq.weekend %}
   {# ÜÇ AYRI BOŞLUK: küme yok / defter çekilemedi / henüz taranmadı. Hepsine
      "aday yok" demek, çekilemeyen defteri "hedef yok" diye okutur. #}
@@ -123,14 +121,14 @@
 </div>
 
 <div class="panel">
-  <h2>📼 Gerçekleşen saldırılar <span class="dim" style="text-transform:none">·
+  <h2>📼 Gerçekleşen saldırılar <span class="st">·
     karne — önceden işaretlemiş miydik?</span></h2>
   <p class="sub">1 dakikalık fiyat serisinde referanstan <b>≥%{{ '%g'|format(spike_pct) }}</b>
   sapıp <b>{{ revert_min }} dk</b> içinde geri dönen hareket, <b>ve</b> o aralıkta
   likidasyon fiyatı sıçramanın içinde kalan kapanmış pozisyon varsa "saldırı".
   Liq onayı olmayan fitil sayılmaz; geri dönmeyen hareket gerçek fiyat hareketidir.</p>
   {% if lq.attacks %}
-  <div style="overflow-x:auto">
+  <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Hisse</th><th>Ne zaman</th><th>Yön</th>
         <th title="Referanstan uca">Sıçrama</th>
@@ -155,13 +153,13 @@
     </tr>
     {% endfor %}
   </table>
-  </div>
+  </div></div>
   {% else %}
   <p class="dim">Henüz tespit edilmiş saldırı yok. Tespit saatte bir, son 21 günün
     hafta sonlarına bakar; 1 dakikalık fiyat kaydı bu deploy'dan itibaren
     birikiyor.</p>
   {% endif %}
-  <p class="sub dim" style="margin-top:10px">🧾 Defter = <code>l2Book</code>'un
+  <p class="kunye">🧾 Defter = <code>l2Book</code>'un
     görünen seviyeleri, tur anında (hafta sonu her {{ scan_sec // 60 }} dk, aday coin
     başına 1 istek) · pozisyonlar süpürmede görülenler · hedef uzaklık tavanı
     %{{ '%g'|format(max_dist) }} · küme tabanı {{ min_usd|usd }}. Oran bir üst sınırdır:

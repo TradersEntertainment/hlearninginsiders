@@ -12,8 +12,8 @@
 <div class="scanbar"><span class="swimmer">🐋</span> Balinalar aranıyor<span class="dots"></span> veriler kendiliğinden gelecek (sayfa zıplamaz)</div>
 {% endif %}
 <div class="panel">
-  <h2>{{ symbol }} <span class="dim">({{ coin }})</span>
-    {% if propr %}<span class="badge" style="background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)"
+  <h2>{{ symbol }} <span class="st">({{ coin }})</span>
+    {% if propr %}<span class="pbadge"
       title="propr.xyz'de listeli — trade ettiğin platformda işlem açabilirsin">✅ PROPR'da listeli</span>{% endif %}</h2>
   <span class="stat">Mark <b>{{ summ.mark|px }}</b>
     {% if summ.px_change_pct is not none %}<span class="{{ 'long' if summ.px_change_pct>0 else 'short' }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</span>{% endif %}</span>
@@ -31,15 +31,15 @@
   </form>
   {% if is_admin %}
   <form method="post" action="/t/{{ symbol }}/send{{ k }}" style="display:inline">
-    <button type="submit" {% if not has_bot %}disabled title="TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram'a gönder</button>
+    <button type="submit" {% if not has_bot %}disabled{% endif %}>📨 Telegram'a gönder</button>
+    {% if not has_bot %}<span class="hint">bot yok — <code>TELEGRAM_BOT_TOKEN</code> tanımlı değil</span>{% endif %}
   </form>
   {% else %}
-  <a href="/login{{ '?nxt=/t/' + symbol if not k else k + '&nxt=/t/' + symbol }}" class="tab"
-     style="padding:6px 14px;border-radius:999px;border:1.5px solid var(--border)">🔐 giriş yap</a>
+  <a href="/login{{ '?nxt=/t/' + symbol if not k else k + '&nxt=/t/' + symbol }}" class="btn ghost sm">🔐 giriş yap</a>
   {% endif %}
   {% if tg == 'ok' %}<span class="long">✓ Telegram'a gitti!</span>
   {% elif tg == 'err' %}<span class="short">✗ Gönderilemedi — token/chat id'yi ve logları kontrol et</span>{% endif %}
-  <div class="dim" style="margin-top:6px">
+  <div class="dim mt6">
     Long {{ long_total|usd }} / Short {{ short_total|usd }}
     {% if scanned_ts %} · son tarama: {{ scanned_ts|dt }}{% endif %}
   </div>
@@ -62,10 +62,10 @@
 
 {% if hchart %}
 <div class="panel">
-  <h2>🕐 Hangi saatte ne yapıyor? <span class="dim" style="text-transform:none">· son {{ hstats.days }} günün 1 saatlik mumları</span></h2>
+  <h2>🕐 Hangi saatte ne yapıyor? <span class="st">· son {{ hstats.days }} günün 1 saatlik mumları</span></h2>
   <p class="sub">Her bar o saatin ORTALAMA getirisi: yeşil = o saatte tarihsel olarak yükselmiş,
   kırmızı = düşmüş. Saatler TSİ. Üzerine gel → kazanç oranı ve örnek sayısı.</p>
-  <div class="legendrow">
+  <div class="legend">
     <span>☀️ ABD borsası AÇIKKEN toplam: <b class="{{ 'long' if hstats.open_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hstats.open_ret) }}%</b></span>
     <span>🌙 KAPALIYKEN toplam: <b class="{{ 'long' if hstats.closed_ret >= 0 else 'short' }}">{{ '%+.1f'|format(hstats.closed_ret) }}%</b></span>
     {% if hstats.closed_ret > hstats.open_ret and hstats.closed_ret > 0 %}<span class="warn">→ getirinin çoğu borsa KAPALIYKEN gelmiş 🌙</span>{% endif %}
@@ -95,7 +95,7 @@
           tabindex="0" role="img" aria-label="{{ b.tip }}"/>
     {% endfor %}
   </svg>
-  <p class="sub" style="margin-top:6px">🟨 alt bantlı saatler ≈ ABD borsası açık ·
+  <p class="sub mt6">🟨 alt bantlı saatler ≈ ABD borsası açık ·
   soluk barlar = az örnek (güven düşük) ·
   en iyi saatler: {% for h in hstats.best %}<b>TSİ {{ '%02d'|format(h.tsi) }}</b> ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% endfor %}
   · en kötü: {% for h in hstats.worst %}TSİ {{ '%02d'|format(h.tsi) }} ({{ '%+.2f'|format(h.avg) }}%){{ ' · ' if not loop.last }}{% endfor %}
@@ -109,28 +109,28 @@
 {% endif %}
 
 <div class="panel" data-keep="pxchart">
-  <h2>📈 Fiyat grafiği <span style="text-transform:none">· liq duvarları ve balina girişleri işaretli</span></h2>
+  <h2>📈 Fiyat grafiği <span class="st">· liq duvarları ve balina girişleri işaretli</span></h2>
   <p class="sub">Hyperliquid perp mumları (1 saatlik). Yatay çizgiler balinaların
   <b>likidasyon duvarları</b> ve <b>giriş seviyeleri</b> — fiyat oraya değerse ne olacağını burada görürsün.
   Alttaki ince şerit o saatin tarihsel karnesi (yeşil = güçlü saat, kırmızı = zayıf).
   📊 işaretli mumlar geçmiş bilanço günleri.</p>
   <div id="pxchart" data-sym="{{ symbol }}{{ k }}"
        data-pending="{{ 0 if pxchart else 1 }}"
-       style="position:relative;height:360px">
+      >
     <p class="dim" id="pxmsg">{% if pxchart %}Grafik çiziliyor…{% else %}Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.{% endif %}</p>
   </div>
 </div>
 
 {% if tv_sym %}
 <details class="panel guidetv" data-keep="tvembed">
-  <summary style="cursor:pointer;color:var(--head);font-weight:800;font-size:13.5px;letter-spacing:.04em">
-    📊 TradingView — {{ tv_sym }} <span class="dim" style="font-weight:400;letter-spacing:0">· hisse senedinin grafiği (aç/kapat)</span>
+  <summary class="h3">
+    📊 TradingView — {{ tv_sym }} <span class="st">· hisse senedinin grafiği (aç/kapat)</span>
   </summary>
-  <p class="sub" style="margin-top:10px">Bu <b>hisse senedinin</b> grafiği; yukarıdaki mumlar ise
+  <p class="sub mt10">Bu <b>hisse senedinin</b> grafiği; yukarıdaki mumlar ise
   balinaların işlem gördüğü <b>HL perp'i</b>. Seansları ve fiyatları birebir aynı değildir —
   liq/entry seviyeleri yukarıdaki grafiğe aittir. Sitenin tek dış kaynaklı parçasıdır:
   yalnız bu paneli açtığında TradingView'den yüklenir.</p>
-  <div class="tvbox" data-tv="{{ tv_sym }}" style="height:420px"></div>
+  <div class="tvbox" data-tv="{{ tv_sym }}"></div>
 </details>
 {% endif %}
 
@@ -138,7 +138,7 @@
 <div class="panel">
   <h2>📍 Nereden açtılar? · entry haritası</h2>
   <p class="sub">Balinalar bu hisseye hangi fiyattan girdi? Her bar bir pozisyon: girdiği fiyat seviyesinde durur, boyu = kaç dolarlık. Üzerine gel → kim olduğunu gör.</p>
-  <div class="legendrow">
+  <div class="legend">
     <span><i class="sw" style="background:{{ chart.c_short }}"></i> Short ({{ chart.n_short }}) — solda</span>
     <span><i class="sw" style="background:{{ chart.c_long }}"></i> Long ({{ chart.n_long }}) — sağda</span>
     <span class="dim">bar boyu = pozisyon büyüklüğü · kesikli çizgi = güncel fiyat</span>
@@ -200,17 +200,17 @@
 
 {% if liq %}
 <div class="panel">
-  <h2>💥 Likidasyon haritası <span style="text-transform:none">· fiyat nereye giderse kim patlar</span></h2>
+  <h2>💥 Likidasyon haritası <span class="st">· fiyat nereye giderse kim patlar</span></h2>
   <p class="sub">Yukarı = fiyat yükselir, aşağı = düşer. Her satır bir fiyat bandı;
   bar o bantta zorla kapanacak pozisyonların <b>toplamı</b>, dilimler tek tek
   pozisyonlar (en büyüğü kökte). Fiyat bir banda değdiğinde o bar patlar ve fiyat
   aynı yöne itilebilir — "stop avı" burada okunur. 🧲 = tek başına yönün
   {{ (liq.meta.wall_share * 100)|int }}%'inden fazlasını taşıyan duvar.</p>
 
-  <div class="lq-legend">
-    <span><i class="sw lq-sw-short"></i> <b>Short liq</b> — fiyat <b>çıkarsa</b> ·
+  <div class="legend">
+    <span><i class="sw f-liq-short"></i> <b>Short liq</b> — fiyat <b>çıkarsa</b> ·
       {{ liq.legend.up.n }} poz · <b>{{ liq.legend.up.total|usd }}</b></span>
-    <span><i class="sw lq-sw-long"></i> <b>Long liq</b> — fiyat <b>düşerse</b> ·
+    <span><i class="sw f-liq-long"></i> <b>Long liq</b> — fiyat <b>düşerse</b> ·
       {{ liq.legend.down.n }} poz · <b>{{ liq.legend.down.total|usd }}</b></span>
   </div>
 
@@ -258,7 +258,7 @@
   {# Erişilebilirlik ikizi: hiçbir değer yalnız tooltip'te yaşamaz. #}
   <details class="lq-table">
     <summary>📋 tablo olarak gör</summary>
-    <div style="overflow-x:auto">
+    <div class="tscroll"><div class="tscroll-x">
     <table>
       <tr><th class="l">Yön</th><th class="l">Bant</th><th>Fiyat aralığı</th>
           <th>Poz</th><th>Toplam</th><th title="Şimdiden bu banda kadar biriken">Kümülatif</th></tr>
@@ -269,12 +269,12 @@
           <td>{{ r.n }}</td><td><b>{{ r.total|usd }}</b></td><td class="dim">{{ r.cum|usd }}</td></tr>
       {% endfor %}
     </table>
-    </div>
+    </div></div>
   </details>
 
   {# Künye: kova toplamı yalnız GÖRDÜĞÜMÜZ pozisyonlar. Uzağa düşenler eskiden
      sessizce yok oluyordu; artık sayılıyor. #}
-  <p class="sub dim" style="margin-top:10px">🧾 {{ liq.meta.n }} pozisyon — süpürmede
+  <p class="kunye">🧾 {{ liq.meta.n }} pozisyon — süpürmede
     görülenler; eşik altı ve görmediklerimiz dahil değil
     {%- if liq.meta.dropped_far %} · <b>{{ liq.meta.dropped_far }}</b> pozisyon
       ({{ liq.meta.far_total|usd }}) %{{ liq.meta.max_dist|int }}'den uzakta, gösterilmiyor{% endif %}
@@ -291,7 +291,7 @@
 {% endif %}
 
 <div class="panel">
-  <h2>🐋 En büyük pozisyonlar <span style="text-transform:none">· güncel fiyat: <b>{{ summ.mark|px }}</b></span></h2>
+  <h2>🐋 En büyük pozisyonlar <span class="st">· güncel fiyat: <b>{{ summ.mark|px }}</b></span></h2>
   <p class="sub">Bu hisseye en çok para koyan cüzdanlar. 🚨 rozet = insider şüphelisi (nedenleri sağdaki kolonda). Adrese tıkla → cüzdanın tüm karnesi.
   Kolon başlığına tıkla → o kolona göre sırala (tekrar tıkla → ters çevir).</p>
   {% if rows %}
@@ -335,7 +335,7 @@
 </div>
 
 <div class="panel">
-  <h2>💣 Likidasyona en yakın büyük pozisyonlar <span style="text-transform:none">· güncel fiyat: <b>{{ summ.mark|px }}</b> · mesafe ≤ %{{ max_liq|int }}</span></h2>
+  <h2>💣 Likidasyona en yakın büyük pozisyonlar <span class="st">· güncel fiyat: <b>{{ summ.mark|px }}</b> · mesafe ≤ %{{ max_liq|int }}</span></h2>
   {% if liq_rows %}
   <table>
     <tr><th>#</th><th class="l">Adres</th><th>Yön</th><th>Notional</th>

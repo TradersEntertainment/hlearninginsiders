@@ -298,7 +298,7 @@ border-radius:0 7px 7px 0;overflow:hidden}
 /* legend: ≥2 seri olan her grafiğin üstünde */
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:var(--fs-s);color:var(--dim);margin:2px 0 10px}
 .legend b{color:var(--fg)}
-.legend .sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px}
+.sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px}
 /* durum kapsülü */
 .pill{display:inline-block;padding:2px 10px;border-radius:var(--r-pill);font-size:var(--fs-s);font-weight:700;
 border:1px solid var(--border);color:var(--dim);white-space:nowrap;line-height:1.5}
@@ -334,6 +334,21 @@ font-size:var(--fs-s);font-weight:700;white-space:nowrap}
 .tag:hover{border-color:var(--btn-line);color:var(--fg)}
 .tag .pt{color:var(--green);margin-left:4px}
 .card-center{max-width:460px;margin:40px auto}
+/* tablo ikizi / katlanır ayrıntı: grafiklerin altındaki "📋 tablo olarak gör" */
+details.dtl{margin-top:10px}
+details.dtl>summary{cursor:pointer;color:var(--dim);font-size:12.5px;list-style:none;user-select:none}
+details.dtl>summary::-webkit-details-marker{display:none}
+details.dtl>summary::before{content:'▸ ';color:var(--dim)}
+details.dtl[open]>summary::before{content:'▾ '}
+details.dtl>.tscroll,details.dtl>table{margin-top:6px}
+.chips .hint{align-self:center}
+.ecard+.ecard{margin-top:12px}
+.ecard table{margin-top:8px}
+td.wrap{white-space:normal}
+ul.list{margin:0;padding-left:18px;line-height:1.55}
+.mt6{margin-top:6px}.mt10{margin-top:10px}.mb0{margin-bottom:0}
+#pxchart{position:relative;height:360px}
+.tvbox{height:420px}
 .h3{margin:0 0 6px;font-size:var(--fs-b);font-weight:800;color:var(--head)}
 .hint{font-size:var(--fs-xs);color:var(--dim)}
 .bad{color:var(--red-fg)}
@@ -479,7 +494,7 @@ main.no-pop .panel{animation:none}
 .panel h2{font-size:var(--fs-l);margin:0 0 8px;color:var(--head);font-weight:800;
 letter-spacing:.01em;border-bottom:1px dashed var(--border);padding-bottom:8px}
 /* alt başlık = panelin cevapladığı soru; başlığın ağırlığını ve aralığını taşımaz */
-.panel h2 .st{font-size:var(--fs-s);font-weight:600;color:var(--dim);letter-spacing:0}
+.st{font-size:var(--fs-s);font-weight:600;color:var(--dim);letter-spacing:0}
 table{border-collapse:collapse;width:100%;white-space:nowrap}
 th,td{padding:6px 10px;text-align:right;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);
 font-variant-numeric:tabular-nums}
@@ -949,7 +964,7 @@ addEventListener('scroll', function(){
 // Atlananlar: link/etiket/form denetimi (imleç ve görünümleri bozulmasın) ve
 // disabled buton (Firefox disabled'a mouseover göndermez — açıklama şablonda
 // yanına yazılır). th ve duvar çipleri klavyeyle de gezilebilsin diye tabindex alır.
-var TIPS_ON = false;   // 1b: şablonlardaki title'lar hazır olunca açılır
+var TIPS_ON = true;
 function initTips(){
   document.querySelectorAll('main [title]').forEach(function(el){
     if(el.matches('a,label,button,input,select,textarea,option,summary') || el.disabled) return;
@@ -972,6 +987,7 @@ function initTscroll(){
 }
 addEventListener('resize', function(){ initTscroll(); }, {passive: true});
 initTscroll();
+initTips();
 
 // ---- Mum grafiği (TradingView Lightweight Charts, depoya gömülü) ----
 // Kütüphane 'defer' yüklenir; panel <main>'de ama [data-keep] sayesinde
