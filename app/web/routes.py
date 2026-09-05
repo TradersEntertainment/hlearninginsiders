@@ -1176,6 +1176,18 @@ async def liq_attack_page(request: Request):
     })
 
 
+@router.post("/saldiri/tara")
+async def liq_attack_scan_now(request: Request):
+    """🔄 şimdi tara — döngüyü beklemeden bir tur (asgari aralık korumalı)."""
+    _guard(request)
+    st = request.app.state
+    try:
+        out = await liqattack.manual_scan(st.cfg, st.client, getattr(st, "notifier", None))
+    except Exception as e:
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"[:200]}, status_code=500)
+    return JSONResponse(out)
+
+
 @router.get("/kapali")
 async def offhours_page(request: Request):
     """Kapalı seans screener'ı — kapanıştan beri sapma + kapalıyken açılanlar.

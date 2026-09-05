@@ -444,9 +444,27 @@ async def prune(days: int = RETENTION_D) -> int:
         return n + (cur.rowcount or 0)
 
 
+MANUAL_MIN_GAP = 60       # elle tarama: iki tıklama arası en az bu kadar sn
+
+
+async def manual_scan(cfg, client, notifier=None) -> dict:
+    """Sayfadaki 🔄 düğmesi. Adaylar için geçmiş veri GEREKMİYOR — pozisyonlar
+    DB'de, defter canlı — o yüzden kullanıcı döngüyü beklemek zorunda değil.
+    Tıklama fırtınasına karşı asgari aralık (kv damgası)."""
+    from ..db import kv_get
+    last = int(await kv_get("liqattack_manual_ts") or 0)
+    if now() - last < MANUAL_MIN_GAP:
+        return {"skipped": f"{MANUAL_MIN_GAP - (now() - last)} sn sonra tekrar"}
+    await kv_set("liqattack_manual_ts", now())
+    return await scan(cfg, client, notifier)
+
+
 async def loop(cfg, client, notifier=None) -> None:
     from ..health import beat
-    await asyncio.sleep(240)
+    # Kısa açılış: ihtiyaç duyulan her şey ya DB'de (pozisyonlar, mark) ya
+    # canlı (defter). Eskiden 240 sn'ydi ve deploy'dan hemen sonra bakan
+    # kullanıcı "tarama henüz çalışmadı" görüyordu — sebepsiz bekleme.
+    await asyncio.sleep(20)
     tick = 0
     while True:
         try:
@@ -459,6 +477,9 @@ async def loop(cfg, client, notifier=None) -> None:
             await beat("liqattack")
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as e:
             log.exception("liq attack turu hatası")
+            # Hata SAYFADA görünsün: eskiden kv yazılmıyor, sayfa sonsuza dek
+            # "tarama henüz çalışmadı" diyordu — bozuk ile bekleyen ayrılamıyordu.
+            await _stats({"error": f"{type(e).__name__}: {e}"[:200]})
         await asyncio.sleep(max(60, int(getattr(cfg, "liq_attack_scan_sec", 300))))

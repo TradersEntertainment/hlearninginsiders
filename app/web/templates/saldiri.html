@@ -33,7 +33,15 @@
         {%- if lq.stats.book_err %} · <span class="short">{{ lq.stats.book_err }} defter hatası</span>{% endif %}
         {%- if lq.stats.failed %} · <span class="short">{{ lq.stats.failed }} bildirim gönderilemedi</span>{% endif %}
       {%- endif %}</span>
-    {% else %}<span class="short">· tarama henüz hiç çalışmadı</span>{% endif %}
+    {% elif lq.weekend %}<span class="dim">· ilk tarama bekleniyor (açılıştan ~20 sn sonra)</span>
+    {% else %}<span class="dim">· bu hafta sonu henüz tarama olmadı</span>{% endif %}
+    {% if lq.stats.error %}<span class="short">· ⚠️ son tur hata verdi: {{ lq.stats.error }}</span>{% endif %}
+    {% if lq.weekend %}
+      <button type="button" id="scan-now" style="padding:5px 12px;border-radius:999px;border:1px solid var(--border);
+              background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--fg);font-weight:700;
+              font-size:12px;cursor:pointer">🔄 şimdi tara</button>
+      <span id="scan-msg" class="dim"></span>
+    {% endif %}
   </div>
 
   {% set hot = lq.cands|selectattr('hot')|list %}
@@ -92,9 +100,22 @@
   </table>
   </div>
   {% elif lq.weekend %}
-  <p class="dim">Bu turda hiçbir hissede {{ max_dist|int }}% içinde
-    <b>{{ min_usd|usd }}</b>'lik bir küme yok — itmeye değer hedef görünmüyor.
-    {% if not lq.stats.ts %}Tarama daha çalışmadıysa birkaç dakika bekle.{% endif %}</p>
+  {# ÜÇ AYRI BOŞLUK: küme yok / defter çekilemedi / henüz taranmadı. Hepsine
+     "aday yok" demek, çekilemeyen defteri "hedef yok" diye okutur. #}
+  {% if not lq.stats.ts %}
+  <p class="dim">Henüz tarama olmadı — ilk tur açılıştan ~20 sn sonra, ya da
+    yukarıdaki <b>🔄 şimdi tara</b>.</p>
+  {% elif lq.stats.coins and not lq.stats.books %}
+  <p class="short">⚠️ {{ lq.stats.coins }} hisse ön elemeyi geçti ama <b>hiçbir
+    defter çekilemedi</b> — aday hesaplanamadı. Bu "hedef yok" demek DEĞİL;
+    <code>/tani</code>'ye bak, sonraki tur yeniden dener.</p>
+  {% elif not lq.stats.coins %}
+  <p class="dim">Bu turda hiçbir hissede %{{ '%g'|format(max_dist) }} içinde
+    <b>{{ min_usd|usd }}</b>'lik bir küme yok — itmeye değer hedef görünmüyor.</p>
+  {% else %}
+  <p class="dim">{{ lq.stats.coins }} hissede küme var ama hiçbirinde oran ölçülemedi
+    ({{ lq.stats.books }} defter çekildi{% if lq.stats.book_err %}, {{ lq.stats.book_err }} hata{% endif %}).</p>
+  {% endif %}
   {% else %}
   <p class="dim">Henüz ölçülmüş bir hafta sonu yok. Radar Cumartesi 00:00 TSİ'de
     açılır; adaylar burada birikir.</p>
@@ -147,4 +168,24 @@
     defter hedefe varmıyorsa gerçek maliyet daha da düşük.</p>
 </div>
 
+<script>
+(function () {
+  var b = document.getElementById('scan-now');
+  if (!b) return;
+  b.addEventListener('click', async function () {
+    var msg = document.getElementById('scan-msg');
+    b.disabled = true; msg.textContent = 'defterler çekiliyor…';
+    try {
+      var r = await fetch('/saldiri/tara' + location.search, { method: 'POST' });
+      var j = await r.json();
+      msg.textContent = j.error ? ('hata: ' + j.error)
+        : j.skipped ? ('atlandı: ' + j.skipped)
+        : (j.coins + ' coin ölçüldü · ' + j.books + ' defter · ' + j.candidates
+           + ' aday — sayfa yenileniyor');
+      if (!j.error && !j.skipped) setTimeout(function () { location.reload(); }, 900);
+    } catch (e) { msg.textContent = 'hata: ' + e; }
+    b.disabled = false;
+  });
+})();
+</script>
 {% endblock %}
