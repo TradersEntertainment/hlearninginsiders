@@ -58,6 +58,10 @@ def test_simulate_chain():
     # defter liq'e uzanmıyor
     c3 = cz.simulate([], lv((89.50, 10)), TRIG, POOL, 89.13)
     assert c3["no_book"] and c3["steps"] == [] and c3["end_px"] == 89.93
+    assert abs(c3["book_reach_pct"] - (89.50 / 89.13 - 1) * 100) < 1e-9, "defter nereye kadar görünüyor"
+    assert abs(c["book_reach_pct"] - (92.0 / 89.13 - 1) * 100) < 1e-9 and c["coarse"] is False
+    cc = cz.simulate([], lv(*ASKS), TRIG, POOL, 89.13, coarse=True)
+    assert cc["coarse"] is True and "kaba defter" in "\n".join(cz.describe(cc, 89.13))
     # down aynası: long patlar → satış bid'leri yer → alttaki long'lar
     trig = {"side": "long", "liq_px": 88.0, "notional": 5_000_000, "address": "0xl"}
     pool = [{"side": "long", "liq_px": 87.7, "notional": 1_000_000, "address": "0xm"},
@@ -78,7 +82,7 @@ def test_describe():
     t2 = "\n".join(cz.describe(c2, 89.13))
     assert "arada başka liq yok" in t2 and "görünen defter 90.20'da bitiyor" in t2 and "yerleşmedi" in t2, t2
     c3 = cz.simulate([], lv((89.50, 10)), TRIG, POOL, 89.13)
-    assert "uzanmıyor" in cz.describe(c3, 89.13)[0]
+    assert "uzanmıyor" in cz.describe(c3, 89.13)[0] and "en geniş görünüm fiyattan %+0.4'e kadar" in cz.describe(c3, 89.13)[0]
     assert cz.describe(None) == []
     print("✅ metin) hedef, ara liq, toplam, şimdiden %, tükenme notu; defter yoksa dürüst")
 

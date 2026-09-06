@@ -374,7 +374,9 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   defter bitince durur (`app/radar/cascade.py`, saf). Satır: "→ 90.50 · arada
   2 short daha ($4.1M) → 91.00 · toplam $17.4M · fiyat kaçınılmaz ~91.00'a
   gidebilir (şimdiden +2.1%)"; grafikte hedef çizgisi. **Alt sınırdır:** defter
-  anlık ve görünen kadar (l2Book 20 seviye, genişlik için `nSigFigs=3`), havuz
+  anlık ve görünen kadar (l2Book 20 seviye, genişlik için `nSigFigs=3`; ince
+  defter liq'e uzanmıyorsa 2 haneli kaba defterle yeniden bakılır, mesaj "kaba
+  defter" der; o da uzanmıyorsa "en geniş görünüm %X'e kadar" yazar), havuz
   HL'nin tamamı değil; defter bitince "$X yerleşmedi — ötesi bilinmiyor" yazar.
   `/hype` cevabında da var. Ayar: `crypto_liq_cascade`.
 - **Mesaja grafik — tek mesaj.** Kademe mesajı resim + altyazı olarak gider

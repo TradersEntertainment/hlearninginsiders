@@ -45,17 +45,23 @@ def walk(levels: list[dict], start_px: float, usd: float, direction: str) -> dic
 
 
 def simulate(bids: list[dict], asks: list[dict], trigger: dict, positions: list[dict],
-             mark: float | None, max_steps: int = MAX_STEPS) -> dict:
+             mark: float | None, max_steps: int = MAX_STEPS, coarse: bool = False) -> dict:
     """Zincir. `trigger`: {side, liq_px, notional, address}; `positions`: coinin
     açık pozisyonları (her boyut; ters yön ve trigger'ın kendisi yok sayılır).
+    `coarse`: defter kaba toplulaştırmayla (nSigFigs=2) alındı — metinde söylenir.
     Dönüş: {direction, trigger_usd, start_px, end_px, move_pct (mark'a göre),
     total_usd, n_pos, steps[{from,to,spent,n_new,usd_new}], exhausted,
-    pending_usd, book_usd, no_book}."""
+    pending_usd, book_usd, no_book, coarse, book_reach_pct (yönün son görünen
+    seviyesi mark'tan % kaç uzakta — "defter nereye kadar görünüyor")}."""
     side = trigger.get("side")
     direction = UP if side == "short" else DOWN
     levels = [{"px": float(l["px"]), "sz": float(l["sz"])}
               for l in (asks if direction == UP else bids)]
     start = float(trigger["liq_px"])
+    reach_pct = None
+    if levels and mark:
+        edge = max(l["px"] for l in levels) if direction == UP else min(l["px"] for l in levels)
+        reach_pct = (edge / float(mark) - 1) * 100
     pool = [p for p in positions
             if p.get("side") == side and p.get("liq_px")
             and (p.get("address") or "") != (trigger.get("address") or "")]
@@ -72,7 +78,8 @@ def simulate(bids: list[dict], asks: list[dict], trigger: dict, positions: list[
                 return {"direction": direction, "trigger_usd": float(trigger.get("notional") or 0),
                         "start_px": start, "end_px": start, "move_pct": None, "total_usd": total,
                         "n_pos": 1, "steps": [], "exhausted": True, "pending_usd": pending,
-                        "book_usd": 0.0, "no_book": True}
+                        "book_usd": 0.0, "no_book": True, "coarse": coarse,
+                        "book_reach_pct": reach_pct}
         reached = w["reached_px"]
         new = []
         for j, p in enumerate(pool):
@@ -101,7 +108,8 @@ def simulate(bids: list[dict], asks: list[dict], trigger: dict, positions: list[
             "start_px": start, "end_px": end,
             "move_pct": (end / float(mark) - 1) * 100 if mark else None,
             "total_usd": total, "n_pos": n_pos, "steps": steps, "exhausted": exhausted,
-            "pending_usd": left, "book_usd": depth, "no_book": False}
+            "pending_usd": left, "book_usd": depth, "no_book": False, "coarse": coarse,
+            "book_reach_pct": reach_pct}
 
 
 def describe(c: dict | None, mark: float | None = None) -> list[str]:
@@ -115,7 +123,10 @@ def describe(c: dict | None, mark: float | None = None) -> list[str]:
     head = (f"💣 <b>Zincir</b> (defter anlık) · {usd(c['trigger_usd'])} {who} "
             f"{px(c['start_px'])}'te patlarsa zorunlu {act}")
     if c.get("no_book"):
-        return [head + " — görünen defter liq fiyatına kadar uzanmıyor, derinlik bilinmiyor"]
+        reach = c.get("book_reach_pct")
+        seen = (f" (en geniş görünüm fiyattan %{reach:+.1f}'e kadar, 20 seviye)"
+                if reach is not None else "")
+        return [head + f" — görünen defter liq fiyatına kadar uzanmıyor{seen}, derinlik bilinmiyor"]
     st = c["steps"]
     parts = [head + f" → <b>{px(st[0]['to'])}</b>"]
     for prev, s in zip(st, st[1:]):
@@ -127,6 +138,8 @@ def describe(c: dict | None, mark: float | None = None) -> list[str]:
     parts.append(f"toplam <b>{usd(c['total_usd'])}</b>")
     move = f" (şimdiden {c['move_pct']:+.1f}%)" if c.get("move_pct") is not None else ""
     parts.append(f"fiyat kaçınılmaz ~<b>{px(c['end_px'])}</b>'a gidebilir{move}")
+    if c.get("coarse"):
+        parts.append("<i>kaba defter (2 anlamlı hane)</i>")
     out = [" · ".join(parts)]
     if c.get("exhausted"):
         out.append(f"<i>görünen defter {px(c['end_px'])}'da bitiyor ({usd(c['book_usd'])} derinlik,"

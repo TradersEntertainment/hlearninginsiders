@@ -255,26 +255,42 @@ async def _cascade(cfg, client, coin: str, mark, trigger: dict, rows: list[dict]
     fn = getattr(client, "l2_book", None)
     if fn is None:
         return None
-    book = None
-    for args in ((coin, 3), (coin,)):
-        try:
-            book = await fn(*args)
-            if book:
-                break
-        except TypeError:
-            continue                          # eski/sahte client n_sig_figs bilmiyor
-        except Exception as e:
-            log.debug("l2Book alınamadı (%s): %s", coin, e)
-    if not book:
-        return None
     from . import cascade
     from .bookwall import _parse_book
-    try:
-        bids, asks = _parse_book(book)
-        return cascade.simulate(bids, asks, trigger, rows, mark)
-    except Exception:
-        log.debug("zincir hesaplanamadı (%s)", coin, exc_info=True)
-        return None
+    # l2Book en çok 20 seviye: 3 anlamlı hane HYPE'ta 0,1'lik kovalar (≈ +%2,3),
+    # liq daha uzaksa defter "uzanmıyor" görünür. O zaman 2 hane (1,0'lık kova,
+    # ≈ +%23) ile yeniden bak — kaba ama geniş; metinde söylenir. En çok 2 istek.
+    best = None
+    for n_sig in (3, 2):
+        try:
+            book = await fn(coin, n_sig)
+        except TypeError:                     # eski/sahte client n_sig_figs bilmiyor
+            try:
+                book = await fn(coin)
+            except Exception as e:
+                log.debug("l2Book alınamadı (%s): %s", coin, e)
+                break
+            n_sig = None
+        except Exception as e:
+            log.debug("l2Book(%s, %s) alınamadı: %s", coin, n_sig, e)
+            continue
+        if not book:
+            continue
+        try:
+            bids, asks = _parse_book(book)
+            c = cascade.simulate(bids, asks, trigger, rows, mark, coarse=(n_sig == 2))
+        except Exception:
+            log.debug("zincir hesaplanamadı (%s)", coin, exc_info=True)
+            continue
+        if not c.get("exhausted"):
+            return c                          # ince defter yetti
+        # tükendi: en uzağa varanı sakla, bir sonraki (daha kaba) haneyi dene
+        if best is None or (not c.get("no_book") and (best.get("no_book") or
+                                                       abs(c["end_px"] - c["start_px"]) > abs(best["end_px"] - best["start_px"]))):
+            best = c
+        if n_sig is None:
+            break
+    return best
 
 
 def _target(casc: dict | None) -> tuple | None:

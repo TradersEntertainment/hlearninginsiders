@@ -87,15 +87,20 @@ class Client:
         self.ctx_calls, self.probes, self.fill_calls, self.candle_calls = 0, [], [], 0
         self.book_calls = []
         m = MARK["PUMP"]
-        # PUMP defteri: her seviye ~$1.6M — $1.2M long liq'i (-%1.8) 0.00314'te yenir
-        self.book = book if book is not None else {"levels": [
+        # PUMP defteri: her seviye ~$1.6M — $1.2M long liq'i (-%1.8) 0.00314'te yenir.
+        # `book` bir sözlükse her hane için aynı; {3: …, 2: …} ise haneye göre.
+        default = {"levels": [
             [{"px": str(m * 0.995), "sz": "5e8"}, {"px": str(m * 0.98), "sz": "5e8"},
              {"px": str(m * 0.97), "sz": "5e8"}],
             [{"px": str(m * 1.005), "sz": "5e8"}, {"px": str(m * 1.02), "sz": "5e8"},
              {"px": str(m * 1.03), "sz": "5e8"}]]}
+        self.books = book if isinstance(book, dict) and set(book) <= {2, 3, None} else None
+        self.book = default if book is None or self.books is not None else book
 
     async def l2_book(self, coin, n_sig_figs=None):
         self.book_calls.append((coin, n_sig_figs))
+        if self.books is not None:
+            return self.books.get(n_sig_figs)
         return self.book
 
     async def meta_and_ctxs(self, dex=""):
@@ -539,6 +544,39 @@ def test_snapshot():
     asyncio.run(run())
 
 
+# ------------------------------------------------ 8c) zincir: ince defter uzanmıyorsa kaba defter
+def test_cascade_fallback():
+    async def run():
+        from app.telegram import format as fmt
+        m = MARK["PUMP"]
+        rows = [row("PUMP", A, "long", 1_200_000, 1.8)]           # liq 0.982·m
+        await _seed(rows)
+        cfg = _cfg()
+        fine = {"levels": [[{"px": str(m * 0.995), "sz": "5e8"}, {"px": str(m * 0.99), "sz": "5e8"}], []]}
+        wide = {"levels": [[{"px": str(m * 0.99), "sz": "5e8"}, {"px": str(m * 0.98), "sz": "5e8"},
+                            {"px": str(m * 0.97), "sz": "5e8"}, {"px": str(m * 0.96), "sz": "5e8"}], []]}
+        # (1) 3 hane liq'e uzanmıyor (en düşük bid 0.99·m > liq 0.982·m), 2 hane uzanıyor → kaba sonuç
+        cli = Client(rows, candles=synth_candles(m), book={3: fine, 2: wide})
+        s = await cl.snapshot(cfg, cli, "PUMP")
+        assert cli.book_calls == [("PUMP", 3), ("PUMP", 2)], cli.book_calls
+        assert s["cascade"] and s["cascade"]["coarse"] is True and not s["cascade"]["no_book"]
+        assert abs(s["cascade"]["end_px"] - m * 0.98) < 1e-12, s["cascade"]
+        t = fmt.crypto_liq_snapshot(s)
+        assert "kaba defter (2 anlamlı hane)" in t and "gidebilir" in t, t
+        # (2) ikisi de uzanmıyor → tek satır, en geniş görünüm yazılı
+        cli2 = Client(rows, book={3: fine, 2: fine})
+        s2 = await cl.snapshot(cfg, cli2, "PUMP")
+        assert s2["cascade"]["no_book"] and cli2.book_calls == [("PUMP", 3), ("PUMP", 2)]
+        t2 = fmt.crypto_liq_snapshot(s2)
+        assert "uzanmıyor" in t2 and "en geniş görünüm fiyattan %-1.0'e kadar" in t2, t2
+        # (3) ince defter yetiyorsa tek istek
+        cli3 = Client(rows)
+        s3 = await cl.snapshot(cfg, cli3, "PUMP")
+        assert cli3.book_calls == [("PUMP", 3)] and s3["cascade"]["coarse"] is False
+        print("✅ kaba defter) 3 hane uzanmayınca 2 hane; ikisi de uzanmıyorsa en geniş görünüm; yetiyorsa tek istek")
+    asyncio.run(run())
+
+
 # ------------------------------------------------ 9) sembol çözümleme
 def test_resolve():
     async def run():
@@ -571,5 +609,6 @@ test_send_gate()
 test_wiring()
 test_format_and_chart()
 test_snapshot()
+test_cascade_fallback()
 test_resolve()
 print("\n✅ KRİPTO LIQ TESTLERİ GEÇTİ")
