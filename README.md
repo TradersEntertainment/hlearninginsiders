@@ -429,9 +429,11 @@ girebilirse girer, giremezse girmez"; ters bacak **%0,75** geri çekilince
 kapanır (kullanıcı: %0,5–1), stop %10, en çok 120 dk. Liq oldu ama iğne **30 dk**
 içinde hedefe gelmezse ön bacak piyasadan kapanır, ters bacak hiç açılmaz.
 
-- **Hesap.** Başlangıç **$10K**, **2x** kaldıraç, kullanılabilir bakiyenin tamamı
-  marjin (bir seferde fiilen tek işlem; ikinci coin "bakiye bağlı" diye
-  atlanır ve sayfada görünür). Ücret HL taban: taker %0,045 (giriş, stop,
+- **Hesap.** Başlangıç **$10K**, **5x** kaldıraç, bakiyenin **%33**'ü bir dilim:
+  aynı anda en çok **3** işlem (kullanıcı kuralı). Dilimler doluysa sinyal
+  "bakiye bağlı" diye atlanır ve sayfada görünür; kayıptan sonra son dilim
+  kalan bakiyeden küçük olabilir (mesaj not düşer). Ön bacak kapanınca dilimi
+  boşalır, ters bacak o dilimi alır. Ücret HL taban: taker %0,045 (giriş, stop,
   süre dolumu), maker %0,015 (hedef, ters bacak girişi). Bakiye bileşik.
 - **Değerlendirme.** Her 60 sn, açık işlem başına 1 istek: 1 dk mumların
   uçları. Seviyeye dokunan limit dolmuş sayılır (iyimser), aynı mumda stop +

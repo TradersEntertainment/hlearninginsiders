@@ -17,7 +17,8 @@
   orada kapanır ve <b>aynı fiyattan ters bacak</b> açılır (hedef %{{ '%g'|format(cfg.sim_post_tp_pct) }} geri çekilme,
   stop %{{ '%g'|format(cfg.sim_post_stop_pct) }}, en çok {{ cfg.sim_post_max_min }} dk). İğne {{ cfg.sim_after_liq_min }} dk içinde
   gelmezse ön bacak piyasadan kapanır, ters bacak açılmaz. Başlangıç {{ cfg.sim_start_balance|usd }},
-  <b>{{ '%g'|format(cfg.sim_leverage) }}x</b>, kullanılabilir bakiyenin %{{ '%g'|format(cfg.sim_margin_pct) }}'i marjin.
+  <b>{{ '%g'|format(cfg.sim_leverage) }}x</b>, bakiyenin %{{ '%g'|format(cfg.sim_margin_pct) }}'i bir işlemin marjini
+  (aynı anda en çok <b>{{ ((100 // cfg.sim_margin_pct)|int) if cfg.sim_margin_pct else 1 }}</b> işlem; dilimler doluysa sinyal "bakiye bağlı" diye atlanır).
   <span class="warn">Simülasyondur, yatırım tavsiyesi değildir.</span></p>
 
   <div class="strip">

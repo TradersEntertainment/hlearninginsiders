@@ -363,10 +363,10 @@ async def main():
              "defter yok → hedef liq fiyatı, ters bacak yok · liq geldi, iğne 30 dk içinde hedefe uzanmadı",
              t0 + 3 * 86400),
             # 5) HYPE açık ön bacak (liq bekleniyor)
-            (1, "HYPE", 1, "long", "open", hm * 0.996, now - 1500, "ctx", 16_886 / (hm * 0.996), 16_886, 8_443, 2,
-             hm * 0.996 * 0.9, hm * 1.021, "cascade", None, None, None, None, None, 9.4, wa, "short", 12_900_000,
+            (1, "HYPE", 1, "long", "open", hm * 0.996, now - 1500, "ctx", 13_930 / (hm * 0.996), 13_930, 2_786, 5,
+             hm * 0.996 * 0.9, hm * 1.021, "cascade", None, None, None, None, None, 6.3, wa, "short", 12_900_000,
              hm * 1.004, hm * 1.021, 15_800_000, "2 poz zincirde", None, now - 40, hm * 1.002, hm * 0.994, None,
-             None, None, now - 1500),   # ücret 7.6 ≈ 16.9K × %0,045
+             None, None, now - 1500),   # %33 dilim × 5x; ücret 6.3 ≈ 13.9K × %0,045
             # 6-7) atlanan sinyaller
             (1, "PUMP", 1, "long", "skipped", None, None, None, None, None, None, None, None, None, None, None, None,
              None, None, None, None, wb, "short", 700_000, pm * 1.005, None, None, None, None, None, None, None, None,

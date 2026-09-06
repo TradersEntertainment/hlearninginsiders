@@ -10,8 +10,9 @@ iğneye uzanırsa ön bacak orada kapanır ve AYNI fiyattan ters bacak açılır
 çekilince kapanır, stop %10. Liq oldu ama iğne 30 dk içinde hedefe gelmezse
 ön bacak piyasadan kapanır, ters bacak hiç açılmaz.
 
-Hesap: başlangıç $10K, 2x kaldıraç, kullanılabilir bakiyenin tamamı marjin
-(bir seferde fiilen tek işlem), ücretler HL taban (taker %0,045 / maker
+Hesap: başlangıç $10K, 5x kaldıraç, bakiyenin %33'ü bir dilim (aynı anda en
+çok 3 işlem; dilimler doluysa sinyal "bakiye bağlı" diye atlanır, son dilim
+kalan bakiyeden küçük olabilir), ücretler HL taban (taker %0,045 / maker
 %0,015), bakiye bileşik. Değerlendirme 1 dk mum uçlarıyla: seviyeye dokunan
 limit dolmuş sayılır (iyimser), aynı mumda stop+hedef → stop (kötümser),
 slippage/kısmi dolum yok. Sayfa /sim, Telegram SIM_CHAT_ID (env; boşsa mesaj
@@ -55,13 +56,29 @@ def _get_lock() -> asyncio.Lock:
 
 # ---------------- saf motor (ağ/DB yok) ----------------
 
-def sizing(available: float, margin_pct: float, leverage: float, entry: float) -> tuple[float, float, float]:
-    """(marjin, notional, adet). Marjin = kullanılabilir × pay; notional = marjin × kaldıraç."""
-    margin = max(0.0, float(available or 0)) * max(0.0, float(margin_pct or 0)) / 100.0
+def slots_of(margin_pct) -> int:
+    """Marjin payından dilim sayısı: 33 → 3, 50 → 2, 100 → 1, 25 → 4."""
+    pct = float(margin_pct or 0)
+    return max(1, int(100 // pct)) if pct > 0 else 1
+
+
+def sizing(available: float, margin_pct: float, leverage: float, entry: float,
+           balance: float | None = None) -> tuple[float, float, float]:
+    """(marjin, notional, adet). Marjin = BAKİYE × pay (dilim), kullanılabilir
+    bakiyeyi aşamaz (son dilim küçük kalabilir); notional = marjin × kaldıraç.
+    `balance` verilmezse kullanılabilir × pay (eski davranış)."""
+    base = float(balance) if balance is not None else float(available or 0)
+    margin = max(0.0, base) * max(0.0, float(margin_pct or 0)) / 100.0
+    margin = min(margin, max(0.0, float(available or 0)))
     lev = max(1.0, float(leverage or 1))
     notional = margin * lev
     qty = notional / float(entry) if entry and float(entry) > 0 else 0.0
     return margin, notional, qty
+
+
+def usd_short(v: float) -> str:
+    v = float(v or 0)
+    return f"${v / 1000:.1f}K" if abs(v) >= 1000 else f"${v:,.0f}"
 
 
 def fee(notional: float, pct: float) -> float:
@@ -83,9 +100,10 @@ def pnl_of(t: dict, exit_px: float, exit_fee_pct: float) -> tuple[float, float, 
 
 
 def plan_leg1(cfg, coin: str, mark, whale: dict, casc: dict | None,
-              available: float, balance: float) -> dict:
+              available: float, balance: float, n_open: int = 0) -> dict:
     """Ön bacak planı ya da {"skip": neden}. Yön balinanın tersi; hedef zincir
-    sonu (defter yoksa liq fiyatı, ters bacak yok); stop girişten %X."""
+    sonu (defter yoksa liq fiyatı, ters bacak yok); stop girişten %X. Boyut:
+    bakiyenin `sim_margin_pct`'i bir dilim, dilimler (`slots_of`) doluysa atlanır."""
     if not whale.get("verified"):
         return {"skip": "sonda teyidi yok"}
     try:
@@ -114,12 +132,18 @@ def plan_leg1(cfg, coin: str, mark, whale: dict, casc: dict | None,
     min_tp = float(getattr(cfg, "sim_min_tp_pct", 0.2) or 0)
     if dist_pct < min_tp:
         return {"skip": f"hedef çok yakın (%{dist_pct:.2f} < %{min_tp:g})"}
+    pct = float(getattr(cfg, "sim_margin_pct", 33) or 100)
+    slots = slots_of(pct)
+    if int(n_open or 0) >= slots:
+        return {"skip": f"bakiye bağlı ({int(n_open)}/{slots} dilim dolu)"}
     if available <= 0 or available < float(balance or 0) * MIN_AVAIL_FRAC:
         return {"skip": f"bakiye bağlı (kullanılabilir ${max(0.0, float(available or 0)):,.0f})"}
-    lev = float(getattr(cfg, "sim_leverage", 2) or 1)
-    margin, notional, qty = sizing(available, getattr(cfg, "sim_margin_pct", 100), lev, mark)
+    lev = float(getattr(cfg, "sim_leverage", 5) or 1)
+    margin, notional, qty = sizing(available, pct, lev, mark, balance)
     if qty <= 0:
         return {"skip": "boyut sıfır"}
+    if margin < float(balance or 0) * pct / 100 * 0.999:
+        notes.append(f"son dilim kalan bakiyeden ({usd_short(margin)}), tam dilim {usd_short(float(balance or 0) * pct / 100)}")
     stop_pct = float(getattr(cfg, "sim_stop_pct", 10) or 0)
     stop = mark * (1 - stop_pct / 100) if up else mark * (1 + stop_pct / 100)
     if tp_src == "liq":
@@ -138,18 +162,23 @@ def plan_leg1(cfg, coin: str, mark, whale: dict, casc: dict | None,
             "note": " · ".join(notes) or None}
 
 
-def plan_leg2(cfg, parent: dict, px: float, available: float, balance: float) -> dict | None:
+def plan_leg2(cfg, parent: dict, px: float, available: float, balance: float,
+              n_open: int = 0) -> dict | None:
     """Ters bacak: ön bacak hedefte dolduğu fiyattan ters yön. Yalnız hedef
-    gerçek zincir sonuysa (defter yok / kırpılmış hedefte iğne anlamsız)."""
+    gerçek zincir sonuysa (defter yok / kırpılmış hedefte iğne anlamsız).
+    Ön bacak kapanınca dilimi boşalır; ters bacak o dilimi alır."""
     if parent.get("tp_src") != "cascade" or not px or float(px) <= 0:
         return None
     if available <= 0 or available < float(balance or 0) * MIN_AVAIL_FRAC:
         return None
+    pct = float(getattr(cfg, "sim_margin_pct", 33) or 100)
+    if int(n_open or 0) >= slots_of(pct):
+        return None
     px = float(px)
     side = "short" if parent.get("side") == "long" else "long"
     up = side == "long"
-    lev = float(getattr(cfg, "sim_leverage", 2) or 1)
-    margin, notional, qty = sizing(available, getattr(cfg, "sim_margin_pct", 100), lev, px)
+    lev = float(getattr(cfg, "sim_leverage", 5) or 1)
+    margin, notional, qty = sizing(available, pct, lev, px, balance)
     if qty <= 0:
         return None
     tp_pct = float(getattr(cfg, "sim_post_tp_pct", 0.75) or 0)
@@ -510,7 +539,8 @@ async def on_signal(cfg, client, notifier, coin: str, mark, fresh: list[dict], c
             return False
         m, _ = await _mark(client, coin, ttl=ENTRY_MARK_TTL, fetch=True)
         entry = m or mark
-        plan = plan_leg1(cfg, coin, entry, w, casc, available_of(acc, opens), float(acc.get("balance") or 0))
+        plan = plan_leg1(cfg, coin, entry, w, casc, available_of(acc, opens), float(acc.get("balance") or 0),
+                         n_open=len(opens))
         if plan.get("skip"):
             if await _skip(coin, w, plan["skip"], run):
                 await _bump(skipped_signals=1)
@@ -594,7 +624,8 @@ async def _eval_one(cfg, client, notifier, t: dict, ts: int, out: dict) -> None:
     if ev["reason"] == "tp" and int(t.get("leg") or 1) == 1:
         acc = await account(cfg)
         opens = await open_trades()
-        plan = plan_leg2(cfg, closed, float(ev["px"]), available_of(acc, opens), float(acc.get("balance") or 0))
+        plan = plan_leg2(cfg, closed, float(ev["px"]), available_of(acc, opens), float(acc.get("balance") or 0),
+                         n_open=len(opens))
         if plan:
             # İğne mumu yeniden değerlendirilmez: ters bacak sonraki mumdan izlenir.
             plan.update(run=int(acc.get("run") or 1), status="open", entry_ts=exit_ts,

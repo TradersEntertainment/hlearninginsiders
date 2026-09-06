@@ -336,9 +336,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "sim_start_balance": {"type": "float", "label": "Başlangıç bakiyesi ($)", "group": "Simülasyon",
                           "desc": "Sanal hesabın başlangıcı; sıfırlamada da buna döner (kullanıcı kuralı $10K)"},
     "sim_leverage": {"type": "float", "label": "Kaldıraç (x)", "group": "Simülasyon",
-                     "desc": "İki bacak da bu kaldıraçla girer (kullanıcı kuralı 2x)"},
+                     "desc": "İki bacak da bu kaldıraçla girer (kullanıcı kuralı 5x)"},
     "sim_margin_pct": {"type": "float", "label": "Marjin payı (%)", "group": "Simülasyon",
-                       "desc": "Kullanılabilir bakiyenin yüzde kaçı işleme yatırılsın. 100 = hepsi (bir seferde tek işlem; ikinci coin 'bakiye bağlı' diye atlanır), 50 = iki coin aynı anda"},
+                       "desc": "Bakiyenin yüzde kaçı BİR işleme yatırılsın: 33 = aynı anda üç eşit dilim (kullanıcı kuralı), 50 = iki, 100 = tek işlem. Dilimler doluysa sinyal 'bakiye bağlı' diye atlanır; son dilim kalan bakiyeden küçük olabilir"},
     "sim_stop_pct": {"type": "float", "label": "Ön bacak stop (%)", "group": "Simülasyon",
                      "desc": "Girişten bu kadar ters gidince piyasadan kapanır (kullanıcı kuralı %10). Aynı mumda hedef de görülürse stop sayılır"},
     "sim_min_tp_pct": {"type": "float", "label": "Asgari hedef mesafesi (%)", "group": "Simülasyon",
@@ -571,8 +571,8 @@ class Config:
         self.notify_sim = True
         self.sim_enabled = True
         self.sim_start_balance = float(os.getenv("SIM_START_BALANCE", "10000"))
-        self.sim_leverage = float(os.getenv("SIM_LEVERAGE", "2"))
-        self.sim_margin_pct = float(os.getenv("SIM_MARGIN_PCT", "100"))
+        self.sim_leverage = float(os.getenv("SIM_LEVERAGE", "5"))
+        self.sim_margin_pct = float(os.getenv("SIM_MARGIN_PCT", "33"))
         self.sim_stop_pct = float(os.getenv("SIM_STOP_PCT", "10"))
         self.sim_min_tp_pct = float(os.getenv("SIM_MIN_TP_PCT", "0.2"))
         self.sim_max_tp_pct = float(os.getenv("SIM_MAX_TP_PCT", "0"))

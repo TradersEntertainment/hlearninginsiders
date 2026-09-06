@@ -452,7 +452,7 @@ def test_tick_candles():
         sw = whale(addr=B, coin="SOL", mark=170.0, liq=170.0 * 1.004, ntl=900_000)
         assert await sim.on_signal(cfg, cli, notifier, "SOL", 170.0, [sw], None)
         opens = await sim.open_trades()
-        assert len(opens) == 2 and opens[0]["margin"] == 5_000 and opens[1]["margin"] == 2_500, "yarı marjin bileşik"
+        assert len(opens) == 2 and opens[0]["margin"] == 5_000 and opens[1]["margin"] == 5_000, "iki eşit dilim"
         cli.err = True
         await sim.tick(cfg, cli, notifier)
         assert cli.calls == 2
@@ -606,6 +606,45 @@ def test_reset_page_render():
     asyncio.run(run())
 
 
+# ------------------------------------------------ 9b) %33 dilim: aynı anda 3 işlem, 5x
+def test_margin_slots():
+    async def run():
+        await _fresh({"HYPE": HYPE, "SOL": 170.0, "PUMP": 0.0032, "kPEPE": 0.01})
+        cfg = _cfg()
+        cfg.sim_margin_pct, cfg.sim_leverage = 33, 5
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        cli = Client(err=True)
+        sigs = [("HYPE", HYPE, whale()),
+                ("SOL", 170.0, whale(addr=B, coin="SOL", mark=170.0, liq=170.0 * 1.004, ntl=900_000)),
+                ("PUMP", 0.0032, whale(addr=C, coin="PUMP", mark=0.0032, liq=0.0032 * 1.004, ntl=800_000))]
+        for coin, m, w in sigs:
+            assert await sim.on_signal(cfg, cli, notifier, coin, m, [w], None) is True, coin
+        opens = await sim.open_trades()
+        assert [round(o["margin"]) for o in opens] == [3300, 3300, 3300], "üç EŞİT dilim (bakiyenin %33'ü)"
+        assert all(o["leverage"] == 5 and abs(o["notional"] - 16_500) < 1e-6 for o in opens)
+        assert "SİM AÇILDI" in bot.sent[0][1] and "5x" in bot.sent[0][1] and fmt.usd(16_500) in bot.sent[0][1]
+        kw = whale(addr="0x" + "d" * 40, coin="kPEPE", mark=0.01, liq=0.01 * 1.004, ntl=700_000)
+        assert await sim.on_signal(cfg, cli, notifier, "kPEPE", 0.01, [kw], None) is False
+        sk = await _rows("skipped")
+        assert len(sk) == 1 and sk[0]["skip_reason"] == "bakiye bağlı (3/3 dilim dolu)"
+        # HYPE stop olunca (mark 30) dilim boşalır; kalan bakiye tam dilimden küçük → küçük dilim, not
+        await set_marks({"HYPE": 30.0, "SOL": 170.0, "PUMP": 0.0032, "kPEPE": 0.01})
+        out = await sim.tick(cfg, cli, notifier)
+        assert out["closed"] == 1 and len(await sim.open_trades()) == 2
+        acc = await sim.account(cfg)
+        avail = acc["balance"] - 6_600
+        assert 0 < avail < acc["balance"] * 0.33
+        assert await sim.on_signal(cfg, cli, notifier, "kPEPE", 0.01, [kw], None) is True
+        t = [o for o in await sim.open_trades() if o["coin"] == "kPEPE"][0]
+        assert abs(t["margin"] - avail) < 1e-6 and "son dilim kalan bakiyeden" in t["note"]
+        # 100 → tek dilim; 50 → iki; 25 → dört
+        assert sim.slots_of(100) == 1 and sim.slots_of(50) == 2 and sim.slots_of(25) == 4 and sim.slots_of(0) == 1
+        assert sim.sizing(1_000, 33, 5, 40, balance=10_000) == (1_000, 5_000, 125), "dilim kullanılabilirle sınırlı"
+        print("✅ dilim) %33 = üç eşit dilim, 4. sinyal atlanır; boşalan dilim kalan bakiyeyle dolar; 5x")
+    asyncio.run(run())
+
+
 # ------------------------------------------------ 10) bağlantı
 def test_wiring():
     from app.config import EDITABLE_FIELDS
@@ -618,7 +657,8 @@ def test_wiring():
         assert f in EDITABLE_FIELDS and hasattr(c, f), f
         assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
     assert "sim_chat_id" not in EDITABLE_FIELDS and hasattr(c, "sim_chat_id"), "chat id env-only"
-    assert c.sim_start_balance == 10_000 and c.sim_leverage == 2 and c.sim_stop_pct == 10 and c.sim_after_liq_min == 30
+    assert c.sim_start_balance == 10_000 and c.sim_leverage == 5 and c.sim_stop_pct == 10 and c.sim_after_liq_min == 30
+    assert c.sim_margin_pct == 33 and sim.slots_of(c.sim_margin_pct) == 3
     assert c.sim_post_tp_pct == 0.75 and c.sim_post_stop_pct == 10 and c.sim_max_tp_pct == 0 and c.notify_sim is True
     from app.health import limits, periods
     assert "sim" in limits(c) and "sim" in periods(c)
