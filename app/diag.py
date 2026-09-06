@@ -341,6 +341,30 @@ async def _subsystems(cfg) -> list[str]:
                    + (f" · {_dur(now() - int(cl['ts']))} önce" if cl.get("ts") else ""))
     else:
         out.append("  kripto liq: tur HENÜZ ÇALIŞMADI")
+    # 🧪 Simülasyon: defter kv'de; sinyal kaynağı kripto liq kapısına bağlı
+    if not getattr(cfg, "sim_enabled", True):
+        out.append("  sim: kapalı (sim_enabled=0)")
+    else:
+        sm = await kv_get("sim_stats") or {}
+        acc = await kv_get("sim_account") or {}
+        if sm.get("ts"):
+            bal = float(acc.get("balance") or 0)
+            start = float(acc.get("start_balance") or 0)
+            line = ("  sim: " + (f"⚠️ {sm['error']}" if sm.get("error") else
+                    f"tur #{acc.get('run', 1)} · bakiye ${bal:,.0f}"
+                    + (f" ({(bal - start) / start * 100:+.1f}%)" if start else "")
+                    + f" · açık {sm.get('open', 0)} · açılan {sm.get('opened', 0)}"
+                    + (f" · bu tur kapanan {sm['closed']}" if sm.get("closed") else "")
+                    + f" · atlanan {sm.get('skipped_signals', 0) or 0}"
+                    + (f" · ⚠️ {sm['candle_err']} mum hatası" if sm.get("candle_err") else "")
+                    + (f" · {sm['deferred']} ertelendi" if sm.get("deferred") else "")
+                    + (f" · ⚠️ {sm['failed']} gönderilemedi" if sm.get("failed") else "")
+                    + (f" · ⚠️ {sm['gate']} (mesaj gitmiyor)" if sm.get("gate") else "")
+                    + (f" · ⚠️ sinyal kaynağı kapalı: {sm['source_gate']}" if sm.get("source_gate") else ""))
+                    + f" · {_dur(now() - int(sm['ts']))} önce")
+            out.append(line)
+        else:
+            out.append("  sim: tur HENÜZ ÇALIŞMADI")
     bs = await kv_get("bars_stats") or {}
     if bs:
         out.append(f"  mum arşivi: {bs.get('coins', '?')} sembol"

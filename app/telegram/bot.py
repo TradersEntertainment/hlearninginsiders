@@ -242,6 +242,9 @@ class TelegramBot:
             elif chat_id in self._own_chats():
                 if await self._dispatch_track(cmd, args, chat_id):
                     return                     # kanaldan /takip_N, /birak_N, /takipler
+                if cmd in ("sim", "sım"):
+                    await self._cmd_sim(chat_id)   # coin çözümlemesine düşmesin
+                    return
                 if not args:
                     await self._cmd_coin_liq(cmd, chat_id)
             return
@@ -288,6 +291,8 @@ class TelegramBot:
             await self._cmd_watchlist(chat_id)
         elif cmd.startswith("takip_"):
             await self._cmd_track_start(cmd, chat_id)
+        elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
+            await self._cmd_sim(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:      # /takip 0xADRES SEMBOL → manuel takip
                 await self._cmd_track_manual(args, chat_id)
@@ -358,6 +363,15 @@ class TelegramBot:
             return False
         return True
 
+    async def _cmd_sim(self, chat_id: str) -> None:
+        """/sim — kâğıt üstü liq simülasyonunun özeti (bakiye, açık işlem, son kapanışlar)."""
+        try:
+            from ..radar import sim
+            await self.send(fmt.sim_summary(await sim.summary(self.cfg)), chat_id)
+        except Exception as e:
+            log.exception("sim özeti hatası")
+            await self.send(f"❌ sim okunamadı: {fmt.esc(e)}", chat_id)
+
     def _track_chat(self, chat_id: str) -> str:
         """Takip haberleri nereye: ana sohbetten başlatıldıysa varsayılan (boş),
         kanaldan başlatıldıysa o kanal."""
@@ -368,7 +382,8 @@ class TelegramBot:
         return {str(v).strip() for v in (
             self.cfg.telegram_chat_id, getattr(self.cfg, "crypto_chat_id", ""),
             getattr(self.cfg, "crypto_stocks_id", ""), getattr(self.cfg, "liq_attack_chat_id", ""),
-            getattr(self.cfg, "pattern_chat_id", ""), getattr(self.cfg, "telegram_channel_id", ""))
+            getattr(self.cfg, "pattern_chat_id", ""), getattr(self.cfg, "telegram_channel_id", ""),
+            getattr(self.cfg, "sim_chat_id", ""))
             if v and str(v).strip()}
 
     # ---------- komutlar ----------

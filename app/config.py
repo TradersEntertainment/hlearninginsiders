@@ -72,6 +72,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "PROPR'da listeli bir kripto coin son 24 saatin en yüksek 5 dakikalık hacmine ulaşınca — ayrı kanala gider (CRYPTO_CHAT_ID)"},
     "notify_cryptoliq": {"type": "bool", "label": "💥 Kripto liq yakını", "group": "Bildirimler",
                          "desc": "Ana dex kriptoda (BTC/ETH hariç) eşik büyüklüğündeki bir pozisyon likidasyon fiyatına eşik mesafe kadar yaklaşınca — ayrı kanala gider (CRYPTO_CHAT_ID); eşikler 'Kripto liq' grubunda"},
+    "notify_sim": {"type": "bool", "label": "🧪 Liq simülasyonu mesajları", "group": "Bildirimler",
+                   "desc": "Sanal işlem açılış/kapanış/sıfırlama mesajları — ayrı kanala gider (SIM_CHAT_ID, env). İşlem defteri mesajdan bağımsız ilerler; kanal boşsa hiçbir yere gitmez"},
     "notify_equityvol": {"type": "bool", "label": "📈 Hisse hacim patlaması", "group": "Bildirimler",
                          "desc": "PROPR'da listeli bir HİSSE perp'i son 24 saatin en yüksek 5 dakikalık hacmine ulaşınca — ayrı kanala gider (CRYPTO_STOCKS_ID)"},
     "notify_pattern": {"type": "bool", "label": "🔮 Örüntü sinyali", "group": "Bildirimler",
@@ -329,6 +331,36 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Turda 1 fiyat isteği (ana dex özeti, metrik döngüsüyle paylaşılır) + bildirilecek her aday adres için 1 canlılık sondası (tur başına en çok 12)"},
     "crypto_liq_cooldown": {"type": "int", "label": "Pozisyon başına bekleme (sn)", "group": "Kripto liq",
                             "desc": "Aynı pozisyon bu süre içinde yeniden bildirilmez — fiyat eşiğin etrafında salınınca her tur mesaj olmasın. Aynı coinde YENİ bir pozisyon eşiğe girerse mesaj yine gider (coin başına tek mesaj)"},
+    "sim_enabled": {"type": "bool", "label": "🧪 Liq simülasyonu", "group": "Simülasyon",
+                    "desc": "Kripto liq radarının sondayla doğrulanmış SON UYARI'sında kâğıt üstünde işlem: balinanın tersine girer, hedef zincir sonu (limit); iğne gelirse aynı fiyattan ters bacak. Gerçek emir YOK. Sayfa: /sim"},
+    "sim_start_balance": {"type": "float", "label": "Başlangıç bakiyesi ($)", "group": "Simülasyon",
+                          "desc": "Sanal hesabın başlangıcı; sıfırlamada da buna döner (kullanıcı kuralı $10K)"},
+    "sim_leverage": {"type": "float", "label": "Kaldıraç (x)", "group": "Simülasyon",
+                     "desc": "İki bacak da bu kaldıraçla girer (kullanıcı kuralı 2x)"},
+    "sim_margin_pct": {"type": "float", "label": "Marjin payı (%)", "group": "Simülasyon",
+                       "desc": "Kullanılabilir bakiyenin yüzde kaçı işleme yatırılsın. 100 = hepsi (bir seferde tek işlem; ikinci coin 'bakiye bağlı' diye atlanır), 50 = iki coin aynı anda"},
+    "sim_stop_pct": {"type": "float", "label": "Ön bacak stop (%)", "group": "Simülasyon",
+                     "desc": "Girişten bu kadar ters gidince piyasadan kapanır (kullanıcı kuralı %10). Aynı mumda hedef de görülürse stop sayılır"},
+    "sim_min_tp_pct": {"type": "float", "label": "Asgari hedef mesafesi (%)", "group": "Simülasyon",
+                       "desc": "Zincir sonu girişe bundan yakınsa işlem açılmaz (ücreti karşılamaz)"},
+    "sim_max_tp_pct": {"type": "float", "label": "Azami hedef mesafesi (%)", "group": "Simülasyon",
+                       "desc": "0 = kapalı (hedef her zaman zincir sonu). Açılırsa daha uzak hedef burada kırpılır ve ters bacak açılmaz (ince defterde zincir sonu güvenilmez)"},
+    "sim_after_liq_min": {"type": "int", "label": "Liq sonrası bekleme (dk)", "group": "Simülasyon",
+                          "desc": "Balina patladıktan sonra iğne bu sürede hedefe uzanmazsa ön bacak piyasadan kapanır, ters bacak açılmaz (kullanıcı kuralı 30)"},
+    "sim_pre_max_min": {"type": "int", "label": "Ön bacak azami ömür (dk)", "group": "Simülasyon",
+                        "desc": "Balina bu sürede patlamazsa (uzaklaştı, teminat ekledi) ön bacak piyasadan kapanır"},
+    "sim_post_tp_pct": {"type": "float", "label": "Ters bacak hedefi (%)", "group": "Simülasyon",
+                        "desc": "İğneden bu kadar geri çekilince limitle kapanır (kullanıcı kuralı %0,5–1)"},
+    "sim_post_stop_pct": {"type": "float", "label": "Ters bacak stop (%)", "group": "Simülasyon",
+                          "desc": "Girişten bu kadar ters gidince piyasadan kapanır (kullanıcı kuralı %10)"},
+    "sim_post_max_min": {"type": "int", "label": "Ters bacak azami ömür (dk)", "group": "Simülasyon",
+                         "desc": "Bu sürede hedef gelmezse piyasadan kapanır (kısa vadeli işlem)"},
+    "sim_fee_taker_pct": {"type": "float", "label": "Taker ücreti (%)", "group": "Simülasyon",
+                          "desc": "Piyasa emirleri (giriş, stop, süre dolumu), notional üzerinden; HL taban %0,045"},
+    "sim_fee_maker_pct": {"type": "float", "label": "Maker ücreti (%)", "group": "Simülasyon",
+                          "desc": "Limit emirleri (hedef, ters bacak girişi), notional üzerinden; HL taban %0,015"},
+    "sim_poll_sec": {"type": "int", "label": "Değerlendirme aralığı (sn)", "group": "Simülasyon",
+                     "desc": "Açık işlem başına 1 mum isteği (1 dk mumlar); açık işlem yoksa istek yok"},
     "equity_vol_enabled": {"type": "bool", "label": "Hisse hacim radarı", "group": "Hisse hacim",
                            "desc": "Kapatılırsa hiç mum çekilmez, istek maliyeti sıfırlanır"},
     "equity_vol_poll_sec": {"type": "int", "label": "Tarama aralığı (sn)", "group": "Hisse hacim",
@@ -533,6 +565,25 @@ class Config:
         self.crypto_liq_cascade = True
         self.crypto_liq_poll_sec = int(os.getenv("CRYPTO_LIQ_POLL_SEC", "120"))
         self.crypto_liq_cooldown = int(os.getenv("CRYPTO_LIQ_COOLDOWN", "14400"))
+        # Liq simülasyonu (kâğıt üstü). Kanal env-only (chat id kuralı); boşsa
+        # Telegram'a hiçbir şey gitmez, /sim sayfası ve defter yine çalışır.
+        self.sim_chat_id = os.getenv("SIM_CHAT_ID", "")
+        self.notify_sim = True
+        self.sim_enabled = True
+        self.sim_start_balance = float(os.getenv("SIM_START_BALANCE", "10000"))
+        self.sim_leverage = float(os.getenv("SIM_LEVERAGE", "2"))
+        self.sim_margin_pct = float(os.getenv("SIM_MARGIN_PCT", "100"))
+        self.sim_stop_pct = float(os.getenv("SIM_STOP_PCT", "10"))
+        self.sim_min_tp_pct = float(os.getenv("SIM_MIN_TP_PCT", "0.2"))
+        self.sim_max_tp_pct = float(os.getenv("SIM_MAX_TP_PCT", "0"))
+        self.sim_after_liq_min = int(os.getenv("SIM_AFTER_LIQ_MIN", "30"))
+        self.sim_pre_max_min = int(os.getenv("SIM_PRE_MAX_MIN", "360"))
+        self.sim_post_tp_pct = float(os.getenv("SIM_POST_TP_PCT", "0.75"))
+        self.sim_post_stop_pct = float(os.getenv("SIM_POST_STOP_PCT", "10"))
+        self.sim_post_max_min = int(os.getenv("SIM_POST_MAX_MIN", "120"))
+        self.sim_fee_taker_pct = float(os.getenv("SIM_FEE_TAKER_PCT", "0.045"))
+        self.sim_fee_maker_pct = float(os.getenv("SIM_FEE_MAKER_PCT", "0.015"))
+        self.sim_poll_sec = int(os.getenv("SIM_POLL_SEC", "60"))
         self.notify_equityvol = True
         self.equity_vol_enabled = True
         self.equity_vol_poll_sec = int(os.getenv("EQUITY_VOL_POLL_SEC", "300"))

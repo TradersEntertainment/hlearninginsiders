@@ -384,7 +384,8 @@ async def scan(cfg, client, notifier=None) -> dict:
            "probe_deferred": 0, "probe_err": 0, "dropped_stale": 0, "alerted": 0,
            "failed": 0, "skipped": "", "chat": False, "top": [], "ctx_age": None,
            "tracked": 0, "stage2": 0, "stage3": 0, "resets": 0, "closed": 0,
-           "closed_liq": 0, "close_notes": 0, "photos": 0, "combined": 0, "cascades": 0}
+           "closed_liq": 0, "close_notes": 0, "photos": 0, "combined": 0, "cascades": 0,
+           "sim": 0}
     if not getattr(cfg, "crypto_liq_enabled", True):
         out["skipped"] = "kapalı"
         return await _stats(out)
@@ -578,6 +579,15 @@ async def scan(cfg, client, notifier=None) -> dict:
         casc = await _cascade(cfg, client, coin, marks.get(coin), fresh[0], await _coin_rows(coin))
         if casc:
             out["cascades"] += 1
+        # 🧪 Simülasyon: doğrulanmış SON UYARI → kâğıt üstünde işlem. Alarmdan
+        # bağımsız: gönderim düşse de defter ilerler; sim patlarsa alarm etkilenmez.
+        if getattr(cfg, "sim_enabled", True):
+            try:
+                from . import sim
+                if await sim.on_signal(cfg, client, notifier, coin, marks.get(coin), fresh, casc):
+                    out["sim"] += 1
+            except Exception:
+                log.exception("sim sinyali işlenemedi (%s)", coin)
         # Her satırın yanına /takip_N: kullanıcı basınca o pozisyon takibe alınır
         # (boyut %10 adımı, liq fiyatı %1 kayması, kapanış/likidasyon). Teklif
         # yazılamazsa mesaj yine gider, sadece komut olmaz.

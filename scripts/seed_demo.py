@@ -324,6 +324,59 @@ async def main():
                  now - 3 * 3600, now - 120, now - 120, (now - 1800) if closed else None, closed,
                  CRYPTO_MARK["PUMP"] * 0.997 if closed else None, (now - 1700) if closed else None))
     await dbm.kv_set("fills_count", 8)
+    # 🧪 SİM: kâğıt üstü defter — 1 açık ön bacak (HYPE), hedefli kapanış + ters bacak,
+    # stop (PUMP), süre dolumu, 2 atlanan sinyal; bakiye kv'de.
+    hm, pm = CRYPTO_MARK["HYPE"], CRYPTO_MARK["PUMP"]
+    await dbm.kv_set("sim_account", {"run": 1, "balance": 8_443.0, "start_balance": 10_000.0,
+                                     "start_ts": now - 6 * 86400})
+    await dbm.kv_set("sim_stats", {"open": 1, "closed": 0, "opened2": 0, "candles": 1, "candle_err": 0,
+                                   "mark_used": 0, "deferred": 0, "sent": 0, "failed": 0, "errors": 0,
+                                   "gate": "", "source_gate": "", "skipped": "", "opened": 4,
+                                   "skipped_signals": 2, "balance": 8_443.0, "run": 1, "ts": now - 40})
+    async with dbm.db() as c:
+        cols = ("run,coin,leg,side,status,entry_px,entry_ts,entry_src,qty,notional,margin,leverage,stop_px,tp_px,"
+                "tp_src,exit_px,exit_ts,exit_reason,pnl_usd,pnl_pct,fee_usd,whale_addr,whale_side,whale_notional,"
+                "whale_liq_px,casc_end_px,casc_total,casc_note,liq_ts,last_eval_ts,hi_px,lo_px,parent_id,"
+                "skip_reason,note,created_ts")
+        q = f"INSERT INTO sim_trades({cols}) VALUES({','.join('?' * len(cols.split(',')))})"
+        wa, wb, wc = addr(r), addr(r), addr(r)
+        t0 = now - 5 * 86400
+        e1 = hm * 0.97
+        rows = [
+            # 1) HYPE ön bacak: hedefte kapandı (+), 2) ters bacak hedefte (+)
+            (1, "HYPE", 1, "long", "closed", e1, t0, "ctx", 20_000 / e1, 20_000, 10_000, 2, e1 * 0.9, e1 * 1.024,
+             "cascade", e1 * 1.024, t0 + 1500, "tp", 462.0, 4.62, 15.1, wa, "short", 13_400_000, e1 * 1.006,
+             e1 * 1.024, 17_400_000, "3 poz zincirde", t0 + 900, t0 + 1500, e1 * 1.027, e1 * 0.996, None, None, None, t0),
+            (1, "HYPE", 2, "short", "closed", e1 * 1.024, t0 + 1500, "tp", 20_920 / (e1 * 1.024), 20_920, 10_460, 2,
+             e1 * 1.024 * 1.1, e1 * 1.024 * 0.9925, "pct", e1 * 1.024 * 0.9925, t0 + 3300, "tp", 150.0, 1.43, 6.3,
+             wa, "short", 13_400_000, e1 * 1.006, e1 * 1.024, 17_400_000, None, t0 + 900, t0 + 3300,
+             e1 * 1.028, e1 * 1.015, 1, None, None, t0 + 1500),
+            # 3) PUMP ön bacak: stop (−)
+            (1, "PUMP", 1, "short", "closed", pm, t0 + 2 * 86400, "ctx", 21_220 / pm, 21_220, 10_610, 2, pm * 1.1,
+             pm * 0.985, "cascade", pm * 1.1, t0 + 2 * 86400 + 5400, "stop", -2_131.0, -20.1, 19.8, wb, "long",
+             2_100_000, pm * 0.995, pm * 0.985, 2_600_000, "2 poz zincirde", None, t0 + 2 * 86400 + 5400,
+             pm * 1.104, pm * 0.998, None, None, "aynı mumda hedef de vardı, stop sayıldı", t0 + 2 * 86400),
+            # 4) SOL ön bacak: süre dolumu (iğne gelmedi), küçük eksi
+            (1, "SOL", 1, "long", "closed", 166.0, t0 + 3 * 86400, "ctx", 16_960 / 166.0, 16_960, 8_480, 2, 149.4,
+             170.2, "liq", 165.7, t0 + 3 * 86400 + 4100, "timeout", -38.0, -0.45, 15.3, wc, "short", 900_000,
+             167.2, None, None, None, t0 + 3 * 86400 + 2300, t0 + 3 * 86400 + 4100, 167.9, 165.1, None, None,
+             "defter yok → hedef liq fiyatı, ters bacak yok · liq geldi, iğne 30 dk içinde hedefe uzanmadı",
+             t0 + 3 * 86400),
+            # 5) HYPE açık ön bacak (liq bekleniyor)
+            (1, "HYPE", 1, "long", "open", hm * 0.996, now - 1500, "ctx", 16_886 / (hm * 0.996), 16_886, 8_443, 2,
+             hm * 0.996 * 0.9, hm * 1.021, "cascade", None, None, None, None, None, 9.4, wa, "short", 12_900_000,
+             hm * 1.004, hm * 1.021, 15_800_000, "2 poz zincirde", None, now - 40, hm * 1.002, hm * 0.994, None,
+             None, None, now - 1500),   # ücret 7.6 ≈ 16.9K × %0,045
+            # 6-7) atlanan sinyaller
+            (1, "PUMP", 1, "long", "skipped", None, None, None, None, None, None, None, None, None, None, None, None,
+             None, None, None, None, wb, "short", 700_000, pm * 1.005, None, None, None, None, None, None, None, None,
+             "bakiye bağlı (kullanılabilir $0)", None, now - 900),
+            (1, "kPEPE", 1, "short", "skipped", None, None, None, None, None, None, None, None, None, None, None, None,
+             None, None, None, None, wc, "long", 1_100_000, CRYPTO_MARK["kPEPE"] * 0.995, None, None, None, None, None,
+             None, None, None, "sonda teyidi yok", None, now - 4 * 3600),
+        ]
+        for row_ in rows:
+            await c.execute(q, row_)
     await dbm.kv_set("specialists_cache", [
         {"address": sndk_addrs[1], "coin": "xyz:SNDK", "symbol": "SNDK", "n": 14, "vol": 6.2e6,
          "hits": 3, "misses": 1, "watchlist": 1, "open": {"side": "long", "notional": 520_000}}])

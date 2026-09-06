@@ -137,6 +137,30 @@ CREATE TABLE IF NOT EXISTS cryptoliq_watch(
   closed_px REAL, notified_ts INTEGER, -- kapanış notu gitti mi (NULL = henüz)
   PRIMARY KEY(coin, address)
 );
+-- Liq simülasyonu (kâğıt üstü, gerçek emir yok). Bacak 1 = SON UYARI'da
+-- balinanın tersine giriş, hedef zincir sonu (limit); bacak 2 = o seviyeden
+-- ters yön ("iğneden dönüş"). Satır SİLİNMEZ: sıfırlama yeni tur (run) açar,
+-- eski turlar sayfada ?run=all ile görünür.
+CREATE TABLE IF NOT EXISTS sim_trades(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run INTEGER DEFAULT 1,
+  coin TEXT, leg INTEGER,           -- 1 ön bacak | 2 ters bacak
+  side TEXT,                        -- long | short (bizim yön)
+  status TEXT DEFAULT 'open',       -- open | closed | skipped
+  entry_px REAL, entry_ts INTEGER, entry_src TEXT,   -- ctx (ana dex fiyatı) | tp (1. bacağın hedefi)
+  qty REAL, notional REAL, margin REAL, leverage REAL,
+  stop_px REAL, tp_px REAL, tp_src TEXT,             -- cascade | liq | capped | pct (2. bacak)
+  exit_px REAL, exit_ts INTEGER, exit_reason TEXT,   -- tp | stop | timeout | void | reset
+  pnl_usd REAL, pnl_pct REAL, fee_usd REAL,          -- pnl_pct marjine göre, ücret düşülmüş
+  whale_addr TEXT, whale_side TEXT, whale_notional REAL, whale_liq_px REAL,
+  casc_end_px REAL, casc_total REAL, casc_note TEXT,
+  liq_ts INTEGER,                   -- balina liq fiyatı kesildi / 💀 teyidi
+  last_eval_ts INTEGER, hi_px REAL, lo_px REAL,      -- değerlendirme damgası, uç fiyatlar
+  parent_id INTEGER,                -- 2. bacak → 1. bacağın id'si
+  skip_reason TEXT, note TEXT, created_ts INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_sim_open ON sim_trades(status, coin);
+CREATE INDEX IF NOT EXISTS idx_sim_run ON sim_trades(run, created_ts DESC);
 -- TÜM Hyperliquid'in büyük pozisyonları (ana dex + HIP-3 hepsi).
 -- positions_current'a KARIŞTIRILMAZ: orası hisse skorlama/earnings hattının
 -- sahibi ve neredeyse her sorgusu tickers ile JOIN'li — BTC satırı oraya

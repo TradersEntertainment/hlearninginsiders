@@ -18,7 +18,7 @@ PAGES = [("index", "/"), ("coin", "/t/SNDK"), ("crypto", "/t/PUMP"),
          ("devler", "/devler"), ("gecmis", "/gecmis"), ("ai", "/ai"), ("tani", "/tani"),
          ("saatler", "/saatler"), ("kapali", "/kapali"), ("funding", "/funding"),
          ("hacim", "/hacim"), ("orintu", "/orintu"), ("neoldu", "/neoldu?sym=SNDK"),
-         ("twap", "/twap"), ("saldiri", "/saldiri"), ("settings", "/settings"),
+         ("twap", "/twap"), ("saldiri", "/saldiri"), ("sim", "/sim"), ("settings", "/settings"),
          ("login", "/login")]
 VIEWPORTS = (("d", 1400, 900), ("m", 390, 844))
 METRICS = {

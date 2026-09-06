@@ -57,6 +57,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/whale 0x…` | Adres karnesi + canlı pozisyonları |
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
 | `/takipler` · `/birak_N` | Aktif pozisyon takipleri · takibi bırak |
+| `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
 | `/status` | Bot durumu (WS, havuz boyutları, tarama hızı, son yenilemeler) |
@@ -415,6 +416,45 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   yapılır ama sonda atılmaz — `/tani` "kripto liq" satırı nedenini söyler.
 - Fiyat `main_dex_ctx` kv'sinden: metrik döngüsü zaten çektiği ana dex
   yanıtından yazar (ek istek yok); bayatsa tur kendisi tek istekle tazeler.
+
+## Simülasyon: `/sim`
+
+Kâğıt üstü, **gerçek emir yok**. Kullanıcı kuralı: kripto liq radarı sondayla
+doğrulanmış **SON UYARI** verince (liq'e ≤%0,5 kala, ≥$500K, BTC/ETH hariç)
+bot balinanın **tersine** girer — HYPE short'u 90'da patlayacaksa %0,5 kala
+LONG. Stop girişten **%10**. Hedef: zincir simülasyonunun "defter nereye kadar
+yenir" fiyatı, **limit** emir. Liq gerçekleşip fiyat o iğneye uzanırsa ön bacak
+orada kapanır ve **aynı fiyattan ters bacak** (SHORT) açılır — "iğneden
+girebilirse girer, giremezse girmez"; ters bacak **%0,75** geri çekilince
+kapanır (kullanıcı: %0,5–1), stop %10, en çok 120 dk. Liq oldu ama iğne **30 dk**
+içinde hedefe gelmezse ön bacak piyasadan kapanır, ters bacak hiç açılmaz.
+
+- **Hesap.** Başlangıç **$10K**, **2x** kaldıraç, kullanılabilir bakiyenin tamamı
+  marjin (bir seferde fiilen tek işlem; ikinci coin "bakiye bağlı" diye
+  atlanır ve sayfada görünür). Ücret HL taban: taker %0,045 (giriş, stop,
+  süre dolumu), maker %0,015 (hedef, ters bacak girişi). Bakiye bileşik.
+- **Değerlendirme.** Her 60 sn, açık işlem başına 1 istek: 1 dk mumların
+  uçları. Seviyeye dokunan limit dolmuş sayılır (iyimser), aynı mumda stop +
+  hedef → **stop** (kötümser), slippage/kısmi dolum yok, giriş fiyatı ana dex
+  özeti (≤150 sn). Mum alınamazsa taze kv fiyatı, o da bayatsa **ertelenir** —
+  uydurma fiyatla kapanış yok.
+- **Balina ne yaptı.** Liq fiyatı kesilince (mum) ya da radar 💀 teyit edince
+  `liq_ts`; balina liq olmadan kapattıysa 🚫 **tez bozuldu**, piyasadan kapanır;
+  6 saat içinde hiç patlamazsa ⏱ süre dolumu. Defter okunamadıysa hedef liq
+  fiyatı olur ve ters bacak açılmaz (mesaj söyler).
+- **Sayfa `/sim`.** Bakiye, toplam kâr/zarar, özkaynak, isabet, en iyi/en kötü,
+  bakiye eğrisi, açık işlemler (anlık K/Z, hedefe uzaklık, balina, durum),
+  kapanan işlemler (sebep, ücret, süre, uç fiyatlar), atlanan sinyaller
+  (neden). Yönetici **🔄 sıfırla**: açıklar piyasadan kapanır, yeni tur, bakiye
+  başa; eski turlar `?run=all`. Telegram `/sim` aynı özeti verir.
+- **Kanal.** `SIM_CHAT_ID` (env; aynı botun ayrı kanalı). Boşsa mesaj gitmez,
+  defter yine ilerler. Alarm kuralından bilerek ayrılır: mesaj düşerse işlem
+  geri alınmaz (`fail:sim` kaydı) — bu bir defterdir.
+- **Sinyal kaynağı kripto liq kapısına bağlı:** `CRYPTO_CHAT_ID` yoksa ya da
+  radar/bildirim kapalıysa tarama adım 6'ya gelmez, sim sinyal alamaz; sayfa ve
+  `/tani` bunu yazar. Ayarlar → **Simülasyon** (kaldıraç, stop, hedefler, süre
+  kuralları, ücretler); `sim_max_tp_pct` 0 = kapalı (hedef her zaman zincir
+  sonu), açılırsa uzak hedef kırpılır ve ters bacak açılmaz.
 
 ## Kripto coin sayfaları: `/t/PUMP`
 

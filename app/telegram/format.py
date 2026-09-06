@@ -1359,6 +1359,7 @@ def help_text() -> str:
         "/watchlist — sicilli adresler\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için /birak_N)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
+        "/sim — liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar (sayfa /sim)\n"
         "/takip 0x… SNDK — herhangi bir balinayı ELLE takibe al (teklif beklemeden)\n"
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"
@@ -1369,3 +1370,152 @@ def help_text() -> str:
         "/status — bot durumu\n"
         "/id — bu sohbetin chat id'si"
     )
+
+
+# ---------------- 🧪 SİM: kâğıt üstü liq simülasyonu ----------------
+
+SIM_REASON = {"tp": "✅ hedef", "stop": "🛑 stop", "timeout": "⏱ süre doldu",
+              "void": "🚫 tez bozuldu", "reset": "🔄 sıfırlama"}
+SIM_TP_SRC = {"cascade": "zincir sonu", "liq": "liq fiyatı (defter yok)", "capped": "kırpılmış hedef",
+              "pct": "geri çekilme"}
+SIM_FOOT = "<i>simülasyon — gerçek emir yok · sayfa /sim</i>"
+
+
+def dur_txt(sec) -> str:
+    """Süre: '14 dk' · '2 s 5 dk' · '3 g 4 s'."""
+    sec = max(0, int(sec or 0))
+    d, h, m = sec // 86400, sec % 86400 // 3600, sec % 3600 // 60
+    if d:
+        return f"{d} g {h} s"
+    if h:
+        return f"{h} s {m} dk"
+    return f"{m} dk"
+
+
+def _sim_head(t: dict) -> str:
+    lev = float(t.get("leverage") or 0)
+    return (f"<b>{esc(t.get('coin'))}</b> · {_side_badge(t.get('side'))}"
+            f"{f' {lev:g}x' if lev else ''} · {'ön' if int(t.get('leg') or 1) == 1 else 'ters'} bacak")
+
+
+def _signed_usd(v) -> str:
+    v = float(v or 0)
+    return f"{'+' if v >= 0 else '−'}{usd(abs(v))}"
+
+
+def sim_opened(t: dict, acc: dict, cfg) -> str:
+    """🧪 SİM AÇILDI — ön bacak (ya da elle başlatılan ters bacak)."""
+    up = t.get("side") == "long"
+    entry, tp, stop = float(t["entry_px"]), float(t["tp_px"]), float(t["stop_px"])
+    tp_pct = (tp - entry) / entry * 100
+    stop_pct = (stop - entry) / entry * 100
+    src = SIM_TP_SRC.get(t.get("tp_src") or "", t.get("tp_src") or "")
+    lines = [f"🧪 <b>SİM AÇILDI</b> · {_sim_head(t)}",
+             f"giriş <b>{px(entry)}</b> · {float(t.get('qty') or 0):.4g} adet · {usd(t.get('notional'))}"
+             f" (marjin {usd(t.get('margin'))})",
+             f"🎯 hedef <b>{px(tp)}</b> ({tp_pct:+.2f}% · {src} · limit) · 🛑 stop {px(stop)} ({stop_pct:+.1f}%)"]
+    if t.get("whale_addr"):
+        wl = float(t.get("whale_liq_px") or 0)
+        wd = abs(wl - entry) / entry * 100 if wl and entry else None
+        lines.append(f"balina: {_side_badge(t.get('whale_side') or '')} <b>{usd(t.get('whale_notional'))}</b>"
+                     f" · liq {px(wl)}" + (f" (%{wd:.2f} kaldı)" if wd is not None else "")
+                     + f" · 👤 {alink(t['whale_addr'])}"
+                     + (f" · {esc(t['casc_note'])}" if t.get("casc_note") else ""))
+    after = int(getattr(cfg, "sim_after_liq_min", 30) or 0)
+    if int(t.get("leg") or 1) == 1:
+        if t.get("tp_src") == "cascade":
+            lines.append(f"plan: liq gelince iğne {px(tp)}'e uzanırsa {'long' if up else 'short'} orada kapanır,"
+                         f" aynı fiyattan <b>{'SHORT' if up else 'LONG'}</b> açılır"
+                         f" (hedef %{pct_num(float(getattr(cfg, 'sim_post_tp_pct', 0.75)))} geri çekilme,"
+                         f" stop %{pct_num(float(getattr(cfg, 'sim_post_stop_pct', 10)))});"
+                         f" iğne {after} dk içinde gelmezse piyasadan kapanır")
+        else:
+            lines.append(f"plan: hedefe uzanırsa orada kapanır, ters bacak YOK;"
+                         f" liq'ten {after} dk sonra hedef yoksa piyasadan kapanır")
+    if t.get("note"):
+        lines.append(f"<i>{esc(t['note'])}</i>")
+    lines.append(f"bakiye {usd(acc.get('balance'))} · tur #{acc.get('run')} · {SIM_FOOT}")
+    return "\n".join(lines)
+
+
+def sim_closed(t: dict, acc: dict, cfg, child: dict | None = None, st: dict | None = None) -> str:
+    """🧪 SİM KAPANDI — sebep, sonuç, bakiye; hedefte kapandıysa ters bacak satırı."""
+    reason = SIM_REASON.get(t.get("exit_reason") or "", t.get("exit_reason") or "")
+    pnl, pct = float(t.get("pnl_usd") or 0), float(t.get("pnl_pct") or 0)
+    dur = int(t.get("exit_ts") or 0) - int(t.get("entry_ts") or 0)
+    line2 = (f"{px(t.get('entry_px'))} → <b>{px(t.get('exit_px'))}</b> · <b>{_signed_usd(pnl)}</b>"
+             f" ({pct:+.1f}% marjin) · ücret {usd(t.get('fee_usd'))} · {dur_txt(dur)}")
+    if t.get("hi_px") and t.get("lo_px"):
+        line2 += f" · uç {px(t['hi_px'])} / {px(t['lo_px'])}"
+    lines = [f"🧪 <b>SİM KAPANDI</b> · {_sim_head(t)} · {reason}", line2]
+    if t.get("note"):
+        lines.append(f"<i>{esc(t['note'])}</i>")
+    bal = float(acc.get("balance") or 0)
+    start = float(acc.get("start_balance") or 0)
+    line = f"bakiye <b>{usd(bal)}</b>" + (f" ({(bal - start) / start * 100:+.1f}% başlangıçtan)" if start else "")
+    if st and st.get("n"):
+        line += f" · {st['n']} işlem"
+        if st.get("hit_rate") is not None:
+            line += f" · isabet %{st['hit_rate']:.0f}"
+    lines.append(line)
+    if child:
+        ce, ct, cs = float(child["entry_px"]), float(child["tp_px"]), float(child["stop_px"])
+        lines.append(f"🔁 <b>{'SHORT' if child.get('side') == 'short' else 'LONG'} açıldı</b> @ {px(ce)}"
+                     f" · {usd(child.get('notional'))} · hedef {px(ct)} ({(ct - ce) / ce * 100:+.2f}%)"
+                     f" · stop {px(cs)} ({(cs - ce) / ce * 100:+.1f}%)"
+                     f" · en çok {int(getattr(cfg, 'sim_post_max_min', 120))} dk")
+    elif t.get("exit_reason") == "tp" and int(t.get("leg") or 1) == 1:
+        lines.append("ters bacak açılmadı: " + ("hedef zincir sonu değildi" if t.get("tp_src") != "cascade"
+                                                 else "kullanılabilir bakiye yok"))
+    lines.append(SIM_FOOT)
+    return "\n".join(lines)
+
+
+def sim_reset(old: dict, acc: dict, n_closed: int) -> str:
+    bal = float(old.get("balance") or 0)
+    start = float(old.get("start_balance") or 0)
+    chg = f" ({(bal - start) / start * 100:+.1f}%)" if start else ""
+    return (f"🔄 <b>SİM SIFIRLANDI</b> · tur #{old.get('run')} → <b>#{acc.get('run')}</b>\n"
+            f"önceki tur: bakiye {usd(bal)}{chg} · {n_closed} açık işlem piyasadan kapatıldı\n"
+            f"yeni bakiye <b>{usd(acc.get('balance'))}</b> · {SIM_FOOT}")
+
+
+def sim_summary(s: dict) -> str:
+    """/sim komutu: bakiye, isabet, açık işlemler, son kapanışlar, uyarılar."""
+    acc, st = s.get("acc") or {}, s.get("stats") or {}
+    bal = float(acc.get("balance") or 0)
+    start = float(acc.get("start_balance") or 0)
+    chg = f" ({(bal - start) / start * 100:+.1f}%)" if start else ""
+    lines = [f"🧪 <b>SİM</b> · tur #{acc.get('run')} · bakiye <b>{usd(bal)}</b>{chg}"
+             f" · özkaynak {usd(s.get('equity'))}"]
+    if st.get("n"):
+        line = (f"{st['n']} işlem · {st.get('wins', 0)}✓/{st.get('losses', 0)}✗"
+                + (f" (isabet %{st['hit_rate']:.0f})" if st.get("hit_rate") is not None else ""))
+        if st.get("best"):
+            line += (f" · en iyi {_signed_usd(st['best'].get('pnl_usd'))} {esc(st['best'].get('coin'))}"
+                     f" · en kötü {_signed_usd(st['worst'].get('pnl_usd'))} {esc(st['worst'].get('coin'))}")
+        lines.append(line)
+    else:
+        lines.append("henüz kapanmış işlem yok")
+    for t in s.get("opens") or []:
+        live = t.get("live") or {}
+        lines.append(f"açık: {_sim_head(t)} @ {px(t.get('entry_px'))}"
+                     + (f" · şimdi {px(live['mark'])} · <b>{_signed_usd(live['usd'])}</b> ({live['pct']:+.1f}%)"
+                        if live else " · fiyat yok")
+                     + f" · {dur_txt(t.get('age'))} · hedef {px(t.get('tp_px'))} · stop {px(t.get('stop_px'))}"
+                     + f" · {esc(t.get('status_txt') or '')}")
+    if not s.get("opens"):
+        lines.append("açık işlem yok — SON UYARI bekleniyor")
+    closed = s.get("closed") or []
+    if closed:
+        lines.append("son: " + " · ".join(
+            f"{SIM_REASON.get(c.get('exit_reason') or '', '?')} {esc(c.get('coin'))} {_signed_usd(c.get('pnl_usd'))}"
+            for c in closed[:5]))
+    if not s.get("enabled", True):
+        lines.append("⚠️ simülasyon kapalı (sim_enabled)")
+    if s.get("gate"):
+        lines.append(f"⚠️ Telegram: {esc(s['gate'])} — mesaj gitmiyor")
+    if s.get("source_gate"):
+        lines.append(f"⚠️ sinyal kaynağı kapalı: {esc(s['source_gate'])}")
+    lines.append(SIM_FOOT)
+    return "\n".join(lines)

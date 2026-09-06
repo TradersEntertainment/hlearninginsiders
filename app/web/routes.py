@@ -20,7 +20,7 @@ from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol, liqattack, liqmap,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
-                     patterns, pricechart, twap)
+                     patterns, pricechart, sim, twap)
 
 log = logging.getLogger("web.routes")
 
@@ -1219,6 +1219,27 @@ async def funding_page(request: Request):
     _guard(request)
     fr = await funding.ranking(request.app.state.cfg)
     return _render(request, "funding.html", {"fr": fr})
+
+
+@router.get("/sim")
+async def sim_page(request: Request):
+    """Liq simülasyonu — kâğıt üstünde iki bacaklı işlem defteri, bakiye, isabet."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    s = await sim.page(cfg, request.query_params.get("run"))
+    return _render(request, "sim.html", {"s": s, "cfg": cfg})
+
+
+@router.post("/sim/sifirla")
+async def sim_reset(request: Request):
+    """Yeni tur: açık işlemler piyasadan kapanır, bakiye başlangıca döner (yalnız yönetici)."""
+    _guard(request)
+    _require_admin(request)
+    st = request.app.state
+    try:
+        return JSONResponse(await sim.reset(st.cfg, getattr(st, "notifier", None)))
+    except Exception as e:
+        return JSONResponse({"error": f"{type(e).__name__}: {e}"[:200]}, status_code=500)
 
 
 @router.get("/saldiri")

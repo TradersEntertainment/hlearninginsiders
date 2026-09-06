@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}🧪 Sim · HL Radar{% endblock %}
+{% block content %}
+{% set acc = s.acc %}{% set st = s.stats %}
+{% set tpsrc = {'cascade': 'zincir sonu', 'liq': 'liq fiyatı', 'capped': 'kırpık', 'pct': 'geri çekilme'} %}
+{% set reason_pill = {'tp': ('ok', '✅ hedef'), 'stop': ('bad', '🛑 stop'), 'timeout': ('warn', '⏱ süre doldu'),
+                      'void': ('warn', '🚫 tez bozuldu'), 'reset': ('off', '🔄 sıfırlama')} %}
+{% set qk = ('&' + k[1:]) if k else '' %}
+
+<div class="panel">
+  <h2>🧪 Liq simülasyonu <span class="st">· kâğıt üstünde iki bacaklı işlem defteri — gerçek emir yok</span></h2>
+  <p class="sub">Kripto liq radarı <b>SON UYARI</b> verince (liq'e ≤%{{ '%g'|format(cfg.crypto_liq_dist3_pct) }} kala,
+  ≥ {{ cfg.crypto_liq_min_usd|usd }}, BTC/ETH hariç, defteri sondayla doğrulanmış pozisyon) bot balinanın <b>tersine</b> girer:
+  short balina patlayınca zorunlu alış gelir → LONG; long balina → SHORT. Stop girişten <b>%{{ '%g'|format(cfg.sim_stop_pct) }}</b>;
+  hedef zincir simülasyonunun "defter nereye kadar yenir" fiyatı, <b>limit</b>. Liq gerçekleşip fiyat o iğneye uzanırsa ön bacak
+  orada kapanır ve <b>aynı fiyattan ters bacak</b> açılır (hedef %{{ '%g'|format(cfg.sim_post_tp_pct) }} geri çekilme,
+  stop %{{ '%g'|format(cfg.sim_post_stop_pct) }}, en çok {{ cfg.sim_post_max_min }} dk). İğne {{ cfg.sim_after_liq_min }} dk içinde
+  gelmezse ön bacak piyasadan kapanır, ters bacak açılmaz. Başlangıç {{ cfg.sim_start_balance|usd }},
+  <b>{{ '%g'|format(cfg.sim_leverage) }}x</b>, kullanılabilir bakiyenin %{{ '%g'|format(cfg.sim_margin_pct) }}'i marjin.
+  <span class="warn">Simülasyondur, yatırım tavsiyesi değildir.</span></p>
+
+  <div class="strip">
+    <span class="pill {{ 'ok' if s.enabled else 'off' }}">{{ '● açık' if s.enabled else '○ kapalı' }}</span>
+    <span class="dim">tur <b>#{{ s.cur_run }}</b>{% if s.run is none %} · tüm turlar gösteriliyor{% elif s.run != s.cur_run %} · gösterilen tur #{{ s.run }}{% endif %}</span>
+    {% if s.kv.ts %}
+      <span class="dim">· son değerlendirme {{ s.kv.ts|dt }}
+        {%- if s.kv.error %} · <span class="bad">⚠️ {{ s.kv.error }}</span>{% endif %}
+        {%- if s.kv.deferred %} · {{ s.kv.deferred }} ertelendi (fiyat yok){% endif %}
+        {%- if s.kv.candle_err %} · <span class="bad">{{ s.kv.candle_err }} mum hatası</span>{% endif %}
+        {%- if s.kv.failed %} · <span class="bad">{{ s.kv.failed }} mesaj gönderilemedi</span>{% endif %}</span>
+    {% else %}<span class="dim">· tur henüz çalışmadı (açılıştan ~3 dk sonra)</span>{% endif %}
+    {% if s.gate %}<span class="warn">· ⚠️ Telegram: {{ s.gate }} — mesaj gitmiyor, defter yine ilerler</span>
+    {% else %}<span class="dim">· Telegram: SİM kanalı</span>{% endif %}
+    {% if is_admin %}
+      <button type="button" id="sim-reset" class="btn ghost sm">🔄 sıfırla</button>
+      <span id="sim-msg" class="dim"></span>
+    {% endif %}
+  </div>
+  {% if s.source_gate %}
+  <div class="alert warn">⚠️ Sinyal kaynağı kapalı: {{ s.source_gate }} — kripto liq radarı taramadıkça simülasyon sinyal alamaz
+    (Ayarlar → Kripto liq, <code>CRYPTO_CHAT_ID</code>).</div>
+  {% endif %}
+
+  <div class="kpi">
+    <div><div class="l">Bakiye</div><div class="v">{{ acc.balance|usd }}</div>
+      <div class="s">başlangıç {{ acc.start_balance|usd }}</div></div>
+    <div><div class="l">Toplam kâr/zarar</div>
+      <div class="v {{ 'long' if st.pnl_sum >= 0 else 'short' }}">{{ '+' if st.pnl_sum >= 0 else '−' }}{{ (st.pnl_sum|abs)|usd }}</div>
+      <div class="s">{% if st.pnl_pct is not none %}{{ '%+.1f'|format(st.pnl_pct) }}% başlangıçtan{% else %}tüm turlar{% endif %} · ücret {{ st.fees|usd }}</div></div>
+    <div><div class="l">Özkaynak</div><div class="v">{{ s.equity|usd }}</div>
+      <div class="s">açık K/Z {{ '%+.0f'|format(s.open_pnl) }}$</div></div>
+    <div><div class="l">İşlem · isabet</div><div class="v">{{ st.n }}</div>
+      <div class="s">{{ st.wins }}✓ / {{ st.losses }}✗{% if st.hit_rate is not none %} · isabet %{{ st.hit_rate|int }}{% endif %}</div></div>
+    <div><div class="l">En iyi / en kötü</div>
+      <div class="v">{% if st.best %}{{ '%+.0f'|format(st.best.pnl_usd) }}${% else %}—{% endif %}</div>
+      <div class="s">{% if st.best %}{{ st.best.coin }} · en kötü {{ '%+.0f'|format(st.worst.pnl_usd) }}$ {{ st.worst.coin }}{% else %}henüz kapanış yok{% endif %}</div></div>
+    <div><div class="l">Açık işlem</div><div class="v">{{ s.opens|length }}</div>
+      <div class="s">kapanan: {{ st.by_leg[1].n }} ön · {{ st.by_leg[2].n }} ters bacak</div></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>📈 Bakiye eğrisi <span class="st">· her kapanıştan sonra · kesikli çizgi = başlangıç · nokta üstünde işlem</span></h2>
+  {% if s.svg %}
+  {{ s.svg|safe }}
+  {% else %}
+  {{ m.empty(["Henüz kapanmış işlem yok.",
+              "İlk doğrulanmış SON UYARI'da ön bacak açılır; eğri kapanışlarla oluşur."]) }}
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>🟢 Açık işlemler <span class="st">· anlık K/Z ana dex fiyatından{% if s.marks_age is not none %} ({{ s.marks_age // 60 }} dk önce){% endif %}, çıkış ücreti düşülmüş</span></h2>
+  {% if s.opens %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Coin</th><th class="l">Bacak</th><th class="l">Yön</th><th>Giriş</th><th>Şimdi</th><th>K/Z</th>
+        <th>Hedef</th><th>Stop</th><th class="l">Balina</th><th class="l">Durum</th><th>Yaş</th></tr>
+    {% for t in s.opens %}
+    <tr>
+      <td class="l"><a href="/t/{{ t.coin }}{{ k }}">{{ t.coin }}</a></td>
+      <td class="l">{{ 'ön' if t.leg == 1 else 'ters' }}</td>
+      <td class="l"><span class="{{ 'long' if t.side == 'long' else 'short' }}">{{ 'LONG' if t.side == 'long' else 'SHORT' }}</span>
+        <span class="dim">{{ '%g'|format(t.leverage or 0) }}x</span></td>
+      <td>{{ t.entry_px|px }} <span class="dim">{{ t.notional|usd }}</span></td>
+      <td>{% if t.live %}{{ t.live.mark|px }}{% else %}<span class="dim">—</span>{% endif %}</td>
+      <td>{% if t.live %}<b class="{{ 'long' if t.live.usd >= 0 else 'short' }}">{{ '%+.0f'|format(t.live.usd) }}$</b>
+        <span class="dim">{{ '%+.1f'|format(t.live.pct) }}%</span>{% else %}<span class="dim">fiyat yok</span>{% endif %}</td>
+      <td>{{ t.tp_px|px }}{% if t.live and t.live.to_tp_pct is not none %} <span class="dim">{{ '%+.2f'|format(t.live.to_tp_pct) }}%</span>{% endif %}
+        <span class="dim">{{ tpsrc.get(t.tp_src, t.tp_src) }}</span></td>
+      <td>{{ t.stop_px|px }}</td>
+      <td class="l">{% if t.whale_addr %}{{ m.addr(t.whale_addr, k, 6) }}
+        <span class="{{ 'short' if t.whale_side == 'short' else 'long' }}">{{ 'S' if t.whale_side == 'short' else 'L' }}</span>
+        {{ t.whale_notional|usd }} <span class="dim">liq {{ t.whale_liq_px|px }}</span>{% else %}<span class="dim">—</span>{% endif %}</td>
+      <td class="l">{{ t.status_txt }}{% if t.note %} <span class="dim" title="{{ t.note }}">ⓘ</span>{% endif %}</td>
+      <td>{{ t.age // 60 }} dk</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}
+  {{ m.empty(["Açık işlem yok.",
+              (("Simülasyon kapalı (Ayarlar → Simülasyon)." if not s.enabled else
+                ("Sinyal kaynağı kapalı: " ~ s.source_gate ~ "." if s.source_gate else
+                 "Doğrulanmış SON UYARI (liq'e ≤%" ~ ('%g'|format(cfg.crypto_liq_dist3_pct)) ~ " kala, ≥ " ~ (cfg.crypto_liq_min_usd|usd) ~ ") bekleniyor.")))]) }}
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>🗂 Kapanan işlemler <span class="st">· son {{ s.closed|length }}{% if s.closed_total > s.closed|length %} / {{ s.closed_total }}{% endif %}{% if s.run is none %} · tüm turlar{% endif %}</span></h2>
+  {% if s.closed %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Kapanış</th><th class="l">Coin</th><th class="l">Bacak</th><th class="l">Yön</th><th>Giriş → çıkış</th>
+        <th class="l">Sebep</th><th>K/Z</th><th>Ücret</th><th>Süre</th><th>Uç</th><th class="l">Balina</th>{% if s.run is none %}<th>Tur</th>{% endif %}</tr>
+    {% for t in s.closed %}
+    {% set rp = reason_pill.get(t.exit_reason, ('off', t.exit_reason)) %}
+    <tr>
+      <td class="l">{{ t.exit_ts|dt }}</td>
+      <td class="l"><a href="/t/{{ t.coin }}{{ k }}">{{ t.coin }}</a></td>
+      <td class="l">{{ 'ön' if t.leg == 1 else 'ters' }}</td>
+      <td class="l"><span class="{{ 'long' if t.side == 'long' else 'short' }}">{{ 'LONG' if t.side == 'long' else 'SHORT' }}</span>
+        <span class="dim">{{ '%g'|format(t.leverage or 0) }}x</span></td>
+      <td>{{ t.entry_px|px }} → <b>{{ t.exit_px|px }}</b> <span class="dim">{{ t.notional|usd }} · {{ tpsrc.get(t.tp_src, t.tp_src) }}</span></td>
+      <td class="l"><span class="pill {{ rp[0] }}">{{ rp[1] }}</span>{% if t.note %} <span class="dim" title="{{ t.note }}">ⓘ</span>{% endif %}</td>
+      <td><b class="{{ 'long' if (t.pnl_usd or 0) >= 0 else 'short' }}">{{ '%+.0f'|format(t.pnl_usd or 0) }}$</b>
+        <span class="dim">{{ '%+.1f'|format(t.pnl_pct or 0) }}%</span></td>
+      <td class="dim">{{ t.fee_usd|usd }}</td>
+      <td>{{ t.dur // 60 }} dk</td>
+      <td class="dim">{% if t.hi_px and t.lo_px %}{{ t.hi_px|px }} / {{ t.lo_px|px }}{% else %}—{% endif %}</td>
+      <td class="l">{% if t.whale_addr %}{{ m.addr(t.whale_addr, k, 6) }}
+        <span class="{{ 'short' if t.whale_side == 'short' else 'long' }}">{{ 'S' if t.whale_side == 'short' else 'L' }}</span>
+        {{ t.whale_notional|usd }}{% else %}<span class="dim">—</span>{% endif %}</td>
+      {% if s.run is none %}<td class="dim">#{{ t.run }}</td>{% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="dim">{% if s.run is not none %}<a href="/sim?run=all{{ qk }}">tüm turları göster</a>{% else %}<a href="/sim{{ k }}">yalnız güncel tur</a>{% endif %}</p>
+  {% else %}
+  {{ m.empty(["Bu turda kapanmış işlem yok.",
+              ("Eski turlara bakmak için: " if s.run is not none else "") ~ "sıfırlama yeni tur açar, satırlar silinmez."]) }}
+  {% if s.run is not none and s.cur_run > 1 %}<p class="dim"><a href="/sim?run=all{{ qk }}">tüm turları göster</a></p>{% endif %}
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>⏭ Atlanan sinyaller <span class="st">· SON UYARI geldi ama işlem açılmadı — neden</span></h2>
+  {% if s.skipped %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Zaman</th><th class="l">Coin</th><th class="l">Balina</th><th class="l">Bizim yön</th><th class="l">Neden</th></tr>
+    {% for t in s.skipped %}
+    <tr>
+      <td class="l">{{ t.created_ts|dt }}</td>
+      <td class="l"><a href="/t/{{ t.coin }}{{ k }}">{{ t.coin }}</a></td>
+      <td class="l">{% if t.whale_addr %}{{ m.addr(t.whale_addr, k, 6) }}
+        <span class="{{ 'short' if t.whale_side == 'short' else 'long' }}">{{ 'S' if t.whale_side == 'short' else 'L' }}</span>
+        {{ t.whale_notional|usd }} <span class="dim">liq {{ t.whale_liq_px|px }}</span>{% endif %}</td>
+      <td class="l"><span class="{{ 'long' if t.side == 'long' else 'short' }}">{{ 'LONG' if t.side == 'long' else 'SHORT' }}</span></td>
+      <td class="l">{{ t.skip_reason }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}
+  {{ m.empty(["Atlanan sinyal yok.",
+              "Aynı coinde açık işlem varken gelen tekrar sinyaller buraya yazılmaz (spam değil, beklenen)."]) }}
+  {% endif %}
+  <p class="kunye">🧾 Değerlendirme her {{ cfg.sim_poll_sec }} sn, açık işlem başına 1 istek (1 dk mumlar) ·
+    seviyeye dokunan limit dolmuş sayılır (iyimser) · aynı mumda stop + hedef → stop (kötümser) ·
+    giriş fiyatı ana dex özeti (≤150 sn) · slippage / kısmi dolum yok · ücret taker %{{ '%g'|format(cfg.sim_fee_taker_pct) }} /
+    maker %{{ '%g'|format(cfg.sim_fee_maker_pct) }} (notional üzerinden, iki taraf) · bakiye bileşik ·
+    balina liq olmadan kapatırsa 🚫 tez bozuldu · {{ cfg.sim_pre_max_min // 60 }} saatte patlamazsa ⏱ ·
+    Telegram <code>SIM_CHAT_ID</code> (env) · Ayarlar → Simülasyon.</p>
+</div>
+
+<script>
+(function () {
+  var b = document.getElementById('sim-reset');
+  if (!b) return;
+  b.addEventListener('click', async function () {
+    if (!confirm('Simülasyon sıfırlansın mı? Açık işlemler piyasadan kapanır, yeni tur başlar; eski satırlar silinmez.')) return;
+    var msg = document.getElementById('sim-msg');
+    b.disabled = true; msg.textContent = 'sıfırlanıyor…';
+    try {
+      var r = await fetch('/sim/sifirla' + location.search, { method: 'POST' });
+      var j = await r.json();
+      msg.textContent = j.error ? ('hata: ' + j.error)
+        : ('tur #' + j.run + ' başladı · ' + j.closed + ' açık işlem kapatıldı — sayfa yenileniyor');
+      if (!j.error) setTimeout(function () { location.reload(); }, 900);
+    } catch (e) { msg.textContent = 'hata: ' + e; }
+    b.disabled = false;
+  });
+})();
+</script>
+{% endblock %}
