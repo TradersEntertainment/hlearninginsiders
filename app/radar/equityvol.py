@@ -72,7 +72,8 @@ async def scan(cfg, client, notifier=None) -> dict:
            # TEŞHİS: "0 rekor" üç ayrı sebepten olabilir ve üçü de ekranda
            # aynı görünüyordu — mum gelmiyor / rekor çıkmadı / eşik eledi.
            "n_nodata": 0, "n_bucket": 0, "n_record": 0,
-           "below_page": 0, "below_alert": 0, "best_miss": None}
+           "below_page": 0, "below_alert": 0, "best_miss": None,
+           "photos": 0, "combined": 0}
     if not getattr(cfg, "equity_vol_enabled", True):
         out["skipped"] = "kapalı"
         return out
@@ -149,14 +150,22 @@ async def scan(cfg, client, notifier=None) -> dict:
                                   rec["bucket_ts"] + 300)
         text = fmt.equity_vol_alert({**rec, "coin": coin, "brief": brief,
                                      "day_vol": vols.get(coin)})
-        if await notifier.send("equityvol", text, priority="high",
-                               key=f"{key}:{rec['bucket_ts']}", chat_id=chat):
+        from .cryptovol import short_caption, vol_chart
+        png = (vol_chart(coin, candles, rec, vols.get(coin))
+               if getattr(cfg, "equity_vol_chart", True) else None)
+        ok, mode = await notifier.send_rich("equityvol", text, png, key=f"{key}:{rec['bucket_ts']}",
+                                            chat_id=chat, short_caption=short_caption(coin, rec))
+        if ok:
             await alert_log("equityvol", key, text)
             async with db() as conn:
                 await conn.execute(
                     "UPDATE vol_events SET alerted=1 WHERE coin=? AND bucket_ts=?",
                     (coin, rec["bucket_ts"]))
             out["alerted"] += 1
+            if mode in ("combined", "split"):
+                out["photos"] += 1
+            if mode == "combined":
+                out["combined"] += 1
 
     if out["unit_bad"]:
         log.warning("hisse hacim birimi şüpheli (%d sembol, ör. %s): v×fiyat "

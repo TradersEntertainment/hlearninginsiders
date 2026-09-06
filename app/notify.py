@@ -4,6 +4,7 @@ Tüm Telegram mesajları buradan geçer: tip bazlı açma/kapama, sessiz saatler
 öncelik (kritik olanlar sessiz saatte bile geçer), kayıt ve günlük özet.
 """
 import logging
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -37,6 +38,14 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "digest":    ("notify_digest",    "🌅 Günlük özet",                       "normal"),
     "test":      ("",                 "🔧 Test",                              "critical"),
 }
+
+
+CAPTION_MAX = 1000     # Telegram altyazı sınırı 1024 görünür karakter; pay bırak
+
+
+def visible_len(text: str) -> int:
+    """Telegram'ın saydığı uzunluk: etiketsiz metin, UTF-16 birim."""
+    return len(re.sub(r"<[^>]+>", "", text or "").encode("utf-16-le")) // 2
 
 
 def kind_enabled(cfg: Config, kind: str) -> bool:
@@ -116,6 +125,27 @@ class Notifier:
         if ok:
             await alert_log(f"sent:{kind}", key or kind, caption)
         return ok
+
+    async def send_rich(self, kind: str, text: str, png: bytes | None, *, key: str = "",
+                        chat_id: str = "", priority: str = "high", short_caption: str = "",
+                        limit: int = CAPTION_MAX) -> tuple[bool, str]:
+        """Metin + resim, mümkünse TEK mesaj (resim + altyazı olarak tam metin).
+
+        Dönüş (gitti mi, yol): 'combined' tek mesaj · 'split' metin + kısa
+        altyazılı resim (metin sığmadı) · 'text' yalnız metin (resim yok ya da
+        reddedildi) · '' gitmedi. Resim reddedilirse metin yine gider — alarm
+        resme bağlı değil. Marker kararı çağıranın, `ok`'a göre."""
+        if png and visible_len(text) <= limit:
+            if await self.send_photo(kind, png, text, key=key, chat_id=chat_id):
+                return True, "combined"
+            png = None                       # reddedildi: metin yedek, resim tekrar denenmez
+        ok = await self.send(kind, text, priority=priority, key=key, chat_id=chat_id)
+        if not ok:
+            return False, ""
+        if png and short_caption and await self.send_photo(
+                kind, png, short_caption, key=(key + ":img") if key else "", chat_id=chat_id):
+            return True, "split"
+        return True, "text"
 
 
 async def pending_digest_items(hours: int = 14) -> list[dict]:

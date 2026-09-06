@@ -294,7 +294,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "crypto_vol_min_usd": {"type": "float", "label": "Asgari 5dk hacim — SAYFA ($)", "group": "Kripto hacim",
                            "desc": "Bu tutarın üstündeki her rekor /hacim sayfasına yazılır. Düşük tutulur: sayfa dolu olsun ki bildirim eşiğini gerçek rakamlara bakarak ayarlayabilesin"},
     "crypto_vol_alert_min_usd": {"type": "float", "label": "Asgari 5dk hacim — BİLDİRİM ($)", "group": "Kripto hacim",
-                                 "desc": "Telegram'a düşmesi için gereken tutar. Sayfa eşiğinden yüksek: sayfada bağlam olan küçük rekor, kanalda gürültüdür"},
+                                 "desc": "Telegram'a düşmesi için gereken tutar (kullanıcı kuralı $500K). Sayfa eşiğinden yüksek: sayfada bağlam olan küçük rekor, kanalda gürültüdür"},
+    "crypto_vol_chart": {"type": "bool", "label": "Mesaja grafik ekle", "group": "Kripto hacim",
+                         "desc": "Rekor mesajı geniş 5 dk grafikle tek mesaj: fiyat mumları + $ hacim barları, rekor kovası vurgulu, önceki rekor çizgisi. Ek istek yok (mumlar zaten elde)"},
     "crypto_vol_cooldown": {"type": "int", "label": "Coin başına bekleme (sn)", "group": "Kripto hacim",
                             "desc": "Uzun bir yükselişte her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
     "crypto_vol_max_coins": {"type": "int", "label": "Evren tavanı (coin)", "group": "Kripto hacim",
@@ -325,6 +327,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "desc": "Bu tutarın üstündeki her rekor /hacim sayfasına yazılır. Kriptodakinden DÜŞÜK: hisse perp'leri çok daha ince — SHEIN'in 24 saatlik TOPLAM hacmi $4.2M'ken patlama mumu ~$150K'ydı"},
     "equity_vol_alert_min_usd": {"type": "float", "label": "Asgari 5dk hacim — BİLDİRİM ($)", "group": "Hisse hacim",
                                  "desc": "Telegram'a düşmesi için gereken tutar. Sayfa eşiğinden yüksek tutulur"},
+    "equity_vol_chart": {"type": "bool", "label": "Mesaja grafik ekle", "group": "Hisse hacim",
+                         "desc": "Rekor mesajı geniş 5 dk grafikle tek mesaj (kripto ile aynı çizim)"},
     "equity_vol_cooldown": {"type": "int", "label": "Hisse başına bekleme (sn)", "group": "Hisse hacim",
                             "desc": "Uzun bir hareket boyunca her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
     "equity_vol_max_coins": {"type": "int", "label": "Evren tavanı (hisse)", "group": "Hisse hacim",
@@ -497,8 +501,10 @@ class Config:
         # SAYFA eşiği bilerek DÜŞÜK: eşik altı rekor hiçbir yere yazılmadığı
         # sürece "panel neden boş" sorusu cevapsız kalıyordu. Bildirim eşiği ayrı.
         self.crypto_vol_min_usd = float(os.getenv("CRYPTO_VOL_MIN_USD", "50000"))
+        # Kullanıcı kuralı: 5dk hacim $500K'nın altındaysa kanala düşmesin.
         self.crypto_vol_alert_min_usd = float(
-            os.getenv("CRYPTO_VOL_ALERT_MIN_USD", "250000"))
+            os.getenv("CRYPTO_VOL_ALERT_MIN_USD", "500000"))
+        self.crypto_vol_chart = True
         self.crypto_vol_cooldown = int(os.getenv("CRYPTO_VOL_COOLDOWN", "1800"))
         self.crypto_vol_max_coins = int(os.getenv("CRYPTO_VOL_MAX_COINS", "120"))
         # Kripto bildirimlerinin gideceği AYRI kanal. Diğer chat/kanal id'leri
@@ -521,6 +527,7 @@ class Config:
         self.equity_vol_min_usd = float(os.getenv("EQUITY_VOL_MIN_USD", "10000"))
         self.equity_vol_alert_min_usd = float(
             os.getenv("EQUITY_VOL_ALERT_MIN_USD", "100000"))
+        self.equity_vol_chart = True
         self.equity_vol_cooldown = int(os.getenv("EQUITY_VOL_COOLDOWN", "1800"))
         self.equity_vol_max_coins = int(os.getenv("EQUITY_VOL_MAX_COINS", "120"))
         # Hisse hacim bildirimlerinin kanalı. Kullanıcı Railway'de bu adla

@@ -33,7 +33,6 @@ metin zaten gitmiştir.
 """
 import asyncio
 import logging
-import re
 
 from ..db import alert_log, alert_recent, db, kv_set, now
 from .bigpos import MAJORS
@@ -236,11 +235,6 @@ async def _closure_kind(client, coin: str, addr: str, w: dict) -> tuple[str, flo
             except (TypeError, ValueError):
                 return "liq", None
     return ("close" if seen else "unknown"), None
-
-
-def _visible_len(text: str) -> int:
-    """Telegram'ın saydığı uzunluk: etiketsiz metin, UTF-16 birim."""
-    return len(re.sub(r"<[^>]+>", "", text or "").encode("utf-16-le")) // 2
 
 
 async def _chart(client, coin: str, mark, fresh: list[dict]) -> bytes | None:
@@ -523,14 +517,10 @@ async def scan(cfg, client, notifier=None) -> dict:
                 png = await _chart(client, coin, marks.get(coin), fresh)
             except Exception:
                 log.debug("grafik üretilemedi (%s)", coin, exc_info=True)
-        sent = combined = False
-        if png and _visible_len(text) <= CAPTION_MAX:
-            sent = combined = await notifier.send_photo("cryptoliq", png, text, key=key,
-                                                        chat_id=chat)
-            if not sent:
-                png = None                      # resim reddedildi: yedek metin, resim tekrar denenmez
-        if not sent:
-            sent = await notifier.send("cryptoliq", text, priority="high", key=key, chat_id=chat)
+        cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"
+               f" · %{fresh[0]['dist']:.2f} kaldı")
+        sent, mode = await notifier.send_rich("cryptoliq", text, png, key=key, chat_id=chat,
+                                              short_caption=cap, limit=CAPTION_MAX)
         if sent:
             for p in fresh:
                 await _watch_upsert(coin, p["address"], p, p["dist"], p["mark"],
@@ -541,19 +531,10 @@ async def scan(cfg, client, notifier=None) -> dict:
                 if int(p["need"]) >= 2:
                     out["stage2" if int(p["need"]) == 2 else "stage3"] += 1
             out["alerted"] += 1
-            if combined:
+            if mode in ("combined", "split"):
                 out["photos"] += 1
+            if mode == "combined":
                 out["combined"] += 1
-            elif png:
-                # Metin sığmadı: iki parça — metin gitti, resim kısa altyazıyla
-                cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"
-                       f" · %{fresh[0]['dist']:.2f} kaldı")
-                try:
-                    if await notifier.send_photo("cryptoliq", png, cap, key=key + ":img",
-                                                 chat_id=chat):
-                        out["photos"] += 1
-                except Exception:
-                    log.debug("grafik gönderilemedi (%s)", coin, exc_info=True)
         else:
             await alert_log("fail:cryptoliq", key, text[:200])
             out["failed"] += 1

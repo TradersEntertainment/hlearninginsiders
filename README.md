@@ -129,7 +129,16 @@ bildirim eşiği ayrı**:
 | Panel | Evren | Kanal | Sayfa | Bildirim |
 |---|---|---|---|---|
 | 📈 Hisseler | PROPR ∩ **xyz dex** | `CRYPTO_STOCKS_ID` | $10K | **$100K** |
-| 🚀 Kripto | PROPR ∩ **ana dex** | `CRYPTO_CHAT_ID` | $50K | **$250K** |
+| 🚀 Kripto | PROPR ∩ **ana dex** | `CRYPTO_CHAT_ID` | $50K | **$500K** |
+
+**Mesaja grafik — tek mesaj.** Rekor mesajı geniş bir 5 dk grafikle gelir
+(resim + altyazı olarak metin, Telegram `sendPhoto`): üstte son 24 saatin
+fiyat mumları, altta $ hacim barları (mum hacmi × kapanış), **rekor kovası
+amber** ve etiketli, önceki 24 saatin rekoru kesikli çizgi, sağda boş pay.
+Mumlar tarama sırasında zaten elde — ek istek yok (`app/radar/volchart.py`).
+Metin altyazı sınırını aşarsa metin ayrı, resim kısa altyazıyla; çizim
+patlarsa yalnız metin — alarm resme bağlı değil. Ayar: `crypto_vol_chart`,
+`equity_vol_chart`.
 
 `CRYPTO_CHAT_ID` aynı zamanda **kripto liq yakını** bildiriminin kanalıdır
 (aşağıda) — Railway'de tanımlı değilse iki kripto bildirimi de gitmez.

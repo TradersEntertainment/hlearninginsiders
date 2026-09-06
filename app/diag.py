@@ -301,6 +301,7 @@ async def _subsystems(cfg) -> list[str]:
                    f" · {vs.get('checked', 0)} tarandı"
                    f" · {vs.get('n_bucket', 0)} kova → {vs.get('n_record', 0)} rekor"
                    f" · {vs.get('events', 0)} yazıldı / {vs.get('alerted', 0)} bildirim"
+                   + (f" ({vs['photos']} resimli)" if vs.get("photos") else "")
                    # "0 rekor"un sebebini ayırt eden üç sayı; biri olmadan
                    # eşik mi veri mi sorusu cevapsız kalıyordu.
                    + (f" · ⚠️ {vs['n_nodata']} sembolde MUM YOK" if vs.get("n_nodata") else "")
