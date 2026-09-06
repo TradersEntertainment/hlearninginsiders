@@ -329,6 +329,11 @@ MIGRATIONS = [
     "ALTER TABLE liq_attack_candidates ADD COLUMN zone_dist REAL",
     "ALTER TABLE liq_attack_candidates ADD COLUMN zone_liq REAL",
     "ALTER TABLE liq_attack_candidates ADD COLUMN zone_score REAL",
+    # Takip: son bildirilen liq fiyatı (%X kayınca haber), kaldıraç, komutun
+    # geldiği sohbet (kanaldan /takip_N basıldıysa haber oraya gider)
+    "ALTER TABLE trackers ADD COLUMN liq_px REAL",
+    "ALTER TABLE trackers ADD COLUMN leverage REAL",
+    "ALTER TABLE trackers ADD COLUMN chat_id TEXT",
     "ALTER TABLE positions_current ADD COLUMN last_add_ts INTEGER",
     "ALTER TABLE positions_current ADD COLUMN last_trim_ts INTEGER",
     "ALTER TABLE position_snapshots ADD COLUMN last_add_ts INTEGER",

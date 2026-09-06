@@ -46,30 +46,65 @@ async def live_position(client: HLClient, address: str, coin: str) -> dict | Non
             continue
         if szi == 0:
             continue
+        liq = p.get("liquidationPx")
+        try:
+            lev = float((p.get("leverage") or {}).get("value") or 0)
+        except (TypeError, ValueError):
+            lev = 0.0
         return {
             "szi": szi,
             "side": "long" if szi > 0 else "short",
             "notional": abs(float(p.get("positionValue") or 0)),
             "entry_px": float(p.get("entryPx") or 0),
             "upnl": float(p.get("unrealizedPnl") or 0),
+            "liq_px": float(liq) if liq else None,
+            "leverage": lev,
         }
     return None
 
 
 async def start_tracker(cfg: Config, address: str, coin: str, symbol: str,
-                        live: dict) -> int:
+                        live: dict, chat_id: str = "") -> int:
     """Canlı pozisyonu baz alarak takip kaydı aç, tracker id döner.
-    Hem teklif yolu (/takip_N) hem manuel komut (/takip 0xADRES SEMBOL) kullanır."""
+    Hem teklif yolu (/takip_N) hem manuel komut (/takip 0xADRES SEMBOL) kullanır.
+    `chat_id`: komut bir kanaldan geldiyse haberler oraya gider (boş = ana sohbet)."""
     ts = now()
     async with db() as conn:
         cur = await conn.execute(
             """INSERT INTO trackers(address,coin,symbol,side,base_szi,last_szi,
-                 base_notional,created_ts,expires_ts,active,last_check_ts,entry_px)
-               VALUES(?,?,?,?,?,?,?,?,?,1,?,?)""",
+                 base_notional,created_ts,expires_ts,active,last_check_ts,entry_px,
+                 liq_px,leverage,chat_id)
+               VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)""",
             (address, coin, symbol, live["side"], abs(live["szi"]), abs(live["szi"]),
              live["notional"], ts, ts + int(cfg.track_expire_days) * 86400, ts,
-             live.get("entry_px")))
+             live.get("entry_px"), live.get("liq_px"), live.get("leverage"), chat_id or ""))
         return cur.lastrowid
+
+
+async def offer_positions(coin: str, symbol: str, rows: list[dict]) -> list[int]:
+    """Mesajdaki pozisyonlar için /takip_N teklifleri — id listesi satırlarla
+    hizalı. Kullanıcı basınca `_cmd_track_start` teklifi bulur, canlı pozisyonu
+    baz alır. Teklifler 14 gün sonra budanır (`prune_offers`)."""
+    ts = now()
+    ids: list[int] = []
+    async with db() as conn:
+        for p in rows:
+            cur = await conn.execute(
+                """INSERT INTO track_offers(address,coin,symbol,side,notional,created_ts)
+                   VALUES(?,?,?,?,?,?)""",
+                (p["address"], coin, symbol, p.get("side"), float(p.get("notional") or 0), ts))
+            ids.append(cur.lastrowid)
+    return ids
+
+
+OFFER_KEEP_SEC = 14 * 86400
+
+
+async def prune_offers() -> int:
+    async with db() as conn:
+        cur = await conn.execute("DELETE FROM track_offers WHERE created_ts < ?",
+                                 (now() - OFFER_KEEP_SEC,))
+        return cur.rowcount or 0
 
 
 async def estimate_pnl(t: dict, exit_px: float | None = None) -> dict | None:
@@ -239,6 +274,10 @@ async def check_trackers(cfg: Config, client: HLClient, notifier) -> None:
         cur = await conn.execute("SELECT * FROM trackers WHERE active=1")
         trackers = [dict(r) for r in await cur.fetchall()]
     ts = now()
+    try:
+        await prune_offers()
+    except Exception:
+        log.debug("teklif budama", exc_info=True)
     for t in trackers:
         try:
             await _check_one(cfg, client, notifier, t, ts)
@@ -248,6 +287,7 @@ async def check_trackers(cfg: Config, client: HLClient, notifier) -> None:
 
 async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) -> None:
     live = await live_position(client, t["address"], t["coin"])
+    chat = (t.get("chat_id") or "").strip()           # kanaldan başlatıldıysa haber oraya
     base = float(t["base_szi"] or 0)
     last = float(t["last_szi"] if t["last_szi"] is not None else base)
     # track_step_pct ≤0 girilirse adım bildirimleri sessizce tamamen kapanıyordu
@@ -270,14 +310,22 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     # 1) Tamamen kapanmış → kritik bildirim, takip biter
     if live is None or (base > 0 and abs(live["szi"]) <= base * CLOSED_EPS):
         pnl = await estimate_pnl(t)
-        ok = await notifier.send("track", fmt.track_closed(t, base, last, pnl),
-                                 priority="critical", key=f"closed:{t['id']}")
+        # Likide mi oldu, kapattı mı? Fill'lerde likidasyon kaydı (cryptoliq ile
+        # aynı teyit); sorgu düşerse "doğrulanamadı" — uydurulmaz.
+        kind, cpx = None, None
+        if live is None and hasattr(client, "user_fills_by_time"):
+            from .cryptoliq import _closure_kind
+            kind, cpx = await _closure_kind(client, t["coin"], t["address"],
+                                            {"first_ts": t.get("created_ts")})
+        ok = await notifier.send("track", fmt.track_closed(t, base, last, pnl, kind, cpx),
+                                 priority="critical", key=f"closed:{t['id']}", chat_id=chat)
         if ok:
+            note = "likide oldu" if kind == "liq" else "kapandı"
             async with db() as conn:
                 await conn.execute(
-                    "UPDATE trackers SET active=0, last_szi=0, end_note='kapandı' WHERE id=?",
-                    (t["id"],))
-            log.info("takip #%s: %s pozisyonu TAMAMEN kapandı", t["id"], t["symbol"])
+                    "UPDATE trackers SET active=0, last_szi=0, end_note=? WHERE id=?",
+                    (note, t["id"]))
+            log.info("takip #%s: %s pozisyonu TAMAMEN kapandı (%s)", t["id"], t["symbol"], note)
         return
 
     cur_szi = abs(live["szi"])
@@ -285,25 +333,42 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     # 2) Yön değişimi (long→short / short→long) → kritik, takip yeni yönle sürer
     if live["side"] != t["side"]:
         ok = await notifier.send("track", fmt.track_flip(t, live), priority="critical",
-                                 key=f"flip:{t['id']}:{live['side']}")
+                                 key=f"flip:{t['id']}:{live['side']}", chat_id=chat)
         if ok:
             async with db() as conn:
                 await conn.execute(
-                    """UPDATE trackers SET side=?, base_szi=?, last_szi=?, base_notional=?
-                       WHERE id=?""",
-                    (live["side"], cur_szi, cur_szi, live["notional"], t["id"]))
+                    """UPDATE trackers SET side=?, base_szi=?, last_szi=?, base_notional=?,
+                       liq_px=? WHERE id=?""",
+                    (live["side"], cur_szi, cur_szi, live["notional"], live.get("liq_px"), t["id"]))
         return
 
     # 3) Anlamlı adım: son bildirimden beri TOPLAM boyutun %X'i kadar değişim.
     #    Spam önleyici — her transaction değil, birikmiş anlamlı fark bildirir.
     if step > 0 and abs(cur_szi - last) >= step:
         ok = await notifier.send("track", fmt.track_step(t, live, base, last, cur_szi),
-                                 key=f"step:{t['id']}:{cur_szi:.4f}")
+                                 key=f"step:{t['id']}:{cur_szi:.4f}", chat_id=chat)
         if ok:  # last_szi yalnız gönderilince ilerler (kaçan adım tekrar denenir)
             async with db() as conn:
                 await conn.execute(
-                    "UPDATE trackers SET last_szi=? WHERE id=?", (cur_szi, t["id"]))
+                    "UPDATE trackers SET last_szi=?, liq_px=COALESCE(?, liq_px) WHERE id=?",
+                    (cur_szi, live.get("liq_px"), t["id"]))
         return
+
+    # 3b) Liq fiyatı kaydı: boyut değişmeden de olur (teminat ekledi/çekti).
+    #     Kullanıcı kuralı %1; son bildirilene göre ölçülür.
+    liq_step = float(getattr(cfg, "track_liq_step_pct", 1.0) or 0)
+    prev_liq, cur_liq = t.get("liq_px"), live.get("liq_px")
+    if liq_step > 0 and prev_liq and cur_liq and \
+            abs(cur_liq - prev_liq) / prev_liq * 100 >= liq_step:
+        ok = await notifier.send("track", fmt.track_liq_move(t, live, prev_liq, cur_liq),
+                                 key=f"liq:{t['id']}:{cur_liq:.6g}", chat_id=chat)
+        if ok:
+            async with db() as conn:
+                await conn.execute("UPDATE trackers SET liq_px=? WHERE id=?", (cur_liq, t["id"]))
+        return
+    if cur_liq and not prev_liq:
+        async with db() as conn:                # eski kayıt: liq bilinmiyordu, öğren
+            await conn.execute("UPDATE trackers SET liq_px=? WHERE id=?", (cur_liq, t["id"]))
 
     # 4) Süre doldu AMA poz hâlâ açık → takip BİTMEZ, yalnız yoklama yapılır.
     #
@@ -327,7 +392,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
                                (new_exp, t["id"]))
         await notifier.send("track", fmt.track_checkin(t, live, base),
                             priority="normal",
-                            key=f"checkin:{t['id']}:{t['expires_ts']}")
+                            key=f"checkin:{t['id']}:{t['expires_ts']}", chat_id=chat)
 
 
 async def _auto_stop(cfg: Config, notifier, t: dict, live: dict,

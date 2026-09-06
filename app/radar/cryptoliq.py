@@ -578,8 +578,17 @@ async def scan(cfg, client, notifier=None) -> dict:
         casc = await _cascade(cfg, client, coin, marks.get(coin), fresh[0], await _coin_rows(coin))
         if casc:
             out["cascades"] += 1
+        # Her satırın yanına /takip_N: kullanıcı basınca o pozisyon takibe alınır
+        # (boyut %10 adımı, liq fiyatı %1 kayması, kapanış/likidasyon). Teklif
+        # yazılamazsa mesaj yine gider, sadece komut olmaz.
+        offers: list[int] = []
+        try:
+            from .tracker import offer_positions
+            offers = await offer_positions(coin, coin, fresh[:LIST_MAX])
+        except Exception:
+            log.debug("takip teklifi yazılamadı (%s)", coin, exc_info=True)
         text = fmt.crypto_liq_alert(coin, marks.get(coin), fresh, old.get(coin) or [],
-                                    thr[stage], stage, cascade=casc)
+                                    thr[stage], stage, cascade=casc, offers=offers)
         key = f"cryptoliq:{coin}:{stage}:{ts}"
         # Grafik ÖNCE üretilir: sığıyorsa tam metin resmin altyazısı olur → tek
         # mesaj (kullanıcı isteği). Resim yoksa / metin uzunsa / resim

@@ -367,6 +367,16 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   yönlü) fill varsa 💀 **LİKİDE OLDU** (gerçekleşen fiyat ve piyasaya çarpan
   zorunlu alış/satış), fill var ama likidasyon yoksa 🏁 kapatıldı, istek
   düşerse "doğrulanamadı" — uydurulmaz. Ayar: `crypto_liq_notify_close`.
+- **👣 /takip_N.** `/hype` cevabında ve kademe mesajlarında her pozisyonun
+  yanında bir komut durur; basınca o pozisyon takibe alınır (`trackers`):
+  boyut toplamın her **%10**'u kadar değişince (✂️ kapatıyor / ➕ ekliyor),
+  liq fiyatı son bildirilene göre **%1** kayınca (🛡 uzaklaştı = teminat
+  ekledi ya da küçüldü / yaklaştı = büyüdü ya da teminat çekti), poz yok
+  olunca fill'lerden teyitle 💀 **likide oldu** ya da 🚪 kapattı. Komut hangi
+  kanaldan basıldıysa haberler oraya gider (ana sohbetten basılırsa oraya).
+  Eşikler ⚙️ Ayarlar → Bildirimler (`track_step_pct`, `track_liq_step_pct`);
+  `/takipler` listeler, `/birak_N` bırakır; `/takip 0xADRES HYPE` elle başlatır
+  (hisse önce, sonra ana dex kripto).
 - **💣 Zincir simülasyonu.** Mesajın en yakın pozisyonu için: patlarsa zorunlu
   emir (short → alış, long → satış) emir defterini liq fiyatından itibaren
   nereye kadar süpürür; o fiyata kadar liq'i olan aynı yönlü pozisyonlar da

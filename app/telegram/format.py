@@ -675,7 +675,8 @@ CRYPTO_LIQ_STAGE = {1: ("💥", ""), 2: ("🔥", " · 2. uyarı"), 3: ("🚨", "
 
 def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
                      old: list[dict], dist_pct: float, stage: int = 1,
-                     list_max: int = 6, cascade: dict | None = None) -> str:
+                     list_max: int = 6, cascade: dict | None = None,
+                     offers: list[int] | None = None) -> str:
     """Kripto liq yakını — coin başına TEK mesaj, pozisyonlar yakından uzağa.
 
     `stage` 1/2/3 = ≤%2,5 / ≤%1 / ≤%0,5 kademesi (başlık ve satır işareti);
@@ -690,15 +691,16 @@ def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
     icon, tail = CRYPTO_LIQ_STAGE.get(int(stage or 1), CRYPTO_LIQ_STAGE[1])
     lines = [f"{icon} <b>{sym}</b> — likidasyona ≤%{dist_pct:g}{tail}"
              f" · {len(fresh)} pozisyon · <b>{usd(total)}</b>"]
-    for p in fresh[:list_max]:
+    for i, p in enumerate(fresh[:list_max]):
         is_long = p.get("side") == "long"
         lev = f" · {float(p['leverage']):g}x" if p.get("leverage") else ""
         ent = {"mm": " 🤖MM", "vault": " 🏦VAULT"}.get(p.get("entity") or "", "")
         st = int(p.get("need") or stage or 1)
         pre = (CRYPTO_LIQ_STAGE[st][0] + " ") if st >= 2 else ""
+        tk = f" → /takip_{offers[i]}" if offers and i < len(offers) and offers[i] else ""
         lines.append(f"{pre}{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
                      f" · liq {px(p['liq_px'])} (%{p['dist']:.2f} {'altta' if is_long else 'üstte'})"
-                     f"{lev} · 👤 {alink(p['address'])}{ent}")
+                     f"{lev} · 👤 {alink(p['address'])}{ent}{tk}")
     if len(fresh) > list_max:
         rest = fresh[list_max:]
         lines.append(f"… +{len(rest)} pozisyon daha · {usd(sum(p['notional'] for p in rest))}")
@@ -730,7 +732,7 @@ def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
     return "\n".join(lines)
 
 
-def crypto_liq_snapshot(s: dict) -> str:
+def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
     """/hype, /pump… cevabı: liq'e en yakın büyük pozisyonlar, canlı fiyat ve
     güncel kalan mesafe. Boşsa nedenini söyler (fiyat yok / pozisyon yok /
     hepsi eşik altı)."""
@@ -749,13 +751,14 @@ def crypto_liq_snapshot(s: dict) -> str:
         return "\n".join(lines)
     if not s.get("n_big"):
         lines.append(f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>")
-    for p in rows:
+    for i, p in enumerate(rows):
         is_long = p.get("side") == "long"
         lev = f" · {float(p['leverage']):g}x" if p.get("leverage") else ""
         ent = {"mm": " 🤖MM", "vault": " 🏦VAULT"}.get(p.get("entity") or "", "")
+        tk = f" → /takip_{offers[i]}" if offers and i < len(offers) and offers[i] else ""
         lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
                      f" · liq {px(p['liq_px'])} (%{p['dist']:.2f} {'altta' if is_long else 'üstte'})"
-                     f"{lev} · 👤 {alink(p['address'])}{ent}")
+                     f"{lev} · 👤 {alink(p['address'])}{ent}{tk}")
     sell = sum(p["notional"] for p in rows if p.get("side") == "long")
     buy = sum(p["notional"] for p in rows if p.get("side") == "short")
     imp = []
@@ -1019,13 +1022,33 @@ def pct_num(p: float) -> str:
 
 
 def track_started(tid: int, symbol: str, address: str, live: dict, cfg) -> str:
+    liq = f" · liq <b>{px(live['liq_px'])}</b>" if live.get("liq_px") else ""
+    lev = f" · {float(live['leverage']):g}x" if live.get("leverage") else ""
+    liq_step = float(getattr(cfg, "track_liq_step_pct", 1.0) or 0)
+    liq_line = (f"🛡 Liq fiyatı <b>%{pct_num(liq_step)}</b> kayınca da haber"
+                " (teminat ekledi/çekti, boyut değişti).\n" if liq_step > 0 else "")
     return (f"👣 <b>TAKİP BAŞLADI</b> — {symbol} (#{tid})\n"
             f"👤 {alink(address)} {_side_badge(live['side'])} <b>{usd(live['notional'])}</b>"
-            f" @ {px(live['entry_px'])}\n"
+            f" @ {px(live['entry_px'])}{lev}{liq}\n"
             f"Bu boyut baz alındı — toplamın <b>%{pct_num(cfg.track_step_pct)}</b> kadarı"
-            " her kapandığında bildirim gelecek.\n"
-            "🚪 Tam kapanış ve 🔁 yön değişimi anında bildirilir.\n"
+            " her kapandığında/eklendiğinde bildirim gelecek.\n"
+            + liq_line +
+            "🚪 Tam kapanış (💀 likidasyon teyidiyle) ve 🔁 yön değişimi anında bildirilir.\n"
             f"⏳ Süre: {int(cfg.track_expire_days)} gün · bırakmak için /birak_{tid}")
+
+
+def track_liq_move(t: dict, live: dict, prev: float, cur: float) -> str:
+    """Takipteki pozisyonun liq fiyatı kaydı: uzaklaştı mı yaklaştı mı, ne kadar."""
+    sym = t["symbol"]
+    chg = (cur - prev) / prev * 100
+    short = t.get("side") == "short"
+    away = (short and cur > prev) or (not short and cur < prev)
+    why = ("fiyattan <b>uzaklaştı</b> — teminat eklendi ya da boyut küçüldü olabilir" if away
+           else "fiyata <b>yaklaştı</b> — boyut büyüdü ya da teminat çekildi olabilir")
+    lines = [f"🛡 <b>LIQ FİYATI KAYDI</b> — {sym} (#{t['id']})",
+             f"👤 {alink(t['address'])} {_side_badge(t['side'])} <b>{usd(live.get('notional'))}</b>",
+             f"liq {px(prev)} → <b>{px(cur)}</b> ({chg:+.2f}%) · {why}"]
+    return "\n".join(lines)
 
 
 def track_step(t: dict, live: dict, base: float, last: float, cur: float) -> str:
@@ -1047,16 +1070,29 @@ def track_step(t: dict, live: dict, base: float, last: float, cur: float) -> str
              f"{act} · {total_txt}",
              f"Güncel: <b>{usd(live['notional'])}</b>"
              f" (başlangıç {usd(t.get('base_notional'))})"]
+    if live.get("liq_px"):
+        prev = t.get("liq_px")
+        lines.append(f"liq {px(prev)} → <b>{px(live['liq_px'])}</b>" if prev and abs(prev - live["liq_px"]) > 1e-12
+                     else f"liq <b>{px(live['liq_px'])}</b>")
     if is_listed(sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
 
-def track_closed(t: dict, base: float, last: float, pnl: dict | None = None) -> str:
+def track_closed(t: dict, base: float, last: float, pnl: dict | None = None,
+                 closed_kind: str | None = None, closed_px: float | None = None) -> str:
     sym = t["symbol"]
-    lines = [f"🚨🚪 <b>BALİNA TAMAMEN KAPATTI</b> — {sym}",
-             f"👤 {alink(t['address'])} {_side_badge(t['side'])}"
-             f" <b>{usd(t.get('base_notional'))}</b> pozisyonunu kapattı."]
+    if closed_kind == "liq":
+        lines = [f"💀🚪 <b>BALİNA LİKİDE OLDU</b> — {sym}",
+                 f"👤 {alink(t['address'])} {_side_badge(t['side'])}"
+                 f" <b>{usd(t.get('base_notional'))}</b> pozisyonu likide oldu"
+                 + (f" · gerçekleşen {px(closed_px)}" if closed_px else "") + "."]
+    else:
+        lines = [f"🚨🚪 <b>BALİNA TAMAMEN KAPATTI</b> — {sym}",
+                 f"👤 {alink(t['address'])} {_side_badge(t['side'])}"
+                 f" <b>{usd(t.get('base_notional'))}</b> pozisyonunu kapattı"
+                 + (" · <i>likidasyon mu kapatma mı doğrulanamadı</i>" if closed_kind == "unknown"
+                    else "") + "."]
     if pnl:
         emoji = "💰" if pnl["usd"] >= 0 else "🩸"
         pct = f" ({pnl['pct']:+.1f}%)" if pnl.get("pct") is not None else ""
@@ -1322,6 +1358,7 @@ def help_text() -> str:
         "/forget 0x… — adresin sicilini sıfırla + watchlist'ten çıkar\n"
         "/watchlist — sicilli adresler\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için /birak_N)\n"
+        "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
         "/takip 0x… SNDK — herhangi bir balinayı ELLE takibe al (teklif beklemeden)\n"
         "/gecmis — geçmiş bilanço arşivi (kim ne pozisyondaydı, kim haklı çıktı)\n"
         "/winners — en iyi biliciler (doğru tahmin sicili)\n"

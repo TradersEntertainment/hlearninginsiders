@@ -52,6 +52,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                      "desc": "Earnings geçince 'takip edelim mi?' teklifi + takipteki balina pozunu kapadıkça haber"},
     "track_step_pct": {"type": "float", "label": "Takip bildirim adımı (%)", "group": "Bildirimler",
                        "desc": "Takipteki poz, toplam boyutun bu yüzdesi kadar değişmeden bildirim GELMEZ (spam önleyici)"},
+    "track_liq_step_pct": {"type": "float", "label": "Takip: liq fiyatı kayma bildirimi (%)", "group": "Bildirimler",
+                           "desc": "Takipteki pozisyonun likidasyon fiyatı son bildirilene göre bu kadar kayınca haber (teminat ekledi/çekti ya da boyut değişti). Kullanıcı kuralı %1; 0 = kapalı"},
     "track_auto_stop": {"type": "bool", "label": "Takip süreyle bitsin (eski davranış)",
                         "group": "Bildirimler",
                         "desc": "Açılırsa takip, süre dolunca poz açık olsa bile BİTER (eskiden böyleydi — balinanın çıkışı kaçıyordu). Kapalıyken takip yalnız pozisyon kapanınca ya da /birak_N ile biter"},
@@ -499,6 +501,7 @@ class Config:
         self.notify_liqmap = True
         self.notify_track = True
         self.track_step_pct = float(os.getenv("TRACK_STEP_PCT", "10"))
+        self.track_liq_step_pct = float(os.getenv("TRACK_LIQ_STEP_PCT", "1"))
         self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
         self.track_auto_stop = convert_value("bool", os.getenv("TRACK_AUTO_STOP", "0"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))

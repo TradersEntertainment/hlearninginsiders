@@ -239,8 +239,11 @@ class TelegramBot:
         if self.cfg.telegram_chat_id and chat_id != self.cfg.telegram_chat_id:
             if cmd in ("start", "id"):
                 await self.send(f"Bu sohbetin chat id'si: <code>{chat_id}</code>", chat_id)
-            elif chat_id in self._own_chats() and not args:
-                await self._cmd_coin_liq(cmd, chat_id)
+            elif chat_id in self._own_chats():
+                if await self._dispatch_track(cmd, args, chat_id):
+                    return                     # kanaldan /takip_N, /birak_N, /takipler
+                if not args:
+                    await self._cmd_coin_liq(cmd, chat_id)
             return
 
         if cmd in ("start", "help"):
@@ -340,6 +343,26 @@ class TelegramBot:
                 f"❓ <code>/{fmt.esc(cmd)}</code> diye bir komut yok.\n\n"
                 + fmt.help_text(), chat_id)
 
+    async def _dispatch_track(self, cmd: str, args: list[str], chat_id: str) -> bool:
+        """Takip komutları (kanaldan da çalışır; haber komutun geldiği sohbete gider)."""
+        if cmd.startswith("takip_"):
+            await self._cmd_track_start(cmd, chat_id)
+        elif cmd in ("takipler", "takip", "trackers"):
+            if cmd == "takip" and args:
+                await self._cmd_track_manual(args, chat_id)
+            else:
+                await self._cmd_track_list(chat_id)
+        elif cmd.startswith("birak_") or cmd.startswith("bırak_"):
+            await self._cmd_track_stop(cmd, chat_id)
+        else:
+            return False
+        return True
+
+    def _track_chat(self, chat_id: str) -> str:
+        """Takip haberleri nereye: ana sohbetten başlatıldıysa varsayılan (boş),
+        kanaldan başlatıldıysa o kanal."""
+        return "" if chat_id == (self.cfg.telegram_chat_id or "") else chat_id
+
     def _own_chats(self) -> set[str]:
         """Botun yazdığı tüm sohbetler (ana + kanallar) — boşlar hariç."""
         return {str(v).strip() for v in (
@@ -367,7 +390,14 @@ class TelegramBot:
             log.exception("liq görüntüsü hatası: %s", t["coin"])
             await self.send(f"❌ <b>{sym}</b> okunamadı: {fmt.esc(e)}", chat_id)
             return True
-        text = fmt.crypto_liq_snapshot(s)
+        offers: list[int] = []
+        if s.get("rows"):
+            try:
+                from ..radar.tracker import offer_positions
+                offers = await offer_positions(t["coin"], t["symbol"], s["rows"])
+            except Exception:
+                log.debug("takip teklifi yazılamadı (%s)", t["coin"], exc_info=True)
+        text = fmt.crypto_liq_snapshot(s, offers=offers)
         png = s.get("png")
         if png and _caption_fit(text)[1] and await self.send_photo(png, text, chat_id):
             return True
@@ -739,7 +769,7 @@ class TelegramBot:
             return
         from ..radar.tracker import start_tracker
         tid = await start_tracker(self.cfg, offer["address"], offer["coin"],
-                                  offer["symbol"], live)
+                                  offer["symbol"], live, chat_id=self._track_chat(chat_id))
         await self.send(fmt.track_started(tid, offer["symbol"], offer["address"],
                                           live, self.cfg), chat_id)
 
@@ -755,10 +785,13 @@ class TelegramBot:
                 " (ör. <code>/takip 0xabc... SNDK</code>)\n"
                 "Sadece <code>/takip</code> yazarsan aktif takipleri listeler.", chat_id)
             return
-        t = await find_ticker(sym)
+        # Hisse ÖNCE, sonra ana dex kripto (HYPE, PUMP…) — /takip 0x… HYPE de çalışsın.
+        from ..hl.universe import resolve_coin
+        t = await resolve_coin(sym)
         if not t:
             await self.send(f"'{sym}' HL evreninde yok.", chat_id)
             return
+        sym = t["symbol"]
         async with db() as conn:
             cur = await conn.execute(
                 "SELECT id FROM trackers WHERE active=1 AND address=? AND coin=?",
@@ -777,7 +810,8 @@ class TelegramBot:
             await self.send(f"{fmt.alink(addr)} adresinin <b>{sym}</b> pozisyonu yok"
                             " — takip edilecek bir şey bulamadım.", chat_id)
             return
-        tid = await start_tracker(self.cfg, addr, t["coin"], sym, live)
+        tid = await start_tracker(self.cfg, addr, t["coin"], sym, live,
+                                  chat_id=self._track_chat(chat_id))
         await self.send(fmt.track_started(tid, sym, addr, live, self.cfg), chat_id)
 
     async def _cmd_track_list(self, chat_id: str) -> None:
