@@ -33,6 +33,7 @@ metin zaten gitmiştir.
 """
 import asyncio
 import logging
+import re
 
 from ..db import alert_log, alert_recent, db, kv_set, now
 from .bigpos import MAJORS
@@ -45,7 +46,9 @@ RESET_FACTOR = 1.5                 # dist > dist1×1.5 → kademeler sıfırlan�
 STAGE_PROBE_SEC = {1: 600, 2: 0, 3: 0}   # izlenen pozisyonu yeniden sondalama aralığı
 CLOSE_NOTE_MAX_AGE = 24 * 3600     # bundan eski kapanışa not gitmez (kanal yeni açıldıysa yığılmasın)
 FILLS_LOOKBACK = 48 * 3600         # kapanış teyidi: fill'lere en çok bu kadar geriye bak
-CHART_INTERVAL, CHART_SPAN = "30m", 48 * 3600
+CHART_INTERVAL, CHART_SPAN = "15m", 48 * 3600   # 192 mum; sağda pay renderer'da
+CHART_LABEL = ("15dk", "son 48 saat")
+CAPTION_MAX = 1000                 # Telegram altyazı sınırı 1024 görünür karakter; pay bırak
 WATCH_KEEP_CLOSED = 7 * 86400
 WATCH_KEEP_IDLE = 3 * 86400
 
@@ -235,6 +238,11 @@ async def _closure_kind(client, coin: str, addr: str, w: dict) -> tuple[str, flo
     return ("close" if seen else "unknown"), None
 
 
+def _visible_len(text: str) -> int:
+    """Telegram'ın saydığı uzunluk: etiketsiz metin, UTF-16 birim."""
+    return len(re.sub(r"<[^>]+>", "", text or "").encode("utf-16-le")) // 2
+
+
 async def _chart(client, coin: str, mark, fresh: list[dict]) -> bytes | None:
     """Mesajın resmi: son 48 saatin 30 dk mumları + liq çizgileri + kalan mesafe."""
     fn = getattr(client, "candles", None)
@@ -251,7 +259,60 @@ async def _chart(client, coin: str, mark, fresh: list[dict]) -> bytes | None:
     levels = [{"px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
                "dist": p.get("dist"), "main": i == 0}
               for i, p in enumerate(sorted(fresh, key=lambda q: q.get("dist") or 0)[:4])]
-    return liqchart.render(coin, cands, mark, levels)
+    return liqchart.render(coin, cands, mark, levels, interval=CHART_LABEL[0],
+                           span_txt=CHART_LABEL[1])
+
+
+async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5) -> dict:
+    """/hype, /pump… komutu: coinin liq'e EN YAKIN büyük pozisyonları + grafik,
+    CANLI fiyat ve güncel kalan mesafeyle (alarmı beklemeden bakmak için).
+
+    Kripto: fiyat ana dex özeti (≤60 sn, gerekirse tek istekle tazelenir),
+    satırlar addr_positions (süpürmede görülen her boyut). Hisse: asset_metrics
+    fiyatı, positions_current satırları. ≥ min_usd olanlar öne; hiç yoksa en
+    yakın küçükler gösterilir ve söylenir. Dönüş: {coin, kind, mark, age, rows,
+    n_all, n_big, min_usd, png}."""
+    min_usd = float(getattr(cfg, "crypto_liq_min_usd", 500_000))
+    age = None
+    if kind == "crypto":
+        from ..hl.universe import main_dex_ctx
+        ctx = await main_dex_ctx(client, ttl=60, fetch=True)
+        mark = ((ctx.get("c") or {}).get(coin) or {}).get("m")
+        if ctx.get("ts"):
+            age = max(0, now() - int(ctx["ts"]))
+        async with db() as conn:
+            cur = await conn.execute(
+                f"SELECT {_COLS} FROM {_FROM} WHERE a.coin=? AND a.closed_ts IS NULL"
+                " AND a.liq_px > 0 AND a.notional > 0", (coin,))
+            rows = [dict(r) for r in await cur.fetchall()]
+    else:
+        from .metrics import summary
+        mark = (await summary(coin)).get("mark")
+        async with db() as conn:
+            cur = await conn.execute(
+                """SELECT p.coin, p.address, p.side, p.notional, p.liq_px, p.leverage,
+                          p.entry_px, p.ts, ad.entity
+                   FROM positions_current p LEFT JOIN addresses ad ON ad.address = p.address
+                   WHERE p.coin=? AND p.liq_px > 0 AND p.notional > 0""", (coin,))
+            rows = [dict(r) for r in await cur.fetchall()]
+    cands = []
+    for r in rows:
+        d = _dist(r, mark)
+        if d is None:
+            continue
+        cands.append({**r, "notional": float(r.get("notional") or 0), "liq_px": float(r["liq_px"]),
+                      "dist": d, "mark": float(mark)})
+    cands.sort(key=lambda q: q["dist"])
+    big = [c for c in cands if c["notional"] >= min_usd]
+    show = (big or cands)[:limit]
+    png = None
+    if show and getattr(cfg, "crypto_liq_chart", True):
+        try:
+            png = await _chart(client, coin, mark, show)
+        except Exception:
+            log.debug("anlık grafik üretilemedi (%s)", coin, exc_info=True)
+    return {"coin": coin, "kind": kind, "mark": mark, "age": age, "rows": show,
+            "n_all": len(cands), "n_big": len(big), "min_usd": min_usd, "png": png}
 
 
 # ─────────────────────────────────────────────── tarama
@@ -261,7 +322,7 @@ async def scan(cfg, client, notifier=None) -> dict:
            "probe_deferred": 0, "probe_err": 0, "dropped_stale": 0, "alerted": 0,
            "failed": 0, "skipped": "", "chat": False, "top": [], "ctx_age": None,
            "tracked": 0, "stage2": 0, "stage3": 0, "resets": 0, "closed": 0,
-           "closed_liq": 0, "close_notes": 0, "photos": 0}
+           "closed_liq": 0, "close_notes": 0, "photos": 0, "combined": 0}
     if not getattr(cfg, "crypto_liq_enabled", True):
         out["skipped"] = "kapalı"
         return await _stats(out)
@@ -453,7 +514,24 @@ async def scan(cfg, client, notifier=None) -> dict:
         text = fmt.crypto_liq_alert(coin, marks.get(coin), fresh, old.get(coin) or [],
                                     thr[stage], stage)
         key = f"cryptoliq:{coin}:{stage}:{ts}"
-        if await notifier.send("cryptoliq", text, priority="high", key=key, chat_id=chat):
+        # Grafik ÖNCE üretilir: sığıyorsa tam metin resmin altyazısı olur → tek
+        # mesaj (kullanıcı isteği). Resim yoksa / metin uzunsa / resim
+        # reddedildiyse metin ayrı gider — alarm asla resme bağlı değil.
+        png = None
+        if getattr(cfg, "crypto_liq_chart", True):
+            try:
+                png = await _chart(client, coin, marks.get(coin), fresh)
+            except Exception:
+                log.debug("grafik üretilemedi (%s)", coin, exc_info=True)
+        sent = combined = False
+        if png and _visible_len(text) <= CAPTION_MAX:
+            sent = combined = await notifier.send_photo("cryptoliq", png, text, key=key,
+                                                        chat_id=chat)
+            if not sent:
+                png = None                      # resim reddedildi: yedek metin, resim tekrar denenmez
+        if not sent:
+            sent = await notifier.send("cryptoliq", text, priority="high", key=key, chat_id=chat)
+        if sent:
             for p in fresh:
                 await _watch_upsert(coin, p["address"], p, p["dist"], p["mark"],
                                     stage=int(p["need"]),
@@ -463,12 +541,16 @@ async def scan(cfg, client, notifier=None) -> dict:
                 if int(p["need"]) >= 2:
                     out["stage2" if int(p["need"]) == 2 else "stage3"] += 1
             out["alerted"] += 1
-            if getattr(cfg, "crypto_liq_chart", True):
+            if combined:
+                out["photos"] += 1
+                out["combined"] += 1
+            elif png:
+                # Metin sığmadı: iki parça — metin gitti, resim kısa altyazıyla
+                cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"
+                       f" · %{fresh[0]['dist']:.2f} kaldı")
                 try:
-                    png = await _chart(client, coin, marks.get(coin), fresh)
-                    cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"
-                           f" · %{fresh[0]['dist']:.2f} kaldı")
-                    if png and await notifier.send_photo("cryptoliq", png, cap, chat_id=chat):
+                    if await notifier.send_photo("cryptoliq", png, cap, key=key + ":img",
+                                                 chat_id=chat):
                         out["photos"] += 1
                 except Exception:
                     log.debug("grafik gönderilemedi (%s)", coin, exc_info=True)

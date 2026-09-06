@@ -47,6 +47,9 @@ Detaylı mimari için: [PLAN.md](PLAN.md)
 
 ## Telegram Komutları
 
+`/hype`, `/pump`, `/sndk` gibi çıplak coin komutları o coinin liq'e en yakın
+büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
+
 | Komut | İş |
 |---|---|
 | `/scan SNDK` | Coini şimdi tara, en büyük pozları ve skorları göster |
@@ -350,11 +353,20 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   yönlü) fill varsa 💀 **LİKİDE OLDU** (gerçekleşen fiyat ve piyasaya çarpan
   zorunlu alış/satış), fill var ama likidasyon yoksa 🏁 kapatıldı, istek
   düşerse "doğrulanamadı" — uydurulmaz. Ayar: `crypto_liq_notify_close`.
-- **Mesaja grafik.** Her kademe mesajının peşinden resim (Telegram
-  `sendPhoto`): son 48 saatin 30 dk mumları, liq çizgileri, fiyat çizgisi ve
-  aradaki bant + "%0,40 kaldı" köprüsü (`app/radar/liqchart.py`, Pillow;
-  tarayıcı yok, dikdörtgen ve çizgi yeter). Mum çekilemezse yalnız metin
-  gider — resim bonus. PROPR satırı yok: bu kanalın coinleri zaten PROPR'da.
+- **Mesaja grafik — tek mesaj.** Kademe mesajı resim + altyazı olarak gider
+  (Telegram `sendPhoto`, metin altyazıda): son 48 saatin 30 dk mumları, liq
+  çizgileri, fiyat çizgisi ve aradaki bant + "%0,40 kaldı" köprüsü
+  (`app/radar/liqchart.py`, Pillow; tarayıcı yok, dikdörtgen ve çizgi yeter).
+  Altyazı sınırı 1024 görünür karakter: metin sığmazsa (çok pozisyonlu coin)
+  metin ayrı, resim kısa altyazıyla peşinden. Mum çekilemezse ya da Telegram
+  resmi reddederse yalnız metin gider — alarm resme bağlı değil. PROPR satırı
+  yok: bu kanalın coinleri zaten PROPR'da. Mumlar 15 dakikalık (son 48 saat),
+  sağda boş pay var — son mum fiyat etiketlerine yapışmaz.
+- **`/hype`, `/pump`, `/sndk` komutu.** Alarmı beklemeden bak: o coinin liq'e
+  en yakın büyük pozisyonları (≥ $500K; yoksa en yakın küçükler, söylenir),
+  canlı fiyat ve güncel kalan mesafeyle, aynı grafikle tek mesaj. Ana sohbette
+  ve botun kendi kanallarında (kripto, hisse hacim, liq attack, örüntü, yayın)
+  çalışır; hisse sembolleri de olur (`positions_current`).
 - Marker yalnız gönderim başarılıysa; kanal/bot/tip kapalıysa hesap yine
   yapılır ama sonda atılmaz — `/tani` "kripto liq" satırı nedenini söyler.
 - Fiyat `main_dex_ctx` kv'sinden: metrik döngüsü zaten çektiği ana dex

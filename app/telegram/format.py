@@ -726,6 +726,51 @@ def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
     return "\n".join(lines)
 
 
+def crypto_liq_snapshot(s: dict) -> str:
+    """/hype, /pump… cevabı: liq'e en yakın büyük pozisyonlar, canlı fiyat ve
+    güncel kalan mesafe. Boşsa nedenini söyler (fiyat yok / pozisyon yok /
+    hepsi eşik altı)."""
+    sym = esc((s.get("coin") or "").split(":")[-1])
+    mark = s.get("mark")
+    rows = s.get("rows") or []
+    if not mark:
+        return (f"❓ <b>{sym}</b> için güncel fiyat alınamadı — HL'ye ulaşılamıyor olabilir,"
+                f" birazdan yeniden dene.")
+    age = s.get("age")
+    when = f" ({age_str(now() - int(age))} önce)" if age is not None and age > 30 else " (canlı)"
+    lines = [f"🎯 <b>{sym}</b> — liq'e en yakın büyük pozisyonlar · fiyat <b>{px(mark)}</b>{when}"]
+    if not rows:
+        lines.append(f"Havuzda {sym} için liq fiyatı bilinen açık pozisyon yok — süpürme"
+                     f" uğradıkça dolar; HL'nin tamamı değil.")
+        return "\n".join(lines)
+    if not s.get("n_big"):
+        lines.append(f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>")
+    for p in rows:
+        is_long = p.get("side") == "long"
+        lev = f" · {float(p['leverage']):g}x" if p.get("leverage") else ""
+        ent = {"mm": " 🤖MM", "vault": " 🏦VAULT"}.get(p.get("entity") or "", "")
+        lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
+                     f" · liq {px(p['liq_px'])} (%{p['dist']:.2f} {'altta' if is_long else 'üstte'})"
+                     f"{lev} · 👤 {alink(p['address'])}{ent}")
+    sell = sum(p["notional"] for p in rows if p.get("side") == "long")
+    buy = sum(p["notional"] for p in rows if p.get("side") == "short")
+    imp = []
+    if sell:
+        imp.append(f"📉 long'lar patlarsa zorunlu <b>SATIŞ</b> ~{usd(sell)}")
+    if buy:
+        imp.append(f"📈 short'lar patlarsa zorunlu <b>ALIŞ</b> ~{usd(buy)}")
+    if imp:
+        lines.append(" · ".join(imp))
+    oldest = min((int(p.get("ts") or 0) for p in rows), default=0)
+    ctx = [f"havuzda {s.get('n_all', 0)} açık pozisyon, {s.get('n_big', 0)}'ü ≥ {usd(s.get('min_usd'))}"]
+    if oldest:
+        ctx.append(f"pozisyon ölçümü en eski {age_str(oldest)} önce (süpürme)")
+    ctx.append("HL'nin tamamı değil")
+    lines.append("<i>" + " · ".join(ctx) + "</i>")
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
 def crypto_liq_closed(coin: str, rows: list[dict]) -> str:
     """İzlenen kripto pozisyonu yok oldu: 💀 likide (fill'de likidasyon kaydı),
     🏁 kapandı (fill var, likidasyon yok), ya da doğrulanamadı. Coin başına
@@ -1258,6 +1303,7 @@ def help_text() -> str:
         "Earnings öncesi Hyperliquid hisse perp'lerindeki balina pozisyonlarını izler.\n\n"
         "Komutlar:\n"
         "/scan SNDK — coini şimdi tara, en büyük pozları göster\n"
+        "/hype, /pump, /sndk — o coinin liq'e EN YAKIN büyük pozisyonları + grafik (canlı fiyat, kalan mesafe)\n"
         "/upcoming — yaklaşan HL-eşleşen earnings'ler\n"
         "/refresh — takvimi ŞİMDİ tüm kaynaklardan yenile (eksik earnings görürsen bas)\n"
         "/settime SHAZ bmo — bilanço saatini elle düzelt (bmo/amc/16:30/09:30et)\n"

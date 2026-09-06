@@ -28,6 +28,26 @@ def _cmd_lower(s: str) -> str:
     return s.lower().replace("̇", "")
 
 
+CAPTION_LIMIT = 1024               # Telegram: ayrıştırılmış altyazı, UTF-16 birim
+
+
+def _caption_fit(caption: str, limit: int = CAPTION_LIMIT,
+                 force_plain: bool = False) -> tuple[str, bool]:
+    """(altyazı, HTML mi). Sınır GÖRÜNÜR metin üzerinden: etiketler sayılmaz.
+    Sığıyorsa dokunma (etiketli metni ortadan kesmek HTML'i bozar → 400);
+    sığmıyorsa etiketler sıyrılır, varlıklar çözülür, kesilir + '…'."""
+    import html as _html
+    if not caption:
+        return "", False
+    visible = re.sub(r"<[^>]+>", "", caption)
+    if not force_plain and len(visible.encode("utf-16-le")) // 2 <= limit:
+        return caption, True
+    plain = _html.unescape(visible)
+    if len(plain.encode("utf-16-le")) // 2 > limit:
+        plain = plain[:limit - 24].rstrip() + "…"
+    return plain, False
+
+
 class TelegramBot:
     def __init__(self, cfg: Config, session: aiohttp.ClientSession,
                  client: HLClient, state: dict):
@@ -52,18 +72,25 @@ class TelegramBot:
 
     async def send_photo(self, png: bytes, caption: str = "",
                          chat_id: str | None = None) -> bool:
-        """Tek resim (PNG bayt) + kısa HTML altyazı — Telegram sendPhoto.
+        """Resim (PNG bayt) + HTML altyazı — Telegram sendPhoto, TEK mesaj.
 
-        Altyazı sınırı 1024 karakter; uzun metin AYRI mesaj olarak gider, resim
-        onun peşinden. Resim bonus: düşerse metin zaten gitmiştir."""
+        Altyazı sınırı 1024 görünür karakter (etiketler sayılmaz); `_caption_fit`
+        sığdırır. Çağıran genelde tam alarm metnini altyazı yapar (birleşik
+        mesaj); sığmazsa metni ayrı yollar, burası yalnız kısa altyazı alır."""
         chat = chat_id or self.cfg.telegram_chat_id
         if not chat or not png:
             return False
-        form = aiohttp.FormData()
+        cap, is_html = _caption_fit(caption)
+        return await self._send_photo_once(chat, png, cap, is_html)
+
+    async def _send_photo_once(self, chat: str, png: bytes, cap: str, is_html: bool,
+                               _retry: bool = True) -> bool:
+        form = aiohttp.FormData()              # her denemede yeni: FormData tek kullanımlık
         form.add_field("chat_id", str(chat))
-        if caption:
-            form.add_field("caption", caption[:1000])
-            form.add_field("parse_mode", "HTML")
+        if cap:
+            form.add_field("caption", cap)
+            if is_html:
+                form.add_field("parse_mode", "HTML")
         form.add_field("photo", png, filename="chart.png", content_type="image/png")
         try:
             async with self.session.post(
@@ -72,7 +99,20 @@ class TelegramBot:
             ) as r:
                 if r.status == 200:
                     return True
-                log.warning("sendPhoto %s: %s", r.status, (await r.text())[:300])
+                body = (await r.text())[:300]
+                log.warning("sendPhoto %s: %s", r.status, body)
+                if r.status == 429 and _retry:
+                    try:
+                        wait = int(((await r.json()).get("parameters") or {})
+                                   .get("retry_after") or 1)
+                    except Exception:
+                        wait = 1
+                    await asyncio.sleep(min(wait, 30))
+                    return await self._send_photo_once(chat, png, cap, is_html, _retry=False)
+                if r.status == 400 and is_html and _retry:
+                    # HTML reddedildi: etiketsiz düz altyazıyla bir kez daha
+                    plain, _ = _caption_fit(re.sub(r"<[^>]+>", "", cap), force_plain=True)
+                    return await self._send_photo_once(chat, png, plain, False, _retry=False)
                 return False
         except Exception as e:
             log.warning("sendPhoto hatası: %s", e)
@@ -193,10 +233,14 @@ class TelegramBot:
         cmd = _cmd_lower(parts[0][1:].split("@")[0])
         args = parts[1:]
 
-        # Yapılandırılmış chat dışından sadece /id ve /start'a cevap ver
+        # Yapılandırılmış chat dışından sadece /id ve /start'a cevap ver.
+        # İSTİSNA: botun kendi kanalları (kripto, hisse hacim, liq attack, örüntü,
+        # yayın) — oraya /hype yazan, o coinin liq görüntüsünü orada ister.
         if self.cfg.telegram_chat_id and chat_id != self.cfg.telegram_chat_id:
             if cmd in ("start", "id"):
                 await self.send(f"Bu sohbetin chat id'si: <code>{chat_id}</code>", chat_id)
+            elif chat_id in self._own_chats() and not args:
+                await self._cmd_coin_liq(cmd, chat_id)
             return
 
         if cmd in ("start", "help"):
@@ -287,6 +331,8 @@ class TelegramBot:
                 fmt.big_positions(await bigpos.live_big(15),
                                   await bigpos.stats(self.cfg),
                                   bigpos.tiers(self.cfg)), chat_id)
+        elif not args and await self._cmd_coin_liq(cmd, chat_id):
+            pass                                  # /hype, /pump, /sndk → liq görüntüsü
         else:
             # Eskiden bilinmeyen komut SESSİZCE yutuluyordu: yazdığın şey
             # cevapsız kalınca bot ölü mü, komut mu yok anlaşılmıyordu.
@@ -294,7 +340,43 @@ class TelegramBot:
                 f"❓ <code>/{fmt.esc(cmd)}</code> diye bir komut yok.\n\n"
                 + fmt.help_text(), chat_id)
 
+    def _own_chats(self) -> set[str]:
+        """Botun yazdığı tüm sohbetler (ana + kanallar) — boşlar hariç."""
+        return {str(v).strip() for v in (
+            self.cfg.telegram_chat_id, getattr(self.cfg, "crypto_chat_id", ""),
+            getattr(self.cfg, "crypto_stocks_id", ""), getattr(self.cfg, "liq_attack_chat_id", ""),
+            getattr(self.cfg, "pattern_chat_id", ""), getattr(self.cfg, "telegram_channel_id", ""))
+            if v and str(v).strip()}
+
     # ---------- komutlar ----------
+
+    async def _cmd_coin_liq(self, cmd: str, chat_id: str) -> bool:
+        """/hype, /pump, /sndk → o coinin liq'e en yakın büyük pozisyonları +
+        grafik, canlı fiyat ve güncel kalan mesafeyle. Dönüş: komut bir coin
+        miydi (değilse çağıran 'komut yok' der). Resim + tam metin tek mesaj;
+        sığmazsa metin ayrı, resim kısa altyazıyla."""
+        from ..hl.universe import resolve_coin
+        from ..radar import cryptoliq
+        t = await resolve_coin(cmd)
+        if not t:
+            return False
+        sym = fmt.esc(t["symbol"])
+        try:
+            s = await cryptoliq.snapshot(self.cfg, self.client, t["coin"], t.get("kind", "crypto"))
+        except Exception as e:
+            log.exception("liq görüntüsü hatası: %s", t["coin"])
+            await self.send(f"❌ <b>{sym}</b> okunamadı: {fmt.esc(e)}", chat_id)
+            return True
+        text = fmt.crypto_liq_snapshot(s)
+        png = s.get("png")
+        if png and _caption_fit(text)[1] and await self.send_photo(png, text, chat_id):
+            return True
+        await self.send(text, chat_id)
+        if png and s.get("rows"):
+            p = s["rows"][0]
+            await self.send_photo(png, f"📈 <b>{sym}</b> · liq {fmt.px(p['liq_px'])}"
+                                       f" · %{p['dist']:.2f} kaldı", chat_id)
+        return True
 
     async def _cmd_status(self, chat_id: str) -> None:
         async with db() as conn:

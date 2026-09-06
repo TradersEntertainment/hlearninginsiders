@@ -65,7 +65,7 @@ def _usd(v: float) -> str:
 
 
 def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict],
-           *, interval: str = "30dk", span_txt: str = "son 48 saat") -> bytes | None:
+           *, interval: str = "15dk", span_txt: str = "son 48 saat") -> bytes | None:
     """PNG bayt. `candles`: [{t,o,h,l,c}] (t saniye, artan). `levels`:
     [{px, side, notional, dist, main}] — `main` olan seviyeye kalan mesafe
     köprüsü çizilir, en çok 4 seviye. Mum yoksa ya da Pillow yoksa None."""
@@ -126,9 +126,11 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     img.paste(Image.alpha_composite(img.convert("RGBA"), over).convert("RGB"))
     d = ImageDraw.Draw(img)
 
-    # mumlar
+    # mumlar — sağda boş slot bırakılır: son mum fiyat etiketlerine yapışmasın,
+    # "şimdi"den sonrası boş görünsün (TradingView'ın sağ payı gibi)
     n = len(cs)
-    step = plot_w / n
+    gap = max(6, n // 10)
+    step = plot_w / (n + gap)
     bw = max(2, int(step * 0.62))
     for i, c in enumerate(cs):
         x = plot_l + step * (i + 0.5)
@@ -139,7 +141,8 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
             y2 = y1 + 1
         d.rectangle([x - bw / 2, y1, x + bw / 2, y2], fill=col)
 
-    # zaman ekseni: 5 etiket (TSİ)
+    # zaman ekseni: 5 etiket (TSİ), mumların kapladığı genişlik üzerinde
+    last_x = plot_l + step * (n - 0.5)
     for k in range(5):
         i = int(round((n - 1) * k / 4))
         x = plot_l + step * (i + 0.5)
@@ -149,7 +152,8 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
         except Exception:
             lbl = ""
         tw = d.textlength(lbl, font=f_ax)
-        d.text((max(plot_l, min(plot_r - tw, x - tw / 2)), plot_b + 9), lbl, fill=DIM, font=f_ax)
+        d.text((max(plot_l, min(last_x + step * gap / 2 - tw, x - tw / 2)), plot_b + 9),
+               lbl, fill=DIM, font=f_ax)
 
     def dashed(y: float, col, dash: int = 10, width: int = 2):
         x = plot_l

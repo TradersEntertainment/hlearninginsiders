@@ -118,8 +118,8 @@ class Client:
 
 
 class Bot:
-    def __init__(self, ok=True):
-        self.ok, self.sent, self.photos = ok, [], []
+    def __init__(self, ok=True, photo_ok=True):
+        self.ok, self.photo_ok, self.sent, self.photos = ok, photo_ok, [], []
 
     async def send(self, text, chat_id=None):
         if self.ok:
@@ -127,8 +127,9 @@ class Bot:
         return self.ok
 
     async def send_photo(self, png, caption="", chat_id=None):
-        self.photos.append((chat_id, caption, len(png)))
-        return True
+        if self.photo_ok:
+            self.photos.append((chat_id, caption, len(png)))
+        return self.photo_ok
 
 
 def synth_candles(mark, n=96):
@@ -195,8 +196,8 @@ def test_scan_flow():
         await _seed(rows)
         cfg = _cfg()
         cli = Client(rows, closed={C}, candles=synth_candles(MARK["PUMP"]))
-        # (a) gönderim BAŞARISIZ → marker/kademe yok, failed=1, sonraki tur yeniden dener
-        bad = Bot(False)
+        # (a) gönderim BAŞARISIZ (resim de metin de) → marker/kademe yok, failed=1, sonraki tur yeniden dener
+        bad = Bot(False, photo_ok=False)
         out = await cl.scan(cfg, cli, Notifier(cfg, bad))
         assert cli.ctx_calls == 0, "kv tazeyken istek atılmamalı"
         assert out["coins"] == 3 and out["candidates"] == 3 and out["fresh"] == 3, out
@@ -208,35 +209,40 @@ def test_scan_flow():
             cur = await c.execute("SELECT closed_ts FROM addr_positions WHERE address=? AND coin='PUMP'", (C,))
             assert (await cur.fetchone())["closed_ts"], "sonda kapanışı damgalamalı"
         assert (await watch_row("PUMP", A) or {}).get("stage", 0) == 0, "başarısız gönderim kademe ilerletti"
-        # (b) başarılı → coin başına TEK mesaj, 2 pozisyon, doğrulandı, vault etiketi, PROPR YOK, resim
+        # (b) başarılı → coin başına TEK mesaj = resim + tam metin altyazı (birleşik),
+        #     2 pozisyon, doğrulandı, vault etiketi, PROPR YOK
         good = Bot(True)
         cli2 = Client(rows, closed={C}, candles=synth_candles(MARK["PUMP"]))
         out2 = await cl.scan(cfg, cli2, Notifier(cfg, good))
-        assert out2["alerted"] == 1 and len(good.sent) == 1, out2
-        chat, text = good.sent[0]
-        assert chat == "-100" and text.startswith("💥 <b>PUMP</b>") and "2 pozisyon" in text and "$1.9M" in text
+        assert out2["alerted"] == 1 and out2["combined"] == 1 and out2["photos"] == 1, out2
+        assert good.sent == [] and len(good.photos) == 1, "birleşik: ayrı metin mesajı olmamalı"
+        chat, text, nbytes = good.photos[0]
+        assert chat == "-100" and nbytes > 1000 and cli2.candle_calls == 1
+        assert text.startswith("💥 <b>PUMP</b>") and "2 pozisyon" in text and "$1.9M" in text
         assert "$1.2M" in text and "%1.80 altta" in text and "%2.30 üstte" in text
         assert "🏦VAULT" in text and "doğrulandı" in text and "BTC" not in text and "PROPR" not in text
         assert "SATIŞ</b> ~$1.2M" in text and "ALIŞ</b> ~$700K" in text
-        assert out2["photos"] == 1 and len(good.photos) == 1 and good.photos[0][2] > 1000, good.photos
-        assert "kaldı" in good.photos[0][1] and cli2.candle_calls == 1
         assert (await watch_row("PUMP", A))["stage"] == 1 and (await watch_row("PUMP", B))["stage"] == 1
+        async with dbm.db() as c:
+            cur = await c.execute("SELECT COUNT(*) n FROM alerts_log WHERE kind='sent:cryptoliq'")
+            assert (await cur.fetchone())["n"] == 1, "birleşik gönderim de sent: kaydı yazmalı"
         # (c) aynı tur tekrar → bekleme: mesaj yok; kademe 1 izlenenler 10 dk sondalanmaz
         cli3 = Client(rows, closed={C})
         out3 = await cl.scan(cfg, cli3, Notifier(cfg, good))
         assert out3["fresh"] == 0 and out3["alerted"] == 0 and cli3.probes == [], out3
-        assert out3["tracked"] == 2 and len(good.sent) == 1
-        # (d) YENİ pozisyon eşiğe girince mesaj gider; eskiler "daha önce bildirildi"
+        assert out3["tracked"] == 2 and good.sent == [] and len(good.photos) == 1
+        # (d) YENİ pozisyon eşiğe girince mesaj gider; eskiler "daha önce bildirildi";
+        #     mum çekilemeyince resim yok → düz metin mesajı
         new = row("PUMP", D, "short", 650_000, 1.2)
         async with dbm.db() as c:
             await c.execute("UPDATE addr_positions SET side='short', notional=?, liq_px=? WHERE address=? AND coin='PUMP'",
                             (new["notional"], new["liq_px"], D))
         cli4 = Client([r for r in rows if r["address"] != D] + [new], closed={C})
         out4 = await cl.scan(cfg, cli4, Notifier(cfg, good))
-        assert out4["alerted"] == 1 and len(good.sent) == 2 and cli4.probes == [D], out4
-        t4 = good.sent[1][1]
+        assert out4["alerted"] == 1 and len(good.sent) == 1 and cli4.probes == [D], out4
+        t4 = good.sent[0][1]
         assert "1 pozisyon" in t4 and "$650K" in t4 and "ayrıca 2 pozisyon daha eşikte" in t4, t4
-        assert out4["photos"] == 0, "mum çekilemeyince resim yok, metin gitti"
+        assert out4["photos"] == 0 and out4["combined"] == 0, "mum çekilemeyince resim yok, metin gitti"
         st = await dbm.kv_get("cryptoliq_stats")
         assert st and st["alerted"] == 1 and st["chat"] is True and st["top"][0]["coin"] == "PUMP"
         print("✅ tarama) başarısız gönderim marker/kademe yazmadı; coin başına tek mesaj + resim;"
@@ -360,6 +366,48 @@ def test_reset_hysteresis_close_kinds():
     asyncio.run(run())
 
 
+# ------------------------------------------------ 5b) birleşik mesajın yedek yolları
+def test_combined_fallbacks():
+    """Resim reddedilirse metin gider (kademe ilerler, fail yok); metin altyazıya
+    sığmazsa metin + kısa altyazılı resim (iki parça); _caption_fit sınırları."""
+    async def run():
+        from app.notify import Notifier
+        a = row("PUMP", A, "long", 1_200_000, 1.8)
+        # (1) sendPhoto düşer → metin yedeği
+        await _seed([a])
+        cfg = _cfg(); bot = Bot(photo_ok=False)
+        out = await cl.scan(cfg, Client([a], candles=synth_candles(MARK["PUMP"])), Notifier(cfg, bot))
+        assert out["alerted"] == 1 and out["combined"] == 0 and out["photos"] == 0 and out["failed"] == 0, out
+        assert len(bot.sent) == 1 and bot.photos == [] and bot.sent[0][1].startswith("💥")
+        assert (await watch_row("PUMP", A))["stage"] == 1
+        async with dbm.db() as c:
+            cur = await c.execute("SELECT COUNT(*) n FROM alerts_log WHERE kind LIKE 'fail:%'")
+            assert (await cur.fetchone())["n"] == 0
+        # (2) metin altyazıya sığmıyor → iki parça: metin + kısa altyazılı resim
+        await _seed([a])
+        bot2 = Bot()
+        real = cl.CAPTION_MAX
+        cl.CAPTION_MAX = 50
+        try:
+            out2 = await cl.scan(cfg, Client([a], candles=synth_candles(MARK["PUMP"])), Notifier(cfg, bot2))
+        finally:
+            cl.CAPTION_MAX = real
+        assert out2["alerted"] == 1 and out2["combined"] == 0 and out2["photos"] == 1, out2
+        assert len(bot2.sent) == 1 and len(bot2.photos) == 1
+        assert "kaldı" in bot2.photos[0][1] and "PUMP" in bot2.photos[0][1] and len(bot2.photos[0][1]) < 120
+        print("✅ birleşik yedek) resim düşünce metin gitti; uzun metin iki parça (kısa altyazı)")
+    asyncio.run(run())
+    from app.telegram.bot import _caption_fit
+    tagged = "<b>" + "a" * 700 + "</b> <a href=\"https://x/" + "y" * 600 + "\">z</a>"   # etiketli 1400+, görünür ~702
+    cap, is_html = _caption_fit(tagged)
+    assert cap == tagged and is_html is True, "görünür metin sığıyorsa dokunulmaz"
+    longv = "<b>başlık</b> &lt;x&gt; " + "ş" * 1500
+    cap2, is_html2 = _caption_fit(longv)
+    assert is_html2 is False and cap2.endswith("…") and len(cap2) <= 1001 and "<b>" not in cap2
+    assert cap2.startswith("başlık <x>"), "düz metinde varlıklar çözülür"
+    print("✅ altyazı) etiketler sınıra sayılmaz; taşan metin etiketsiz kesilir")
+
+
 # ------------------------------------------------ 6) kapı kapalıysa sonda da yok
 def test_send_gate():
     async def run():
@@ -438,6 +486,35 @@ def test_format_and_chart():
     print("✅ mesaj/grafik) kademe başlıkları, PROPR yok, kapanış metni; PNG üretiliyor, yetersiz veride None")
 
 
+# ------------------------------------------------ 8b) /coin anlık görüntüsü
+def test_snapshot():
+    async def run():
+        rows = [row("PUMP", A, "long", 1_200_000, 1.8), row("PUMP", B, "short", 700_000, 0.9),
+                row("PUMP", C, "long", 300_000, 0.3), row("PUMP", D, "short", 4_000_000, 6.0)]
+        await _seed(rows)
+        cfg = _cfg()
+        from app.telegram import format as fmt
+        s = await cl.snapshot(cfg, Client(rows, candles=synth_candles(MARK["PUMP"])), "PUMP")
+        assert [p["address"] for p in s["rows"]] == [B, A, D], "≥$500K olanlar, yakından uzağa"
+        assert s["n_all"] == 4 and s["n_big"] == 3 and s["mark"] == MARK["PUMP"] and s["png"]
+        t = fmt.crypto_liq_snapshot(s)
+        assert t.startswith("🎯 <b>PUMP</b>") and "%0.90 üstte" in t and "$4.0M" in t and "canlı" in t
+        assert "havuzda 4 açık pozisyon, 3'ü ≥ $500K" in t and "PROPR" not in t, t
+        # eşik üstü yoksa en yakın küçükler + not; pozisyon hiç yoksa nedeni
+        small = [row("PUMP", C, "long", 300_000, 0.3)]
+        await _seed(small)
+        s2 = await cl.snapshot(cfg, Client(small), "PUMP")
+        t2 = fmt.crypto_liq_snapshot(s2)
+        assert s2["n_big"] == 0 and len(s2["rows"]) == 1 and "en yakın küçükler" in t2 and s2["png"] is None
+        s3 = await cl.snapshot(cfg, Client([]), "HYPE")
+        assert s3["rows"] == [] and "açık pozisyon yok" in fmt.crypto_liq_snapshot(s3)
+        # fiyat yoksa nedeni (kv'de olmayan coin, istek de boş dönüyor)
+        s4 = await cl.snapshot(cfg, Client([]), "ZZZ")
+        assert s4["mark"] is None and "fiyat alınamadı" in fmt.crypto_liq_snapshot(s4)
+        print("✅ anlık) /coin: ≥$500K en yakın önce, canlı fiyat; eşik altı/boş/fiyatsız durumlar dürüst")
+    asyncio.run(run())
+
+
 # ------------------------------------------------ 9) sembol çözümleme
 def test_resolve():
     async def run():
@@ -465,8 +542,10 @@ test_parse_ctx()
 test_scan_flow()
 test_stages_and_liquidation()
 test_reset_hysteresis_close_kinds()
+test_combined_fallbacks()
 test_send_gate()
 test_wiring()
 test_format_and_chart()
+test_snapshot()
 test_resolve()
 print("\n✅ KRİPTO LIQ TESTLERİ GEÇTİ")

@@ -330,7 +330,9 @@ async def _subsystems(cfg) -> list[str]:
                       + (f" · son uyarı {cl['stage3']}" if cl.get("stage3") else "")
                       + (f" · kapanış {cl['closed']} ({cl.get('closed_liq', 0)} likide)"
                          if cl.get("closed") else "")
-                      + (f" · {cl['photos']} resim" if cl.get("photos") else "")
+                      + (f" · {cl['photos']} resimli"
+                         + (f" ({cl['combined']} birleşik)" if cl.get("combined") else "")
+                         if cl.get("photos") else "")
                       + (f" · ⚠️ {cl['failed']} gönderilemedi" if cl.get("failed") else "")
                       + (f" · {cl['dropped_stale']} bayat düştü" if cl.get("dropped_stale") else "")
                       + (f" · {cl['probe_deferred']} sonda ertelendi" if cl.get("probe_deferred") else "")

@@ -95,10 +95,12 @@ class Notifier:
         return ok
 
     async def send_photo(self, kind: str, png: bytes | None, caption: str = "", *,
-                         chat_id: str = "") -> bool:
-        """Metin mesajının peşinden resim. Aynı tip toggle'ı; sessiz saatte
-        (kanal hedefli değilse) resim atlanır — ertelenmez, çünkü metni
-        zaten sabah özetine bırakıldı. Bot resim bilmiyorsa (eski/sahte) False."""
+                         key: str = "", chat_id: str = "") -> bool:
+        """Resim + altyazı (tam alarm metni olabilir → tek mesaj). Aynı tip
+        toggle'ı; sessiz saatte (kanal hedefli değilse) atlanır — ertelenmez,
+        çağıran metni ayrı yoldan zaten yollar. Başarıda `sent:` kaydı metin
+        yolundaki gibi (son gönderimler / tanı bunu okur). Bot resim bilmiyorsa
+        (eski/sahte) False → çağıran metne düşer."""
         if not self.bot or not png or not kind_enabled(self.cfg, kind):
             return False
         fn = getattr(self.bot, "send_photo", None)
@@ -107,10 +109,13 @@ class Notifier:
         if not chat_id and in_quiet_hours(self.cfg):
             return False
         try:
-            return bool(await fn(png, caption, chat_id or None))
+            ok = bool(await fn(png, caption, chat_id or None))
         except Exception as e:
             log.warning("resim gönderilemedi (%s): %s", kind, e)
             return False
+        if ok:
+            await alert_log(f"sent:{kind}", key or kind, caption)
+        return ok
 
 
 async def pending_digest_items(hours: int = 14) -> list[dict]:
