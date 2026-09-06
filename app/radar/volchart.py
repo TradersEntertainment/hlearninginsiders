@@ -102,6 +102,11 @@ def render(coin: str, candles: list[dict], rec: dict, *, day_vol: float | None =
     step = plot_w / (n + gap)
     bw = max(2, int(step * 0.66))
     vol_up, vol_dn = _mix(UP, BG, 0.55), _mix(DOWN, BG, 0.55)
+    # Rekor kovası vurgusu MUMLARIN ARKASINDA: soluk, geniş şerit — mum üstte
+    # net kalır (eskiden mumun üstüne çizilip son hareketi gizliyordu).
+    xr = plot_l + step * (rec_i + 0.5)
+    band = max(6, bw * 3)
+    d.rectangle([xr - band / 2, p_t, xr + band / 2, p_b], fill=_mix(AMBER, BG, 0.18))
     for i, c in enumerate(cs):
         x = plot_l + step * (i + 0.5)
         up = c["c"] >= c["o"]
@@ -122,13 +127,13 @@ def render(coin: str, candles: list[dict], rec: dict, *, day_vol: float | None =
         while x < plot_r:
             d.line([(x, yp), (min(x + 10, plot_r), yp)], fill=DIM, width=1)
             x += 20
+        # etiket SOLDA: sağdaki "rekor $X" etiketiyle üst üste binmesin
         lbl = f"önceki rekor {_usd(prev_usd)}"
         tw = d.textlength(lbl, font=f_ax)
-        d.rectangle([plot_r - tw - 14, yp - 20, plot_r - 2, yp - 2], fill=BG)
-        d.text((plot_r - tw - 8, yp - 19), lbl, fill=DIM, font=f_ax)
+        d.rectangle([plot_l + 2, yp - 20, plot_l + tw + 14, yp - 2], fill=BG)
+        d.text((plot_l + 8, yp - 19), lbl, fill=DIM, font=f_ax)
 
     # rekor kovası etiketi (bar tepesinin üstünde; sığmazsa yanında)
-    xr = plot_l + step * (rec_i + 0.5)
     yr = y_vol(cs[rec_i]["usd"])
     lbl = f"rekor {_usd(cs[rec_i]['usd'])}" + (f" · {float(ratio):.1f}×" if ratio else "")
     tw = d.textlength(lbl, font=f_lab)
@@ -137,8 +142,12 @@ def render(coin: str, candles: list[dict], rec: dict, *, day_vol: float | None =
     d.rectangle([lx - 6, ly - 3, lx + tw + 6, ly + 20], fill=AMBER)
     d.text((lx, ly - 1), lbl, fill=BG, font=f_lab)
     d.line([(xr, ly + 20), (xr, yr)], fill=AMBER, width=1)
-    # fiyat panelinde de rekor kovasını işaretle (ince amber sütun)
-    d.line([(xr, p_t), (xr, p_b)], fill=_mix(AMBER, BG, 0.35), width=max(2, bw))
+    # fiyat panelinde mumun DIŞINDA işaret: high'ın üstünde ▼, low'un altında ▲
+    rc = cs[rec_i]
+    yh, ylw = y_px(rc["h"]), y_px(rc["l"])
+    tri = max(5, bw)
+    d.polygon([(xr - tri, yh - 15), (xr + tri, yh - 15), (xr, yh - 5)], fill=AMBER)
+    d.polygon([(xr - tri, ylw + 15), (xr + tri, ylw + 15), (xr, ylw + 5)], fill=AMBER)
 
     # zaman ekseni: 5 etiket (TSİ)
     last_x = plot_l + step * (n - 0.5)

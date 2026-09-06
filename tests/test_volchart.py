@@ -89,6 +89,15 @@ def test_render():
     from io import BytesIO
     im = Image.open(BytesIO(png))
     assert im.size == (volchart.W, volchart.H) and im.size[0] > 1.5 * im.size[1], "geniş olmalı"
+    # rekor mumu örtülmemeli: kovanın sütununda mum rengi (UP/DOWN) piksel var
+    n = len([c for c in cs if c["t"] <= rec["bucket_ts"]])
+    gap = max(8, n // 10)
+    step = (volchart.W - volchart.PAD_R - volchart.PAD_L) / (n + gap)
+    xr = int(volchart.PAD_L + step * (n - 0.5))
+    total_h = volchart.H - volchart.PAD_T - volchart.PAD_B
+    col = [im.getpixel((xr, y)) for y in range(volchart.PAD_T, volchart.PAD_T + int(total_h * 0.58))]
+    assert any(p in (volchart.UP, volchart.DOWN) for p in col), "rekor mumu vurgunun altında kaldı"
+    assert any(p == volchart.AMBER for p in col), "▼/▲ işaret yok"
     assert volchart.render("PUMP", cs[:5], rec) is None, "mum azsa None"
     assert volchart.render("PUMP", [], rec) is None
     print("✅ grafik) geniş PNG; yetersiz mumda None")
