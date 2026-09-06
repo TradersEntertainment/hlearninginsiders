@@ -9,3 +9,5 @@ tzdata>=2024.1
 # Örüntü eşleştirme (analog.py) — bugüne kadar yalnız
 # yfinance→pandas üzerinden DOLAYLI geliyordu; ona yaslanmak kırılgan.
 numpy>=1.26
+# Bildirim grafiği (kripto liq: mumlar + liq çizgisi + kalan mesafe) — PNG, Telegram sendPhoto
+pillow>=10.1

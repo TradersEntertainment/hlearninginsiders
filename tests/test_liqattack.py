@@ -359,8 +359,12 @@ def test_alert_gate():
         out2 = await la.scan(cfg, C(), Notifier(cfg, bot))
         assert out2["alerted"] == 1 and out2["gated"] == 0 and len(bot.sent) == 1, out2
         assert "≤%2" in bot.sent[0] and "$1.2M</b> liq" in bot.sent[0], bot.sent[0]
+        # MESAJ BÖLGEYİ ANLATIR: hedef %1.50 (≤%2), geniş aday (%3.25) yalnız bağlam
+        assert "%1.50 aşağı" in bot.sent[0] and "%3.25 aşağı" not in bot.sent[0], bot.sent[0]
+        assert "daha geniş bakınca: %3.25" in bot.sent[0] and "oran 24" in bot.sent[0], bot.sent[0]
         pg2 = await la.page(cfg)
         assert pg2["cands"][0]["alert_ok"] is True and abs(pg2["cands"][0]["near_usd"] - 1_200_000) < 1
+        assert abs(pg2["cands"][0]["zone_dist"] - 1.5) < 1e-9 and pg2["cands"][0]["zone_score"] > 20
         # kapıdan önceki kayıt (near_usd NULL) sayfada yeniden hesaplanır
         async with dbm.db() as c:
             await c.execute("UPDATE liq_attack_candidates SET near_usd=NULL")
@@ -372,3 +376,50 @@ def test_alert_gate():
         asyncio.run(run())
     finally:
         _restore()   # monkeypatch sızmasın: runner testleri alfabetik koşuyor
+
+
+# ------------------------------------------------ 4c) bölge kapısı: $ var, oran yok
+def test_zone_gate():
+    """≤%2'de $1M+ liq VAR ama oraya itmek pahalı (oran < 2): geniş aday (%3.5,
+    oran 9×) hot olsa da mesaj GİTMEZ — %4 hedefli mesajın kaynağı buydu."""
+    async def run():
+        cfg = Config(); cfg.telegram_chat_id = "-1"; cfg.alert_forensics = False
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "la4.db"))
+        now = dbm.now()
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO tickers(coin,symbol) VALUES('xyz:SNDK','SNDK')")
+            await c.execute("INSERT OR REPLACE INTO asset_metrics(coin,ts,mark_px,oi,"
+                            "funding,day_volume) VALUES('xyz:SNDK',?,?,1,0,0)", (now, MARK))
+            for a, dist, ntl in (("0xnear", 1.5, 1_200_000), ("0xfar", 3.5, 8_000_000)):
+                await c.execute(
+                    "INSERT INTO positions_current(coin,address,ts,side,szi,entry_px,"
+                    "leverage,liq_px,upnl,notional) VALUES('xyz:SNDK',?,?,'long',1,100,3,?,0,?)",
+                    (a, now, MARK * (1 - dist / 100), ntl))
+        la.hourstats.weekend_window = lambda *a, **k: (T0, T0 + 2 * 86400)
+
+        class C:
+            async def l2_book(self, coin):
+                # ≤%2 içinde $1.0M defter (99.0 × 10101), ötesi bedava
+                return {"levels": [[{"px": "99.0", "sz": "10101"}, {"px": "97.0", "sz": "100"}],
+                                   [{"px": "100.3", "sz": "500"}]]}
+
+        class Bot:
+            def __init__(self): self.sent = []
+            async def send(self, text, chat_id=None):
+                self.sent.append(text); return True
+        from app.notify import Notifier
+        bot = Bot()
+        out = await la.scan(cfg, C(), Notifier(cfg, bot))
+        assert out["candidates"] == 1 and out["gated"] == 1 and out["alerted"] == 0, out
+        assert bot.sent == [], "bölge oranı < 2 iken mesaj gitti"
+        pg = await la.page(cfg)
+        c0 = pg["cands"][0]
+        assert c0["hot"] == 1 and c0["score"] > 5, c0
+        assert c0["alert_ok"] is False and c0["gate_why"] == "score", c0
+        assert c0["near_usd"] >= 1_000_000 and 1.0 < c0["zone_score"] < 2.0, c0
+        assert pg["min_score"] == 2.0
+        print("✅ bölge) ≤%2'de $1.2M var ama oran 1.2× < 2 → kapı kapalı, sayfada nedeni 'oran'")
+    try:
+        asyncio.run(run())
+    finally:
+        _restore()

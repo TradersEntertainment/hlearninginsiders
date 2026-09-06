@@ -1,12 +1,15 @@
-"""Kripto liq yakını — kapı, tarama, canlılık sondası, marker kuralı, bağlantı,
-mesaj, sembol çözümleme.
+"""Kripto liq yakını — kapı, kademeler, canlılık sondası, kapanış teyidi, marker
+kuralı, bağlantı, mesaj, sembol çözümleme.
 
 Pinlenenler:
   • kapı: ≥ min_usd, ≤ dist_pct, yönü doğru; BTC/ETH ve HIP-3 ('xyz:') girmez
-  • coin başına TEK mesaj; bekleme pozisyon başına (yeni pozisyon → yeni mesaj,
-    eskiler "daha önce bildirildi" diye anılır)
-  • mesajdan önce sonda: kapanmış pozisyon düşer, açık olan "doğrulandı" yazar
-  • marker YALNIZ gönderim başarılıysa; chat/bot/tip yoksa sonda da gönderim de yok
+  • coin başına TEK mesaj; bekleme pozisyon başına ve yalnız 1. kademe için
+  • kademeler: ≤%2,5 💥 → ≤%1 🔥 (bekleme içinde de) → ≤%0,5 🚨 → yok olunca
+    💀 likide (fill'de liquidation) ya da 🏁 kapandı; %3,75'e uzaklaşınca sıfırlanır
+  • izlenen pozisyon $500K altına küçülse de takipte kalır (histerezis)
+  • sonda: yükselme adayı + kademe ≥2 her tur, kademe 1 on dakikada bir
+  • marker/kademe YALNIZ gönderim başarılıysa; chat/bot/tip yoksa sonda da yok
+  • metnin peşinden resim (mum + liq çizgisi); resim düşerse metin gitmiştir
   • ana dex özeti kv'den, tazeyse istek yok; resolve_coin hisse > kripto, kPEPE
 """
 import asyncio
@@ -51,7 +54,11 @@ def test_near_liq():
     assert abs(out["PUMP"][0]["dist"] - 1.8) < 1e-9 and out["PUMP"][0]["mark"] == MARK["PUMP"]
     assert abs(out["HYPE"][0]["dist"] - 2.5) < 1e-9
     assert cl.near_liq(rows, {}, 2.5, 500_000) == {}, "fiyat yoksa aday yok"
-    print("✅ kapı) eşik/mesafe/yön sağlaması; BTC/ETH, HIP-3 ve tutarsız satır dışarıda")
+    assert cl.needed_stage(2.6, 2.5, 1.0, 0.5) == 0 and cl.needed_stage(2.5, 2.5, 1.0, 0.5) == 1
+    assert cl.needed_stage(1.0, 2.5, 1.0, 0.5) == 2 and cl.needed_stage(0.5, 2.5, 1.0, 0.5) == 3
+    c = Config(); c.crypto_liq_dist2_pct = 3.0            # yanlış ayar: d2 > d1 kırpılır
+    assert cl.stage_dists(c) == (2.5, 2.5, 0.5)
+    print("✅ kapı) eşik/mesafe/yön sağlaması; BTC/ETH, HIP-3 ve tutarsız satır dışarıda; kademe sınırları")
 
 
 # ------------------------------------------------ 2) ana dex özeti ayrıştırma
@@ -71,11 +78,13 @@ def test_parse_ctx():
 # ------------------------------------------------ 3) tarama fikstürü
 class Client:
     """Sahte HL: meta_and_ctxs sayılır (kv tazeyken ÇAĞRILMAMALI); clearinghouse_all
-    adres başına yanıt — `closed` kümesindeki adres artık pozisyon tutmuyor."""
+    adres başına yanıt — `closed` kümesindeki adres artık pozisyon tutmuyor;
+    `fills` adres → userFillsByTime yanıtı; `candles` 30dk mum listesi."""
 
-    def __init__(self, positions, closed=()):
-        self.positions, self.closed = positions, set(closed)
-        self.ctx_calls, self.probes = 0, []
+    def __init__(self, positions, closed=(), fills=None, candles=None, fills_err=False):
+        self.positions, self.closed = list(positions), set(closed)
+        self.fills, self.candles_raw, self.fills_err = fills or {}, candles, fills_err
+        self.ctx_calls, self.probes, self.fill_calls, self.candle_calls = 0, [], [], 0
 
     async def meta_and_ctxs(self, dex=""):
         self.ctx_calls += 1
@@ -95,15 +104,43 @@ class Client:
         return {"main": {"assetPositions": aps, "marginSummary": {"accountValue": "1000000"}},
                 "xyz": {"assetPositions": []}}
 
+    async def user_fills_by_time(self, addr, start_ms, end_ms=None):
+        self.fill_calls.append(addr)
+        if self.fills_err:
+            raise RuntimeError("HL 500")
+        return self.fills.get(addr, [])
+
+    async def candles(self, coin, interval, start_ms, end_ms):
+        self.candle_calls += 1
+        if self.candles_raw is None:
+            raise RuntimeError("mum yok")
+        return self.candles_raw
+
 
 class Bot:
     def __init__(self, ok=True):
-        self.ok, self.sent = ok, []
+        self.ok, self.sent, self.photos = ok, [], []
 
     async def send(self, text, chat_id=None):
         if self.ok:
             self.sent.append((chat_id, text))
         return self.ok
+
+    async def send_photo(self, png, caption="", chat_id=None):
+        self.photos.append((chat_id, caption, len(png)))
+        return True
+
+
+def synth_candles(mark, n=96):
+    """HL candleSnapshot biçiminde (ms damgalı, string) sentetik 30dk mumlar."""
+    t0 = (dbm.now() - n * 1800) * 1000
+    out, px = [], mark * 0.98
+    for i in range(n):
+        o = px
+        px = px * (1 + (0.0004 if i % 3 else -0.0005))
+        out.append({"t": t0 + i * 1800 * 1000, "o": str(o), "h": str(max(o, px) * 1.001),
+                    "l": str(min(o, px) * 0.999), "c": str(px), "v": "1"})
+    return out
 
 
 async def _seed(rows):
@@ -120,8 +157,19 @@ async def _seed(rows):
             if p.get("entity"):
                 await c.execute("INSERT OR REPLACE INTO addresses(address,first_seen,entity)"
                                 " VALUES(?,?,?)", (p["address"], p["ts"], p["entity"]))
+    await set_marks(MARK)
+
+
+async def set_marks(marks):
     await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {k: {"m": v, "oi": 1, "f": 0, "v": 1, "p": None}
-                                             for k, v in MARK.items()}, "ts": dbm.now()})
+                                             for k, v in marks.items()}, "ts": dbm.now()})
+
+
+async def watch_row(coin, addr):
+    async with dbm.db() as c:
+        cur = await c.execute("SELECT * FROM cryptoliq_watch WHERE coin=? AND address=?", (coin, addr))
+        r = await cur.fetchone()
+        return dict(r) if r else None
 
 
 def _cfg(chat="-100"):
@@ -129,6 +177,8 @@ def _cfg(chat="-100"):
     cfg.crypto_chat_id = chat
     cfg.crypto_liq_min_usd = 500_000
     cfg.crypto_liq_dist_pct = 2.5
+    cfg.crypto_liq_dist2_pct = 1.0
+    cfg.crypto_liq_dist3_pct = 0.5
     cfg.crypto_liq_cooldown = 3600
     return cfg
 
@@ -144,8 +194,8 @@ def test_scan_flow():
                 row("SOL", B, "long", 800_000, 9.0)]       # uzak
         await _seed(rows)
         cfg = _cfg()
-        cli = Client(rows, closed={C})
-        # (a) gönderim BAŞARISIZ → marker yok, failed=1, sonraki tur yeniden dener
+        cli = Client(rows, closed={C}, candles=synth_candles(MARK["PUMP"]))
+        # (a) gönderim BAŞARISIZ → marker/kademe yok, failed=1, sonraki tur yeniden dener
         bad = Bot(False)
         out = await cl.scan(cfg, cli, Notifier(cfg, bad))
         assert cli.ctx_calls == 0, "kv tazeyken istek atılmamalı"
@@ -157,21 +207,25 @@ def test_scan_flow():
             assert (await cur.fetchone())["n"] == 0, "başarısız gönderim marker yazdı"
             cur = await c.execute("SELECT closed_ts FROM addr_positions WHERE address=? AND coin='PUMP'", (C,))
             assert (await cur.fetchone())["closed_ts"], "sonda kapanışı damgalamalı"
-        # (b) başarılı → coin başına TEK mesaj, 2 pozisyon, doğrulandı notu, vault etiketi
+        assert (await watch_row("PUMP", A) or {}).get("stage", 0) == 0, "başarısız gönderim kademe ilerletti"
+        # (b) başarılı → coin başına TEK mesaj, 2 pozisyon, doğrulandı, vault etiketi, PROPR YOK, resim
         good = Bot(True)
-        cli2 = Client(rows, closed={C})
+        cli2 = Client(rows, closed={C}, candles=synth_candles(MARK["PUMP"]))
         out2 = await cl.scan(cfg, cli2, Notifier(cfg, good))
         assert out2["alerted"] == 1 and len(good.sent) == 1, out2
         chat, text = good.sent[0]
-        assert chat == "-100" and "PUMP" in text and "2 pozisyon" in text and "$1.9M" in text
-        assert "$1.2M" in text and "%1.8 altta" in text and "%2.3 üstte" in text
-        assert "🏦VAULT" in text and "doğrulandı" in text and "BTC" not in text
+        assert chat == "-100" and text.startswith("💥 <b>PUMP</b>") and "2 pozisyon" in text and "$1.9M" in text
+        assert "$1.2M" in text and "%1.80 altta" in text and "%2.30 üstte" in text
+        assert "🏦VAULT" in text and "doğrulandı" in text and "BTC" not in text and "PROPR" not in text
         assert "SATIŞ</b> ~$1.2M" in text and "ALIŞ</b> ~$700K" in text
-        # (c) aynı tur tekrar → bekleme: mesaj yok, sonda yok
+        assert out2["photos"] == 1 and len(good.photos) == 1 and good.photos[0][2] > 1000, good.photos
+        assert "kaldı" in good.photos[0][1] and cli2.candle_calls == 1
+        assert (await watch_row("PUMP", A))["stage"] == 1 and (await watch_row("PUMP", B))["stage"] == 1
+        # (c) aynı tur tekrar → bekleme: mesaj yok; kademe 1 izlenenler 10 dk sondalanmaz
         cli3 = Client(rows, closed={C})
         out3 = await cl.scan(cfg, cli3, Notifier(cfg, good))
         assert out3["fresh"] == 0 and out3["alerted"] == 0 and cli3.probes == [], out3
-        assert len(good.sent) == 1
+        assert out3["tracked"] == 2 and len(good.sent) == 1
         # (d) YENİ pozisyon eşiğe girince mesaj gider; eskiler "daha önce bildirildi"
         new = row("PUMP", D, "short", 650_000, 1.2)
         async with dbm.db() as c:
@@ -182,15 +236,131 @@ def test_scan_flow():
         assert out4["alerted"] == 1 and len(good.sent) == 2 and cli4.probes == [D], out4
         t4 = good.sent[1][1]
         assert "1 pozisyon" in t4 and "$650K" in t4 and "ayrıca 2 pozisyon daha eşikte" in t4, t4
-        # stats kv'de, /tani okur
+        assert out4["photos"] == 0, "mum çekilemeyince resim yok, metin gitti"
         st = await dbm.kv_get("cryptoliq_stats")
         assert st and st["alerted"] == 1 and st["chat"] is True and st["top"][0]["coin"] == "PUMP"
-        print("✅ tarama) başarısız gönderim marker yazmadı; coin başına tek mesaj; kapanmış"
-              " aday sondada düştü; bekleme pozisyon başına, yeni pozisyon yeni mesaj")
+        print("✅ tarama) başarısız gönderim marker/kademe yazmadı; coin başına tek mesaj + resim;"
+              " kapanmış aday sondada düştü; bekleme pozisyon başına, yeni pozisyon yeni mesaj")
     asyncio.run(run())
 
 
-# ------------------------------------------------ 4) kapı kapalıysa sonda da yok
+# ------------------------------------------------ 4) kademeler: 💥 → 🔥 → 🚨 → 💀
+def test_stages_and_liquidation():
+    async def run():
+        from app.notify import Notifier
+        a = row("PUMP", A, "long", 1_200_000, 1.8)
+        await _seed([a])
+        cfg = _cfg(); bot = Bot(); nt = Notifier(cfg, bot)
+        cli = Client([a])
+        await cl.scan(cfg, cli, nt)
+        assert len(bot.sent) == 1 and bot.sent[0][1].startswith("💥"), bot.sent
+        # fiyat liq'e yaklaşır: %0,9 → bekleme içinde de 2. uyarı, her tur sondalanır
+        m2 = a["liq_px"] / (1 - 0.9 / 100)
+        await set_marks({**MARK, "PUMP": m2})
+        cli2 = Client([a])
+        out2 = await cl.scan(cfg, cli2, nt)
+        assert out2["stage2"] == 1 and len(bot.sent) == 2 and cli2.probes == [A], (out2, cli2.probes)
+        t2 = bot.sent[1][1]
+        assert t2.startswith("🔥 <b>PUMP</b>") and "2. uyarı" in t2 and "≤%1" in t2 and "%0.90 altta" in t2, t2
+        assert (await watch_row("PUMP", A))["stage"] == 2
+        cli2b = Client([a])
+        out2b = await cl.scan(cfg, cli2b, nt)
+        assert out2b["alerted"] == 0 and cli2b.probes == [A], "kademe 2 her tur sondalanır, mesaj tekrar etmez"
+        # %0,4 → SON UYARI
+        m3 = a["liq_px"] / (1 - 0.4 / 100)
+        await set_marks({**MARK, "PUMP": m3})
+        out3 = await cl.scan(cfg, Client([a]), nt)
+        assert out3["stage3"] == 1 and len(bot.sent) == 3 and bot.sent[2][1].startswith("🚨"), out3
+        assert "SON UYARI" in bot.sent[2][1] and "≤%0.5" in bot.sent[2][1]
+        assert (await watch_row("PUMP", A))["stage"] == 3
+        # pozisyon yok oldu, fill'de likidasyon kaydı → 💀 LİKİDE OLDU (gerçekleşen fiyat)
+        fills = {A: [{"coin": "PUMP", "px": str(a["liq_px"]), "sz": "1", "side": "A", "time": dbm.now() * 1000,
+                      "dir": "Liquidated Cross Long", "liquidation": {"liquidatedUser": A, "markPx": "1", "method": "market"}}]}
+        cli4 = Client([a], closed={A}, fills=fills)
+        out4 = await cl.scan(cfg, cli4, nt)
+        assert out4["closed"] == 1 and out4["closed_liq"] == 1 and out4["close_notes"] == 1, out4
+        assert cli4.fill_calls == [A] and len(bot.sent) == 4
+        t4 = bot.sent[3][1]
+        assert t4.startswith("💀 <b>PUMP</b>") and "LİKİDE OLDU" in t4 and "gerçekleşen" in t4, t4
+        assert "SATIŞ</b> piyasaya çarptı" in t4 and "son mesafe %0.40" in t4
+        w = await watch_row("PUMP", A)
+        assert w["closed_kind"] == "liq" and w["notified_ts"] and w["closed_px"], w
+        # bir sonraki tur: tekrar yok, sonda yok
+        cli5 = Client([a], closed={A}, fills=fills)
+        out5 = await cl.scan(cfg, cli5, nt)
+        assert out5["closed"] == 0 and out5["close_notes"] == 0 and len(bot.sent) == 4 and cli5.probes == []
+        print("✅ kademe) 💥 → bekleme içinde 🔥 (2. uyarı) → 🚨 (son) → 💀 likide (fill teyidi, gerçekleşen fiyat); tekrar yok")
+    asyncio.run(run())
+
+
+# ------------------------------------------------ 5) sıfırlama + histerezis + kapanış türleri
+def test_reset_hysteresis_close_kinds():
+    async def run():
+        from app.notify import Notifier
+        a = row("PUMP", A, "long", 1_200_000, 1.8)
+        await _seed([a])
+        cfg = _cfg(); bot = Bot(); nt = Notifier(cfg, bot)
+        await cl.scan(cfg, Client([a]), nt)
+        assert len(bot.sent) == 1
+        # %4'e uzaklaştı → kademe sıfır, mesaj yok; %2'ye dönüş bekleme içinde sessiz
+        await set_marks({**MARK, "PUMP": a["liq_px"] / (1 - 4.0 / 100)})
+        out = await cl.scan(cfg, Client([a]), nt)
+        assert out["resets"] == 1 and (await watch_row("PUMP", A))["stage"] == 0 and len(bot.sent) == 1, out
+        await set_marks({**MARK, "PUMP": a["liq_px"] / (1 - 2.0 / 100)})
+        out = await cl.scan(cfg, Client([a]), nt)
+        assert out["alerted"] == 0 and len(bot.sent) == 1, "bekleme içinde 1. kademe tekrar etmemeli"
+        assert (await watch_row("PUMP", A))["stage"] == 1, "marker varken sessizce takibe alınır"
+        # bekleme bitti (marker silindi) ve sıfırdan geliyorsa → yeniden 💥
+        async with dbm.db() as c:
+            await c.execute("DELETE FROM alerts_log WHERE kind='cryptoliq'")
+            await c.execute("UPDATE cryptoliq_watch SET stage=0")
+        out = await cl.scan(cfg, Client([a]), nt)
+        assert out["alerted"] == 1 and len(bot.sent) == 2 and bot.sent[1][1].startswith("💥"), out
+        # histerezis: kademe 2'ye çıkar, sonra $400K'ya küçülür → izlenmeye devam, %0,4'te SON UYARI
+        await set_marks({**MARK, "PUMP": a["liq_px"] / (1 - 0.9 / 100)})
+        out = await cl.scan(cfg, Client([a]), nt)
+        assert out["stage2"] == 1 and len(bot.sent) == 3
+        small = {**a, "notional": 400_000.0}
+        async with dbm.db() as c:
+            await c.execute("UPDATE addr_positions SET notional=400000 WHERE address=? AND coin='PUMP'", (A,))
+        await set_marks({**MARK, "PUMP": a["liq_px"] / (1 - 0.4 / 100)})
+        out = await cl.scan(cfg, Client([small]), nt)
+        assert out["stage3"] == 1 and len(bot.sent) == 4 and "$400K" in bot.sent[3][1], out
+        # kapanış, likidasyon kaydı yok → 🏁 kapatıldı; fill isteği düşerse → doğrulanamadı
+        fills = {A: [{"coin": "PUMP", "px": "0.0032", "sz": "1", "side": "A", "time": dbm.now() * 1000, "dir": "Close Long"}]}
+        out = await cl.scan(cfg, Client([small], closed={A}, fills=fills), nt)
+        assert out["closed"] == 1 and out["closed_liq"] == 0 and len(bot.sent) == 5, out
+        assert bot.sent[4][1].startswith("🏁") and "likidasyon kaydı yok" in bot.sent[4][1], bot.sent[4][1]
+        # yeniden açılış (aynı adres, yeni pozisyon) → yeni satır, yeni 💥; kapanışta fill hatası → doğrulanamadı
+        async with dbm.db() as c:
+            await c.execute("DELETE FROM alerts_log WHERE kind='cryptoliq'")
+            await c.execute("UPDATE addr_positions SET closed_ts=NULL, notional=900000 WHERE address=? AND coin='PUMP'", (A,))
+        await set_marks({**MARK, "PUMP": a["liq_px"] / (1 - 1.5 / 100)})
+        out = await cl.scan(cfg, Client([{**a, "notional": 900_000.0}]), nt)
+        assert out["alerted"] == 1 and (await watch_row("PUMP", A))["stage"] == 1 and (await watch_row("PUMP", A))["closed_ts"] is None
+        # kademe 1 on dakikada bir sondalanır: bu tur sonda yok, kapanış görülmez
+        cli = Client([a], closed={A}, fills_err=True)
+        out = await cl.scan(cfg, cli, nt)
+        assert out["closed"] == 0 and cli.probes == [], out
+        # …ama süpürme damgalamışsa sonda gerekmez: satır kapalı → kapanış, fill hatası → doğrulanamadı
+        async with dbm.db() as c:
+            await c.execute("UPDATE addr_positions SET closed_ts=? WHERE address=? AND coin='PUMP'", (dbm.now(), A))
+        cli = Client([a], closed={A}, fills_err=True)
+        out = await cl.scan(cfg, cli, nt)
+        assert out["closed"] == 1 and cli.probes == [] and "doğrulanamadı" in bot.sent[-1][1], (out, bot.sent[-1][1])
+        # kapanış notu kapalıysa sessiz ama notified_ts dolar
+        cfg.crypto_liq_notify_close = False
+        async with dbm.db() as c:
+            await c.execute("UPDATE cryptoliq_watch SET notified_ts=NULL")
+        n = len(bot.sent)
+        out = await cl.scan(cfg, Client([a], closed={A}), nt)
+        assert len(bot.sent) == n and (await watch_row("PUMP", A))["notified_ts"], "kapalıyken sessizce işaretlenir"
+        print("✅ sıfırlama/histerezis) %3,75+ uzaklaşınca sıfır, bekleme içinde sessiz; küçülen izlenen"
+              " pozisyon SON UYARI alır; kapanış türleri: kaydı yok / doğrulanamadı / kapalı=sessiz")
+    asyncio.run(run())
+
+
+# ------------------------------------------------ 6) kapı kapalıysa sonda da yok
 def test_send_gate():
     async def run():
         from app.notify import Notifier
@@ -210,49 +380,65 @@ def test_send_gate():
         cfg = _cfg(); cfg.crypto_liq_enabled = False
         out = await cl.scan(cfg, Client(rows), Notifier(cfg, Bot()))
         assert out["skipped"] == "kapalı"
-        # kv bayatsa ve kapı açıksa fiyat İSTENİR (tek istek)
+        # kv bayatsa ve kapı açıksa fiyat İSTENİR (tek istek); grafik kapalıysa resim yok
         await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": 1}}, "ts": dbm.now() - 3600})
-        cfg = _cfg(); cli = Client(rows)
-        out = await cl.scan(cfg, cli, Notifier(cfg, Bot()))
-        assert cli.ctx_calls == 1 and out["alerted"] == 1, out
-        print("✅ kapı) chat/bot/tip yokken hesap var, sonda ve gönderim yok; kv bayatsa tek fiyat isteği")
+        cfg = _cfg(); cfg.crypto_liq_chart = False
+        cli = Client(rows, candles=synth_candles(MARK["PUMP"])); bot = Bot()
+        out = await cl.scan(cfg, cli, Notifier(cfg, bot))
+        assert cli.ctx_calls == 1 and out["alerted"] == 1 and out["photos"] == 0 and cli.candle_calls == 0, out
+        print("✅ kapı) chat/bot/tip yokken hesap var, sonda ve gönderim yok; kv bayatsa tek fiyat isteği; grafik ayarı")
     asyncio.run(run())
 
 
-# ------------------------------------------------ 5) bağlantı
+# ------------------------------------------------ 7) bağlantı
 def test_wiring():
     from app.config import EDITABLE_FIELDS
     c = Config()
     for f in ("crypto_liq_enabled", "crypto_liq_min_usd", "crypto_liq_dist_pct",
-              "crypto_liq_poll_sec", "crypto_liq_cooldown", "notify_cryptoliq"):
+              "crypto_liq_dist2_pct", "crypto_liq_dist3_pct", "crypto_liq_notify_close",
+              "crypto_liq_chart", "crypto_liq_poll_sec", "crypto_liq_cooldown", "notify_cryptoliq"):
         assert f in EDITABLE_FIELDS and hasattr(c, f), f
         assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
     assert "crypto_chat_id" not in EDITABLE_FIELDS, "chat id env-only kalmalı"
     assert c.crypto_liq_min_usd == 500_000 and c.crypto_liq_dist_pct == 2.5 and c.notify_cryptoliq is True
+    assert c.crypto_liq_dist2_pct == 1.0 and c.crypto_liq_dist3_pct == 0.5
     from app.health import limits, periods
     assert "cryptoliq" in limits(c) and "cryptoliq" in periods(c)
     from app.notify import KINDS
     assert KINDS["cryptoliq"][0] == "notify_cryptoliq" and KINDS["cryptoliq"][2] == "high"
-    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "app", "main.py"), encoding="utf-8").read()
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "app", "main.py"), encoding="utf-8").read()
     assert '_spawn("cryptoliq"' in src
-    print("✅ bağlantı) 6 ayar künyeli, chat id env-only, bekçi/tip/döngü kayıtlı")
+    assert "cryptoliq_watch" in open(os.path.join(root, "app", "db.py"), encoding="utf-8").read()
+    assert "pillow" in open(os.path.join(root, "requirements.txt"), encoding="utf-8").read()
+    for fn in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"):
+        assert os.path.exists(os.path.join(root, "app", "web", "static", "fonts", fn)), fn
+    print("✅ bağlantı) 10 ayar künyeli, chat id env-only, bekçi/tip/döngü kayıtlı, tablo/font/pillow yerinde")
 
 
-# ------------------------------------------------ 6) mesaj: doğrulanmamış satır yaşını yazar, PROPR notu
-def test_format():
+# ------------------------------------------------ 8) mesaj + grafik
+def test_format_and_chart():
     from app.telegram import format as fmt
     fresh = [{**row("PUMP", A, "long", 1_200_000, 1.8, ts=dbm.now() - 47 * 60), "dist": 1.8}]
     t = fmt.crypto_liq_alert("PUMP", 0.0032, fresh, [], 2.5)
     assert "ölçüm 47dk önce" in t and "doğrulandı" not in t, t
-    assert "PROPR'da listeli" in t, "PUMP PROPR'da — not yazılmalı"
+    assert "PROPR" not in t, "PROPR satırı kaldırıldı — kanalın coinleri zaten PROPR'da"
     assert "≤%2.5" in t and "1 pozisyon" in t and "yatırım tavsiyesi değildir" in t
-    t2 = fmt.crypto_liq_alert("ZZZZ", 1.0, [{**fresh[0], "verified": True, "coin": "ZZZZ"}], [], 3)
-    assert "PROPR" not in t2 and "doğrulandı" in t2
-    print("✅ mesaj) sondasız satır ölçüm yaşını yazar; PROPR notu yalnız listelide")
+    t3 = fmt.crypto_liq_alert("PUMP", 0.0032, [{**fresh[0], "need": 3, "verified": True}], [], 0.5, stage=3)
+    assert t3.startswith("🚨") and "SON UYARI" in t3 and "🚨 🟢 LONG" in t3 and "doğrulandı" in t3
+    tc = fmt.crypto_liq_closed("PUMP", [{"address": A, "side": "short", "notional": 7e5, "liq_px": 0.0033,
+                                         "last_dist": 0.3, "closed_kind": "liq", "closed_px": 0.00331}])
+    assert "LİKİDE OLDU" in tc and "ALIŞ</b> piyasaya çarptı" in tc and "gerçekleşen 0.0033" in tc, tc
+    from app.radar import liqchart, pricechart
+    cs = pricechart.parse_candles(synth_candles(0.0032))
+    png = liqchart.render("PUMP", cs, 0.0032, [{"px": 0.0032 * (1 - 0.018), "side": "long", "notional": 1.2e6,
+                                               "dist": 1.8, "main": True}])
+    assert png and png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 5000, "PNG üretilmedi"
+    assert liqchart.render("PUMP", cs[:2], 0.0032, []) is None, "mum/seviye yoksa None"
+    print("✅ mesaj/grafik) kademe başlıkları, PROPR yok, kapanış metni; PNG üretiliyor, yetersiz veride None")
 
 
-# ------------------------------------------------ 7) sembol çözümleme
+# ------------------------------------------------ 9) sembol çözümleme
 def test_resolve():
     async def run():
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "rs.db"))
@@ -277,8 +463,10 @@ def test_resolve():
 test_near_liq()
 test_parse_ctx()
 test_scan_flow()
+test_stages_and_liquidation()
+test_reset_hysteresis_close_kinds()
 test_send_gate()
 test_wiring()
-test_format()
+test_format_and_chart()
 test_resolve()
 print("\n✅ KRİPTO LIQ TESTLERİ GEÇTİ")

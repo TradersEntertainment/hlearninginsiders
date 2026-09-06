@@ -616,29 +616,47 @@ def what_happened(b: dict | None) -> list[str]:
 
 
 def liq_attack_alert(s: dict, wk: tuple | None = None) -> str:
-    """Hafta sonu liq attack adayı: hedef küme, itme maliyeti, oran."""
+    """Hafta sonu liq attack adayı: hedef küme, itme maliyeti, oran.
+
+    Bölge adayı (`zone_*`, ≤alert_dist) varsa mesaj ONU anlatır — kullanıcı
+    "%2 yakınında $1M yoksa atma" dedi; kapı açıldığında %4'lük d* hedefini
+    yazmak "%4 bildirimi" gibi okunuyordu. Geniş aday (d*) tek bağlam satırı.
+    """
     sym = (s.get("symbol") or (s.get("coin") or "").split(":")[-1])
     down = s.get("direction") == "down"
     arrow = "↓" if down else "↑"
     who = "long" if down else "short"
+    zone = s.get("zone_dist") is not None
+    dist = s["zone_dist"] if zone else s.get("dist_pct", 0)
+    cost = s["zone_cost"] if zone else s.get("cost_usd")
+    liq = s["zone_liq"] if zone else s.get("liq_usd")
+    score = s["zone_score"] if zone else s.get("score", 0)
+    thin = s.get("zone_thin") if zone else s.get("book_thin")
+    target_px = s.get("zone_px") if zone else s.get("target_px")
+    targets = (s.get("zone_targets") if zone else s.get("targets")) or []
     lines = [
         f"🎯 <b>LIQ ATTACK ADAYI</b> — <b>{esc(sym)}</b> {arrow}",
-        f"Fiyatı <b>%{s.get('dist_pct', 0):.2f} {'aşağı' if down else 'yukarı'}</b> "
-        f"itmek ≈ <b>{usd(s.get('cost_usd'))}</b> defter yer; karşılığında "
-        f"<b>{usd(s.get('liq_usd'))}</b> {who} patlar "
-        f"(oran <b>{s.get('score', 0):.1f}×</b>)",
+        f"Fiyatı <b>%{dist:.2f} {'aşağı' if down else 'yukarı'}</b> "
+        f"itmek ≈ <b>{usd(cost)}</b> defter yer; karşılığında "
+        f"<b>{usd(liq)}</b> {who} patlar "
+        f"(oran <b>{(score or 0):.1f}×</b>)",
     ]
-    if s.get("book_thin"):
+    if thin:
         lines.append("🕳 <b>Görünen defter hedefe varmadan bitiyor</b> — itmek "
                      "bundan da ucuz olabilir")
-    if s.get("near_usd") is not None:
+    if zone:
+        lines.append(f"🔔 kapı: ≤%{s.get('alert_dist', 2):g} içinde <b>{usd(liq)}</b> liq"
+                     f" · oran {score:.1f}× ≥ {s.get('min_score', 2):g}")
+        if abs(float(s.get("dist_pct") or 0) - float(dist)) > 1e-9:
+            lines.append(f"<i>daha geniş bakınca: %{s.get('dist_pct', 0):.2f}'e kadar "
+                         f"{usd(s.get('liq_usd'))} liq, oran {s.get('score', 0):.1f}×</i>")
+    elif s.get("near_usd") is not None:
         lines.append(f"🔔 fiyatın ≤%{s.get('alert_dist', 2):g} yakınında "
                      f"<b>{usd(s['near_usd'])}</b> liq — bildirim kapısı bu")
-    tg = s.get("targets") or []
-    if tg:
+    if targets:
         lines.append("hedef: " + " · ".join(
-            f"{alink(t['address'])} {usd(t['notional'])} @ {px(t['liq_px'])}" for t in tg))
-    ctx = [f"şimdi {px(s.get('mark'))} → hedef {px(s.get('target_px'))}"]
+            f"{alink(t['address'])} {usd(t['notional'])} @ {px(t['liq_px'])}" for t in targets))
+    ctx = [f"şimdi {px(s.get('mark'))} → hedef {px(target_px)}"]
     if s.get("dev_close") is not None:
         ctx.append(f"Cuma kapanışından %{s['dev_close']:+.2f}")
     if wk:
@@ -651,25 +669,34 @@ def liq_attack_alert(s: dict, wk: tuple | None = None) -> str:
     return "\n".join(lines)
 
 
+CRYPTO_LIQ_STAGE = {1: ("💥", ""), 2: ("🔥", " · 2. uyarı"), 3: ("🚨", " · SON UYARI")}
+
+
 def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
-                     old: list[dict], dist_pct: float, list_max: int = 6) -> str:
+                     old: list[dict], dist_pct: float, stage: int = 1,
+                     list_max: int = 6) -> str:
     """Kripto liq yakını — coin başına TEK mesaj, pozisyonlar yakından uzağa.
 
-    `fresh`: bu mesajla ilk kez bildirilenler (`dist`, `mark`, opsiyonel
-    `verified`/`entity`/`ts`); `old`: eşikte ama daha önce bildirilmiş olanlar
-    (yalnız sayı+toplam). Sonda ile doğrulanmamış satır varsa ölçümün yaşı
-    yazılır — süpürme 75-125 dk'da bir uğruyor, yaşını saklamak yanıltır.
+    `stage` 1/2/3 = ≤%2,5 / ≤%1 / ≤%0,5 kademesi (başlık ve satır işareti);
+    `dist_pct` o kademenin eşiği. `fresh`: bu mesajla bildirilenler (`dist`,
+    `mark`, opsiyonel `need`/`verified`/`entity`/`ts`); `old`: eşikte ama daha
+    önce bildirilmiş olanlar (yalnız sayı+toplam). Sonda ile doğrulanmamış
+    satır varsa ölçümün yaşı yazılır — süpürme 75-125 dk'da bir uğruyor.
+    PROPR notu yok: bu kanalın coinleri zaten PROPR'da (kullanıcı isteği).
     """
     sym = esc((coin or "").split(":")[-1])
     total = sum(p["notional"] for p in fresh)
-    lines = [f"💥 <b>{sym}</b> — likidasyona ≤%{dist_pct:g} · {len(fresh)} pozisyon"
-             f" · <b>{usd(total)}</b>"]
+    icon, tail = CRYPTO_LIQ_STAGE.get(int(stage or 1), CRYPTO_LIQ_STAGE[1])
+    lines = [f"{icon} <b>{sym}</b> — likidasyona ≤%{dist_pct:g}{tail}"
+             f" · {len(fresh)} pozisyon · <b>{usd(total)}</b>"]
     for p in fresh[:list_max]:
         is_long = p.get("side") == "long"
         lev = f" · {float(p['leverage']):g}x" if p.get("leverage") else ""
         ent = {"mm": " 🤖MM", "vault": " 🏦VAULT"}.get(p.get("entity") or "", "")
-        lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
-                     f" · liq {px(p['liq_px'])} (%{p['dist']:.1f} {'altta' if is_long else 'üstte'})"
+        st = int(p.get("need") or stage or 1)
+        pre = (CRYPTO_LIQ_STAGE[st][0] + " ") if st >= 2 else ""
+        lines.append(f"{pre}{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
+                     f" · liq {px(p['liq_px'])} (%{p['dist']:.2f} {'altta' if is_long else 'üstte'})"
                      f"{lev} · 👤 {alink(p['address'])}{ent}")
     if len(fresh) > list_max:
         rest = fresh[list_max:]
@@ -695,8 +722,44 @@ def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
         ctx.append(f"ölçüm {age_str(oldest)} önce (son süpürme; sonda alınamadı)")
     ctx.append("havuzdaki adresler — HL'nin tamamı değil")
     lines.append("<i>" + " · ".join(ctx) + "</i>")
-    if is_listed(sym):
-        lines.append(PROPR_NOTE)
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
+def crypto_liq_closed(coin: str, rows: list[dict]) -> str:
+    """İzlenen kripto pozisyonu yok oldu: 💀 likide (fill'de likidasyon kaydı),
+    🏁 kapandı (fill var, likidasyon yok), ya da doğrulanamadı. Coin başına
+    tek mesaj, satır başına pozisyon."""
+    sym = esc((coin or "").split(":")[-1])
+    liq = [r for r in rows if r.get("closed_kind") == "liq"]
+    head = (f"💀 <b>{sym}</b> — <b>LİKİDE OLDU</b>" if liq
+            else f"🏁 <b>{sym}</b> — izlenen pozisyon kapandı")
+    if len(rows) > 1:
+        head += f" · {len(rows)} pozisyon"
+    lines = [head]
+    for r in rows:
+        is_long = r.get("side") == "long"
+        tag = "🟢 LONG" if is_long else "🔴 SHORT"
+        kind = r.get("closed_kind")
+        if kind == "liq":
+            done = (f" · gerçekleşen {px(r['closed_px'])}" if r.get("closed_px") else "")
+            what = f"💀 likide oldu{done}"
+        elif kind == "close":
+            what = "🏁 kapatıldı (likidasyon kaydı yok)"
+        else:
+            what = "🏁 kapandı · likidasyon mu kapatma mı doğrulanamadı"
+        lines.append(f"{tag} <b>{usd(r.get('notional'))}</b> · liq {px(r.get('liq_px'))}"
+                     f" · son mesafe %{float(r.get('last_dist') or 0):.2f}"
+                     f" · {what} · 👤 {alink(r['address'])}")
+    sell = sum(float(r.get("notional") or 0) for r in liq if r.get("side") == "long")
+    buy = sum(float(r.get("notional") or 0) for r in liq if r.get("side") == "short")
+    imp = []
+    if sell:
+        imp.append(f"📉 ~{usd(sell)} zorunlu <b>SATIŞ</b> piyasaya çarptı")
+    if buy:
+        imp.append(f"📈 ~{usd(buy)} zorunlu <b>ALIŞ</b> piyasaya çarptı")
+    if imp:
+        lines.append(" · ".join(imp))
     lines.append(DISCLAIMER)
     return "\n".join(lines)
 

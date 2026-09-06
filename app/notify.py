@@ -94,6 +94,24 @@ class Notifier:
             await alert_log(f"sent:{kind}", key or kind, text)
         return ok
 
+    async def send_photo(self, kind: str, png: bytes | None, caption: str = "", *,
+                         chat_id: str = "") -> bool:
+        """Metin mesajının peşinden resim. Aynı tip toggle'ı; sessiz saatte
+        (kanal hedefli değilse) resim atlanır — ertelenmez, çünkü metni
+        zaten sabah özetine bırakıldı. Bot resim bilmiyorsa (eski/sahte) False."""
+        if not self.bot or not png or not kind_enabled(self.cfg, kind):
+            return False
+        fn = getattr(self.bot, "send_photo", None)
+        if fn is None:
+            return False
+        if not chat_id and in_quiet_hours(self.cfg):
+            return False
+        try:
+            return bool(await fn(png, caption, chat_id or None))
+        except Exception as e:
+            log.warning("resim gönderilemedi (%s): %s", kind, e)
+            return False
+
 
 async def pending_digest_items(hours: int = 14) -> list[dict]:
     """Sessiz saatte biriken bildirimler."""

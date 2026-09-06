@@ -1,25 +1,35 @@
 """Kripto liq yakını — "ana dexte büyük bir pozisyon patlamak üzere".
 
 Kullanıcı kuralı: BTC/ETH HARİÇ ana dex kriptoda notional ≥ $500K ve
-likidasyon fiyatı şimdiye ≤ %2,5 → kripto kanalına (CRYPTO_CHAT_ID) mesaj.
+likidasyon fiyatı şimdiye ≤ %2,5 → kripto kanalına (CRYPTO_CHAT_ID) mesaj;
+sonra pozisyon TAKİPTE kalır: ≤%1'de ikinci, ≤%0,5'te son uyarı, yok olunca
+likidasyon/kapanış notu (`liqwatch`'ın kademe mantığı, kripto kanalı için).
 
-KAYNAK `addr_positions`: süpürme her adresin TÜM pozisyonlarını her boyutta
-yazıyor (`hl_positions` yalnız ≥$20M kripto tutar, $500K için kördür). Tur
-75–125 dk; bu yüzden mesaj gitmeden önce adayın defteri CANLI çekilir
+KAYNAK `addr_positions`: derin keşif her adresin TÜM pozisyonlarını her boyutta
+yazar (`hl_positions` yalnız ≥$20M kripto tutar, $500K için kördür). Tur 75–125
+dk; bu yüzden mesaj gitmeden önce adayın defteri CANLI çekilir
 (`sweeper.probe_address`) — bir saat önce kapanmış pozisyon için "patlamak
-üzere" demek yalan olur. Sonda başarısızsa mesaj ölçümün yaşını yazar.
+üzere" demek yalan olur. Takipteki pozisyonlar da sondalanır: kademe ≥2 her
+tur (likidasyon anını kaçırmamak için), kademe 1 on dakikada bir.
 
 MESAJ COİN BAŞINA TEK: bir çöküşte 30 pozisyon aynı anda eşiğe girer, 30 ayrı
-mesaj spam'dir (liq attack dersi). Bekleme POZİSYON başına: aynı pozisyon 4 saat
-yeniden yazılmaz, ama aynı coinde YENİ bir pozisyon eşiğe girerse mesaj gider
-ve eskiler "daha önce bildirildi" diye toplamla anılır.
+mesaj spam'dir. Bekleme POZİSYON başına ve yalnız ilk kademe için: kademe 2/3
+yeni bilgidir, beklemeye bakmaz. Pozisyon ilk mesafenin 1,5 katına uzaklaşırsa
+kademeler sıfırlanır (liqwatch'ın histerezisi); liq'e yaklaşırken değeri
+küçülen pozisyon $500K altına indi diye düşürülmez (izleniyorsa kalır).
+
+KAPANIŞ TEYİDİ: izlenen pozisyon yok olunca adresin son fill'leri çekilir; o
+coinde `liquidation` alanlı (ya da "Liquidated …" yönlü) fill varsa 💀 likide,
+fill var ama likidasyon yoksa 🏁 kapatıldı, istek düşerse "doğrulanamadı".
 
 FİYAT `main_dex_ctx` kv'si: metrik döngüsü 5 dk'da bir (ABD kapalıyken 60 sn)
 yazıyor; bayatsa bu modül kendisi çeker — tek istek, ~200 coin.
 
 Kanal boşsa / bot yoksa / tip kapalıysa hesap yine yapılır (kv `cryptoliq_stats`
 → /tani "neden gelmedi"yi söyler) ama sonda atılmaz, gönderim yapılmaz.
-Marker YALNIZ gönderim başarılıysa yazılır (kapalı seans dersi).
+Marker ve kademe YALNIZ gönderim başarılıysa ilerler (kapalı seans dersi).
+Metnin peşinden resim (mumlar + liq çizgisi + kalan mesafe): bonus, düşerse
+metin zaten gitmiştir.
 """
 import asyncio
 import logging
@@ -29,11 +39,52 @@ from .bigpos import MAJORS
 
 log = logging.getLogger("radar.cryptoliq")
 
-PROBE_MAX = 12        # tur başına canlılık sondası (adres); kalanlar sonraki tura
-LIST_MAX = 6          # mesajda tek tek yazılan pozisyon; fazlası toplamla
+PROBE_MAX = 12                     # tur başına canlılık sondası (adres); kalanlar sonraki tura
+LIST_MAX = 6                       # mesajda tek tek yazılan pozisyon; fazlası toplamla
+RESET_FACTOR = 1.5                 # dist > dist1×1.5 → kademeler sıfırlanır (liqwatch: 1.0→1.5)
+STAGE_PROBE_SEC = {1: 600, 2: 0, 3: 0}   # izlenen pozisyonu yeniden sondalama aralığı
+CLOSE_NOTE_MAX_AGE = 24 * 3600     # bundan eski kapanışa not gitmez (kanal yeni açıldıysa yığılmasın)
+FILLS_LOOKBACK = 48 * 3600         # kapanış teyidi: fill'lere en çok bu kadar geriye bak
+CHART_INTERVAL, CHART_SPAN = "30m", 48 * 3600
+WATCH_KEEP_CLOSED = 7 * 86400
+WATCH_KEEP_IDLE = 3 * 86400
 
 
 # ─────────────────────────────────────────────── saf hesap (test edilir)
+
+def stage_dists(cfg) -> tuple[float, float, float]:
+    """(d1, d2, d3) — tekdüze azalan; yanlış ayar (d2 > d1) sessizce kırpılır."""
+    d1 = float(getattr(cfg, "crypto_liq_dist_pct", 2.5))
+    d2 = min(d1, float(getattr(cfg, "crypto_liq_dist2_pct", 1.0)))
+    d3 = min(d2, float(getattr(cfg, "crypto_liq_dist3_pct", 0.5)))
+    return d1, d2, d3
+
+
+def needed_stage(dist: float, d1: float, d2: float, d3: float) -> int:
+    """Bu mesafede hangi kademe bildirilmiş olmalı (0 = hiçbiri)."""
+    if dist <= d3:
+        return 3
+    if dist <= d2:
+        return 2
+    if dist <= d1:
+        return 1
+    return 0
+
+
+def _dist(p: dict, mark) -> float | None:
+    """Liq'e uzaklık (%), yönü doğruysa; değilse None (ters veri atlanır)."""
+    try:
+        mark = float(mark or 0)
+        liq = float(p.get("liq_px") or 0)
+    except (TypeError, ValueError):
+        return None
+    side = p.get("side")
+    if mark <= 0 or liq <= 0 or side not in ("long", "short"):
+        return None
+    if (side == "long" and liq >= mark) or (side == "short" and liq <= mark):
+        return None
+    return abs(mark - liq) / mark * 100
+
 
 def near_liq(rows: list[dict], marks: dict, dist_pct: float, min_usd: float,
              exclude=MAJORS) -> dict[str, list[dict]]:
@@ -50,21 +101,16 @@ def near_liq(rows: list[dict], marks: dict, dist_pct: float, min_usd: float,
         if not coin or ":" in coin or coin.upper() in exclude:
             continue
         try:
-            mark = float(marks.get(coin) or 0)
-            liq = float(p.get("liq_px") or 0)
             ntl = float(p.get("notional") or 0)
         except (TypeError, ValueError):
             continue
-        side = p.get("side")
-        if mark <= 0 or liq <= 0 or ntl < min_usd or side not in ("long", "short"):
+        if ntl < min_usd:
             continue
-        if (side == "long" and liq >= mark) or (side == "short" and liq <= mark):
+        dist = _dist(p, marks.get(coin))
+        if dist is None or dist > dist_pct:
             continue
-        dist = abs(mark - liq) / mark * 100
-        if dist > dist_pct:
-            continue
-        out.setdefault(coin, []).append({**p, "notional": ntl, "liq_px": liq,
-                                         "dist": dist, "mark": mark})
+        out.setdefault(coin, []).append({**p, "notional": ntl, "liq_px": float(p["liq_px"]),
+                                         "dist": dist, "mark": float(marks[coin])})
     for lst in out.values():
         lst.sort(key=lambda q: q["dist"])
     return out
@@ -72,29 +118,83 @@ def near_liq(rows: list[dict], marks: dict, dist_pct: float, min_usd: float,
 
 # ─────────────────────────────────────────────── veri
 
-async def _rows(min_usd: float) -> list[dict]:
+_COLS = ("a.coin, a.address, a.side, a.notional, a.liq_px, a.leverage, a.entry_px,"
+         " a.ts, a.closed_ts, ad.entity")
+_FROM = "addr_positions a LEFT JOIN addresses ad ON ad.address = a.address"
+
+
+async def _rows(min_usd: float, tracked_addrs: list[str]) -> list[dict]:
+    """Açık ana dex satırları: ≥ min_usd olanlar ∪ izlenen adreslerin hepsi
+    (histerezis: izlenen pozisyon küçüldü diye düşmez; çağıran anahtara bakar)."""
+    q = f"SELECT {_COLS} FROM {_FROM} WHERE a.closed_ts IS NULL AND a.liq_px > 0" \
+        f" AND instr(a.coin, ':') = 0 AND (a.notional >= ?"
+    args: list = [min_usd]
+    if tracked_addrs:
+        q += f" OR a.address IN ({','.join('?' * len(tracked_addrs))})"
+        args += tracked_addrs
+    q += ")"
     async with db() as conn:
-        cur = await conn.execute(
-            """SELECT a.coin, a.address, a.side, a.notional, a.liq_px, a.leverage,
-                      a.entry_px, a.ts, ad.entity
-               FROM addr_positions a LEFT JOIN addresses ad ON ad.address = a.address
-               WHERE a.closed_ts IS NULL AND a.liq_px > 0 AND a.notional >= ?
-                 AND instr(a.coin, ':') = 0""", (min_usd,))
+        cur = await conn.execute(q, tuple(args))
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def _reread(coin: str, addrs: list[str]) -> dict[str, dict]:
-    """Sondadan sonra aynı satırları yeniden oku (kapanmışsa closed_ts dolu)."""
+async def _reread_addrs(addrs: list[str]) -> dict[tuple[str, str], dict]:
+    """Sondadan sonra adreslerin ana dex satırları (kapanmışsa closed_ts dolu)."""
     if not addrs:
         return {}
     q = ",".join("?" * len(addrs))
     async with db() as conn:
         cur = await conn.execute(
-            f"""SELECT a.coin, a.address, a.side, a.notional, a.liq_px, a.leverage,
-                       a.entry_px, a.ts, a.closed_ts, ad.entity
-                FROM addr_positions a LEFT JOIN addresses ad ON ad.address = a.address
-                WHERE a.coin=? AND a.address IN ({q})""", (coin, *addrs))
-        return {r["address"]: dict(r) for r in await cur.fetchall()}
+            f"SELECT {_COLS} FROM {_FROM} WHERE a.address IN ({q}) AND instr(a.coin, ':') = 0",
+            tuple(addrs))
+        return {(r["coin"], r["address"]): dict(r) for r in await cur.fetchall()}
+
+
+async def _watch_open() -> dict[tuple[str, str], dict]:
+    async with db() as conn:
+        cur = await conn.execute("SELECT * FROM cryptoliq_watch WHERE closed_ts IS NULL")
+        return {(r["coin"], r["address"]): dict(r) for r in await cur.fetchall()}
+
+
+async def _watch_upsert(coin: str, addr: str, p: dict, dist: float | None, mark,
+                        stage: int | None = None, probed_ts: int | None = None) -> None:
+    """Görülen pozisyonu yaz: son değerler tazelenir, first_ts korunur; kademe ve
+    sonda damgası yalnız verilirse değişir (yeni satırda sonda damgası da yazılır
+    ki az önce sondalanan pozisyon sonraki tur yeniden sondalanmasın)."""
+    ts = now()
+    async with db() as conn:
+        await conn.execute(
+            """INSERT INTO cryptoliq_watch(coin,address,side,notional,liq_px,entry_px,leverage,
+                 stage,last_dist,last_mark,first_ts,updated_ts,probed_ts)
+               VALUES(?,?,?,?,?,?,?,COALESCE(?,0),?,?,?,?,?)
+               ON CONFLICT(coin,address) DO UPDATE SET
+                 side=excluded.side, notional=excluded.notional, liq_px=excluded.liq_px,
+                 entry_px=excluded.entry_px, leverage=excluded.leverage,
+                 last_dist=excluded.last_dist, last_mark=excluded.last_mark,
+                 updated_ts=excluded.updated_ts,
+                 stage=COALESCE(?, cryptoliq_watch.stage),
+                 probed_ts=COALESCE(?, cryptoliq_watch.probed_ts),
+                 closed_ts=NULL, closed_kind=NULL, closed_px=NULL, notified_ts=NULL""",
+            (coin, addr, p.get("side"), p.get("notional"), p.get("liq_px"), p.get("entry_px"),
+             p.get("leverage"), stage, dist, mark, ts, ts, probed_ts, stage, probed_ts))
+
+
+async def _watch_set(coin: str, addr: str, **fields) -> None:
+    if not fields:
+        return
+    cols = ", ".join(f"{k}=?" for k in fields)
+    async with db() as conn:
+        await conn.execute(f"UPDATE cryptoliq_watch SET {cols} WHERE coin=? AND address=?",
+                           (*fields.values(), coin, addr))
+
+
+async def _watch_prune() -> None:
+    ts = now()
+    async with db() as conn:
+        await conn.execute("DELETE FROM cryptoliq_watch WHERE closed_ts IS NOT NULL AND closed_ts < ?",
+                           (ts - WATCH_KEEP_CLOSED,))
+        await conn.execute("DELETE FROM cryptoliq_watch WHERE closed_ts IS NULL AND stage = 0"
+                           " AND COALESCE(updated_ts, 0) < ?", (ts - WATCH_KEEP_IDLE,))
 
 
 def send_gate(cfg, notifier) -> str:
@@ -109,28 +209,85 @@ def send_gate(cfg, notifier) -> str:
     return ""
 
 
+async def _closure_kind(client, coin: str, addr: str, w: dict) -> tuple[str, float | None]:
+    """'liq' | 'close' | 'unknown', (+ likidasyon fiyatı). Tek istek: adresin
+    son fill'leri; o coinde `liquidation` alanlı ya da 'Liquidated …' yönlü fill
+    varsa likidasyon. Fill yok / istek düştü → doğrulanamadı (uydurulmaz)."""
+    fn = getattr(client, "user_fills_by_time", None)
+    if fn is None:
+        return "unknown", None
+    since = max(int(w.get("first_ts") or 0), now() - FILLS_LOOKBACK)
+    try:
+        fills = await fn(addr, since * 1000)
+    except Exception as e:
+        log.debug("fill sorgusu %s: %s", addr, e)
+        return "unknown", None
+    seen = False
+    for f in fills or []:
+        if not isinstance(f, dict) or (f.get("coin") or "") != coin:
+            continue
+        seen = True
+        if f.get("liquidation") or "liquidat" in str(f.get("dir") or "").lower():
+            try:
+                return "liq", float(f.get("px") or 0) or None
+            except (TypeError, ValueError):
+                return "liq", None
+    return ("close" if seen else "unknown"), None
+
+
+async def _chart(client, coin: str, mark, fresh: list[dict]) -> bytes | None:
+    """Mesajın resmi: son 48 saatin 30 dk mumları + liq çizgileri + kalan mesafe."""
+    fn = getattr(client, "candles", None)
+    if fn is None or not fresh:
+        return None
+    from . import liqchart, pricechart
+    ts = now()
+    try:
+        raw = await fn(coin, CHART_INTERVAL, (ts - CHART_SPAN) * 1000, ts * 1000)
+    except Exception as e:
+        log.debug("grafik mumu alınamadı (%s): %s", coin, e)
+        return None
+    cands = pricechart.parse_candles(raw)
+    levels = [{"px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
+               "dist": p.get("dist"), "main": i == 0}
+              for i, p in enumerate(sorted(fresh, key=lambda q: q.get("dist") or 0)[:4])]
+    return liqchart.render(coin, cands, mark, levels)
+
+
 # ─────────────────────────────────────────────── tarama
 
 async def scan(cfg, client, notifier=None) -> dict:
     out = {"coins": 0, "positions": 0, "candidates": 0, "fresh": 0, "probed": 0,
            "probe_deferred": 0, "probe_err": 0, "dropped_stale": 0, "alerted": 0,
-           "failed": 0, "skipped": "", "chat": False, "top": [], "ctx_age": None}
+           "failed": 0, "skipped": "", "chat": False, "top": [], "ctx_age": None,
+           "tracked": 0, "stage2": 0, "stage3": 0, "resets": 0, "closed": 0,
+           "closed_liq": 0, "close_notes": 0, "photos": 0}
     if not getattr(cfg, "crypto_liq_enabled", True):
         out["skipped"] = "kapalı"
         return await _stats(out)
+    d1, d2, d3 = stage_dists(cfg)
+    thr = {1: d1, 2: d2, 3: d3}
     min_usd = float(getattr(cfg, "crypto_liq_min_usd", 500_000))
-    dist_pct = float(getattr(cfg, "crypto_liq_dist_pct", 2.5))
     cool = max(60, int(getattr(cfg, "crypto_liq_cooldown", 4 * 3600)))
     chat = (getattr(cfg, "crypto_chat_id", "") or "").strip()
     out["chat"] = bool(chat)
     gate = send_gate(cfg, notifier)
     out["skipped"] = gate
+    ts = now()
 
-    rows = await _rows(min_usd)
-    out["positions"] = len(rows)
+    watch = await _watch_open()
+    tracked = {k: w for k, w in watch.items() if int(w.get("stage") or 0) >= 1}
+    out["tracked"] = len(tracked)
+    rows = await _rows(min_usd, sorted({a for _c, a in tracked}))
+    out["positions"] = sum(1 for r in rows if float(r.get("notional") or 0) >= min_usd)
     out["coins"] = len({r["coin"] for r in rows})
-    if not rows:
+    if not rows and not tracked:
+        # Aday yok; bekleyen kapanış notu (süpürme damgaladı, not gitmedi) olabilir.
+        if not gate:
+            await _closure_notes(cfg, notifier, chat, ts, out)
+        await _watch_prune()
         return await _stats(out)
+
     from ..hl.universe import main_dex_ctx
     try:
         # Kapı kapalıysa istek de atma: yalnız kv (metrik döngüsü zaten yazıyor).
@@ -141,77 +298,221 @@ async def scan(cfg, client, notifier=None) -> dict:
         return await _stats(out)
     marks = {c: v.get("m") for c, v in (ctx.get("c") or {}).items()}
     if ctx.get("ts"):
-        out["ctx_age"] = max(0, now() - int(ctx["ts"]))
+        out["ctx_age"] = max(0, ts - int(ctx["ts"]))
 
-    by = near_liq(rows, marks, dist_pct, min_usd)
+    # 1) Adaylar: izlenmeyenler eşikle (near_liq); izlenenler HER boyutta —
+    #    liq'e yaklaşırken değeri küçülen pozisyon düşmez (histerezis). İzlenen
+    #    pozisyon ilk mesafenin 1,5 katına uzaklaşmışsa kademe sıfırlanır.
+    open_rows = {(r["coin"], r["address"]): r for r in rows}
+    by = near_liq([r for k, r in open_rows.items() if k not in tracked], marks, d1, min_usd)
+    for key, w in tracked.items():
+        r = open_rows.get(key)
+        if not r:
+            continue                                   # kapanış adayı (aşağıda)
+        dist = _dist(r, marks.get(key[0]))
+        if dist is None:
+            continue                                   # fiyat yok: dokunma
+        if dist > d1 * RESET_FACTOR:
+            await _watch_set(key[0], key[1], stage=0, last_dist=dist, updated_ts=ts)
+            w["stage"] = 0
+            out["resets"] += 1
+            continue
+        await _watch_upsert(key[0], key[1], r, dist, marks.get(key[0]))
+        if dist <= d1:
+            by.setdefault(key[0], []).append({**r, "notional": float(r.get("notional") or 0),
+                                              "liq_px": float(r["liq_px"]), "dist": dist,
+                                              "mark": float(marks[key[0]])})
+    for lst in by.values():
+        lst.sort(key=lambda q: q["dist"])
     out["candidates"] = sum(len(v) for v in by.values())
     out["top"] = sorted(({"coin": c, "n": len(v), "total": sum(p["notional"] for p in v)}
                          for c, v in by.items()), key=lambda x: -x["total"])[:3]
-    if gate or not by:
-        return await _stats(out)               # hesap yapıldı; sonda ve gönderim yok
 
-    from ..telegram import format as fmt
-    from .sweeper import probe_address
-    ts = now()
-    budget = PROBE_MAX
-    for coin, cands in sorted(by.items(), key=lambda kv: -sum(p["notional"] for p in kv[1])):
-        fresh, old = [], []
+    # 2) Kademe: need > sent → yükselme (kademe 1 beklemeye bakar); need ≤ sent → eski.
+    esc: dict[str, list[dict]] = {}
+    old: dict[str, list[dict]] = {}
+    for coin, cands in by.items():
         for p in cands:
-            (old if await alert_recent("cryptoliq", f"{coin}:{p['address']}", cool)
-             else fresh).append(p)
+            key = (coin, p["address"])
+            w = watch.get(key) or {}
+            sent = int(w.get("stage") or 0)
+            need = needed_stage(p["dist"], d1, d2, d3)
+            p["need"], p["sent"] = need, sent
+            if need > sent:
+                if need == 1 and await alert_recent("cryptoliq", f"{coin}:{p['address']}", cool):
+                    # Daha önce bildirilmiş (marker var) ama izlenmiyor — deploy
+                    # öncesi bildirim ya da sıfırlanıp dönen pozisyon: sessizce
+                    # takibe al, bekleme bitince yeniden söylenir.
+                    await _watch_upsert(coin, p["address"], p, p["dist"], p["mark"], stage=1)
+                    old.setdefault(coin, []).append(p)
+                    continue
+                esc.setdefault(coin, []).append(p)
+            else:
+                await _watch_upsert(coin, p["address"], p, p["dist"], p["mark"])
+                old.setdefault(coin, []).append(p)
+    out["fresh"] = sum(len(v) for v in esc.values())
+    if gate:
+        return await _stats(out)                        # hesap yapıldı; sonda ve gönderim yok
+
+    # 3) Sondalar (bütçe, sırayla): (a) yükselme adayları, (b) izlenen kademe ≥2
+    #    her tur, (c) kademe 1 on dakikada bir. Kalan sonraki tura.
+    from .sweeper import probe_address
+    order: list[str] = []
+    for lst in esc.values():
+        order += [p["address"] for p in lst]
+    due = []
+    for (coin, addr), w in tracked.items():
+        st = int(w.get("stage") or 0)
+        if st < 1:
+            continue
+        if ts - int(w.get("probed_ts") or 0) >= STAGE_PROBE_SEC.get(st, 600):
+            due.append((0 if st >= 2 else 1, int(w.get("probed_ts") or 0), addr))
+    order += [a for _p, _t, a in sorted(due)]
+    todo, seen = [], set()
+    for a in order:
+        if a not in seen:
+            seen.add(a)
+            todo.append(a)
+    out["probe_deferred"] = max(0, len(todo) - PROBE_MAX)
+    probed_ok: set[str] = set()
+    for addr in todo[:PROBE_MAX]:
+        try:
+            await probe_address(cfg, client, addr)
+            probed_ok.add(addr)
+            out["probed"] += 1
+        except Exception as e:
+            out["probe_err"] += 1
+            log.debug("sonda %s: %s", addr, e)
+    if probed_ok:
+        async with db() as conn:
+            await conn.execute(
+                f"UPDATE cryptoliq_watch SET probed_ts=? WHERE address IN ({','.join('?' * len(probed_ok))})",
+                (ts, *probed_ok))
+    live = await _reread_addrs(list(probed_ok))
+
+    # 4) Yükselmeleri canlı satırla doğrula: kapanmış → düşer (izleniyorsa kapanış
+    #    yoluna), uzaklaşmış → düşer; yakınlaşmış → kademe yeniden hesaplanır.
+    closures: dict[tuple[str, str], dict] = {}
+    for coin, lst in list(esc.items()):
+        keep = []
+        for p in lst:
+            key = (coin, p["address"])
+            if p["address"] not in probed_ok:
+                keep.append(p)                     # sonda düştü/ertelendi: eldeki satır, yaşı yazılır
+                continue
+            q = live.get(key)
+            if not q or q.get("closed_ts"):
+                out["dropped_stale"] += 1
+                if key in tracked:
+                    closures[key] = tracked[key]
+                continue
+            dist = _dist(q, marks.get(coin))
+            floor = 0.0 if key in tracked else min_usd
+            if dist is None or float(q.get("notional") or 0) < floor:
+                out["dropped_stale"] += 1
+                continue
+            need = needed_stage(dist, d1, d2, d3)
+            if need <= p["sent"]:
+                out["dropped_stale"] += 1          # arada uzaklaşmış
+                continue
+            keep.append({**p, **q, "notional": float(q.get("notional") or 0),
+                         "liq_px": float(q["liq_px"]), "dist": dist, "need": need,
+                         "verified": True})
+        esc[coin] = keep
+
+    # 5) İzlenen pozisyon yok olduysa kapanış: sondalanıp kapanmış ya da satırı
+    #    hiç görünmeyen (süpürme damgalamış) her izlenen anahtar.
+    for key, w in tracked.items():
+        if key in closures or int(w.get("stage") or 0) < 1:
+            continue
+        r = open_rows.get(key)
+        if r is None:
+            q = live.get(key) if key[1] in probed_ok else None
+            if q is not None and not q.get("closed_ts"):
+                continue                           # sonda tekrar açık gördü
+            closures[key] = w
+        elif key[1] in probed_ok and (live.get(key) or {}).get("closed_ts"):
+            closures[key] = w
+    for (coin, addr), w in closures.items():
+        kind, cpx = await _closure_kind(client, coin, addr, w)
+        await _watch_set(coin, addr, closed_ts=ts, closed_kind=kind, closed_px=cpx,
+                         updated_ts=ts)
+        out["closed"] += 1
+        if kind == "liq":
+            out["closed_liq"] += 1
+        log.info("kripto liq: izlenen pozisyon kapandı %s %s (%s)", coin, addr[:10], kind)
+
+    # 6) Mesajlar: coin başına tek; başlık en yüksek kademe. Marker ve kademe
+    #    YALNIZ gönderim başarılıysa ilerler.
+    from ..telegram import format as fmt
+    for coin, fresh in esc.items():
         if not fresh:
             continue
-        out["fresh"] += len(fresh)
-        # Canlılık: taze adayların defterini ŞİMDİ çek — sırayla (sonda
-        # semaforu ilk kullanımda döngüye bağlanır; eşzamanlılık burada gereksiz),
-        # tur bütçesi dahilinde. Bütçeye sığmayan aday bu tur yazılmaz; marker
-        # da yazılmadığı için sonraki tur yeniden sıraya girer.
-        todo, deferred = fresh[:budget], fresh[budget:]
-        out["probe_deferred"] += len(deferred)
-        budget -= len(todo)
-        probed_ok: set[str] = set()
-        for p in todo:
-            try:
-                await probe_address(cfg, client, p["address"])
-                probed_ok.add(p["address"])
-                out["probed"] += 1
-            except Exception as e:
-                out["probe_err"] += 1
-                log.debug("sonda %s: %s", p["address"], e)
-        if probed_ok:
-            live = await _reread(coin, list(probed_ok))
-            keep = []
-            for p in todo:
-                if p["address"] not in probed_ok:
-                    keep.append(p)              # sonda düştü: eldeki satır, yaşı yazılır
-                    continue
-                q = live.get(p["address"])
-                if not q or q.get("closed_ts"):
-                    out["dropped_stale"] += 1   # kapanmış: "patlamak üzere" DEĞİL
-                    continue
-                again = near_liq([q], {coin: marks.get(coin)}, dist_pct, min_usd).get(coin)
-                if not again:
-                    out["dropped_stale"] += 1   # küçülmüş ya da uzaklaşmış
-                    continue
-                keep.append({**again[0], "verified": True})
-            todo = keep
-        if not todo:
-            continue
-        text = fmt.crypto_liq_alert(coin, marks.get(coin), todo, old, dist_pct)
-        key = f"cryptoliq:{coin}:{ts}"
-        # MARKER YALNIZ GİDERSE: başarısız gönderim bekleme süresini yakmasın,
-        # bir sonraki tur yeniden denesin.
+        fresh.sort(key=lambda q: q["dist"])
+        stage = max(int(p["need"]) for p in fresh)
+        text = fmt.crypto_liq_alert(coin, marks.get(coin), fresh, old.get(coin) or [],
+                                    thr[stage], stage)
+        key = f"cryptoliq:{coin}:{stage}:{ts}"
         if await notifier.send("cryptoliq", text, priority="high", key=key, chat_id=chat):
-            for p in todo:
-                await alert_log("cryptoliq", f"{coin}:{p['address']}", text)
+            for p in fresh:
+                await _watch_upsert(coin, p["address"], p, p["dist"], p["mark"],
+                                    stage=int(p["need"]),
+                                    probed_ts=ts if p["address"] in probed_ok else None)
+                if int(p["need"]) == 1:
+                    await alert_log("cryptoliq", f"{coin}:{p['address']}", text)
+                if int(p["need"]) >= 2:
+                    out["stage2" if int(p["need"]) == 2 else "stage3"] += 1
             out["alerted"] += 1
+            if getattr(cfg, "crypto_liq_chart", True):
+                try:
+                    png = await _chart(client, coin, marks.get(coin), fresh)
+                    cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"
+                           f" · %{fresh[0]['dist']:.2f} kaldı")
+                    if png and await notifier.send_photo("cryptoliq", png, cap, chat_id=chat):
+                        out["photos"] += 1
+                except Exception:
+                    log.debug("grafik gönderilemedi (%s)", coin, exc_info=True)
         else:
             await alert_log("fail:cryptoliq", key, text[:200])
             out["failed"] += 1
-    if out["alerted"] or out["dropped_stale"]:
-        log.info("kripto liq: %d aday, %d bildirim, %d bayat düştü, %d gönderilemedi",
-                 out["candidates"], out["alerted"], out["dropped_stale"], out["failed"])
+
+    # 7) Kapanış notları: bildirilmemiş, taze kapanışlar (coin başına tek mesaj).
+    await _closure_notes(cfg, notifier, chat, ts, out)
+    await _watch_prune()
+    if out["alerted"] or out["dropped_stale"] or out["closed"]:
+        log.info("kripto liq: %d aday, %d bildirim, %d kapanış, %d bayat düştü, %d gönderilemedi",
+                 out["candidates"], out["alerted"], out["closed"], out["dropped_stale"], out["failed"])
     return await _stats(out)
+
+
+async def _closure_notes(cfg, notifier, chat: str, ts: int, out: dict) -> None:
+    """Bildirilmemiş taze kapanışlar → coin başına tek mesaj; ayar kapalıysa
+    sessizce işaretlenir. Marker (`notified_ts`) yalnız gönderim başarılıysa."""
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT * FROM cryptoliq_watch WHERE closed_ts IS NOT NULL AND notified_ts IS NULL"
+            " AND closed_ts >= ? AND stage >= 1 ORDER BY coin, closed_ts", (ts - CLOSE_NOTE_MAX_AGE,))
+        pend = [dict(r) for r in await cur.fetchall()]
+    if not pend:
+        return
+    if not getattr(cfg, "crypto_liq_notify_close", True):
+        for r in pend:
+            await _watch_set(r["coin"], r["address"], notified_ts=ts)
+        return
+    from ..telegram import format as fmt
+    groups: dict[str, list[dict]] = {}
+    for r in pend:
+        groups.setdefault(r["coin"], []).append(r)
+    for coin, rs in groups.items():
+        text = fmt.crypto_liq_closed(coin, rs)
+        key = f"cryptoliq_close:{coin}:{ts}"
+        if await notifier.send("cryptoliq", text, priority="high", key=key, chat_id=chat):
+            for r in rs:
+                await _watch_set(coin, r["address"], notified_ts=ts)
+            out["close_notes"] += 1
+        else:
+            await alert_log("fail:cryptoliq", key, text[:200])
+            out["failed"] += 1
 
 
 async def _stats(out: dict) -> dict:

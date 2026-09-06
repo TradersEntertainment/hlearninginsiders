@@ -13,8 +13,10 @@
   <p class="sub"><b>Oran</b> = patlayacak $ ÷ fiyatı oraya itmek için yenmesi gereken
   defter $. <b>{{ '%g'|format(min_score) }}×</b> üstü <b>aday</b>: sayfada öne çıkar.
   Telegram'a yalnız <b>kapıyı geçen</b> aday düşer: fiyatın ≤%{{ '%g'|format(alert_dist) }}
-  yakınında ≥ <b>{{ alert_min|usd }}</b> likidasyon (🔔){% if not chat_set %} — ana sohbete,
-  <code>LIQ_ATTACK_CHAT_ID</code> ayarlanırsa kendi kanalına{% endif %}. Uzaktaki küme
+  yakınında ≥ <b>{{ alert_min|usd }}</b> likidasyon <b>ve</b> o bölgeyi itmenin oranı
+  ≥ {{ '%g'|format(min_score) }}× (🔔){% if not chat_set %} — ana sohbete,
+  <code>LIQ_ATTACK_CHAT_ID</code> ayarlanırsa kendi kanalına{% endif %}. Mesaj o ≤%{{ '%g'|format(alert_dist) }}
+  bölgesini anlatır, tablodaki geniş hedefi (%{{ '%g'|format(max_dist) }}'e kadar) değil. Uzaktaki küme
   sayfada kalır, mesaj atmaz (🔕). 🕳 = görünen defter hedefe varmadan bitiyor,
   itmek bundan da ucuz olabilir. <span class="warn">Oran kâr tahmini değil, göreli
   çekicilik. Yatırım tavsiyesi değildir.</span></p>
@@ -68,7 +70,7 @@
     <span><i class="sw f-liq-long"></i>patlayacak $ (long — fiyat düşerse)</span>
     <span><i class="sw f-liq-short"></i>patlayacak $ (short — fiyat çıkarsa)</span>
     <span><i class="sw f-book"></i>yenmesi gereken defter $</span>
-    <span>🔔 Telegram kapısını geçti (≤%{{ '%g'|format(alert_dist) }} içinde ≥ {{ alert_min|usd }} liq) · 🔕 geçemedi, mesaj yok</span>
+    <span>🔔 Telegram kapısını geçti (≤%{{ '%g'|format(alert_dist) }} içinde ≥ {{ alert_min|usd }} liq, oran ≥ {{ '%g'|format(min_score) }}×) · 🔕 geçemedi, mesaj yok</span>
   </div>
   <div class="tscroll"><div class="tscroll-x">
   <table>
@@ -92,7 +94,8 @@
       <td>{{ c.cost_usd|usd }}{% if c.book_thin %} <span title="Görünen defter hedefe varmadan bitiyor — gerçek maliyet bundan büyük olamaz">🕳</span>{% endif %}</td>
       <td><b>{{ '%.1f'|format(c.score) }}×</b>
         {% if c.hot %}<span class="pill warn">🔥 aday</span>
-          {% if c.alert_ok %}<span class="pill ok" title="Telegram kapısını geçti: ≤%{{ '%g'|format(alert_dist) }} içinde {{ c.near_usd|usd }} liq">🔔</span>
+          {% if c.alert_ok %}<span class="pill ok" title="Telegram kapısını geçti: ≤%{{ '%g'|format(alert_dist) }} içinde {{ (c.zone_liq or c.near_usd)|usd }} liq{% if c.zone_dist is not none %} · hedef %{{ '%.2f'|format(c.zone_dist) }} · oran {{ '%.1f'|format(c.zone_score) }}×{% endif %}">🔔</span>
+          {%- elif c.gate_why == 'score' %}<span class="hint" title="Telegram'a gitmedi: ≤%{{ '%g'|format(alert_dist) }} içinde {{ (c.zone_liq or c.near_usd)|usd }} liq var ama oraya itmek pahalı — oran {{ '%.1f'|format(c.zone_score) }}× < {{ '%g'|format(min_score) }}">🔕 ≤%{{ '%g'|format(alert_dist) }} oran {{ '%.1f'|format(c.zone_score) }}×</span>
           {%- else %}<span class="hint" title="Telegram'a gitmedi: ≤%{{ '%g'|format(alert_dist) }} içinde yalnız {{ c.near_usd|usd }} liq (eşik {{ alert_min|usd }})">🔕 ≤%{{ '%g'|format(alert_dist) }}'de {{ c.near_usd|usd }}</span>{% endif %}
         {% endif %}</td>
       <td class="{{ 'long' if (c.dev_close or 0) > 0 else ('short' if (c.dev_close or 0) < 0 else 'dim') }}">
@@ -166,7 +169,8 @@
     görünen seviyeleri, tur anında (hafta sonu her {{ scan_sec // 60 }} dk, aday coin
     başına 1 istek) · pozisyonlar süpürmede görülenler · hedef uzaklık tavanı
     %{{ '%g'|format(max_dist) }} · küme tabanı {{ min_usd|usd }} · Telegram kapısı ≤%{{ '%g'|format(alert_dist) }}
-    içinde ≥ {{ alert_min|usd }} liq (Ayarlar → Liq attack). Oran bir üst sınırdır:
+    içinde ≥ {{ alert_min|usd }} liq ve o bölgede oran ≥ {{ '%g'|format(min_score) }}× — mesaj bölgeyi
+    anlatır (Ayarlar → Liq attack). Oran bir üst sınırdır:
     defter hedefe varmıyorsa gerçek maliyet daha da düşük.</p>
 </div>
 

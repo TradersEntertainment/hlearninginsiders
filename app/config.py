@@ -305,6 +305,14 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "desc": "Bu tutarın altındaki pozisyon bildirilmez (kullanıcı kuralı $500K). Coin sayfasındaki likidasyon haritası her boyutu gösterir — bu yalnız Telegram eşiği"},
     "crypto_liq_dist_pct": {"type": "float", "label": "Liq mesafesi (%)", "group": "Kripto liq",
                             "desc": "Likidasyon fiyatı şimdiye bu kadar ya da daha yakınsa bildirim (kullanıcı kuralı %2,5). BTC ve ETH her zaman hariç"},
+    "crypto_liq_dist2_pct": {"type": "float", "label": "2. uyarı mesafesi (%)", "group": "Kripto liq",
+                             "desc": "Bildirilen pozisyon likidasyona bu kadar yaklaşınca yeniden mesaj (beklemeye bakmaz — yeni bilgi). Kullanıcı kuralı %1"},
+    "crypto_liq_dist3_pct": {"type": "float", "label": "Son uyarı mesafesi (%)", "group": "Kripto liq",
+                             "desc": "Üçüncü ve son mesaj; sonrası ya likidasyon ya kapanış notu. Kullanıcı kuralı %0,5. Pozisyon ilk mesafenin 1,5 katına uzaklaşırsa kademeler sıfırlanır"},
+    "crypto_liq_notify_close": {"type": "bool", "label": "Kapanış / likidasyon notu", "group": "Kripto liq",
+                                "desc": "İzlenen pozisyon yok olunca mesaj: fill'lerde likidasyon kaydı varsa 💀 LİKİDE OLDU (gerçekleşen fiyatla), yoksa 🏁 kapandı; teyit alınamazsa 'doğrulanamadı' der"},
+    "crypto_liq_chart": {"type": "bool", "label": "Mesaja grafik ekle", "group": "Kripto liq",
+                         "desc": "Her kademe mesajının ardından resim: son 48 saatin 30 dk mumları, liq çizgisi, fiyat ve kalan mesafe (Telegram sendPhoto; mum çekilemezse yalnız metin gider)"},
     "crypto_liq_poll_sec": {"type": "int", "label": "Tarama aralığı (sn)", "group": "Kripto liq",
                             "desc": "Turda 1 fiyat isteği (ana dex özeti, metrik döngüsüyle paylaşılır) + bildirilecek her aday adres için 1 canlılık sondası (tur başına en çok 12)"},
     "crypto_liq_cooldown": {"type": "int", "label": "Pozisyon başına bekleme (sn)", "group": "Kripto liq",
@@ -501,6 +509,10 @@ class Config:
         self.crypto_liq_enabled = True
         self.crypto_liq_min_usd = float(os.getenv("CRYPTO_LIQ_MIN_USD", "500000"))
         self.crypto_liq_dist_pct = float(os.getenv("CRYPTO_LIQ_DIST_PCT", "2.5"))
+        self.crypto_liq_dist2_pct = float(os.getenv("CRYPTO_LIQ_DIST2_PCT", "1.0"))
+        self.crypto_liq_dist3_pct = float(os.getenv("CRYPTO_LIQ_DIST3_PCT", "0.5"))
+        self.crypto_liq_notify_close = True
+        self.crypto_liq_chart = True
         self.crypto_liq_poll_sec = int(os.getenv("CRYPTO_LIQ_POLL_SEC", "120"))
         self.crypto_liq_cooldown = int(os.getenv("CRYPTO_LIQ_COOLDOWN", "14400"))
         self.notify_equityvol = True

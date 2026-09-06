@@ -248,13 +248,16 @@ hafta sonu verdiğimiz en yüksek oran" saklanır → **isabet** (önceden
 işaretlenmiş / tüm saldırılar) ve **yanlış alarm** (bitmiş hafta sonlarında
 gerçekleşmeyen adaylar). Karnesiz tahmin sadece histir.
 
-**Telegram kapısı (spam freni).** Aday olmak (skor ≥ 2×) mesaj için yetmez:
-fiyatın **≤%2 yakınında ≥ $1M** likidasyon yoksa bildirim gitmez
-(`liq_attack_alert_dist_pct`, `liq_attack_alert_min_usd`; Ayarlar → Liq attack).
-%3-4 uzaktaki kümeler ince defterde kolayca 2× oran veriyor ve her 4 saatte bir
-mesaj atıyordu. Sayfa adayı yine gösterir: 🔔 = kapıyı geçti (mesaj gitti/gider),
-🔕 = geçemedi; strip'te "N aday bildirim kapısının altında". Mesajda kapının
-değeri yazar ("≤%2 yakınında $X liq").
+**Telegram kapısı (spam freni).** Aday olmak (skor ≥ 2×) mesaj için yetmez.
+Bildirim **≤%2 bölgesinin kendi adayıdır**: o bölgede **≥ $1M** likidasyon
+olacak *ve* oraya itmenin oranı ≥ 2× olacak (`liq_attack_alert_dist_pct`,
+`liq_attack_alert_min_usd`, `liq_attack_min_score`; Ayarlar → Liq attack).
+Mesaj o bölgeyi anlatır ("%1,50 aşağı itmek ≈ … / $1,2M patlar"); tablodaki
+geniş hedef (%4'e kadar, oranı maksimize eden d*) yalnız bağlam satırında.
+İlk sürümde kapı sadece "≤%2'de $1M var mı" diye bakıyor, mesaj ise %4'lük
+hedefi yazıyordu — kullanıcı için o hâlâ "%4 bildirimi"ydi. Sayfa adayı yine
+gösterir: 🔔 = kapıyı geçti (mesaj gitti/gider), 🔕 = geçemedi (nedeni ipucunda:
+$ yetmedi ya da oran düşük); strip'te "N aday bildirim kapısının altında".
 
 **Bildirim markerı yalnız gönderim başarılıysa yazılır** — kapalı seans
 bandındaki dersin aynısı; başarısız gönderim cooldown'u yakmaz.
@@ -331,9 +334,27 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   uzaklaşmış aday düşer, mesaj "defterler az önce doğrulandı" yazar. Sonda
   alınamazsa ölçümün yaşı yazılır.
 - **Coin başına tek mesaj.** Bir çöküşte 30 pozisyon aynı anda eşiğe girer; 30
-  ayrı mesaj spam'dir. Bekleme **pozisyon** başına (vars. 4 saat): aynı
-  pozisyon yeniden yazılmaz, aynı coinde **yeni** bir pozisyon eşiğe girerse
-  mesaj gider ve eskiler "daha önce bildirildi" diye toplamla anılır.
+  ayrı mesaj spam'dir. Bekleme **pozisyon** başına (vars. 4 saat) ve yalnız
+  ilk kademe için: aynı pozisyon yeniden yazılmaz, aynı coinde **yeni** bir
+  pozisyon eşiğe girerse mesaj gider ve eskiler "daha önce bildirildi" diye
+  toplamla anılır.
+- **Kademeli takip.** İlk mesajdan sonra pozisyon izlenir (`cryptoliq_watch`):
+  liq'e **≤%1** kala 🔥 *2. uyarı*, **≤%0,5** kala 🚨 *SON UYARI* — bekleme
+  süresine bakmadan, çünkü yeni bilgi. İlk mesafenin 1,5 katına (%3,75)
+  uzaklaşırsa kademeler sıfırlanır (liqwatch'ın histerezisi). Liq'e
+  yaklaşırken değeri küçülen pozisyon $500K altına indi diye düşürülmez.
+  İzlenen pozisyonlar da sondalanır: kademe ≥2 her tur, kademe 1 on dakikada
+  bir — likidasyon anı kaçmasın.
+- **Likidasyon / kapanış notu.** İzlenen pozisyon yok olunca adresin son
+  fill'leri çekilir: o coinde `liquidation` alanlı (ya da "Liquidated …"
+  yönlü) fill varsa 💀 **LİKİDE OLDU** (gerçekleşen fiyat ve piyasaya çarpan
+  zorunlu alış/satış), fill var ama likidasyon yoksa 🏁 kapatıldı, istek
+  düşerse "doğrulanamadı" — uydurulmaz. Ayar: `crypto_liq_notify_close`.
+- **Mesaja grafik.** Her kademe mesajının peşinden resim (Telegram
+  `sendPhoto`): son 48 saatin 30 dk mumları, liq çizgileri, fiyat çizgisi ve
+  aradaki bant + "%0,40 kaldı" köprüsü (`app/radar/liqchart.py`, Pillow;
+  tarayıcı yok, dikdörtgen ve çizgi yeter). Mum çekilemezse yalnız metin
+  gider — resim bonus. PROPR satırı yok: bu kanalın coinleri zaten PROPR'da.
 - Marker yalnız gönderim başarılıysa; kanal/bot/tip kapalıysa hesap yine
   yapılır ama sonda atılmaz — `/tani` "kripto liq" satırı nedenini söyler.
 - Fiyat `main_dex_ctx` kv'sinden: metrik döngüsü zaten çektiği ana dex

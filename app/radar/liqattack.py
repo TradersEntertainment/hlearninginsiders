@@ -205,10 +205,12 @@ async def scan(cfg, client, notifier=None) -> dict:
     max_dist = float(getattr(cfg, "liq_attack_max_dist_pct", 4.0))
     min_score = float(getattr(cfg, "liq_attack_min_score", 2.0))
     cool = int(getattr(cfg, "liq_attack_cooldown", 4 * 3600))
-    # Telegram KAPISI: skor ne olursa olsun, fiyatın alert_dist yakınında
-    # alert_min kadar liq yoksa bildirim gitmez. Sayfa adayı yine gösterir
-    # ("sayfa daha çok gösterir, alarm daha seçici"); %3-4 uzaktaki kümeler
-    # her 4 saatte bir mesaj atıp spam oluyordu.
+    # Telegram KAPISI = ≤alert_dist bölgesinin KENDİ adayı: o bölgede ≥ alert_min
+    # liq olacak VE oraya itmek cazip olacak (oran ≥ min_score). Eskiden kapı
+    # yalnız "≤%2'de $1M var mı" diye bakıyor, mesaj ise oranı maksimize eden
+    # d* (≤%4) için kuruluyordu → yakında $1M olunca kapı açılıyor, mesaj yine
+    # "%4 aşağı itmek…" diyordu; kullanıcı için o bir "%4 bildirimi"ydi. Şimdi
+    # mesaj bölgeyi anlatır; sayfa geniş adayı (d*) göstermeye devam eder.
     alert_dist = float(getattr(cfg, "liq_attack_alert_dist_pct", 2.0))
     alert_min = float(getattr(cfg, "liq_attack_alert_min_usd", 1_000_000))
     out["gated"] = 0
@@ -244,11 +246,22 @@ async def scan(cfg, client, notifier=None) -> dict:
             if not s:
                 continue
             near_usd = sum(p["notional"] for p in liq_within(rows, mark, direction, alert_dist))
+            # Bölge adayı: aynı saf skorlayıcı, tavan alert_dist ve taban alert_min.
+            # None = bölgede alert_min kadar liq yok.
+            zone = score_direction(rows, bids, asks, mark, direction, alert_min, alert_dist)
             s.update({"coin": coin, "symbol": rows[0]["symbol"], "mark": mark,
                       "dev_close": devs.get(coin), "ts": ts, "weekend_ts": anchor,
                       "hot": s["score"] >= min_score,
                       "near_usd": near_usd, "alert_dist": alert_dist,
-                      "alert_ok": near_usd >= alert_min})
+                      "min_score": min_score,
+                      "zone_dist": zone["dist_pct"] if zone else None,
+                      "zone_liq": zone["liq_usd"] if zone else None,
+                      "zone_cost": zone["cost_usd"] if zone else None,
+                      "zone_score": zone["score"] if zone else None,
+                      "zone_thin": bool(zone["book_thin"]) if zone else False,
+                      "zone_px": zone["target_px"] if zone else None,
+                      "zone_targets": zone["targets"] if zone else [],
+                      "alert_ok": zone is not None and zone["score"] >= min_score})
             rows_out.append(s)
     rows_out.sort(key=lambda s: -s["score"])
     out["candidates"] = sum(1 for s in rows_out if s["hot"])
@@ -258,11 +271,12 @@ async def scan(cfg, client, notifier=None) -> dict:
         await conn.executemany(
             """INSERT INTO liq_attack_candidates(coin,direction,ts,weekend_ts,mark,
                  dist_pct,liq_usd,cost_usd,score,book_thin,n_pos,target_px,dev_close,hot,
-                 near_usd)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 near_usd,zone_dist,zone_liq,zone_score)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [(s["coin"], s["direction"], ts, anchor, s["mark"], s["dist_pct"],
               s["liq_usd"], s["cost_usd"], s["score"], int(s["book_thin"]),
-              s["n_pos"], s["target_px"], s["dev_close"], int(s["hot"]), s["near_usd"])
+              s["n_pos"], s["target_px"], s["dev_close"], int(s["hot"]), s["near_usd"],
+              s["zone_dist"], s["zone_liq"], s["zone_score"])
              for s in rows_out])
 
     if notifier is not None:
@@ -414,6 +428,7 @@ async def page(cfg) -> dict:
     by = await _equity_positions() if cands else {}
     alert_dist = float(getattr(cfg, "liq_attack_alert_dist_pct", 2.0))
     alert_min = float(getattr(cfg, "liq_attack_alert_min_usd", 1_000_000))
+    min_score = float(getattr(cfg, "liq_attack_min_score", 2.0))
     for c in cands:
         c["liq_w"] = max(1.5, (c["liq_usd"] or 0) / mx * 100)
         c["cost_w"] = max(1.5, (c["cost_usd"] or 0) / mx * 100)
@@ -422,7 +437,16 @@ async def page(cfg) -> dict:
         if c.get("near_usd") is None:
             c["near_usd"] = sum(p["notional"] for p in
                                 liq_within(by.get(c["coin"], []), c["mark"], c["direction"], alert_dist))
-        c["alert_ok"] = (c["near_usd"] or 0) >= alert_min
+        # Kapı = bölge adayının oranı (zone_score; defter gerekir, tur anında
+        # yazıldı). Bölge sütunu olmayan eski kayıtlarda eski kural (yalnız $).
+        if c.get("zone_score") is not None:
+            c["alert_ok"] = float(c["zone_score"]) >= min_score
+            c["gate_why"] = ("" if c["alert_ok"] else "score")
+        else:
+            c["alert_ok"] = (c["near_usd"] or 0) >= alert_min
+            c["gate_why"] = "" if c["alert_ok"] else "usd"
+        if not c["alert_ok"] and (c["near_usd"] or 0) < alert_min:
+            c["gate_why"] = "usd"
         # Hedef pozisyonlar tabloda saklanmıyor (kimlik zaten positions_current'ta);
         # tur anındaki mark ile yeniden bulunur — ucuz ve tek kaynak.
         hit = liq_within(by.get(c["coin"], []), c["mark"], c["direction"], c["dist_pct"])
@@ -430,7 +454,7 @@ async def page(cfg) -> dict:
         c["targets"] = [{"address": p["address"], "notional": p["notional"],
                          "liq_px": p["liq_px"]} for p in hit[:TOP_TARGETS]]
     return {"weekend": wk, "last_ts": last, "cands": cands, "attacks": attacks,
-            "alert_dist": alert_dist, "alert_min": alert_min,
+            "alert_dist": alert_dist, "alert_min": alert_min, "min_score": min_score,
             "rec": await record(cfg),
             "stats": await kv_get("liqattack_stats") or {},
             "next_weekend": next_weekend(None, h)}

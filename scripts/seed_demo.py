@@ -288,7 +288,21 @@ async def main():
     await dbm.kv_set("cryptoliq_stats", {"coins": 4, "positions": 9, "candidates": 3, "fresh": 0, "probed": 2,
                                          "probe_deferred": 0, "probe_err": 0, "dropped_stale": 0, "alerted": 1,
                                          "failed": 0, "skipped": "", "chat": True, "ctx_age": 90,
+                                         "tracked": 2, "stage2": 1, "stage3": 0, "resets": 0, "closed": 1,
+                                         "closed_liq": 1, "close_notes": 1, "photos": 1,
                                          "top": [{"coin": "PUMP", "n": 2, "total": 1_900_000}], "ts": now - 60})
+    # Kademe takibi: A 1. kademe, B 2. kademe (her tur sondalanır), C likide olmuş.
+    async with dbm.db() as c:
+        for i, (stage, dist, closed) in enumerate(((1, 1.8, None), (2, 0.9, None), (3, 0.3, "liq"))):
+            a = pump_addrs[i] if i < 2 else addr(r)
+            await c.execute(
+                "INSERT OR REPLACE INTO cryptoliq_watch(coin,address,side,notional,liq_px,entry_px,leverage,"
+                "stage,last_dist,last_mark,first_ts,updated_ts,probed_ts,closed_ts,closed_kind,closed_px,notified_ts)"
+                " VALUES('PUMP',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (a, "long" if i != 1 else "short", [1_200_000, 700_000, 900_000][i],
+                 CRYPTO_MARK["PUMP"] * (1 - dist / 100), CRYPTO_MARK["PUMP"], 10, stage, dist, CRYPTO_MARK["PUMP"],
+                 now - 3 * 3600, now - 120, now - 120, (now - 1800) if closed else None, closed,
+                 CRYPTO_MARK["PUMP"] * 0.997 if closed else None, (now - 1700) if closed else None))
     await dbm.kv_set("fills_count", 8)
     await dbm.kv_set("specialists_cache", [
         {"address": sndk_addrs[1], "coin": "xyz:SNDK", "symbol": "SNDK", "n": 14, "vol": 6.2e6,

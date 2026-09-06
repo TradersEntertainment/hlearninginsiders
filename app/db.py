@@ -123,6 +123,20 @@ CREATE TABLE IF NOT EXISTS liq_watch(
   last_dist REAL, updated_ts INTEGER,
   PRIMARY KEY(address, coin)
 );
+-- Kripto liq yakını takibi: liq_watch'ın kripto ikizi. liq_watch'a YAZILMAZ —
+-- liqwatch o tabloyu kendi adres havuzu ve ana-sohbet kademeleri (1/0.5/0.1)
+-- için okuyor; buradaki kademeler kripto kanalının (2.5/1/0.5) ve kapanış
+-- notu likidasyon teyidi taşıyor (fill'lerde liquidation alanı).
+CREATE TABLE IF NOT EXISTS cryptoliq_watch(
+  coin TEXT, address TEXT, side TEXT, notional REAL, liq_px REAL,
+  entry_px REAL, leverage REAL,
+  stage INTEGER DEFAULT 0,         -- 0 yok | 1 ≤dist1 | 2 ≤dist2 | 3 ≤dist3 bildirildi
+  last_dist REAL, last_mark REAL,
+  first_ts INTEGER, updated_ts INTEGER, probed_ts INTEGER,
+  closed_ts INTEGER, closed_kind TEXT, -- liq | close | unknown
+  closed_px REAL, notified_ts INTEGER, -- kapanış notu gitti mi (NULL = henüz)
+  PRIMARY KEY(coin, address)
+);
 -- TÜM Hyperliquid'in büyük pozisyonları (ana dex + HIP-3 hepsi).
 -- positions_current'a KARIŞTIRILMAZ: orası hisse skorlama/earnings hattının
 -- sahibi ve neredeyse her sorgusu tickers ile JOIN'li — BTC satırı oraya
@@ -310,6 +324,11 @@ MIGRATIONS = [
     # Liq attack Telegram kapısı: adayın ≤alert_dist içindeki liq toplamı
     # (sayfa 🔔/🔕 için; NULL = kapıdan önceki kayıt, sayfa yeniden hesaplar)
     "ALTER TABLE liq_attack_candidates ADD COLUMN near_usd REAL",
+    # Kapı = ≤alert_dist bölgesinin kendi adayı (mesaj onu anlatır): hedef
+    # uzaklığı, patlayacak $, oran. NULL = bölge adayından önceki kayıt.
+    "ALTER TABLE liq_attack_candidates ADD COLUMN zone_dist REAL",
+    "ALTER TABLE liq_attack_candidates ADD COLUMN zone_liq REAL",
+    "ALTER TABLE liq_attack_candidates ADD COLUMN zone_score REAL",
     "ALTER TABLE positions_current ADD COLUMN last_add_ts INTEGER",
     "ALTER TABLE positions_current ADD COLUMN last_trim_ts INTEGER",
     "ALTER TABLE position_snapshots ADD COLUMN last_add_ts INTEGER",

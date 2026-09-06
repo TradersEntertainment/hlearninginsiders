@@ -50,6 +50,34 @@ class TelegramBot:
                 ok = False
         return ok
 
+    async def send_photo(self, png: bytes, caption: str = "",
+                         chat_id: str | None = None) -> bool:
+        """Tek resim (PNG bayt) + kısa HTML altyazı — Telegram sendPhoto.
+
+        Altyazı sınırı 1024 karakter; uzun metin AYRI mesaj olarak gider, resim
+        onun peşinden. Resim bonus: düşerse metin zaten gitmiştir."""
+        chat = chat_id or self.cfg.telegram_chat_id
+        if not chat or not png:
+            return False
+        form = aiohttp.FormData()
+        form.add_field("chat_id", str(chat))
+        if caption:
+            form.add_field("caption", caption[:1000])
+            form.add_field("parse_mode", "HTML")
+        form.add_field("photo", png, filename="chart.png", content_type="image/png")
+        try:
+            async with self.session.post(
+                f"{self.api}/sendPhoto", data=form,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as r:
+                if r.status == 200:
+                    return True
+                log.warning("sendPhoto %s: %s", r.status, (await r.text())[:300])
+                return False
+        except Exception as e:
+            log.warning("sendPhoto hatası: %s", e)
+            return False
+
     async def _send_chunk(self, chat: str, chunk: str, _retry: bool = True) -> bool:
         try:
             async with self.session.post(
