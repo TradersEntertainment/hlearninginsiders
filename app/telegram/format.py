@@ -674,7 +674,7 @@ CRYPTO_LIQ_STAGE = {1: ("💥", ""), 2: ("🔥", " · 2. uyarı"), 3: ("🚨", "
 
 def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
                      old: list[dict], dist_pct: float, stage: int = 1,
-                     list_max: int = 6) -> str:
+                     list_max: int = 6, cascade: dict | None = None) -> str:
     """Kripto liq yakını — coin başına TEK mesaj, pozisyonlar yakından uzağa.
 
     `stage` 1/2/3 = ≤%2,5 / ≤%1 / ≤%0,5 kademesi (başlık ve satır işareti);
@@ -710,6 +710,9 @@ def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
         imp.append(f"📈 short'lar patlarsa zorunlu <b>ALIŞ</b> ~{usd(buy)}")
     if imp:
         lines.append(" · ".join(imp))
+    if cascade:
+        from ..radar.cascade import describe
+        lines += describe(cascade, mark)
     if old:
         lines.append(f"ayrıca {len(old)} pozisyon daha eşikte (daha önce bildirildi)"
                      f" · {usd(sum(p['notional'] for p in old))}")
@@ -761,6 +764,9 @@ def crypto_liq_snapshot(s: dict) -> str:
         imp.append(f"📈 short'lar patlarsa zorunlu <b>ALIŞ</b> ~{usd(buy)}")
     if imp:
         lines.append(" · ".join(imp))
+    if s.get("cascade"):
+        from ..radar.cascade import describe
+        lines += describe(s["cascade"], mark)
     oldest = min((int(p.get("ts") or 0) for p in rows), default=0)
     ctx = [f"havuzda {s.get('n_all', 0)} açık pozisyon, {s.get('n_big', 0)}'ü ≥ {usd(s.get('min_usd'))}"]
     if oldest:

@@ -28,6 +28,7 @@ UP = (38, 153, 123)
 DOWN = (229, 72, 77)
 MARK = (200, 196, 220)
 LIQ = {"long": (224, 155, 78), "short": (95, 176, 217)}
+AMBER = (255, 206, 138)
 BAND = {"long": (224, 155, 78, 40), "short": (95, 176, 217, 40)}
 FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "web", "static", "fonts")
@@ -65,10 +66,12 @@ def _usd(v: float) -> str:
 
 
 def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict],
-           *, interval: str = "15dk", span_txt: str = "son 48 saat") -> bytes | None:
+           *, interval: str = "15dk", span_txt: str = "son 48 saat",
+           target: tuple | None = None) -> bytes | None:
     """PNG bayt. `candles`: [{t,o,h,l,c}] (t saniye, artan). `levels`:
     [{px, side, notional, dist, main}] — `main` olan seviyeye kalan mesafe
-    köprüsü çizilir, en çok 4 seviye. Mum yoksa ya da Pillow yoksa None."""
+    köprüsü çizilir, en çok 4 seviye. `target=(px, label)`: zincir hedefi
+    (noktalı amber çizgi + etiket). Mum yoksa ya da Pillow yoksa None."""
     try:
         from PIL import Image, ImageDraw
     except Exception:
@@ -82,9 +85,10 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     main = next((x for x in lv if x.get("main")), lv[0])
     mark = float(mark or cs[-1]["c"])
 
-    # y ekseni: mumlar ∪ seviyeler ∪ fiyat, %6 pay
-    lo = min(min(c["l"] for c in cs), min(x["px"] for x in lv), mark)
-    hi = max(max(c["h"] for c in cs), max(x["px"] for x in lv), mark)
+    # y ekseni: mumlar ∪ seviyeler ∪ fiyat ∪ hedef, %6 pay
+    tpx = float(target[0]) if target and target[0] else None
+    lo = min(min(c["l"] for c in cs), min(x["px"] for x in lv), mark, *([tpx] if tpx else []))
+    hi = max(max(c["h"] for c in cs), max(x["px"] for x in lv), mark, *([tpx] if tpx else []))
     rng = (hi - lo) or (hi * 0.02) or 1.0
     lo, hi = lo - rng * 0.06, hi + rng * 0.06
     plot_l, plot_r, plot_t, plot_b = PAD_L, W - PAD_R, PAD_T, H - PAD_B
@@ -187,6 +191,17 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
                 ty = u + 28
         used.append(ty)
         tag(ty, f"{side_of(x)} {_usd(x.get('notional'))} · liq {_px(x['px'])}", col)
+
+    # zincir hedefi: noktalı amber çizgi + etiket (defter + havuzla "en az buraya")
+    if tpx:
+        yt = y_of(tpx)
+        dashed(yt, AMBER, dash=4, width=2)
+        ty = yt
+        for u in sorted(used):
+            if abs(ty - u) < 28:
+                ty = u + 28
+        used.append(ty)
+        tag(ty, str(target[1] or f"zincir hedefi {_px(tpx)}"), AMBER)
 
     # kalan mesafe köprüsü: fiyat ile ana liq arasında dikey çizgi + etiket
     xb = plot_l + 18

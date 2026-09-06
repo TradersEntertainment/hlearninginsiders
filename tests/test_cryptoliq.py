@@ -81,10 +81,22 @@ class Client:
     adres başına yanıt — `closed` kümesindeki adres artık pozisyon tutmuyor;
     `fills` adres → userFillsByTime yanıtı; `candles` 30dk mum listesi."""
 
-    def __init__(self, positions, closed=(), fills=None, candles=None, fills_err=False):
+    def __init__(self, positions, closed=(), fills=None, candles=None, fills_err=False, book=None):
         self.positions, self.closed = list(positions), set(closed)
         self.fills, self.candles_raw, self.fills_err = fills or {}, candles, fills_err
         self.ctx_calls, self.probes, self.fill_calls, self.candle_calls = 0, [], [], 0
+        self.book_calls = []
+        m = MARK["PUMP"]
+        # PUMP defteri: her seviye ~$1.6M — $1.2M long liq'i (-%1.8) 0.00314'te yenir
+        self.book = book if book is not None else {"levels": [
+            [{"px": str(m * 0.995), "sz": "5e8"}, {"px": str(m * 0.98), "sz": "5e8"},
+             {"px": str(m * 0.97), "sz": "5e8"}],
+            [{"px": str(m * 1.005), "sz": "5e8"}, {"px": str(m * 1.02), "sz": "5e8"},
+             {"px": str(m * 1.03), "sz": "5e8"}]]}
+
+    async def l2_book(self, coin, n_sig_figs=None):
+        self.book_calls.append((coin, n_sig_figs))
+        return self.book
 
     async def meta_and_ctxs(self, dex=""):
         self.ctx_calls += 1
@@ -219,6 +231,9 @@ def test_scan_flow():
         chat, text, nbytes = good.photos[0]
         assert chat == "-100" and nbytes > 1000 and cli2.candle_calls == 1
         assert text.startswith("💥 <b>PUMP</b>") and "2 pozisyon" in text and "$1.9M" in text
+        # zincir: en yakın (A, long -%1.8) patlarsa satış bid'leri yer → hedef + satır
+        assert "💣 <b>Zincir</b>" in text and "$1.2M long" in text and "gidebilir" in text, text
+        assert cli2.book_calls == [("PUMP", 3)] and out2["cascades"] == 1
         assert "$1.2M" in text and "%1.80 altta" in text and "%2.30 üstte" in text
         assert "🏦VAULT" in text and "doğrulandı" in text and "BTC" not in text and "PROPR" not in text
         assert "SATIŞ</b> ~$1.2M" in text and "ALIŞ</b> ~$700K" in text
@@ -444,7 +459,8 @@ def test_wiring():
     c = Config()
     for f in ("crypto_liq_enabled", "crypto_liq_min_usd", "crypto_liq_dist_pct",
               "crypto_liq_dist2_pct", "crypto_liq_dist3_pct", "crypto_liq_notify_close",
-              "crypto_liq_chart", "crypto_liq_poll_sec", "crypto_liq_cooldown", "notify_cryptoliq"):
+              "crypto_liq_chart", "crypto_liq_cascade", "crypto_liq_poll_sec", "crypto_liq_cooldown",
+              "notify_cryptoliq"):
         assert f in EDITABLE_FIELDS and hasattr(c, f), f
         assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
     assert "crypto_chat_id" not in EDITABLE_FIELDS, "chat id env-only kalmalı"
@@ -499,6 +515,14 @@ def test_snapshot():
         assert s["n_all"] == 4 and s["n_big"] == 3 and s["mark"] == MARK["PUMP"] and s["png"]
         t = fmt.crypto_liq_snapshot(s)
         assert t.startswith("🎯 <b>PUMP</b>") and "%0.90 üstte" in t and "$4.0M" in t and "canlı" in t
+        assert s["cascade"] and s["cascade"]["direction"] == "up" and "💣 <b>Zincir</b>" in t, t
+        assert "$700K short" in t and "zorunlu alış" in t
+        # ayar kapalı → satır yok, defter isteği yok
+        cfg.crypto_liq_cascade = False
+        cli_off = Client(rows, candles=synth_candles(MARK["PUMP"]))
+        s_off = await cl.snapshot(cfg, cli_off, "PUMP")
+        assert s_off["cascade"] is None and cli_off.book_calls == [] and "Zincir" not in fmt.crypto_liq_snapshot(s_off)
+        cfg.crypto_liq_cascade = True
         assert "havuzda 4 açık pozisyon, 3'ü ≥ $500K" in t and "PROPR" not in t, t
         # eşik üstü yoksa en yakın küçükler + not; pozisyon hiç yoksa nedeni
         small = [row("PUMP", C, "long", 300_000, 0.3)]

@@ -237,8 +237,58 @@ async def _closure_kind(client, coin: str, addr: str, w: dict) -> tuple[str, flo
     return ("close" if seen else "unknown"), None
 
 
-async def _chart(client, coin: str, mark, fresh: list[dict]) -> bytes | None:
-    """Mesajın resmi: son 48 saatin 30 dk mumları + liq çizgileri + kalan mesafe."""
+async def _coin_rows(coin: str) -> list[dict]:
+    """Coinin TÜM açık ana dex pozisyonları (her boyut) — zincir havuzu."""
+    async with db() as conn:
+        cur = await conn.execute(
+            f"SELECT {_COLS} FROM {_FROM} WHERE a.coin=? AND a.closed_ts IS NULL"
+            " AND a.liq_px > 0 AND a.notional > 0", (coin,))
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def _cascade(cfg, client, coin: str, mark, trigger: dict, rows: list[dict]) -> dict | None:
+    """Zincir: en yakın pozisyon patlarsa defter nereye kadar süpürülür, arada
+    kim patlar. Tek l2Book isteği (nSigFigs=3, geniş; düşerse varsayılan).
+    Ayar kapalı / fiyat yok / defter alınamadı → None (mesaj satırsız gider)."""
+    if not getattr(cfg, "crypto_liq_cascade", True) or not mark or client is None or not trigger:
+        return None
+    fn = getattr(client, "l2_book", None)
+    if fn is None:
+        return None
+    book = None
+    for args in ((coin, 3), (coin,)):
+        try:
+            book = await fn(*args)
+            if book:
+                break
+        except TypeError:
+            continue                          # eski/sahte client n_sig_figs bilmiyor
+        except Exception as e:
+            log.debug("l2Book alınamadı (%s): %s", coin, e)
+    if not book:
+        return None
+    from . import cascade
+    from .bookwall import _parse_book
+    try:
+        bids, asks = _parse_book(book)
+        return cascade.simulate(bids, asks, trigger, rows, mark)
+    except Exception:
+        log.debug("zincir hesaplanamadı (%s)", coin, exc_info=True)
+        return None
+
+
+def _target(casc: dict | None) -> tuple | None:
+    """Grafik için zincir hedefi (px, etiket)."""
+    if not casc or not casc.get("steps") or casc.get("no_book"):
+        return None
+    from ..telegram.format import px, usd
+    # kısa: sağ etiket alanına sığsın ("zincir hedefi …" kesiliyordu)
+    return (casc["end_px"], f"zincir → {px(casc['end_px'])} · {usd(casc['total_usd'])}")
+
+
+async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | None = None) -> bytes | None:
+    """Mesajın resmi: son 48 saatin 15 dk mumları + liq çizgileri + kalan mesafe
+    (+ zincir hedefi)."""
     fn = getattr(client, "candles", None)
     if fn is None or not fresh:
         return None
@@ -254,7 +304,7 @@ async def _chart(client, coin: str, mark, fresh: list[dict]) -> bytes | None:
                "dist": p.get("dist"), "main": i == 0}
               for i, p in enumerate(sorted(fresh, key=lambda q: q.get("dist") or 0)[:4])]
     return liqchart.render(coin, cands, mark, levels, interval=CHART_LABEL[0],
-                           span_txt=CHART_LABEL[1])
+                           span_txt=CHART_LABEL[1], target=target)
 
 
 async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5) -> dict:
@@ -299,14 +349,16 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     cands.sort(key=lambda q: q["dist"])
     big = [c for c in cands if c["notional"] >= min_usd]
     show = (big or cands)[:limit]
+    casc = await _cascade(cfg, client, coin, mark, show[0], rows) if show else None
     png = None
     if show and getattr(cfg, "crypto_liq_chart", True):
         try:
-            png = await _chart(client, coin, mark, show)
+            png = await _chart(client, coin, mark, show, target=_target(casc))
         except Exception:
             log.debug("anlık grafik üretilemedi (%s)", coin, exc_info=True)
     return {"coin": coin, "kind": kind, "mark": mark, "age": age, "rows": show,
-            "n_all": len(cands), "n_big": len(big), "min_usd": min_usd, "png": png}
+            "n_all": len(cands), "n_big": len(big), "min_usd": min_usd, "png": png,
+            "cascade": casc}
 
 
 # ─────────────────────────────────────────────── tarama
@@ -316,7 +368,7 @@ async def scan(cfg, client, notifier=None) -> dict:
            "probe_deferred": 0, "probe_err": 0, "dropped_stale": 0, "alerted": 0,
            "failed": 0, "skipped": "", "chat": False, "top": [], "ctx_age": None,
            "tracked": 0, "stage2": 0, "stage3": 0, "resets": 0, "closed": 0,
-           "closed_liq": 0, "close_notes": 0, "photos": 0, "combined": 0}
+           "closed_liq": 0, "close_notes": 0, "photos": 0, "combined": 0, "cascades": 0}
     if not getattr(cfg, "crypto_liq_enabled", True):
         out["skipped"] = "kapalı"
         return await _stats(out)
@@ -505,8 +557,13 @@ async def scan(cfg, client, notifier=None) -> dict:
             continue
         fresh.sort(key=lambda q: q["dist"])
         stage = max(int(p["need"]) for p in fresh)
+        # Zincir: en yakın pozisyon patlarsa defter nereye kadar süpürülür, arada
+        # kim patlar (coinin tüm havuzu, her boyut). Defter alınamazsa satır yok.
+        casc = await _cascade(cfg, client, coin, marks.get(coin), fresh[0], await _coin_rows(coin))
+        if casc:
+            out["cascades"] += 1
         text = fmt.crypto_liq_alert(coin, marks.get(coin), fresh, old.get(coin) or [],
-                                    thr[stage], stage)
+                                    thr[stage], stage, cascade=casc)
         key = f"cryptoliq:{coin}:{stage}:{ts}"
         # Grafik ÖNCE üretilir: sığıyorsa tam metin resmin altyazısı olur → tek
         # mesaj (kullanıcı isteği). Resim yoksa / metin uzunsa / resim
@@ -514,7 +571,7 @@ async def scan(cfg, client, notifier=None) -> dict:
         png = None
         if getattr(cfg, "crypto_liq_chart", True):
             try:
-                png = await _chart(client, coin, marks.get(coin), fresh)
+                png = await _chart(client, coin, marks.get(coin), fresh, target=_target(casc))
             except Exception:
                 log.debug("grafik üretilemedi (%s)", coin, exc_info=True)
         cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"

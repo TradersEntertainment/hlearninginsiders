@@ -362,6 +362,16 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   yönlü) fill varsa 💀 **LİKİDE OLDU** (gerçekleşen fiyat ve piyasaya çarpan
   zorunlu alış/satış), fill var ama likidasyon yoksa 🏁 kapatıldı, istek
   düşerse "doğrulanamadı" — uydurulmaz. Ayar: `crypto_liq_notify_close`.
+- **💣 Zincir simülasyonu.** Mesajın en yakın pozisyonu için: patlarsa zorunlu
+  emir (short → alış, long → satış) emir defterini liq fiyatından itibaren
+  nereye kadar süpürür; o fiyata kadar liq'i olan aynı yönlü pozisyonlar da
+  patlar, onların emri de yürür… yeni tetiklenen kalmayınca ya da görünen
+  defter bitince durur (`app/radar/cascade.py`, saf). Satır: "→ 90.50 · arada
+  2 short daha ($4.1M) → 91.00 · toplam $17.4M · fiyat kaçınılmaz ~91.00'a
+  gidebilir (şimdiden +2.1%)"; grafikte hedef çizgisi. **Alt sınırdır:** defter
+  anlık ve görünen kadar (l2Book 20 seviye, genişlik için `nSigFigs=3`), havuz
+  HL'nin tamamı değil; defter bitince "$X yerleşmedi — ötesi bilinmiyor" yazar.
+  `/hype` cevabında da var. Ayar: `crypto_liq_cascade`.
 - **Mesaja grafik — tek mesaj.** Kademe mesajı resim + altyazı olarak gider
   (Telegram `sendPhoto`, metin altyazıda): son 48 saatin 30 dk mumları, liq
   çizgileri, fiyat çizgisi ve aradaki bant + "%0,40 kaldı" köprüsü

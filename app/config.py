@@ -313,6 +313,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                              "desc": "Üçüncü ve son mesaj; sonrası ya likidasyon ya kapanış notu. Kullanıcı kuralı %0,5. Pozisyon ilk mesafenin 1,5 katına uzaklaşırsa kademeler sıfırlanır"},
     "crypto_liq_notify_close": {"type": "bool", "label": "Kapanış / likidasyon notu", "group": "Kripto liq",
                                 "desc": "İzlenen pozisyon yok olunca mesaj: fill'lerde likidasyon kaydı varsa 💀 LİKİDE OLDU (gerçekleşen fiyatla), yoksa 🏁 kapandı; teyit alınamazsa 'doğrulanamadı' der"},
+    "crypto_liq_cascade": {"type": "bool", "label": "Zincir simülasyonu", "group": "Kripto liq",
+                           "desc": "Mesaja '💣 Zincir' satırı: en yakın pozisyon patlarsa zorunlu emir defteri nereye kadar süpürür, arada kaç pozisyon daha patlar, fiyat en az nereye gider (defter anlık + havuz; alt sınır). Tur başına 1 l2Book isteği"},
     "crypto_liq_chart": {"type": "bool", "label": "Mesaja grafik ekle", "group": "Kripto liq",
                          "desc": "Her kademe mesajının ardından resim: son 48 saatin 30 dk mumları, liq çizgisi, fiyat ve kalan mesafe (Telegram sendPhoto; mum çekilemezse yalnız metin gider)"},
     "crypto_liq_poll_sec": {"type": "int", "label": "Tarama aralığı (sn)", "group": "Kripto liq",
@@ -519,6 +521,7 @@ class Config:
         self.crypto_liq_dist3_pct = float(os.getenv("CRYPTO_LIQ_DIST3_PCT", "0.5"))
         self.crypto_liq_notify_close = True
         self.crypto_liq_chart = True
+        self.crypto_liq_cascade = True
         self.crypto_liq_poll_sec = int(os.getenv("CRYPTO_LIQ_POLL_SEC", "120"))
         self.crypto_liq_cooldown = int(os.getenv("CRYPTO_LIQ_COOLDOWN", "14400"))
         self.notify_equityvol = True
