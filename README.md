@@ -270,6 +270,11 @@ geniş hedef (%4'e kadar, oranı maksimize eden d*) yalnız bağlam satırında.
 hedefi yazıyordu — kullanıcı için o hâlâ "%4 bildirimi"ydi. Sayfa adayı yine
 gösterir: 🔔 = kapıyı geçti (mesaj gitti/gider), 🔕 = geçemedi (nedeni ipucunda:
 $ yetmedi ya da oran düşük); strip'te "N aday bildirim kapısının altında".
+**Endeks/emtia/FX (SP500, XYZ100, GOLD, EUR… — `assets.NON_EQUITY`) için kapı
+çok daha sıkı: ≤%1 içinde ≥ $50M** (`liq_attack_alert_big_dist_pct`,
+`liq_attack_alert_big_min_usd`). Likit perp'te $2-4M'lik küme %2'de kolayca
+3-7× oran verip ana kanalı dolduruyordu; mesaj başlığında "endeks/emtia
+kapısı" yazar, sayfada 📐 rozeti.
 
 **Bildirim markerı yalnız gönderim başarılıysa yazılır** — kapalı seans
 bandındaki dersin aynısı; başarısız gönderim cooldown'u yakmaz.

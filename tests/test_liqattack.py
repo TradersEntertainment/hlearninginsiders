@@ -256,11 +256,14 @@ def test_wiring():
     c = Config()
     for f in ("liq_attack_min_usd", "liq_attack_max_dist_pct", "liq_attack_min_score",
               "liq_attack_scan_sec", "liq_attack_cooldown", "liq_attack_spike_pct",
-              "liq_attack_revert_min"):
+              "liq_attack_revert_min", "liq_attack_alert_big_dist_pct",
+              "liq_attack_alert_big_min_usd"):
         assert f in EDITABLE_FIELDS and hasattr(c, f), f
         assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
     assert "liq_attack_chat_id" not in EDITABLE_FIELDS, "chat id env-only kalmalı"
     assert c.liq_attack_min_usd == 2_000_000 and c.notify_liqattack is True
+    assert la.gate_for(c, "SP500") == (1.0, 50_000_000, True) and la.gate_for(c, "GOLD")[2] is True
+    assert la.gate_for(c, "SNDK") == (2.0, 1_000_000, False)
     from app.health import limits, periods
     assert "liqattack" in limits(c) and "liqattack" in periods(c)
     from app.notify import KINDS
@@ -376,6 +379,68 @@ def test_alert_gate():
         asyncio.run(run())
     finally:
         _restore()   # monkeypatch sızmasın: runner testleri alfabetik koşuyor
+
+
+# ------------------------------------------------ 4d) endeks/emtia/FX kapısı: ≤%1 / $50M
+def test_big_gate():
+    """SP500 (NON_EQUITY): %1.5'te $2.1M long ince defterde 40× oran verir ama kapı
+    ≤%1 / $50M → mesaj yok; aynı turda SNDK normal kapıdan geçer. %0.8'de $60M
+    gelince SP500 de gider, mesaj sınıfı ve eşiği yazar."""
+    async def run():
+        cfg = Config(); cfg.telegram_chat_id = "-1"; cfg.alert_forensics = False
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "la5.db"))
+        now = dbm.now()
+        async with dbm.db() as c:
+            for coin, sym in (("xyz:SP500", "SP500"), ("xyz:SNDK", "SNDK")):
+                await c.execute("INSERT INTO tickers(coin,symbol) VALUES(?,?)", (coin, sym))
+                await c.execute("INSERT OR REPLACE INTO asset_metrics(coin,ts,mark_px,oi,"
+                                "funding,day_volume) VALUES(?,?,?,1,0,0)", (coin, now, MARK))
+            for coin, a, dist, ntl in (("xyz:SP500", "0xsp", 1.5, 2_100_000),
+                                       ("xyz:SNDK", "0xsn", 1.5, 1_200_000),
+                                       ("xyz:SNDK", "0xsn2", 3.5, 1_500_000)):
+                await c.execute(
+                    "INSERT INTO positions_current(coin,address,ts,side,szi,entry_px,"
+                    "leverage,liq_px,upnl,notional) VALUES(?,?,?,'long',1,100,3,?,0,?)",
+                    (coin, a, now, MARK * (1 - dist / 100), ntl))
+        la.hourstats.weekend_window = lambda *a, **k: (T0, T0 + 2 * 86400)
+
+        class C:
+            async def l2_book(self, coin):
+                return {"levels": [[{"px": "99.7", "sz": "500"}, {"px": "97.0", "sz": "500"}],
+                                   [{"px": "100.3", "sz": "500"}]]}
+
+        class Bot:
+            def __init__(self): self.sent = []
+            async def send(self, text, chat_id=None):
+                self.sent.append(text); return True
+        from app.notify import Notifier
+        bot = Bot()
+        out = await la.scan(cfg, C(), Notifier(cfg, bot))
+        assert out["candidates"] == 2 and out["alerted"] == 1 and out["gated"] == 1, out
+        assert out["gated_big"] == 1 and "SNDK" in bot.sent[0] and "SP500" not in bot.sent[0]
+        pg = await la.page(cfg)
+        sp = next(c for c in pg["cands"] if c["symbol"] == "SP500")
+        assert sp["big"] is True and sp["alert_dist"] == 1.0 and sp["alert_min"] == 50_000_000, sp
+        assert sp["hot"] == 1 and sp["alert_ok"] is False and sp["gate_why"] == "usd"
+        assert pg["big_dist"] == 1.0 and pg["big_min"] == 50_000_000
+        sn = next(c for c in pg["cands"] if c["symbol"] == "SNDK")
+        assert sn["big"] is False and sn["alert_dist"] == 2.0 and sn["alert_ok"] is True
+        # %0.8'de $60M long → kapı açılır; mesaj sınıfı ve ≤%1 eşiğini yazar
+        async with dbm.db() as c:
+            await c.execute(
+                "INSERT INTO positions_current(coin,address,ts,side,szi,entry_px,"
+                "leverage,liq_px,upnl,notional) VALUES('xyz:SP500','0xbig',?,'long',1,100,3,?,0,?)",
+                (now, MARK * (1 - 0.8 / 100), 60_000_000))
+        out2 = await la.scan(cfg, C(), Notifier(cfg, bot))
+        assert out2["alerted"] == 1 and out2["gated_big"] == 0 and len(bot.sent) == 2, out2
+        t = bot.sent[1]
+        assert "SP500" in t and "endeks/emtia kapısı" in t and "≤%1 içinde" in t and "$60.0M" in t, t
+        print("✅ endeks kapısı) SP500 $2.1M @ %1.5 sessiz (📐 ≤%1/$50M), SNDK normal kapıdan geçti;"
+              " $60M @ %0.8 gelince SP500 mesajı sınıfı ve eşiği yazdı")
+    try:
+        asyncio.run(run())
+    finally:
+        _restore()
 
 
 # ------------------------------------------------ 4c) bölge kapısı: $ var, oran yok

@@ -251,6 +251,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "liq_attack_alert_min_usd": {"type": "float", "label": "Liq attack: bildirim kapısı — asgari liq ($)",
                                  "group": "Liq attack",
                                  "desc": "Yukarıdaki mesafe içinde en az bu kadar $ likidasyon varsa bildirim gider (🔔)"},
+    "liq_attack_alert_big_dist_pct": {"type": "float", "label": "Liq attack: endeks/emtia/FX kapısı — mesafe (%)",
+                                      "group": "Liq attack",
+                                      "desc": "SP500, XYZ100, GOLD, FX gibi likit perp'lerde (assets.NON_EQUITY + 'non_equity_extra') Telegram kapısı bu mesafe içine bakar. Likit perp'te $2-4M'lik küme %2'de kolayca oran verip ana kanalı dolduruyordu — kullanıcı kuralı: %1"},
+    "liq_attack_alert_big_min_usd": {"type": "float", "label": "Liq attack: endeks/emtia/FX kapısı — asgari liq ($)",
+                                     "group": "Liq attack",
+                                     "desc": "Aynı sınıfta bu mesafe içinde en az bu kadar liq yoksa mesaj GİTMEZ (kullanıcı kuralı $50M). Hisseler normal kapıda (≤%2 / $1M) kalır; oran ≥ eşik şartı ikisinde de geçerli"},
     "liq_attack_scan_sec": {"type": "int", "label": "Liq attack: tarama aralığı (sn)",
                             "group": "Liq attack",
                             "desc": "Yalnız hafta sonu çalışır; aday coin başına 1 l2Book isteği"},
@@ -573,6 +579,9 @@ class Config:
         self.liq_attack_min_score = float(os.getenv("LIQ_ATTACK_MIN_SCORE", "2"))
         self.liq_attack_alert_dist_pct = float(os.getenv("LIQ_ATTACK_ALERT_DIST_PCT", "2"))
         self.liq_attack_alert_min_usd = float(os.getenv("LIQ_ATTACK_ALERT_MIN_USD", "1000000"))
+        # Endeks/emtia/FX (SP500, XYZ100, GOLD…): likit perp, sıkı kapı — kullanıcı kuralı
+        self.liq_attack_alert_big_dist_pct = float(os.getenv("LIQ_ATTACK_ALERT_BIG_DIST_PCT", "1"))
+        self.liq_attack_alert_big_min_usd = float(os.getenv("LIQ_ATTACK_ALERT_BIG_MIN_USD", "50000000"))
         self.liq_attack_scan_sec = int(os.getenv("LIQ_ATTACK_SCAN_SEC", "300"))
         self.liq_attack_cooldown = int(os.getenv("LIQ_ATTACK_COOLDOWN", "14400"))
         self.liq_attack_spike_pct = float(os.getenv("LIQ_ATTACK_SPIKE_PCT", "1.5"))

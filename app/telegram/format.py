@@ -635,7 +635,8 @@ def liq_attack_alert(s: dict, wk: tuple | None = None) -> str:
     target_px = s.get("zone_px") if zone else s.get("target_px")
     targets = (s.get("zone_targets") if zone else s.get("targets")) or []
     lines = [
-        f"🎯 <b>LIQ ATTACK ADAYI</b> — <b>{esc(sym)}</b> {arrow}",
+        f"🎯 <b>LIQ ATTACK ADAYI</b> — <b>{esc(sym)}</b> {arrow}"
+        + (" · <i>endeks/emtia kapısı</i>" if s.get("big") else ""),
         f"Fiyatı <b>%{dist:.2f} {'aşağı' if down else 'yukarı'}</b> "
         f"itmek ≈ <b>{usd(cost)}</b> defter yer; karşılığında "
         f"<b>{usd(liq)}</b> {who} patlar "

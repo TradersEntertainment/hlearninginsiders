@@ -149,6 +149,22 @@ def find_spikes(series: list[tuple[int, float]], spike_pct: float,
     return out
 
 
+def gate_for(cfg, symbol: str) -> tuple[float, float, bool]:
+    """Telegram kapısı sembol SINIFINA göre: (mesafe %, asgari liq $, büyük mü).
+
+    Hisse → (alert_dist, alert_min). Endeks/emtia/FX (assets.kind == non_equity:
+    SP500, XYZ100, GOLD, EUR…) → çok daha sıkı (big_dist, big_min): likit perp'te
+    $2-4M'lik küme %2'de kolayca 3-7× oran verip ana kanalı dolduruyordu;
+    kullanıcı kuralı "$50M ve %1 yakınlık değilse atma". Duvar alarmının
+    `liq_cluster_big_min_usd` ayrımıyla aynı sınıf. Tek kaynak: scan ve page."""
+    from .. import assets
+    if assets.kind(symbol or "") == "non_equity":
+        return (float(getattr(cfg, "liq_attack_alert_big_dist_pct", 1.0)),
+                float(getattr(cfg, "liq_attack_alert_big_min_usd", 50_000_000)), True)
+    return (float(getattr(cfg, "liq_attack_alert_dist_pct", 2.0)),
+            float(getattr(cfg, "liq_attack_alert_min_usd", 1_000_000)), False)
+
+
 # ─────────────────────────────────────────────── veri
 
 async def _equity_positions() -> dict[str, list[dict]]:
@@ -239,21 +255,23 @@ async def scan(cfg, client, notifier=None) -> dict:
             out["book_err"] += 1
             log.warning("l2Book alınamadı (%s): %s", coin, e)
             continue
+        # Kapı sembol sınıfına göre: hisse ≤%2 / $1M, endeks-emtia-FX ≤%1 / $50M.
+        a_dist, a_min, big = gate_for(cfg, rows[0]["symbol"])
         for direction, near in (("down", near_dn), ("up", near_up)):
             if near < min_usd:
                 continue
             s = score_direction(rows, bids, asks, mark, direction, min_usd, max_dist)
             if not s:
                 continue
-            near_usd = sum(p["notional"] for p in liq_within(rows, mark, direction, alert_dist))
-            # Bölge adayı: aynı saf skorlayıcı, tavan alert_dist ve taban alert_min.
-            # None = bölgede alert_min kadar liq yok.
-            zone = score_direction(rows, bids, asks, mark, direction, alert_min, alert_dist)
+            near_usd = sum(p["notional"] for p in liq_within(rows, mark, direction, a_dist))
+            # Bölge adayı: aynı saf skorlayıcı, tavan a_dist ve taban a_min.
+            # None = bölgede a_min kadar liq yok.
+            zone = score_direction(rows, bids, asks, mark, direction, a_min, a_dist)
             s.update({"coin": coin, "symbol": rows[0]["symbol"], "mark": mark,
                       "dev_close": devs.get(coin), "ts": ts, "weekend_ts": anchor,
                       "hot": s["score"] >= min_score,
-                      "near_usd": near_usd, "alert_dist": alert_dist,
-                      "min_score": min_score,
+                      "near_usd": near_usd, "alert_dist": a_dist, "alert_min": a_min,
+                      "big": big, "min_score": min_score,
                       "zone_dist": zone["dist_pct"] if zone else None,
                       "zone_liq": zone["liq_usd"] if zone else None,
                       "zone_cost": zone["cost_usd"] if zone else None,
@@ -266,6 +284,7 @@ async def scan(cfg, client, notifier=None) -> dict:
     rows_out.sort(key=lambda s: -s["score"])
     out["candidates"] = sum(1 for s in rows_out if s["hot"])
     out["gated"] = sum(1 for s in rows_out if s["hot"] and not s["alert_ok"])
+    out["gated_big"] = sum(1 for s in rows_out if s["hot"] and not s["alert_ok"] and s["big"])
 
     async with db() as conn:
         await conn.executemany(
@@ -432,6 +451,9 @@ async def page(cfg) -> dict:
     for c in cands:
         c["liq_w"] = max(1.5, (c["liq_usd"] or 0) / mx * 100)
         c["cost_w"] = max(1.5, (c["cost_usd"] or 0) / mx * 100)
+        # Kapı adayın sembol sınıfına göre (hisse / endeks-emtia-FX).
+        alert_dist, alert_min, big = gate_for(cfg, c.get("symbol") or "")
+        c["alert_dist"], c["alert_min"], c["big"] = alert_dist, alert_min, big
         # Telegram kapısı: kapıdan önceki kayıtlarda near_usd NULL → şimdiki
         # pozisyonlarla yeniden hesapla (targets ile aynı kaynak).
         if c.get("near_usd") is None:
@@ -455,6 +477,8 @@ async def page(cfg) -> dict:
                          "liq_px": p["liq_px"]} for p in hit[:TOP_TARGETS]]
     return {"weekend": wk, "last_ts": last, "cands": cands, "attacks": attacks,
             "alert_dist": alert_dist, "alert_min": alert_min, "min_score": min_score,
+            "big_dist": float(getattr(cfg, "liq_attack_alert_big_dist_pct", 1.0)),
+            "big_min": float(getattr(cfg, "liq_attack_alert_big_min_usd", 50_000_000)),
             "rec": await record(cfg),
             "stats": await kv_get("liqattack_stats") or {},
             "next_weekend": next_weekend(None, h)}
