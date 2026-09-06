@@ -315,6 +315,9 @@ async def index(request: Request):
         liqmin = float(request.query_params.get("liqmin") or 250_000)
     except ValueError:
         liqmin = 250_000
+    # 📐 Endeks/emtia/FX (SP500, XYZ100, EUR, CL…) ayrı görünüm: varsayılan gizli.
+    # Yirmi satırın çoğunu SP500/XYZ100 dolduruyordu ("boşa yer kaplıyor").
+    liqidx = request.query_params.get("liqidx") == "1"
     async with db() as conn:
         cur = await conn.execute(
             """SELECT a.coin, a.mark_px FROM asset_metrics a
@@ -357,12 +360,20 @@ async def index(request: Request):
                         "notional": r["notional"], "liq_px": r["liq_px"],
                         "mark": marks.get(r["coin"]),
                         "dist": r["last_dist"]})
-    liq_map.sort(key=lambda x: x["dist"])
-    liq_map = liq_map[:20]
+    from .. import assets
+    idx_rows = sorted((x for x in liq_map if assets.is_index_perp(x["coin"])), key=lambda x: x["dist"])
+    main_rows = sorted((x for x in liq_map if not assets.is_index_perp(x["coin"])), key=lambda x: x["dist"])
+    liq_idx_n, liq_main_n = len(idx_rows), len(main_rows)
+    # KPI ("Patlamaya en yakın") HER ZAMAN hisse + kriptodan: SP500 satırı karoyu
+    # ele geçirmesin — endeks görünümü açıkken bile.
+    kpi_rows = main_rows[:1]
+    liq_map = (idx_rows if liqidx else main_rows)[:20]
 
-    # Likidasyon duvarları (küme özeti) — tweet'teki heatmap okuması
+    # Likidasyon duvarları (küme özeti) — tweet'teki heatmap okuması; gösterilen
+    # sınıfın duvarları (endeks görünümünde endeks duvarları, aksi hâlde hisse).
     from ..radar.liqwatch import find_clusters
-    liq_walls = (await find_clusters(cfg))[:4]
+    liq_walls = [w for w in await find_clusters(cfg)
+                 if assets.is_index_perp(w.get("coin") or w.get("symbol") or "") == liqidx][:4]
 
     # Emir defteri duvarları (bekleyen dev emirler — SPCX $202M tarzı). Tazelik
     # penceresi tarama periyoduna göre ölçeklenir (sabit 900 değil): wall_poll_sec
@@ -519,6 +530,7 @@ async def index(request: Request):
         "winners": winners, "archive": archive,
         "recent_big": recent_big, "suspicious": suspicious, "specialists": specialists,
         "liq_map": liq_map, "liqmin": liqmin, "liq_walls": liq_walls,
+        "liqidx": liqidx, "liq_idx_n": liq_idx_n, "liq_main_n": liq_main_n,
         "book_walls": book_walls,
         "trackers": trackers,
         "hot_hours": hot_hours, "tsi_now": datetime.now(TR).hour,
@@ -530,7 +542,7 @@ async def index(request: Request):
         "stats": {"fills": fills_n, "addrs": addr_n, "watch": watch_n,
                   "ws_ok": bool(collector and collector.connected),
                   "health_problems": sorted(health_state.keys())},
-        "kpis": _index_kpis(live_events, liq_map, suspicious, ts_now),
+        "kpis": _index_kpis(live_events, kpi_rows, suspicious, ts_now),
         "max_liq": cfg.max_liq_distance_pct,
         "wall_min": cfg.wall_min_usd, "wall_window_min": wall_window // 60,
     })

@@ -286,6 +286,14 @@ kapanır? Eski grafik pozisyon başına bir çizgiydi (40 ince bar, hepsi soldan
 bir seviyede *ne kadar* birikmiş görünmüyordu, çakışan barlar aşağı itilip
 fiyatını yalan söylüyordu, telefonda yazı 4px'e iniyordu.
 
+**Ana sayfa haritası** ("💥 Likidasyon haritası") hisse + ana dex kripto
+pozisyonlarını gösterir; endeks/emtia/FX perp'leri (SP500, XYZ100, EUR, CL…)
+20 satırın çoğunu dolduruyordu, artık **varsayılan gizli** — chips satırındaki
+📐 çipi yalnız onları listeler (`?liqidx=1`), künye gizlenen sayıyı yazar.
+"Patlamaya en yakın" karosu hep hisse + kriptodan beslenir; duvar şeridi
+gösterilen sınıfı izler. Sınıf `assets.is_index_perp` (HIP-3 üstündeki
+`non_equity`; BTC gibi ön eksiz ana dex coinleri kripto sayılır).
+
 **Geometri.** Dikey = fiyat, yukarı = yukarı. Ortada düz "şimdi" çizgisi.
 **Üstü short likidasyonları** (fiyat çıkarsa patlar), **altı long** (düşerse).
 Sezgi geometride; renk (turuncu/mavi = sitenin likidasyon dili, mum

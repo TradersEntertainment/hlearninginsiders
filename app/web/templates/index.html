@@ -67,13 +67,17 @@
 </div>
 
 <div class="panel compact" id="liqmap">
-  <h2>💥 Likidasyon haritası <span class="st">· tüm coin'lerde patlamaya en yakın pozisyonlar</span></h2>
+  <h2>💥 Likidasyon haritası <span class="st">· {% if liqidx %}endeks/emtia/FX (SP500, XYZ100, EUR, CL…) — patlamaya en yakın pozisyonlar{% else %}hisse + kripto — patlamaya en yakın pozisyonlar{% endif %}</span></h2>
   <p class="sub">Fiyat "liq" seviyesine değerse bu pozisyonlar <b>zorla kapanır (patlar)</b>.
-  En üsttekiler patlamaya en yakın olanlar — patlarsa fiyatı sert oynatabilir. Filtreyle küçük pozisyonları gizle.</p>
+  En üsttekiler patlamaya en yakın olanlar — patlarsa fiyatı sert oynatabilir. Filtreyle küçük pozisyonları gizle;
+  endeks/emtia/FX perp'leri (SP500, XYZ100…) listeyi doldurmasın diye ayrı görünümde (📐).</p>
   <div class="chips">
+    {% set qk = ('&key=' + k[5:]) if k else '' %}
     {% for v, lbl in liq_chips %}
-    <a href="/?liqmin={{ v|int }}{{ '&key=' + k[5:] if k else '' }}" class="{{ 'on' if liqmin == v else '' }}">{{ lbl }}</a>
+    <a href="/?liqmin={{ v|int }}{{ '&liqidx=1' if liqidx else '' }}{{ qk }}" class="{{ 'on' if liqmin == v else '' }}">{{ lbl }}</a>
     {% endfor %}
+    <a href="/?liqmin={{ liqmin|int }}&liqidx={{ 0 if liqidx else 1 }}{{ qk }}" class="{{ 'on' if liqidx else '' }}" id="liqidx-chip"
+       title="Endeks/emtia/FX perp'leri (SP500, XYZ100, EUR, CL…) ayrı görünümde — varsayılan gizli, basınca yalnız onlar listelenir">📐 endeks/emtia/FX{% if liq_idx_n %} ({{ liq_idx_n }}){% endif %}</a>
     <span class="hint">
       <i class="sw f-liq-long"></i> long liq — fiyat <b>düşerse</b> patlar ·
       <i class="sw f-liq-short"></i> short liq — fiyat <b>çıkarsa</b> patlar</span>
@@ -104,11 +108,17 @@
   </div>
   {% endfor %}
   <p class="kunye">🧾 {{ liq_map|length }} pozisyon · eşik ≥ {{ liqmin|usd }} · şimdiye ≤ %{{ max_liq|int }} ·
+    {% if liqidx %}görünüm: endeks/emtia/FX · hisse + kripto: {{ liq_main_n }} pozisyon (📐 çipini kapat){% else %}endeks/emtia/FX gizli: {{ liq_idx_n }} pozisyon (📐 çipi){% endif %} ·
     kaynak: hisse süpürmesi + ana dex likidasyon radarı · bar boyu = pozisyon $ (listedeki en büyüğe göre), sıra = mesafe ·
     liq fiyatı son ölçüme ait, teminat değişince kayar.</p>
   {% else %}
-  {{ m.empty(["Bu filtrede likidasyona yakın pozisyon yok.",
-              "Eşik ≥ " ~ liqmin|usd ~ " ve şimdiye ≤ %" ~ max_liq|int ~ "; filtreyi düşür ya da süpürmenin dolmasını bekle."]) }}
+  {% if liqidx %}
+  {{ m.empty(["Endeks/emtia/FX'te bu filtrede likidasyona yakın pozisyon yok.",
+              "Eşik ≥ " ~ liqmin|usd ~ " ve şimdiye ≤ %" ~ max_liq|int ~ "; filtreyi düşür ya da 📐 çipini kapatıp hisse + kriptoya dön (" ~ liq_main_n ~ " pozisyon)."]) }}
+  {% else %}
+  {{ m.empty(["Bu filtrede likidasyona yakın hisse/kripto pozisyonu yok.",
+              "Eşik ≥ " ~ liqmin|usd ~ " ve şimdiye ≤ %" ~ max_liq|int ~ "; filtreyi düşür" ~ (", 📐 çipiyle endeks/emtia/FX'e bak (" ~ liq_idx_n ~ " pozisyon)" if liq_idx_n else "") ~ " ya da süpürmenin dolmasını bekle."]) }}
+  {% endif %}
   {% endif %}
 </div>
 

@@ -55,6 +55,15 @@ def kind(symbol_or_coin: str) -> str:
     return "equity"
 
 
+def is_index_perp(coin_or_symbol: str) -> bool:
+    """HIP-3 (xyz:) üzerindeki endeks/emtia/FX perp'i mi: SP500, XYZ100, EUR, CL…
+    Ana dex kripto (BTC, HYPE — ön eksiz) DEĞİL: ana sayfa liq haritası bunları
+    hisselerle birlikte tutar, endeks/emtia/FX'i 📐 çipine ayırır. Tek kaynak:
+    route, duvar süzgeci ve test bunu kullanır."""
+    s = coin_or_symbol or ""
+    return ":" in s and kind(s) == "non_equity"
+
+
 def has_earnings(symbol_or_coin: str) -> bool:
     """Bu enstrüman için bilanço takvimi aranmalı mı?"""
     return kind(symbol_or_coin) == "equity"

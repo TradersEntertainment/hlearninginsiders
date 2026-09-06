@@ -246,3 +246,21 @@ test_tip_table()
 test_scale()
 test_chart_bars()
 print("\n✅ LİKİDASYON HARİTASI TESTLERİ GEÇTİ")
+
+
+def test_index_perp():
+    """Ana sayfa ayrımı: HIP-3 endeks/emtia/FX → 📐; hisse ve ana dex kripto ana haritada."""
+    from app import assets
+    from app.config import get_config
+    for c in ("xyz:SP500", "xyz:XYZ100", "xyz:EUR", "xyz:CL", "xyz:GOLD"):
+        assert assets.is_index_perp(c), c
+    for c in ("xyz:SNDK", "xyz:NVDA", "BTC", "HYPE", "PUMP", "", "SP500"):
+        assert not assets.is_index_perp(c), c            # ön eksiz sembol/kripto ana haritada
+    cfg = get_config()
+    old = getattr(cfg, "non_equity_extra", "")
+    cfg.non_equity_extra = "FOO"
+    try:
+        assert assets.is_index_perp("xyz:FOO") and not assets.is_index_perp("FOO")
+    finally:
+        cfg.non_equity_extra = old
+    print("✅ endeks) xyz: endeks/emtia/FX ayrılır; hisse ve ana dex kripto kalır; ek liste çalışır")

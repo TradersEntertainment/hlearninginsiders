@@ -27,6 +27,8 @@ from app.radar import hourstats as hs          # noqa: E402
 
 MARK = {"xyz:SNDK": 149.28, "xyz:MU": 118.40, "xyz:WDC": 92.15, "xyz:NVDA": 176.30}
 SYM = {c: c.split(":")[1] for c in MARK}
+# Endeks perp'leri: ana sayfa liq haritasında 📐 çipiyle ayrı görünüm (varsayılan gizli).
+INDEX_MARK = {"xyz:SP500": 7801.5, "xyz:XYZ100": 30340.0}
 # Ana dex kripto: tickers'a GİRMEZ (hisse hattı), yalnız addr_positions + kv özeti.
 CRYPTO_MARK = {"PUMP": 0.00318, "SOL": 168.40, "BTC": 108_900.0, "kPEPE": 0.0098, "HYPE": 41.2,
                "ETH": 3_940.0, "XRP": 2.41, "DOGE": 0.184, "SUI": 3.12, "FARTCOIN": 0.92,
@@ -114,6 +116,24 @@ async def main():
                  entry, lev, liq, (MARK["xyz:SNDK"] - entry) * ntl / entry * (1 if side == "long" else -1),
                  ntl, now - r.randint(3600, 20 * 86400), now - 86400,
                  r.choice([0, 0, 10, 25]), "[]"))
+
+        # ---- SP500 / XYZ100: endeks perp'leri — ana haritada gizli, 📐 çipiyle görünür ----
+        for coin, m in INDEX_MARK.items():
+            await c.execute("INSERT OR IGNORE INTO tickers(coin,symbol) VALUES(?,?)", (coin, coin.split(":")[1]))
+            await c.execute(
+                "INSERT OR REPLACE INTO asset_metrics(coin,ts,mark_px,oi,funding,day_volume)"
+                " VALUES(?,?,?,?,?,?)", (coin, now, m, 4e7 / m, 0.00005, 2.4e8))
+            for side, ntl, dist in (("short", 2_440_000, 0.6), ("short", 689_000, 0.5), ("long", 1_440_000, 0.7),
+                                    ("short", 323_000, 1.2), ("short", 968_000, 1.7), ("long", 481_000, 2.9)):
+                a = addr(r)
+                liq = m * (1 + dist / 100) if side == "short" else m * (1 - dist / 100)
+                await c.execute(
+                    "INSERT INTO positions_current(coin,address,ts,side,szi,entry_px,leverage,"
+                    "liq_px,upnl,notional,opened_ts,first_seen_ts,score,score_reasons)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (coin, a, now - r.randint(60, 7200), side, ntl / m * (1 if side == "long" else -1),
+                     m * r.uniform(0.99, 1.01), r.choice([20, 40, 50]), liq, 0.0, ntl,
+                     now - r.randint(3600, 5 * 86400), now - 86400, 0, "[]"))
 
         # ---- NVDA: skorlu şüpheliler (bilançoya 2 gün) + bir MM ----
         big = [("long", 4_800_000, 72, ["taze cüzdan", "bilançoya 2 gün", "büyük poz"]),
