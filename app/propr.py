@@ -19,6 +19,8 @@ DEFAULT_PROPR: frozenset[str] = frozenset({
     "EIGEN", "PYTH", "MEGA", "CFX", "LINEA", "PEOPLE", "PURR", "W", "SKY",
     "KAS", "ICP", "DYDX", "MET", "BERA", "SYRUP", "SAGA", "RUNE", "STABLE",
     "ENS", "BOME",
+    # propr.xyz 07.09.2026 listesi: yeni kriptolar (PONS "NEW" rozetli)
+    "PONS", "DASH", "HEMI", "ZEN", "SKR", "ZK", "ACE", "2Z",
     # EQ / IDX
     "SNDK", "SKHX", "XYZ100", "SP500", "MU", "SPCX", "DRAM", "SKHY", "NVDA",
     "INTC", "SMSN", "GOOGL", "AMD", "CRCL", "EWY", "META", "MSFT", "ORCL",
@@ -28,6 +30,8 @@ DEFAULT_PROPR: frozenset[str] = frozenset({
     "PURRDAT", "NFLX", "HYUNDAI", "BABA", "JP225", "KR200", "QCOM", "SMH",
     "GIGADEV", "HIMS", "QNT", "NOW", "USAR", "SHAZ", "IBM", "ASML", "BOT",
     "GME", "XLE", "URNM", "SHEIN", "MRNA",
+    # propr.xyz 07.09.2026: SOXL (3x yarı iletken ETF — assets.NON_EQUITY'de), SoftBank Group
+    "SOXL", "SOFTBANK",
     # CMDTY / FX
     "CL", "GOLD", "BRENTOIL", "SILVER", "COPPER", "NATGAS", "PLATINUM",
     "PALLADIUM", "JPY", "EUR", "NOK",
