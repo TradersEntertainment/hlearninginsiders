@@ -242,6 +242,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "census_batch_size": {"type": "int", "label": "Sayım: toplu sorguda hesap/istek",
                           "group": "Tarama & performans",
                           "desc": "batchClearinghouseStates bir istekte kaç hesap sorsun (vars. 50). Toplu sorgu çalışmıyorsa (tek tek mod) etkisiz"},
+    "census_rpm_local": {"type": "int", "label": "Sayım: worker varken ana uygulamanın hızı (istek/dk)",
+                         "group": "Tarama & performans",
+                         "desc": "ROLE=census-worker servisleri kira alıyorsa (son 15 dk) ana uygulama kendi sayımını bu hıza indirir (vars. 100): Railway çıkış IP'leri paylaşımlıysa hepsi aynı HL bütçesini yer. Worker yoksa census_rpm geçerli"},
     "harvest_probe_max": {"type": "int", "label": "Hasat sondası: tur başına adres",
                           "group": "Tarama & performans",
                           "desc": "Her süpürme turunda, o turun hasat coinlerinde işlem yapmış ama pozisyonu bilinmeyen en fazla bu kadar adresin defteri coinin KENDİ dex'inde sorgulanır (adres başına 1 istek; 40/90 sn ≈ bütçenin %8'i). Kripto dex coinleri (para) her tur sırada. 0 = kapalı"},
@@ -783,6 +786,15 @@ class Config:
         self.census_hip3_min_account_value = float(os.getenv("CENSUS_HIP3_MIN_ACCOUNT_VALUE", "1000"))
         self.census_rpm = int(os.getenv("CENSUS_RPM", "250"))
         self.census_batch_size = int(os.getenv("CENSUS_BATCH_SIZE", "50"))
+        self.census_rpm_local = int(os.getenv("CENSUS_RPM_LOCAL", "100"))
+        # Worker modu (env-only, chat id kuralı gibi): ROLE=census-worker ile
+        # Dockerfile `python -m app.worker` çalıştırır; worker DB'siz, ana uygulamayla
+        # MAIN_URL + WORKER_TOKEN üzerinden konuşur (jeton ana uygulamada da aynı).
+        self.role = os.getenv("ROLE", "").strip().lower()
+        self.worker_token = os.getenv("WORKER_TOKEN", "").strip()
+        self.main_url = os.getenv("MAIN_URL", "").strip().rstrip("/")
+        self.worker_name = os.getenv("WORKER_NAME", "").strip()
+        self.worker_lease_n = int(os.getenv("WORKER_LEASE_N", "500"))
         self.sweep_rpm_headroom = float(os.getenv("SWEEP_RPM_HEADROOM", "0.85"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))
         self.notify_lowvol = True

@@ -1328,6 +1328,46 @@ async def pay_ipn(request: Request):
     return JSONResponse({"ok": code == 200, "note": note}, status_code=code)
 
 
+# ---------------- sayım worker API'si (ROLE=census-worker servisleri) ----------------
+
+def _worker_auth(request: Request) -> str:
+    """WORKER_TOKEN (env-only) — başlık X-Worker-Token ya da ?token=. Jeton
+    tanımlı değilse uç yok (404); yanlışsa 401. Döner: worker adı."""
+    tok = getattr(request.app.state.cfg, "worker_token", "") or ""
+    if not tok:
+        raise HTTPException(404)
+    got = request.headers.get("x-worker-token") or request.query_params.get("token") or ""
+    if not hmac.compare_digest(got, tok):
+        raise HTTPException(401, "worker token yanlış")
+    return (request.query_params.get("worker") or "?")[:40]
+
+
+@router.get("/api/census/lease")
+async def census_lease(request: Request):
+    """Worker'a sıradaki n hesabı kirala (10 dk). Tur yoksa boş liste + bekleme."""
+    from ..radar import census
+    worker = _worker_auth(request)
+    try:
+        n = int(request.query_params.get("n") or 500)
+    except ValueError:
+        n = 500
+    return JSONResponse(await census.lease(request.app.state.cfg, worker, n))
+
+
+@router.post("/api/census/ingest")
+async def census_ingest(request: Request):
+    """Worker'ın sonuçları: {pass_ts, results:[{a, dex, state}]} → aynı yazıcılar."""
+    from ..radar import census
+    worker = _worker_auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "JSON gövde gerekli"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "gövde sözlük olmalı"}, status_code=400)
+    return JSONResponse(await census.ingest(request.app.state.cfg, worker, body))
+
+
 @router.get("/saldiri")
 async def liq_attack_page(request: Request):
     """Liq attack radarı — hafta sonu yakın liq kümesini kim ucuza patlatabilir."""

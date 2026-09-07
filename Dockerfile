@@ -9,4 +9,6 @@ COPY app ./app
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# ROLE=census-worker → DB'siz sayım worker'ı (ana uygulamadan adres kiralar, HL'ye
+# kendi IP'siyle sorar, sonucu geri yollar; /health'i kendi verir). Aksi hâlde ana uygulama.
+CMD ["sh", "-c", "if [ \"$ROLE\" = \"census-worker\" ]; then python -m app.worker; else uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi"]

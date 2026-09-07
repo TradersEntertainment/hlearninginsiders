@@ -1250,6 +1250,22 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   coin sayfasının kapsama kutusu ve `/sembol` mesajı "sayım %X" notu taşır.
   Eski `CRYPTO_DEX_CENSUS_ENABLED` (yalnız para, günde bir) kalktı.
 
+  **Worker'lar (isteğe bağlı, `ROLE=census-worker`):** tek tek moddayken turu
+  kısaltmak için aynı repodan Railway'de N ek servis. Worker DB'siz çalışır
+  (`python -m app.worker`, Dockerfile `ROLE` ile dallanır): ana uygulamadan
+  `GET /api/census/lease` ile sıradaki `WORKER_LEASE_N` (vars. 500) hesabı 10
+  dakikalığına kiralar, HL'ye KENDİ istemcisiyle sorar (toplu sorgu sondası ve
+  429 yavaşlaması kendi), sonucu `POST /api/census/ingest` ile yollar; ana
+  uygulama aynı yazıcılarla yazar ve kiralı/bitmiş hesapları kendi turunda
+  atlar. Yetki `WORKER_TOKEN` (env-only, iki tarafta aynı; boşsa uçlar 404),
+  hedef `MAIN_URL`. Ana uygulama worker gördüğünde (son 15 dk kira) kendi
+  hızını `CENSUS_RPM_LOCAL` (vars. 100/dk) ile düşürür. Worker `/health`'i
+  kendi verir (Railway healthcheck). Süresi dolan kira yeniden dağıtılır;
+  `/tani` "worker: N aktif · son kira … · teslim … hesap" yazar. **Dürüst not:**
+  Railway servislerinin çıkış IP'si paylaşımlıysa HL 429 döner ve hepsi
+  yavaşlar — kazanım tek IP bütçesiyle sınırlı kalır; toplu sorgu çalışıyorsa
+  (tur ≈ 4 dk) worker'a gerek yoktur.
+
 ## AI Analist (opsiyonel)
 
 Bir dil modeline ham veri verip "örüntü bul" demek kendinden emin uydurma üretir.
