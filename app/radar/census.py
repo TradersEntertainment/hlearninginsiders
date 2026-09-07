@@ -50,9 +50,11 @@ MODE_KV = "census_mode"
 LB_KV = "census_lb"
 START_DELAY = 300          # açılışta evren + leaderboard otursun
 IDLE_SEC = 600             # kapalıyken bekleme (nabız atar)
+LOCK_RETRY_SEC = 30        # "database is locked" sonrası: 10 dk beklemeye değmez
 PASS_GAP = 60              # iki tur arası nefes
 LB_TTL = 6 * 3600          # leaderboard evrene bu sıklıkla işlenir
 UNI_TTL = 900              # addresses ∪ fills birleştirmesi bu sıklıkla (toplu modda tur 4 dk)
+UNI_FIRST_DAYS = 30        # ilk birleştirmede fills penceresi (gün); sonrası ARTIMLI
 PROBE_TTL = 6 * 3600       # "desteklenmiyor" (4xx/şekil) sondası bu sıklıkla yenilenir
 PROBE_RETRY_SEC = 300      # sonda BELİRSİZ (429/5xx/ağ) kaldıysa bu kadar sonra yeniden
 LEASE_SEC = 600            # worker kirası
@@ -98,22 +100,28 @@ def lb_rows(data, floor: float):
 
 
 async def _ingest_leaderboard(data, floor: float, ts: int) -> int:
+    """Leaderboard satırlarını tabloya yaz — PARÇA BAŞINA AYRI transaction.
+    Eskiden 26 bin satır tek transaction'daydı; yazma kilidi o süre boyunca
+    kimseye açılmıyordu (collector "database is locked" ile WS'i düşürüyordu)."""
     n = 0
     buf: list[tuple] = []
     q = ("INSERT INTO census_accounts(address, account_value, src, seen_ts) VALUES(?,?,'lb',?)"
          " ON CONFLICT(address) DO UPDATE SET account_value=excluded.account_value,"
          " seen_ts=excluded.seen_ts")
-    async with db() as conn:
-        for addr, av in lb_rows(data, floor):
-            buf.append((addr, av, ts))
-            if len(buf) >= LB_BATCH:
-                await conn.executemany(q, buf)
-                n += len(buf)
-                buf = []
-        if buf:
-            await conn.executemany(q, buf)
+
+    async def flush(rows: list[tuple]) -> None:
+        if rows:
+            async with db() as conn:
+                await conn.executemany(q, rows)
+            await asyncio.sleep(0.05)          # diğer yazarlara (collector) yol ver
+    for addr, av in lb_rows(data, floor):
+        buf.append((addr, av, ts))
+        if len(buf) >= LB_BATCH:
+            await flush(buf)
             n += len(buf)
-    return n
+            buf = []
+    await flush(buf)
+    return n + len(buf)
 
 
 async def refresh_universe(cfg, client, *, force: bool = False) -> dict:
@@ -137,18 +145,29 @@ async def refresh_universe(cfg, client, *, force: bool = False) -> dict:
     out["lb_ts"] = rec.get("ts")
     out["lb_n"] = rec.get("n")
     merge = force or ts - int(rec.get("uni_ts") or 0) >= UNI_TTL
-    async with db() as conn:
-        if merge:
+    if merge:
+        # AYRI transaction'lar: her biri kısa sürer, aralarında yazma kilidi açılır.
+        async with db() as conn:
             cur = await conn.execute(
                 "INSERT OR IGNORE INTO census_accounts(address, account_value, src, seen_ts)"
                 " SELECT LOWER(address), account_value, 'addr', ? FROM addresses"
                 " WHERE address LIKE '0x%'", (ts,))
             out["addr"] = int(cur.rowcount or 0)
+        await asyncio.sleep(0)
+        # fills ARTIMLI: yalnız son birleştirmeden beri gelen işlemler (idx_fills_ts).
+        # Eskiden 4,36 MİLYON satırlık DISTINCT taraması bir INSERT transaction'ı
+        # içinde koşuyordu — yazma kilidi onlarca saniye kapalı kalıyor, collector
+        # "database is locked" ile WS'i düşürüyordu (08.09 00:00 vakası).
+        since = int(rec.get("uni_ts") or 0) or (ts - UNI_FIRST_DAYS * 86400)
+        async with db() as conn:
             cur = await conn.execute(
                 "INSERT OR IGNORE INTO census_accounts(address, account_value, src, seen_ts)"
                 " SELECT DISTINCT LOWER(address), NULL, 'fills', ? FROM fills"
-                " WHERE address LIKE '0x%'", (ts,))
+                " WHERE ts >= ? AND address LIKE '0x%'", (ts, since))
             out["fills"] = int(cur.rowcount or 0)
+        out["fills_since"] = since
+        await asyncio.sleep(0)
+    async with db() as conn:
         cur = await conn.execute("SELECT COUNT(*) n FROM census_accounts")
         out["total"] = int((await cur.fetchone())["n"])
     if merge:
@@ -834,8 +853,11 @@ async def loop(cfg, client) -> None:
                 continue
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as e:
             log.exception("sayım hatası")
+            if "locked" in str(e).lower():
+                await asyncio.sleep(LOCK_RETRY_SEC)   # geçici DB kilidi 10 dk'ya mal olmasın
+                continue
         await asyncio.sleep(IDLE_SEC)
 
 

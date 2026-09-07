@@ -446,11 +446,11 @@ async def _upsert_addr_pos(addr: str, positions: dict[str, dict],
 
 async def prune_addr_positions(days: int) -> int:
     """Tazelenmeyeni at. Saklama `fills_retention_days` ile AYNI: işlem kaydı
-    olmayan bir pencere için pozisyon fotoğrafı tutmanın anlamı yok."""
-    async with db() as conn:
-        cur = await conn.execute(
-            "DELETE FROM addr_positions WHERE ts < ?", (now() - int(days) * 86400,))
-        return cur.rowcount or 0
+    olmayan bir pencere için pozisyon fotoğrafı tutmanın anlamı yok.
+    Parçalı: 85 binlik tabloda tek DELETE de kilidi saniyelerce tutuyordu
+    (WITHOUT ROWID tablo → parça anahtarı birincil anahtar)."""
+    return await _chunked_delete("addr_positions", now() - int(days) * 86400,
+                                 key="coin, address")
 
 
 async def upsert_account_value(addr: str, value: float | None, ts: int,
@@ -1026,24 +1026,30 @@ async def refresh_fills_count() -> int:
     return n
 
 
-async def _chunked_delete(table: str, cutoff: int, chunk: int = 50000) -> int:
+async def _chunked_delete(table: str, cutoff: int, chunk: int = 5000, key: str = "rowid") -> int:
     """Eski satırları PARÇA PARÇA sil — her parça ayrı transaction + arada nefes.
     Tek dev DELETE (4M satırda ~37 sn) WAL yazma kilidini onlarca saniye tutup
-    busy_timeout(5s) yüzünden collector'ı 'database is locked' ile düşürüyor,
-    WS reconnect fırtınası + bekçi-cancel-rollback döngüsü yaratıyordu."""
+    collector'ı 'database is locked' ile düşürüyor, WS reconnect fırtınası +
+    bekçi-cancel-rollback döngüsü yaratıyordu. Parça 50.000'di: üç indeksli
+    fills'te tek parça bile saniyeler sürüp kilidi kapalı tutuyordu (08.09 00:00
+    vakası) — 5.000 satır kilidi saniyenin altında tutar.
+
+    `key`: parçayı adresleyen sütun(lar). WITHOUT ROWID tablolarında (addr_positions,
+    census_accounts) `rowid` YOKTUR — oralarda birincil anahtar verilir
+    ("coin, address"); satır-değeri IN'i SQLite destekler."""
     total = 0
     while True:
         async with db() as conn:
             cur = await conn.execute(
-                f"DELETE FROM {table} WHERE rowid IN "
-                f"(SELECT rowid FROM {table} WHERE ts < ? LIMIT ?)", (cutoff, chunk))
+                f"DELETE FROM {table} WHERE ({key}) IN "
+                f"(SELECT {key} FROM {table} WHERE ts < ? LIMIT ?)", (cutoff, chunk))
             n = cur.rowcount or 0
         total += n
         if n < chunk:
             break
         from ..health import beat
         await beat("sweeper")           # uzun bakımda bekçi sahte alarm üretmesin
-        await asyncio.sleep(0.2)        # diğer yazarlara (collector) yol ver
+        await asyncio.sleep(0.5)        # diğer yazarlara (collector) yol ver
     return total
 
 

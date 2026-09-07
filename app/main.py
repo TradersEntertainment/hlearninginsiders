@@ -451,6 +451,7 @@ async def health_endpoint():
     out = {"ok": True, "ws_connected": bool(coll and coll.connected), "state": STATE}
     if coll:
         # anlık sonda sayaçları: "büyük işlem → hemen profiline bak" çalışıyor mu
+        out["db_err"] = coll.db_err
         out["probes"] = {"ok": coll.probes_ok, "err": coll.probes_err,
                          "skipped": coll.probes_skipped,
                          "inflight": len(coll._probing)}

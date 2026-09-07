@@ -1274,6 +1274,16 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   sorgulanan dex'lerle sınırlıdır: `para` sorulmadıysa adresin para satırı
   silinmez/kapanmaz. `/tani` derin keşif satırı "kripto dex sorgusu N adreste
   (adres başına ~2.1 istek)" yazar.
+- **SQLite yazma dayanıklılığı** (`app/db.py` `PRAGMAS`): WAL + `busy_timeout=30000`
+  (yazar hata vermek yerine bekler) + `synchronous=NORMAL` (WAL'da güvenli; commit
+  başına fsync yok — ağ diskinde kilit tutma süresini kat kat düşürür) +
+  `temp_store=MEMORY` + 8 MB önbellek. Gece bakımı ve büyük birleştirmeler PARÇA
+  PARÇA yazar (`_chunked_delete`, 5.000 satır/parça, aralarda 0,5 sn; WITHOUT ROWID
+  tablolarında parça anahtarı birincil anahtardır), sayım evreni `fills`'i artımlı
+  tarar (son birleştirmeden beri), leaderboard parça başına ayrı transaction'da
+  yazılır. WS collector'ın yazımı ayrıca korumalıdır: DB hatası soketi ASLA
+  düşürmez (yalnız o partinin satırları kaybolur, sayaç `/tani`'de) — 08.09 gecesi
+  bakım sırasında soket iki kez kopup o saniyelerdeki tüm işlemler kaybolmuştu.
 - Leaderboard endpoint'i resmi değildir; düşerse bot fills+watchlist ile çalışmaya devam eder.
 - Yahoo takvimi resmi API değildir; nadiren datacenter IP engeli görülebilir → Finnhub key'i eklemek sağlamlaştırır.
 - Fiyat grafiği HL **perp** mumlarını çizer (balinaların gerçekten işlem gördüğü fiyat);

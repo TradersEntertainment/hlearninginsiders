@@ -104,11 +104,11 @@ async def flush_logs() -> int:
 
 
 async def prune_logs() -> int:
-    """Yaş + satır tavanı. İkisi birden: sessiz haftalarda yaş, fırtınada tavan."""
+    """Yaş + satır tavanı. İkisi birden: sessiz haftalarda yaş, fırtınada tavan.
+    Yaş budaması parçalı (yazma kilidi kısa tutulur), tavan tek sorgu (küçük)."""
+    from .radar.sweeper import _chunked_delete
+    n = await _chunked_delete("log_events", now() - LOG_RETENTION_D * 86400)
     async with db() as conn:
-        cur = await conn.execute("DELETE FROM log_events WHERE ts < ?",
-                                 (now() - LOG_RETENTION_D * 86400,))
-        n = cur.rowcount or 0
         cur = await conn.execute(
             "DELETE FROM log_events WHERE id NOT IN"
             " (SELECT id FROM log_events ORDER BY ts DESC LIMIT ?)", (LOG_KEEP_ROWS,))
@@ -219,6 +219,9 @@ async def _coverage(cfg, state) -> list[str]:
                    f" + {len(coll.crypto_coins)} kripto tetiği)")
         if getattr(coll, "crypto_err", ""):
             out.append(f"  ⚠️ kripto tetiği KAPALI: {coll.crypto_err}")
+        if getattr(coll, "db_err", 0):
+            out.append(f"  ⚠️ WS fill yazımı {coll.db_err} kez başarısız (DB kilidi) — soket yaşadı,"
+                       f" o partilerin satırları yazılamadı")
         out.append(f"  sonda: {coll.probes_ok}✓ / {coll.probes_err}✗"
                    f" / {coll.probes_skipped} atlandı / {len(coll._probing)} uçuşta")
     else:

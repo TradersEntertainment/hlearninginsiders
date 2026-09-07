@@ -41,6 +41,7 @@ class Collector:
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
         self.crypto_coins: set[str] = set()  # yalnız sonda tetikleyicisi (ana dex)
         self.hot_marked = 0                  # sayım sıcak şeridine yazılan adres (kümülatif)
+        self.db_err = 0                      # WS sıcak yolunda DB hatası (kilit) — soket ölmez
         # Coin başına canlı akış penceresi: (ts, notional) — hacim tarayıcılarının
         # "mum sormaya değer mi" ön-süzgeci (FLOW_WINDOW sn). Bağlantı anı da tutulur:
         # pencere dolmadan "0 hacim" demek yalan olur → None (bilinmiyor).
@@ -391,37 +392,7 @@ class Collector:
         # Kripto akışı da artık satır üretebiliyor (bkz. fill_floor): "ne oldu"
         # sekmesi o kayıtlar olmadan "kim ne aldı" sorusunu cevaplayamıyordu.
         # Yazma bloğu koşullu, sonda (probe) en sonda.
-        watch: set[str] = set()
-        if rows:
-            async with db() as conn:
-                # executemany: eşik $5K'ya indiğinde parti başına onlarca satır
-                # gelebiliyor ve bu blok WS'in SICAK YOLUNDA. Tek tek execute
-                # etmek her satır için ayrı bir round-trip demekti.
-                await conn.executemany(
-                    "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,"
-                    "notional,ts,taker) VALUES(?,?,?,?,?,?,?,?,?)", rows)
-                await conn.executemany(
-                    "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
-                    " ON CONFLICT(address) DO NOTHING",
-                    [(r[2], r[7]) for r in rows])
-                self.fills_seen += len(rows)
-                # Sayım "sıcak şeridi": ana dex kripto coininde (PUMP…) işlem yapan
-                # adresin defteri dakikalar içinde çekilsin — küçük long'lar ($36K)
-                # hiçbir sondayı tetiklemiyor, hasat yalnız HIP-3'e bakıyor, soğuk
-                # kuyruk/sayım sırası onları en sona atıyordu (0.0042 bandı vakası).
-                if getattr(self.cfg, "census_enabled", False):
-                    hot = {r[2]: r[7] for r in rows if r[0] in self.crypto_coins}
-                    if hot:
-                        try:
-                            from ..radar.census import mark_hot
-                            self.hot_marked += await mark_hot(conn, hot)
-                        except Exception:
-                            log.debug("sıcak şerit yazılamadı", exc_info=True)
-                addr_list = list({r[2] for r in rows})
-                q = ",".join("?" * len(addr_list))
-                cur = await conn.execute(
-                    f"SELECT address FROM addresses WHERE watchlist=1 AND address IN ({q})", addr_list)
-                watch = {row["address"] for row in await cur.fetchall()}
+        watch = await self._write_fills(rows) if rows else set()
 
         # Sicilli adres SADECE daha önce kazandığı hisseye dönerse ilgi çeker.
         # (Genel whale alertleri watchlist dışı büyük pozları da yakalar.)
@@ -455,6 +426,49 @@ class Collector:
         # Büyük işlem gördüğümüz adresin TÜM defterine HEMEN bak. Süpürücü
         # havuzu sırayla geziyor; bu adrese sıra saatler sonra gelebilirdi.
         await self._kick_probes(agg)
+
+    async def _write_fills(self, rows: list[tuple]) -> set[str]:
+        """WS partisini yaz (fills + addresses + sayım sıcak şeridi) ve bu partideki
+        sicilli adresleri döndür.
+
+        HİÇBİR DB HATASI WS'İ DÜŞÜRMEZ: istisna `_handle`'dan çıkarsa `run()` soketi
+        kapatıp yeniden bağlanıyor ve o saniyelerdeki TÜM işlemler kayboluyordu
+        (08.09 00:00 gece bakımı: "WS koptu: database is locked", iki kez). Bedel
+        yalnız bu partinin satırlarıdır; soket akmaya devam eder."""
+        try:
+            async with db() as conn:
+                # executemany: eşik $5K'ya indiğinde parti başına onlarca satır
+                # gelebiliyor ve bu blok WS'in SICAK YOLUNDA. Tek tek execute
+                # etmek her satır için ayrı bir round-trip demekti.
+                await conn.executemany(
+                    "INSERT OR IGNORE INTO fills(coin,tid,address,side,px,sz,"
+                    "notional,ts,taker) VALUES(?,?,?,?,?,?,?,?,?)", rows)
+                await conn.executemany(
+                    "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
+                    " ON CONFLICT(address) DO NOTHING",
+                    [(r[2], r[7]) for r in rows])
+                self.fills_seen += len(rows)
+                # Sayım "sıcak şeridi": ana dex kripto coininde (PUMP…) işlem yapan
+                # adresin defteri dakikalar içinde çekilsin — küçük long'lar ($36K)
+                # hiçbir sondayı tetiklemiyor, hasat yalnız HIP-3'e bakıyor, soğuk
+                # kuyruk/sayım sırası onları en sona atıyordu (0.0042 bandı vakası).
+                if getattr(self.cfg, "census_enabled", False):
+                    hot = {r[2]: r[7] for r in rows if r[0] in self.crypto_coins}
+                    if hot:
+                        from ..radar.census import mark_hot
+                        self.hot_marked += await mark_hot(conn, hot)
+                addr_list = list({r[2] for r in rows})
+                q = ",".join("?" * len(addr_list))
+                cur = await conn.execute(
+                    f"SELECT address FROM addresses WHERE watchlist=1 AND address IN ({q})", addr_list)
+                return {row["address"] for row in await cur.fetchall()}
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.db_err += 1
+            if self.db_err == 1 or self.db_err % 50 == 0:
+                log.warning("fill yazımı başarısız (#%d), WS yaşıyor: %s", self.db_err, e)
+            return set()
 
     def _note_flow(self, coin: str, ts: int, notional: float) -> None:
         q = self.flow.get(coin)

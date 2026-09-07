@@ -379,12 +379,25 @@ def set_db_path(path: str) -> None:
     _DB_PATH = path
 
 
+# Yazma dayanıklılığı (canlıda 08.09 00:00 gece bakımında "database is locked"
+# fırtınası: WS collector İKİ KEZ koptu, bakım/twaplive/bookwall/tracker düştü):
+#   busy_timeout 30 sn — yazar hata vermek yerine BEKLER (5 sn uzun bir DELETE
+#     parçasına ya da evren birleştirmesine yetmiyordu),
+#   synchronous=NORMAL — WAL'da güvenli; commit başına fsync yok, Railway'in ağ
+#     diskinde yazma gecikmesi (dolayısıyla kilidin tutulduğu süre) kat kat düşer,
+#   temp_store=MEMORY — DISTINCT/ORDER BY geçici tabloları diske inmesin,
+#   cache_size=-8000 (8 MB) — 1,6 GB DB'de indeks taramaları için.
+PRAGMAS = ("PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=30000",
+           "PRAGMA synchronous=NORMAL", "PRAGMA temp_store=MEMORY",
+           "PRAGMA cache_size=-8000")
+
+
 @asynccontextmanager
 async def db():
     conn = await aiosqlite.connect(_DB_PATH)
     try:
-        await conn.execute("PRAGMA journal_mode=WAL")
-        await conn.execute("PRAGMA busy_timeout=5000")
+        for p in PRAGMAS:
+            await conn.execute(p)
         conn.row_factory = aiosqlite.Row
         yield conn
         await conn.commit()
@@ -474,6 +487,8 @@ async def init_db(path: str) -> None:
     set_db_path(path)
     conn = await aiosqlite.connect(path)
     try:
+        for p in PRAGMAS:
+            await conn.execute(p)
         await conn.executescript(SCHEMA)
         for mig in MIGRATIONS:
             try:

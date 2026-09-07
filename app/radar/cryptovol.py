@@ -295,10 +295,8 @@ async def recent(limit: int = 60, hours: int = 48,
 
 
 async def prune(days: int = RETENTION_D) -> int:
-    async with db() as conn:
-        cur = await conn.execute("DELETE FROM vol_events WHERE ts < ?",
-                                 (now() - days * 86400,))
-        return cur.rowcount or 0
+    from .sweeper import _chunked_delete            # parçalı: yazma kilidi kısa tutulur
+    return await _chunked_delete("vol_events", now() - days * 86400)
 
 
 async def loop(cfg, client, notifier) -> None:
