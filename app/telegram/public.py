@@ -113,6 +113,24 @@ def unknown_text(q: str) -> str:
 BUSY_TEXT = "🚦 Şu an yoğunluk var, 30 sn sonra tekrar dene."
 
 
+async def unknown_message(cfg, q: str) -> str:
+    """Çözümlenemeyen sembol: başka builder dex'inde mi, hariç mi tutulmuş, yakın ad var mı."""
+    from ..assets import is_excluded
+    from ..hl.universe import find_in_hip3, similar_names
+    sym = fmt.esc(q[:24].upper())
+    h = await find_in_hip3(q, getattr(cfg, "equity_dexes", None))
+    if h:
+        return (f"ℹ️ <b>{sym}</b> Hyperliquid'de <b>{fmt.esc(h['dex'])}</b> builder dex'inde listeli ama bu bot o "
+                "dex'i izlemiyor — pozisyon ve liq verisi yok. Başka bir coin dene: HYPE, BTC, SOL…")
+    if is_excluded(q):
+        return f"⛔ <b>{sym}</b> takip dışı bırakılmış."
+    text = unknown_text(q)
+    sim = await similar_names(q)
+    if sim:
+        text += "\nYakın adlar: " + ", ".join(f"<code>{fmt.esc(s)}</code>" for s in sim)
+    return text
+
+
 def plans(cfg) -> list[dict]:
     """Pro paketleri: (kod, ay, $, Stars). Stars = $ × kur, yukarı yuvarlanır."""
     rate = float(getattr(cfg, "stars_per_usd", 77) or 77)
@@ -490,7 +508,7 @@ async def run_query(bot, u: dict, raw: str) -> bool:
     from ..hl.universe import resolve_coin
     t = await resolve_coin(q)
     if not t:
-        await bot.send(unknown_text(q), chat, reply_markup=menu())
+        await bot.send(await unknown_message(cfg, q), chat, reply_markup=menu())
         return True
     ok, left, why = users.check_query(u, cfg)
     if not ok:

@@ -418,6 +418,47 @@ async def _subsystems(cfg) -> list[str]:
                       else " — HENÜZ HİÇ YOK"))
     except Exception as e:
         out.append(f"  ne oldu (adli) okunamadı ({type(e).__name__}: {e})")
+    # ---- evren: ana dex kripto önbelleği, HIP-3 dex keşfi, PROPR ↔ HL uyumu
+    # ("cryptolardan eksik var" sorusunun cevabı: PROPR'da olup HL'de karşılığı olmayan
+    # sembol burada yazar — arama PROPR listesine değil HL evrenine bakar)
+    try:
+        from . import propr as _propr
+        from .assets import excluded_set
+        from .hl import universe as _uni
+        names = await _uni.crypto_names()
+        ctx = await kv_get(_uni.MAIN_CTX_KV) or {}
+        hip = await kv_get(_uni.HIP3_KV) or {}
+        watched = {str(x).strip() for x in (getattr(cfg, "equity_dexes", None) or []) if str(x).strip()}
+        async with db() as c:
+            cur = await c.execute("SELECT symbol FROM tickers")
+            tick = {str(r["symbol"]).upper() for r in await cur.fetchall() if r["symbol"]}
+        line = (f"  evren: ana dex {len(names)} coin"
+                + (f" (kv {_dur(now() - int(ctx['ts']))} önce)" if ctx.get("ts") else " (kv yok — metrik turu koşmadı)"))
+        dexes = hip.get("dexes") or []
+        if dexes:
+            line += " · HIP-3: " + ", ".join(
+                f"{d['name']} {d['n'] if d.get('n') is not None else '?'}" + (" ✓" if d["name"] in watched else "")
+                for d in dexes) + f" (izlenen: {', '.join(sorted(watched)) or '-'})"
+        else:
+            line += " · HIP-3 keşfi henüz koşmadı"
+        if names:
+            propr_all = set(_propr.DEFAULT_PROPR) | {s.strip().upper() for s in
+                                                    (getattr(cfg, "propr_symbols", "") or "").split(",") if s.strip()}
+            hip_names = {a: d["name"] for d in dexes for a in (d.get("assets") or [])}
+            known = set(names) | tick
+            exc = excluded_set()
+            unwatched = sorted(f"{s} ({hip_names[s]})" for s in propr_all
+                               if s not in known and s in hip_names and hip_names[s] not in watched)
+            missing = sorted(s for s in propr_all if s not in known and s not in hip_names)
+            if unwatched:
+                line += " · PROPR'da olup izlenmeyen dex'te: " + ", ".join(unwatched)
+            if missing:
+                shown = [s + " (hariç tutulmuş)" if s in exc else s for s in missing[:40]]
+                line += (" · PROPR'da olup HL'de bulunamayan (" + str(len(missing)) + "): " + ", ".join(shown)
+                         + (f" … +{len(missing) - 40}" if len(missing) > 40 else ""))
+        out.append(line)
+    except Exception as e:
+        out.append(f"  evren okunamadı ({type(e).__name__}: {e})")
     # Dinleme evreni 30 → 120'ye çıktı ve yakalama tabanı $5K: fill büyümesi
     # buradan izlenir. Şişerse çare tabanı yükseltmek ya da saklamayı kısmak.
     try:

@@ -89,6 +89,10 @@ async def universe_loop(cfg, client, notifier=None):
         try:
             fresh: list[dict] = []
             coins = await uni.refresh_universe(client, cfg.equity_dexes, fresh)
+            try:
+                await uni.discover_dexes(client)     # tanı + arama cevabı için (izleme listesi değişmez)
+            except Exception:
+                log.debug("HIP-3 keşfi", exc_info=True)
             await health.beat("universe")
             if coins:
                 _stamp("evren yenileme")

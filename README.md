@@ -107,7 +107,13 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
 
 ## Nasıl Çalışıyor?
 
-1. `perpDexs` + `meta` ile HL'deki hisse perp evreni keşfedilir (varsayılan dex: `xyz`).
+1. `meta(dex)` ile izlenen HIP-3 dex'lerinin (`EQUITY_DEXES`, varsayılan `xyz`) hisse
+   perp evreni yenilenir. `perpDexs` ile HL'deki **tüm** builder dex'leri ayrıca
+   keşfedilir (6 saatte bir, kv `hip3_dexes`) ama izleme listesi otomatik
+   genişlemez: `/tani` "evren" satırı dex'leri, izlenenleri ve PROPR'da olup HL'de
+   karşılığı olmayan sembolleri yazar; arama ve bot "X `abc` dex'inde listeli ama
+   izlenmiyor" der. Arama PROPR listesine değil HL evrenine bakar — PROPR'a bir
+   sembol eklemek onu aranır yapmaz, HL'de o adla var olması gerekir.
 2. Yahoo'dan (yfinance) evrendeki sembollerin earnings tarihleri çekilir; `FINNHUB_API_KEY` verilirse çapraz doğrulanır.
 3. WebSocket `trades` kanalı 7/24 dinlenir — her trade'de alıcı+satıcı adresi gelir; $5K üstü fill'ler ve adresleri DB'ye yazılır.
    Ana dex'in hacimce ilk 30 kripto coin'i de dinlenir ama YALNIZ tetikleyici olarak:

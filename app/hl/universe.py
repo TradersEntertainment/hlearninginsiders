@@ -304,3 +304,87 @@ async def resolve_coin(symbol_or_coin: str) -> dict | None:
     if not name or is_excluded(name):
         return None
     return {"coin": name, "symbol": name, "dex": "", "kind": "crypto"}
+
+
+# ---------------- HIP-3 (builder) dex keşfi — yalnız tanı ve arama cevabı için ----------------
+# İzleme listesi (EQUITY_DEXES) buradan GENİŞLEMEZ: her ek dex derin keşifte adres
+# başına +1 istek demektir, o karar Ayarlar'da kullanıcının. Burası "ANSEM nerede?"
+# sorusuna cevap verir: 1 perpDexs + dex başına 1 meta, 6 saatte bir, kv'de.
+HIP3_KV = "hip3_dexes"
+HIP3_TTL = 6 * 3600
+
+
+def parse_perp_dexs(raw) -> list[dict]:
+    """perpDexs yanıtı → [{name, full_name}] (ilk eleman ana dex için None gelir; atlanır)."""
+    out = []
+    for d in (raw or []) if isinstance(raw, list) else []:
+        if not isinstance(d, dict):
+            continue
+        name = str(d.get("name") or "").strip()
+        if not name or ":" in name:
+            continue
+        out.append({"name": name, "full_name": str(d.get("full_name") or d.get("fullName") or "")[:60]})
+    return out
+
+
+async def discover_dexes(client: HLClient, ttl: int = HIP3_TTL, fetch: bool = True) -> dict:
+    """HL'deki tüm builder dex'leri ve coin sembolleri → kv `hip3_dexes`
+    {ts, dexes: [{name, full_name, n, assets: [SEMBOL…]}]}. Hata olursa eski kv korunur;
+    meta alınamayan dex `n: None` ile listelenir (yanlış 'yok' demeyelim)."""
+    rec = await kv_get(HIP3_KV) or {}
+    if not fetch or (rec.get("ts") and now() - int(rec["ts"]) < ttl):
+        return rec
+    try:
+        raw = await client.perp_dexs()
+    except Exception as e:
+        log.warning("perpDexs alınamadı: %s", e)
+        return rec
+    dexes = []
+    for d in parse_perp_dexs(raw):
+        try:
+            meta = await client.meta(d["name"])
+            assets = sorted({symbol_of(norm_coin(a.get("name") or "", d["name"]))
+                             for a in ((meta or {}).get("universe") or [])
+                             if a.get("name") and not a.get("isDelisted")})
+            dexes.append({**d, "n": len(assets), "assets": assets})
+        except Exception as e:
+            log.warning("meta(%s) alınamadı: %s", d["name"], e)
+            dexes.append({**d, "n": None, "assets": []})
+    if not dexes and rec.get("dexes"):
+        return rec                                  # boş/bozuk yanıt: eski liste kalsın
+    rec = {"ts": now(), "dexes": dexes}
+    await kv_set(HIP3_KV, rec)
+    log.info("HIP-3 dex keşfi: %s", ", ".join(f"{d['name']}({d['n']})" for d in dexes) or "yok")
+    return rec
+
+
+async def find_in_hip3(symbol: str, watched=None) -> dict | None:
+    """Sembol hangi builder dex'inde: {dex, full_name, n, watched} — kv-only, ağ yok."""
+    sym = symbol_of(symbol or "")
+    if not sym:
+        return None
+    rec = await kv_get(HIP3_KV) or {}
+    w = {str(x).strip() for x in (watched or []) if str(x).strip()}
+    for d in rec.get("dexes") or []:
+        if sym in (d.get("assets") or []):
+            return {"dex": d["name"], "full_name": d.get("full_name") or "", "n": d.get("n"),
+                    "watched": d["name"] in w}
+    return None
+
+
+async def hip3_known() -> bool:
+    return bool((await kv_get(HIP3_KV) or {}).get("dexes"))
+
+
+async def similar_names(symbol: str, limit: int = 5) -> list[str]:
+    """Yakın adlar: sorguyu içeren (ya da sorgunun içerdiği) ana dex kripto adları ve
+    izlenen hisse sembolleri — 'yazımı kontrol et' yerine somut öneri."""
+    q = (symbol or "").strip().upper().split(":")[-1]
+    if len(q) < 2:
+        return []
+    names = set((await crypto_names()).values())
+    async with db() as conn:
+        cur = await conn.execute("SELECT symbol FROM tickers")
+        names |= {r["symbol"] for r in await cur.fetchall() if r["symbol"]}
+    hits = [n for n in names if n.upper() != q and (q in n.upper() or (len(n) >= 3 and n.upper() in q))]
+    return sorted(hits, key=lambda n: (len(n), n))[:limit]

@@ -15,7 +15,8 @@ from fastapi.templating import Jinja2Templates
 from ..config import EDITABLE_FIELDS, convert_value, display_value
 from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import annotate, upcoming_events
-from ..hl.universe import MAIN_CTX_KV, crypto_names, find_ticker, get_universe, resolve_coin
+from ..hl.universe import (MAIN_CTX_KV, crypto_names, find_in_hip3, find_ticker, get_universe, hip3_known,
+                           resolve_coin, similar_names)
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol, liqattack, liqmap,
@@ -669,8 +670,14 @@ async def coin_page(request: Request, symbol: str):
     _guard(request)
     t = await resolve_coin(symbol)
     if not t:
+        from ..assets import is_excluded
+        cfg = request.app.state.cfg
         return _render(request, "coin.html", {"ticker": None, "symbol": symbol.upper(),
-                                              "crypto_n": len(await crypto_names())})
+                                              "crypto_n": len(await crypto_names()),
+                                              "hip3": await find_in_hip3(symbol, cfg.equity_dexes),
+                                              "hip3_known": await hip3_known(),
+                                              "similar": await similar_names(symbol),
+                                              "excluded": is_excluded(symbol)})
     coin, kind = t["coin"], t.get("kind", "equity")
     cfg = request.app.state.cfg
     rows, summ, mark_src = await _coin_data(coin, kind, cfg)

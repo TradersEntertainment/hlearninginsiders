@@ -6,10 +6,18 @@
 {% block content %}
 {% if not ticker %}
 <div class="panel">
-  {{ m.empty([symbol ~ " HL evreninde bulunamadı — ne HIP-3 hisse ne ana dex kripto.",
+  {% if hip3 %}
+  {{ m.empty([symbol ~ " Hyperliquid'de " ~ hip3.dex ~ " builder dex'inde listeli" ~ (" (" ~ hip3.full_name ~ ")" if hip3.full_name else "") ~ " ama bu bot o dex'i izlemiyor — pozisyon ve liq verisi yok.",
+              "İzlemek için Ayarlar → Takvim & semboller → 'Hisse dex'leri' (EQUITY_DEXES) alanına " ~ hip3.dex ~ " ekle; evrene 6 saat içinde (ya da restart'ta) girer. Her ek dex derin keşifte adres başına +1 istek demektir."]) }}
+  {% elif excluded %}
+  {{ m.empty([symbol ~ " hariç tutulmuş — Ayarlar → 'Takip dışı semboller' listesinde.", "Aramak için oradan çıkar; evren yenilemesinde geri gelir."]) }}
+  {% else %}
+  {{ m.empty([symbol ~ " HL evreninde bulunamadı — ne izlenen HIP-3 hisse ne ana dex kripto" ~ (", keşfedilen builder dex'lerinde de yok (PROPR'daki ad HL'deki addan farklı olabilir)." if hip3_known else "."),
               ("Kripto evreni ilk metrik/hacim turundan sonra gelir (henüz 0 coin biliniyor); yazımı kontrol et ya da birazdan yeniden dene."
                if not (crypto_n or 0) else
                (crypto_n ~ " ana dex coini aranabilir — yazımı kontrol et (ör. PUMP, HYPE, kPEPE); hisse sembolleri ana sayfadaki evren listesinde."))]) }}
+  {% endif %}
+  {% if similar %}<p class="mt6">Yakın adlar: {% for s in similar %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
   <p class="mt6"><a href="/{{ k }}">← Ana sayfadaki evren listesine bak</a></p>
 </div>
 {% else %}
