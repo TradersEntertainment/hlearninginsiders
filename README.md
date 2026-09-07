@@ -226,6 +226,33 @@ Sekme ayrıca her tur için pozisyonu, bakiyeyi, **Tur/Bakiye** oranını ve
 **taker %**'sini gösterir: sabırlı bir TWAP genelde pasif kalır, agresif olan
 aceleci demektir.
 
+### Canlı TWAP alarmı
+
+Tetikleyen vaka: INJ'e 6 saate yayılmış **$1.6M TWAP** — dilimler ~$2.2K,
+kripto yakalama tabanı $5K; arşiv radarı bunu **hiç göremez**. Collector abone
+olduğu her coinin her trade'ini adresle aldığı için `app/radar/twaplive.py`
+bunları **bellekte** sayar (ekstra istek yok): 2 sn içindeki parçalar tek dilim
+(HL alt-emri IOC, ince defterde bölünür), düzenlilik son 64 dilimden HL'nin
+rastgeleleştirmesine göre gevşek eşikle (CV 0,5 / 0,6), ortanca aralık 25-35
+sn ise mesaj "HL TWAP düzenine uyuyor" der, değilse "özel dilimleme".
+
+- **Bildirim kapısı:** toplam ≥ $100K **ve** dilim hızı güne yayılınca coinin
+  24s hacminin ≥ %20'si (INJ: $2.2K/30 sn ≈ $6.3M/gün, hacim $9.9M → %64); ya
+  da toplam ≥ $5M (hacimden bağımsız). En az 20 dilim ve 10 dk; hacim
+  bilinmiyor/bayatsa yalnız mutlak kapı çalışır. mm/vault etiketli adres elenir.
+- **Kanal:** kripto → `CRYPTO_CHAT_ID` (boşsa gönderilmez), hisse/endeks → ana
+  sohbet. Mesaj: dilim sayısı/boyutu/aralığı, toplam ve adet, hız, hacim oranı,
+  adresin pozisyonu (canlı sorgu, 1 istek), fiyat ilk→son, taker %.
+- **İlerleme ve bitiş:** toplam $250K/500K/1M/2M/5M… basamaklarını geçince kısa
+  not (tur başına ≥30 dk ara); 3 aralık (≥5 dk) dilim gelmeyince 🏁 bitiş notu
+  (toplam, süre, fiyat, 24s hacme oranı). Sekmede 📡 satırlar, 24s hacim ve
+  hız/gün kolonları.
+- **Kapsam:** yalnız WS'in dinlediği coinler — hisseler + hacme göre ilk
+  `crypto_watch_top` kripto; sekme ve `/tani` sayıyı yazar.
+- **Restart:** bekleme (6 saat) `alerts_log`'da; bildirilmiş turlar açılışta
+  geri yüklenir, bitiş notu kaybolmaz. İşaret gönderimden ÖNCE yazılır: 60 sn'lik
+  döngü sessiz saatte her dakika yeni özet kaydı üretmesin. Ayarlar → **TWAP radarı**.
+
 ## Liq attack radarı: `/saldiri`
 
 **Mekanizma.** Hafta sonu hissenin gerçek fiyatı sabittir (borsa kapalı). Perp

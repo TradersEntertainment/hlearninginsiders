@@ -370,7 +370,8 @@ TASK_TR = {
     "hourstats": "saat istatistiği",
     "digest": "günlük özet", "collector": "canlı işlem akışı (WS)",
     "telegram": "telegram botu", "watchdog": "bekçi", "ai": "AI analist",
-    "channel": "kanal yayını",
+    "channel": "kanal yayını", "twap": "TWAP radarı (arşiv)", "twaplive": "canlı TWAP radarı",
+    "sim": "liq simülasyonu",
 }
 
 
@@ -1518,4 +1519,98 @@ def sim_summary(s: dict) -> str:
     if s.get("source_gate"):
         lines.append(f"⚠️ sinyal kaynağı kapalı: {esc(s['source_gate'])}")
     lines.append(SIM_FOOT)
+    return "\n".join(lines)
+
+
+# ---------------- ⏳ canlı TWAP radarı ----------------
+
+def qty_txt(n) -> str:
+    """Adet: 7.5K · 337.7K · 7.01M."""
+    n = float(n or 0)
+    a = abs(n)
+    if a >= 1e9:
+        return f"{n / 1e9:.2f}B"
+    if a >= 1e6:
+        return f"{n / 1e6:.2f}M"
+    if a >= 1e3:
+        return f"{n / 1e3:.1f}K"
+    return f"{n:.4g}"
+
+
+def _gap_txt(sec) -> str:
+    sec = float(sec or 0)
+    return f"{sec / 60:.0f} dk" if sec >= 90 else f"{sec:.0f} sn"
+
+
+def _twap_side(side) -> str:
+    return "🟢 ALIŞ" if side == "buy" else "🔴 SATIŞ"
+
+
+def twap_alert(m: dict, ctx: dict) -> str:
+    """İlk bildirim: kim, kaç dilim, hangi hızla, hacme göre ne kadar büyük."""
+    sym = esc((m.get("coin") or "").split(":")[-1])
+    klass = ctx.get("klass") or "kripto"
+    badge = (f"🐘 düşük hacimli {klass}" if ctx.get("gate") == "ratio" else "💰 hacimden bağımsız büyük")
+    lines = [f"⏳ <b>TWAP</b> · <b>{sym}</b> · {_twap_side(m.get('side'))} · {badge}",
+             f"👤 {alink(m['address'])} · {int(m.get('n') or 0)} dilim × ~{usd(m.get('avg_slice'))}"
+             f" · her {_gap_txt(m.get('median_gap'))} · {dur_txt(m.get('dur'))}'dır sürüyor"]
+    tot = f"şimdiye kadar <b>{usd(m.get('total'))}</b> ({qty_txt(m.get('sz_total'))} {sym})"
+    if ctx.get("day_vol") and ctx.get("rate_pct") is not None:
+        lines.append(f"{tot} · bu hızla 24 saatte <b>{usd(m.get('rate_day'))}</b> ≈ 24s hacmin"
+                     f" <b>%{ctx['rate_pct']:.0f}</b>'i (hacim {usd(ctx['day_vol'])}, TWAP'ın kendisi dahil)")
+    else:
+        lines.append(f"{tot} · hız {usd(float(m.get('rate_day') or 0) / 24)}/saat · 24s hacim bilinmiyor")
+    pos = ctx.get("pos")
+    if pos and not pos.get("none"):
+        src = pos.get("src") or ""
+        when = f" {age_str(pos['ts'])} önce" if src != "canlı" and pos.get("ts") else ""
+        lines.append(f"📍 pozisyon: {_side_badge(pos.get('side') or '')} <b>{usd(pos.get('notional'))}</b> · {src}{when}")
+    elif pos and pos.get("none"):
+        lines.append("📍 pozisyon: bu coinde açık perp pozisyonu yok (canlı) — kapatıyor ya da hedge olabilir")
+    else:
+        lines.append("📍 pozisyon: bilinmiyor")
+    pr = f"fiyat {px(m.get('px_first'))} → {px(m.get('px_last'))} (<b>{float(m.get('px_chg_pct') or 0):+.1f}%</b>)"
+    if m.get("taker_pct") is not None:
+        pr += f" · %{m['taker_pct']:.0f} taker"
+    lines.append(pr)
+    if m.get("native_like"):
+        lines.append("<i>HL TWAP emri 30 sn'de bir dilim atar; düzen ona uyuyor. Biterse toplamı yazarım.</i>")
+    else:
+        lines.append(f"<i>Özel dilimleme (~{_gap_txt(m.get('median_gap'))} aralık) — kendi botuyla"
+                     " dilimliyor olabilir. Biterse toplamı yazarım.</i>")
+    if ctx.get("entity"):
+        lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
+    if klass == "hisse" and is_listed(sym):
+        lines.append(PROPR_NOTE)
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
+def twap_progress(m: dict, ctx: dict) -> str:
+    sym = esc((m.get("coin") or "").split(":")[-1])
+    line = (f"⏳ <b>TWAP sürüyor</b> · <b>{sym}</b> · {_twap_side(m.get('side'))}"
+            f" · toplam <b>{usd(ctx.get('step'))}</b>'ı geçti (ilk bildirimde {usd(ctx.get('alert_total'))})"
+            f" · {dur_txt(m.get('dur'))} · {int(m.get('n') or 0)} dilim")
+    if ctx.get("rate_pct") is not None:
+        line += f" · bu hızla 24 saatte {usd(m.get('rate_day'))} ≈ hacmin %{ctx['rate_pct']:.0f}'i"
+    else:
+        line += f" · hız {usd(float(m.get('rate_day') or 0) / 24)}/saat"
+    line += (f" · fiyat {px(m.get('px_first'))} → {px(m.get('px_last'))}"
+             f" (<b>{float(m.get('px_chg_pct') or 0):+.1f}%</b>) · 👤 {alink(m['address'])}")
+    return line
+
+
+def twap_end(m: dict, ctx: dict) -> str:
+    sym = esc((m.get("coin") or "").split(":")[-1])
+    total = float(m.get("total") or 0)
+    lines = [f"🏁 <b>TWAP bitti</b> · <b>{sym}</b> · {_twap_side(m.get('side'))} · 👤 {alink(m['address'])}",
+             f"toplam <b>{usd(total)}</b> ({qty_txt(m.get('sz_total'))} {sym}) · {dur_txt(m.get('dur'))}"
+             f" · {int(m.get('n') or 0)} dilim · ort. dilim {usd(m.get('avg_slice'))} / {_gap_txt(m.get('median_gap'))}"]
+    pr = f"fiyat {px(m.get('px_first'))} → {px(m.get('px_last'))} (<b>{float(m.get('px_chg_pct') or 0):+.1f}%</b>)"
+    if ctx.get("day_vol"):
+        pr += f" · 24s hacmin <b>%{total / float(ctx['day_vol']) * 100:.0f}</b>'i"
+    if m.get("taker_pct") is not None:
+        pr += f" · %{m['taker_pct']:.0f} taker"
+    lines.append(pr)
+    lines.append(DISCLAIMER)
     return "\n".join(lines)

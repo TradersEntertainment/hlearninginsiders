@@ -505,6 +505,24 @@ async def _subsystems(cfg) -> list[str]:
                    + (f" · {_dur(now() - int(la['ts']))} önce" if la.get("ts") else ""))
     else:
         out.append("  liq attack: tur HENÜZ ÇALIŞMADI")
+    tl = await kv_get("twaplive_stats") or {}
+    if tl.get("ts"):
+        best = tl.get("best") or {}
+        out.append("  canlı twap: " + (f"⚠️ {tl['error']}" if tl.get("error") else (
+            f"{_num(tl.get('keys'))} dizi bellekte · {tl.get('cands', 0)} aday · {tl.get('regular', 0)} düzenli"
+            f" · {tl.get('alerted', 0)} bildirim · {tl.get('progress', 0)} ilerleme · {tl.get('ended', 0)} bitiş"
+            + (f" · ⚠️ CRYPTO_CHAT_ID TANIMSIZ ({tl['no_chat']} kripto alarmı gönderilmedi)" if tl.get("no_chat") else "")
+            + (f" · {tl['no_vol']} hacim bilinmiyor" if tl.get("no_vol") else "")
+            + (f" · {tl['skipped_mm']} mm/vault elendi" if tl.get("skipped_mm") else "")
+            + (f" · ⚠️ {tl['failed']} gönderilemedi" if tl.get("failed") else "")
+            + (f" · ⚠️ hata {tl['errors']}" if tl.get("errors") else "")
+            + ((f" · en büyüğü {best.get('coin')} {best.get('side')} ${float(best.get('total') or 0):,.0f}"
+                + (f" (hacmin %{float(best['rate_pct']):.0f}'i/gün)" if best.get("rate_pct") is not None else ""))
+               if best else "")
+            + (f" · ⚠️ {tl['skipped']}" if tl.get("skipped") else "")))
+            + f" · {_dur(now() - int(tl['ts']))} önce")
+    else:
+        out.append("  canlı twap: tur HENÜZ ÇALIŞMADI")
     tw = await kv_get("twap_stats") or {}
     if tw:
         best = tw.get("best") or {}

@@ -16,6 +16,14 @@
   <span class="warn">Düzenli işlem yapan her bot TWAP gibi görünebilir —
   market maker/vault etiketli adresler elenir ama hepsi elenemez.
   Yatırım tavsiyesi değildir.</span></p>
+  <p class="sub">📡 <b>Canlı radar{% if not live_on %} (kapalı){% endif %}:</b> WS akışındaki her işlem — yakalama tabanının
+  <b>altındakiler dahil</b> — adres bazında bellekte sayılır, ekstra istek yok. HL'nin yerel
+  TWAP'ı 30 sn'de bir ~$2K'lık dilim atar; arşiv onu göremez, canlı sayaç görür. Telegram:
+  toplam ≥ <b>{{ alert_min|usd }}</b> ve dilim hızı güne yayılınca coinin 24s hacminin
+  ≥ <b>%{{ '%g'|format(rate_pct) }}</b>'si, ya da toplam ≥ {{ big_usd|usd }} (hacimden bağımsız).
+  Kripto → kripto kanalı, hisse → ana sohbet; ilerleme ve 🏁 bitiş notları gelir.
+  Kapsam: dinlenen <b>{{ ws.crypto|length if ws.crypto else 0 }}</b> kripto + <b>{{ ws.equity_n or 0 }}</b> hisse
+  (Ayarlar → TWAP radarı).</p>
 
 </div>
 
@@ -26,6 +34,8 @@
   <table>
     <tr><th class="l">Coin</th><th class="l">Adres</th><th>Yön</th>
         <th title="Turun toplam büyüklüğü — dilimlerin $ toplamı">Toplam</th>
+        <th title="Coinin 24 saatlik hacmi (bildirim anındaki)">24s hacim</th>
+        <th title="Dilim hızı güne yayılınca 24s hacmin yüzde kaçı">Hız/gün</th>
         <th title="Kaç dilime bölünmüş">Dilim</th>
         <th title="Ortalama dilim büyüklüğü">Dilim $</th>
         <th title="Dilimler arası ortalama süre">Aralık</th>
@@ -35,6 +45,8 @@
         <th title="Bu coindeki bilinen açık pozisyonu">Pozisyon</th>
         <th title="HL perp teminatı — net worth değil">HL bakiye</th>
         <th title="Turun büyüklüğü / bakiye">Tur/Bak.</th>
+        <th title="📡 canlı sayaç (tabanın altındaki dilimler dahil) · 🗄 fills arşivi">Kaynak</th>
+        <th title="Telegram: ✅ bildirildi · 🏁 bitiş notu gitti">Bildirim</th>
         <th>Durum</th></tr>
     {% for r in rows %}
     <tr>
@@ -45,6 +57,9 @@
       <td class="{{ 'long' if r.side == 'buy' else 'short' }}">
         <b>{{ 'ALIM' if r.side == 'buy' else 'SATIM' }}</b></td>
       <td><b>{{ r.total|usd }}</b></td>
+      <td class="dim">{% if r.day_volume %}{{ r.day_volume|usd }}{% else %}—{% endif %}</td>
+      <td class="{{ 'short' if r.rate_pct is not none and r.rate_pct >= rate_pct else 'dim' }}">
+        {% if r.rate_pct is not none %}%{{ '%.0f'|format(r.rate_pct) }}{% else %}—{% endif %}</td>
       <td class="dim">{{ r.n_slices }}</td>
       <td class="dim">{{ r.avg_slice|usd }}</td>
       <td class="dim">{{ (r.avg_gap or 0)|int }}sn</td>
@@ -59,6 +74,8 @@
         {%- else %}<span class="dim">—</span>{% endif %}</td>
       <td>{{ m.equity_cell(r.account_value, r.account_ts) }}</td>
       <td>{{ m.equity_pct(r.account_value, r.total) }}</td>
+      <td class="dim">{{ '📡 canlı' if r.src == 'live' else '🗄 arşiv' }}</td>
+      <td class="dim">{% if r.ended_ts %}🏁 {{ r.ended_ts|age }}{% elif r.alerted_ts %}✅ {{ r.alerted_ts|age }}{% else %}—{% endif %}</td>
       <td>{% if r.active %}<b class="long">🔴 sürüyor</b>
           {%- else %}<span class="dim">bitti · {{ r.last_ts|age }}</span>{% endif %}</td>
     </tr>
@@ -73,11 +90,17 @@
     · <b>{{ st.big or 0 }}</b> tanesi eşiği geçti
     {%- if st.skipped_mm %} · {{ st.skipped_mm }} market maker/vault elendi{% endif %}
     {%- if st.ts %} · {{ st.ts|dt }}{% endif %} ·
-    eşik <b>{{ min_usd|usd }}</b> · pencere <b>{{ window_h }} saat</b></p>
+    eşik <b>{{ min_usd|usd }}</b> · pencere <b>{{ window_h }} saat</b> (arşiv)</p>
+  <p class="kunye">📡 Canlı radar: {% if live.ts %}{{ live['keys'] or 0 }} dizi bellekte · {{ live.cands or 0 }} aday ·
+    {{ live.regular or 0 }} düzenli · <b>{{ live.alerted or 0 }}</b> bildirim · {{ live.ended or 0 }} bitiş
+    {%- if live.no_chat %} · <span class="bad">{{ live.no_chat }} kripto alarmı gönderilmedi (CRYPTO_CHAT_ID yok)</span>{% endif %}
+    {%- if live.no_vol %} · {{ live.no_vol }} hacim bilinmiyor{% endif %}
+    {%- if live.errors %} · <span class="bad">hata {{ live.errors }}</span>{% endif %}
+    · {{ live.ts|dt }}{% else %}tur henüz çalışmadı{% endif %}.</p>
 
   {# KÖR NOKTA: bu uyarı olmadan boş sayfa "TWAP yok" gibi okunur, oysa
      "göremediğimiz TWAP'lar olabilir" demek. #}
-  <p class="kunye">🕳 <b>Kör nokta:</b> yalnız yakalama eşiğinin üstündeki
+  <p class="kunye">🕳 <b>Kör nokta (arşiv):</b> yalnız yakalama eşiğinin üstündeki
   dilimleri görüyoruz — hisse <b>{{ eq_floor|usd }}</b>, kripto
   <b>{{ crypto_floor|usd }}</b>. Bunun altına inen çok sabırlı bir TWAP
   <b>tamamen görünmez</b>dir ve kaçırdığımızı bile bilemeyiz.
@@ -91,7 +114,9 @@
   <p class="sub">Bir dizi, iki ölçü birden düşükse "düzenli" sayılıyor:
   <b>aralıkların</b> ve <b>dilim boyutlarının</b> değişkenlik katsayısı (ikisi de
   0.35 altında). İnsan eliyle atılan emirler bu kadar düzenli olmaz; bir
-  algoritma olur. En az {{ 5 }} dilim şart — daha azında "düzenlilik" ölçülemez.</p>
+  algoritma olur. En az {{ 5 }} dilim şart — daha azında "düzenlilik" ölçülemez.
+  Canlı radar son 64 dilimden ölçer; HL'nin rastgeleleştirmesi ve dolmayan dilimin
+  sonrakine taşınması için eşikleri daha gevşek (0.5 / 0.6), 2 sn içindeki parçalar tek dilim.</p>
   <p class="sub"><b>Düzenlilik</b> kolonu ikisinin ortalaması: <b>0'a yakın =
   saat gibi işleyen bir algoritma</b>, 0.35'e yakın = sınırda. <b>Taker %</b>
   yüksekse fiyatı süpürerek alıyor — sabırlı bir TWAP genelde pasif kalır,

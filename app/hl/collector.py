@@ -13,6 +13,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
+from ..radar import twaplive
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -241,6 +242,13 @@ class Collector:
                 if aggr in ("A", "B"):
                     taker = 1 if ((side == "buy" and aggr == "B")
                                   or (side == "sell" and aggr == "A")) else 0
+                # Canlı TWAP sayacı: tabanın ALTINDAKİ dilimler de sayılır — $1.6M/6 s
+                # TWAP ~$2.2K'lık 720 dilimdir, fills bunları hiç görmez. Sıcak yol:
+                # senkron, asla fırlatmaz (bkz. app/radar/twaplive.py).
+                try:
+                    twaplive.observe(coin, addr, side, px, sz, notional, ts, taker)
+                except Exception:
+                    twaplive.REG.errors += 1
                 a = agg.setdefault((coin, addr, side), {
                     "ntl": 0.0, "sz": 0.0, "pxsz": 0.0, "tids": [],
                     "tk": 0.0, "known": 0.0, "ts": ts, "wrote": False})

@@ -31,12 +31,15 @@ RETENTION_D = 30
 ACTIVE_GAPS = 3
 
 
-def detect(rows: list[dict]) -> dict | None:
+def detect(rows: list[dict], *, cv_gap_max: float = CV_GAP_MAX,
+           cv_size_max: float = CV_SIZE_MAX, min_slices: int = MIN_SLICES) -> dict | None:
     """Zaman sıralı fill dizisi → TWAP ölçümleri. Düzenli değilse None.
 
-    `rows`: [{"ts", "sz", "notional"}] — artan zaman.
+    `rows`: [{"ts", "sz", "notional"}] — artan zaman. Eşikler parametre:
+    arşiv taraması ve skor varsayılanı kullanır; canlı radar HL'nin
+    rastgeleleştirmesi için daha gevşek geçer (twaplive).
     """
-    if len(rows) < MIN_SLICES:
+    if len(rows) < min_slices:
         return None
     ts = [int(r["ts"]) for r in rows]
     sizes = [float(r["sz"] or 0) for r in rows]
@@ -47,7 +50,7 @@ def detect(rows: list[dict]) -> dict | None:
         return None
     cv_gap = statistics.pstdev(gaps) / mg
     cv_size = statistics.pstdev(sizes) / ms
-    if cv_gap >= CV_GAP_MAX or cv_size >= CV_SIZE_MAX:
+    if cv_gap >= cv_gap_max or cv_size >= cv_size_max:
         return None
     return {"n": len(rows), "first_ts": ts[0], "last_ts": ts[-1],
             "total": sum(ntls), "avg_slice": (sum(ntls) / len(rows)),
@@ -118,10 +121,17 @@ async def scan(cfg) -> dict:
                            "total": d["total"], "n": d["n"]}
     if keep:
         async with db() as conn:
+            # Aynı PK'ya canlı radar da yazabilir: yalnız KENDİ kolonlarımız güncellenir,
+            # canlı kolonları (src/alerted_ts/day_volume…) silinmez.
             await conn.executemany(
-                """INSERT OR REPLACE INTO twap_runs(coin,address,side,first_ts,
+                """INSERT INTO twap_runs(coin,address,side,first_ts,
                      last_ts,n_slices,total,avg_slice,avg_gap,cv_gap,cv_size,
-                     taker_pct,ts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", keep)
+                     taker_pct,ts,src) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'fills')
+                   ON CONFLICT(coin,address,side,first_ts) DO UPDATE SET
+                     last_ts=excluded.last_ts, n_slices=excluded.n_slices, total=excluded.total,
+                     avg_slice=excluded.avg_slice, avg_gap=excluded.avg_gap, cv_gap=excluded.cv_gap,
+                     cv_size=excluded.cv_size, taker_pct=excluded.taker_pct, ts=excluded.ts,
+                     src=COALESCE(src, excluded.src)""", keep)
         log.info("twap: %d grup, %d düzenli, %d büyük (≥%s)",
                  out["groups"], out["detected"], out["big"], min_usd)
     await kv_set("twap_stats", {**out, "ts": ts})
@@ -141,9 +151,20 @@ async def recent(limit: int = 80, hours: int = 48) -> list[dict]:
             (now() - hours * 3600, limit))
         rows = [dict(r) for r in await cur.fetchall()]
     ts = now()
+    # Aynı tur canlı ve arşivde farklı first_ts ile iki satır olabilir: (coin, adres,
+    # yön) başına en çok dilimli olan kalır.
+    best: dict[tuple, dict] = {}
     for r in rows:
-        r["active"] = is_active(r, ts)
+        k = (r["coin"], r["address"], r["side"])
+        if k not in best or int(r.get("n_slices") or 0) > int(best[k].get("n_slices") or 0):
+            best[k] = r
+    rows = list(best.values())
+    for r in rows:
+        r["active"] = is_active(r, ts) and not r.get("ended_ts")
         r["symbol"] = (r["coin"] or "").split(":")[-1]
+        r["src"] = r.get("src") or "fills"
+        dv, rd = r.get("day_volume"), r.get("rate_day")
+        r["rate_pct"] = (float(rd) / float(dv) * 100) if dv and rd else None
     rows.sort(key=lambda r: (not r["active"], -(r["total"] or 0)))
     return rows
 

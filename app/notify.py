@@ -26,6 +26,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "liqmap":    ("notify_liqmap",    "🧲 Likidasyon duvarı (küme)",          "high"),
     "track":     ("notify_track",     "👣 Pozisyon kapanış takibi",           "high"),
     "lowvol":    ("notify_lowvol",    "🐘 Sessiz su devi (düşük hacim)",      "high"),
+    "twap":      ("notify_twap",      "⏳ TWAP (düşük hacimli coinde büyük)",  "high"),
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "offhours":  ("notify_offhours",  "🌙 Kapalı seans hareketi",             "high"),
     "cryptovol": ("notify_cryptovol", "🚀 Kripto hacim patlaması",            "high"),

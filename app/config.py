@@ -59,6 +59,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                         "desc": "Açılırsa takip, süre dolunca poz açık olsa bile BİTER (eskiden böyleydi — balinanın çıkışı kaçıyordu). Kapalıyken takip yalnız pozisyon kapanınca ya da /birak_N ile biter"},
     "track_expire_days": {"type": "int", "label": "Takip yoklama aralığı (gün)", "group": "Bildirimler",
                           "desc": "Poz hâlâ açıkken kaç günde bir 'takipteyim, bırakayım mı?' densin. Takip bu süreyle BİTMEZ — yalnız pozisyon kapanınca ya da /birak_N ile biter"},
+    "notify_twap": {"type": "bool", "label": "⏳ TWAP (düşük hacimli coinde büyük)", "group": "Bildirimler",
+                    "desc": "Canlı akışta düzenli dilimlerle yürüyen ve coinin 24s hacmine göre büyük olan TWAP'lar (ör. INJ'e $2M). Kripto → CRYPTO_CHAT_ID (tanımsızsa gönderilmez), hisse/endeks → ana sohbet; eşikler 'TWAP radarı' grubunda"},
     "notify_lowvol": {"type": "bool", "label": "🐘 Sessiz su devi", "group": "Bildirimler",
                       "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
     "notify_listing": {"type": "bool", "label": "🆕 Yeni hisse listelendi", "group": "Bildirimler",
@@ -375,15 +377,35 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Uzun bir hareket boyunca her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
     "equity_vol_max_coins": {"type": "int", "label": "Evren tavanı (hisse)", "group": "Hisse hacim",
                              "desc": "Kaç hisse taranacak (PROPR ∩ xyz dex, hacimce büyükten). Her hisse turda 1 istek eder"},
-    "twap_min_usd": {"type": "float", "label": "TWAP asgari büyüklük ($)",
-                     "group": "Tarama & performans",
-                     "desc": "Bu tutarın üstündeki düzenli birikimler /twap sekmesinde listelenir. Tespit KENDİ kayıtlarımızdan yapılır: yakalama tabanının altındaki dilimler görünmez"},
-    "twap_window_h": {"type": "int", "label": "TWAP tarama penceresi (saat)",
-                      "group": "Tarama & performans",
+    "twap_min_usd": {"type": "float", "label": "Arşiv TWAP asgari büyüklük ($)",
+                     "group": "TWAP radarı",
+                     "desc": "Bu tutarın üstündeki düzenli birikimler /twap sekmesinde listelenir (fills arşivinden). Yakalama tabanının altındaki dilimler arşivde görünmez — onları canlı radar sayar"},
+    "twap_window_h": {"type": "int", "label": "Arşiv tarama penceresi (saat)",
+                      "group": "TWAP radarı",
                       "desc": "Kaç saat geriye bakılıp dilimler birleştirilsin. Uzun TWAP'lar için büyük, gürültü için küçük tutulur"},
-    "twap_scan_sec": {"type": "int", "label": "TWAP tarama aralığı (sn)",
-                      "group": "Tarama & performans",
+    "twap_scan_sec": {"type": "int", "label": "Arşiv tarama aralığı (sn)",
+                      "group": "TWAP radarı",
                       "desc": "Tarama tamamen YEREL (fills tablosu) — API maliyeti yoktur"},
+    "twap_live_enabled": {"type": "bool", "label": "📡 Canlı TWAP radarı", "group": "TWAP radarı",
+                          "desc": "WS akışındaki HER işlemi (yakalama tabanının altındakiler dahil) adres bazında bellekte sayar; ekstra HL isteği yok. Kapatılırsa bildirim ve sayaç durur, arşiv taraması sürer"},
+    "twap_alert_min_usd": {"type": "float", "label": "Bildirim tabanı — şimdiye kadarki toplam ($)", "group": "TWAP radarı",
+                           "desc": "Tur bu tutara ulaşmadan bildirilmez; toplam GÖZLENEN dilimlerin $ toplamıdır, tahmin değil"},
+    "twap_alert_rate_pct": {"type": "float", "label": "Bildirim kapısı — hız / 24s hacim (%)", "group": "TWAP radarı",
+                            "desc": "Dilim hızı güne yayılınca coinin 24s hacminin en az bu yüzdesi olmalı. INJ örneği: 30 sn'de $2.2K ≈ $6.3M/gün, hacim $9.9M → %64"},
+    "twap_alert_big_usd": {"type": "float", "label": "Hacimden bağımsız bildirim ($)", "group": "TWAP radarı",
+                           "desc": "Toplam bunu geçerse hacim oranına bakılmaz (BTC/ETH'te bile ilginç)"},
+    "twap_alert_min_slices": {"type": "int", "label": "Asgari dilim sayısı", "group": "TWAP radarı",
+                              "desc": "30 sn'lik HL TWAP'ta 20 dilim = 10 dk. Azaltmak erken ama gürültülü uyarı demektir"},
+    "twap_alert_cooldown": {"type": "int", "label": "Aynı adres+coin+yön için bekleme (sn)", "group": "TWAP radarı",
+                            "desc": "Restart'a dayanıklı (alerts_log). İlerleme ve bitiş notları ayrı anahtarla gider"},
+    "twap_alert_progress": {"type": "bool", "label": "İlerleme notu", "group": "TWAP radarı",
+                            "desc": "Toplam $250K/500K/1M/2M/5M… basamaklarını geçince (tur başına en çok 30 dk'da bir) kısa not"},
+    "twap_alert_end_note": {"type": "bool", "label": "Bitiş notu", "group": "TWAP radarı",
+                            "desc": "Bildirilen tur 3 aralık (en az 5 dk) dilim atmayınca toplam, süre ve fiyat değişimi yazılır"},
+    "twap_live_window_min": {"type": "int", "label": "Canlı pencere (dk)", "group": "TWAP radarı",
+                             "desc": "Bildirilmemiş bir dizinin bellekte tutulduğu en uzun süre; boşta kalan dizi 30 dk'da düşer"},
+    "twap_live_eval_sec": {"type": "int", "label": "Canlı değerlendirme aralığı (sn)", "group": "TWAP radarı",
+                           "desc": "Tamamen yerel: bellek + kv + birkaç SQL sorgusu"},
     "crypto_fill_min_notional": {"type": "float", "label": "Kripto işlem kaydı tabanı ($)",
                                  "group": "Tarama & performans",
                                  "desc": "İzlenen kripto coinlerde bu tutarın üstündeki işlemler adresiyle KAYDEDİLİR ('ne oldu' ve '/twap' sekmeleri bunu okur). Hisse tabanıyla EŞİT tutuldu: sabırlı bir TWAP'ın dilimleri küçüktür, yüksek eşik onları tamamen görünmez yapar. 0 = kripto kaydı kapalı. Bu işlemler Telegram'a DÜŞMEZ, yalnız arşivlenir"},
@@ -606,6 +628,17 @@ class Config:
         self.twap_min_usd = float(os.getenv("TWAP_MIN_USD", "5000000"))
         self.twap_window_h = int(os.getenv("TWAP_WINDOW_H", "12"))
         self.twap_scan_sec = int(os.getenv("TWAP_SCAN_SEC", "600"))
+        # Canlı TWAP radarı (bkz. app/radar/twaplive.py) — "INJ'e $2M TWAP" alarmı
+        self.twap_live_enabled = True
+        self.twap_alert_min_usd = float(os.getenv("TWAP_ALERT_MIN_USD", "100000"))
+        self.twap_alert_rate_pct = float(os.getenv("TWAP_ALERT_RATE_PCT", "20"))
+        self.twap_alert_big_usd = float(os.getenv("TWAP_ALERT_BIG_USD", "5000000"))
+        self.twap_alert_min_slices = int(os.getenv("TWAP_ALERT_MIN_SLICES", "20"))
+        self.twap_alert_cooldown = int(os.getenv("TWAP_ALERT_COOLDOWN", "21600"))
+        self.twap_alert_progress = True
+        self.twap_alert_end_note = True
+        self.twap_live_window_min = int(os.getenv("TWAP_LIVE_WINDOW_MIN", "240"))
+        self.twap_live_eval_sec = int(os.getenv("TWAP_LIVE_EVAL_SEC", "60"))
         self.notify_pattern = True
         self.pattern_enabled = True
         # self = yalnız sembolün kendi geçmişi (kullanıcı tercihi). Dar havuzun
@@ -678,6 +711,7 @@ class Config:
         self.sweep_rpm_headroom = float(os.getenv("SWEEP_RPM_HEADROOM", "0.85"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))
         self.notify_lowvol = True
+        self.notify_twap = True
         self.notify_offhours = True
         self.notify_wall = True
         self.notify_health = False  # bekçi sitede konuşur; Telegram istenirse açılır

@@ -323,6 +323,26 @@ async def main():
                  CRYPTO_MARK["PUMP"] * (1 - dist / 100), CRYPTO_MARK["PUMP"], 10, stage, dist, CRYPTO_MARK["PUMP"],
                  now - 3 * 3600, now - 120, now - 120, (now - 1800) if closed else None, closed,
                  CRYPTO_MARK["PUMP"] * 0.997 if closed else None, (now - 1700) if closed else None))
+    # Canlı TWAP: süren INJ alımı + bitmiş UANSEM satışı (sekmede 📡 satırlar)
+    tw_a, tw_b = addr(r), addr(r)
+    async with dbm.db() as c:
+        await c.execute("INSERT OR IGNORE INTO tickers(coin,symbol) VALUES('xyz:UANSEM','UANSEM')")
+        await c.execute(
+            "INSERT OR REPLACE INTO asset_metrics(coin,ts,mark_px,oi,funding,day_volume)"
+            " VALUES('xyz:UANSEM',?,0.2268,1e7,0.0001,4.1e6)", (now,))
+        await c.executemany(
+            "INSERT OR REPLACE INTO twap_runs(coin,address,side,first_ts,last_ts,n_slices,total,avg_slice,"
+            "avg_gap,cv_gap,cv_size,taker_pct,ts,day_volume,rate_day,src,alerted_ts,ended_ts,px_first,px_last,"
+            "sz_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [("INJ", tw_a, "buy", now - 1260, now - 30, 42, 92_000, 2_190, 30, 0.06, 0.18, 100, now,
+              9.9e6, 6.3e6, "live", now - 600, None, 12.34, 12.44, 7_450),
+             ("xyz:UANSEM", tw_b, "sell", now - 7200, now - 3600, 118, 1_590_000, 13_475, 30, 0.05, 0.22, 97,
+              now - 3500, 4.1e6, 38.8e6, "live", now - 6000, now - 3500, 0.2310, 0.2268, 6_950_000)])
+    await dbm.kv_set("twaplive_stats", {"keys": 3120, "observed": 184_000, "errors": 0, "cands": 4, "regular": 2,
+                                        "alerted": 1, "progress": 0, "ended": 1, "skipped_mm": 1, "no_chat": 0,
+                                        "no_vol": 0, "failed": 0,
+                                        "best": {"coin": "INJ", "side": "buy", "total": 92_000, "rate_pct": 64, "n": 42},
+                                        "ts": now - 45})
     await dbm.kv_set("fills_count", 8)
     # 🧪 SİM: kâğıt üstü defter — 1 açık ön bacak (HYPE), hedefli kapanış + ters bacak,
     # stop (PUMP), süre dolumu, 2 atlanan sinyal; bakiye kv'de.
