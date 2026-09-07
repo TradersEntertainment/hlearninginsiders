@@ -10,7 +10,7 @@ import logging
 
 from .. import assets
 from ..config import Config
-from ..db import alert_log, alert_recent, db, now
+from ..db import alert_log, alert_recent, db, kv_set, now
 from ..hl.client import HLClient
 from ..hl.universe import norm_coin
 from ..telegram import format as fmt
@@ -86,6 +86,32 @@ async def _candidates(cfg: Config, client: HLClient) -> list[str]:
     return ordered[: cfg.liq_watch_top_accounts + 50]
 
 
+async def _dex_map(cfg: Config, addrs: list[str]) -> dict[str, list[str]]:
+    """Adres başına sorgulanacak dex'ler: ana dex HERKESTE; HIP-3 dex'i yalnız adresin
+    o dex'te bilinen pozisyonu (positions_current) ya da izlenen liq satırı (liq_watch)
+    varsa. 350 hesap × 3 dex = 1050 istek/tur idi, üçte ikisi boşa (leaderboard
+    balinalarının çoğunun xyz/para pozisyonu yok). Yeni xyz pozisyonu sweeper/autoscan/
+    WS sondası positions_current'a yazınca bir sonraki turda o dex de sorulur.
+    `liq_watch_all_dexes` eski davranışı geri açar."""
+    watched = [d for d in assets.watched_dexes(cfg) if d]
+    if not addrs:
+        return {}
+    if getattr(cfg, "liq_watch_all_dexes", False) or not watched:
+        return {a: ["", *watched] for a in addrs}
+    have: dict[str, set[str]] = {a: set() for a in addrs}
+    q = ",".join("?" * len(addrs))
+    async with db() as conn:
+        for sql in (f"SELECT DISTINCT address, coin FROM positions_current WHERE address IN ({q})",
+                    f"SELECT DISTINCT address, coin FROM liq_watch WHERE address IN ({q})"):
+            cur = await conn.execute(sql, addrs)
+            for r in await cur.fetchall():
+                coin = r["coin"] or ""
+                a = (r["address"] or "").lower()
+                if ":" in coin and a in have:
+                    have[a].add(coin.split(":")[0])
+    return {a: ["", *[d for d in watched if d in s]] for a, s in have.items()}
+
+
 async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
     marks = await _mark_map(cfg, client)
     if not marks:
@@ -93,6 +119,8 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
     addrs = await _candidates(cfg, client)
     if not addrs:
         return
+    dex_map = await _dex_map(cfg, addrs)
+    n_req = sum(len(v) for v in dex_map.values())
 
     ts = now()
     async with db() as conn:
@@ -110,7 +138,7 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
             # ESKİDEN: ALL_DEXES dene, patlarsa dex="" ile devam. ALL_DEXES HER
             # ZAMAN patladığı için likidasyon radarı fiilen YALNIZ ana dex'i
             # görüyordu — asıl işi olan HIP-3 hisse pozisyonlarını hiç değil.
-            resp = await client.clearinghouse_all(addr, ["", *assets.watched_dexes(cfg)])
+            resp = await client.clearinghouse_all(addr, dex_map.get(addr) or [""])
         except Exception:
             # API hatası ya da eksik dex — 'kapandı' SAYMA (ok_addrs'e girmez)
             return
@@ -140,6 +168,9 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
                 }
 
     await asyncio.gather(*(one(a) for a in addrs))
+    await kv_set("liqwatch_stats", {"addrs": len(addrs), "requests": n_req, "ok": len(ok_addrs),
+                                    "found": len(found), "tracked": len(tracked),
+                                    "pruned": not getattr(cfg, "liq_watch_all_dexes", False), "ts": ts})
 
     # 1) Kaybolanlar: kademe başlamışsa kapanış notu. YALNIZ yanıtı başarıyla alınan
     #    adresler için — API hatası veren adresi 'kapandı' sanıp satırını silmek +

@@ -58,6 +58,7 @@ async def _fresh(crypto=("para",)):
     cfg.sweep_catchup, cfg.sweep_batch_size, cfg.sweep_interval_sec = False, 40, 90
     cfg.fills_lookback_days, cfg.fills_retention_days = 30, 14
     cfg.sweep_leaderboard_top = 1500
+    cfg.census_enabled = False            # eski dex beklentileri; sayım açık hâli ayrıca sınanır
     g = get_config()
     g.equity_dexes, g.crypto_dexes = ["xyz"], list(crypto)
     assets.set_crypto_dex_symbols(["ANSEM", "MEME"])
@@ -99,6 +100,17 @@ def test_touch_set_and_sweep():
             cur = await c.execute("SELECT coin, address, notional FROM positions_current ORDER BY address")
             rows = {(r["coin"], r["address"]): r["notional"] for r in await cur.fetchall()}
         assert rows == {("para:ANSEM", A): 1500.0, ("para:ANSEM", B): 2500.0, ("xyz:SNDK", C): 20000.0}, rows
+        # sayım açıkken SOĞUK adreslerde (A, C: fill'den gelen) ana dex sorulmaz; sıcaklar aynen
+        cfgc, _ = await _fresh()
+        cfgc.census_enabled = True
+        sweeper._cold_tried.clear()
+        clic = Client({A: [("para:ANSEM", 1500.0)], B: [("para:ANSEM", 2500.0)], C: [("xyz:SNDK", 20000.0)]})
+        await sweeper.sweep_batch(cfgc, clic)
+        callsc = dict(clic.calls)
+        assert callsc[A] == ("xyz", "para") and callsc[C] == ("xyz",), (callsc.get(A), callsc.get(C))
+        for a in (B, D, E, W):
+            assert callsc[a] == ("", "xyz", "para"), (a, callsc[a])
+        sweeper._cold_tried.clear()
         # kripto dex kapalı → herkes base
         cfg2, _ = await _fresh(crypto=())
         assert await sweeper.crypto_touch_set(cfg2) == set()

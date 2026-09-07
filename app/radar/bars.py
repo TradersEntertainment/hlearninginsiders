@@ -145,6 +145,8 @@ async def loop(cfg, client) -> None:
     """Denetimli döngü. Site ASLA buna bağımlı değil: patlarsa yalnız örüntü
     sekmesi 'arşiv boş' der."""
     from ..health import beat
+    from ..hl.client import PRIORITY
+    PRIORITY.set("low")                  # arşiv, alarm değil: bütçe doluyken bekler, 429'da susar
     await asyncio.sleep(90)
     while True:
         try:

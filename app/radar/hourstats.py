@@ -500,6 +500,8 @@ def kick(cfg: Config, client: HLClient, coin: str) -> None:
 
 
 async def refresh_loop(cfg: Config, client: HLClient) -> None:
+    from ..hl.client import PRIORITY
+    PRIORITY.set("low")                  # arşiv, alarm değil: düşük şerit
     await asyncio.sleep(150)
     log.info("saat istatistiği döngüsü başladı (%d coin / %ds)", PER_CYCLE, REFRESH_SEC)
     while True:

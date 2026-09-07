@@ -374,6 +374,12 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f" · {_dur(now() - int(cl['ts']))} önce" if cl.get("ts") else ""))
     else:
         out.append("  kripto liq: tur HENÜZ ÇALIŞMADI")
+    lw = await kv_get("liqwatch_stats") or {}
+    if lw:
+        out.append(f"  liq radarı: {lw.get('addrs', 0)} hesap · {lw.get('requests', 0)} dex sorgusu"
+                   f" ({'budama açık' if lw.get('pruned') else 'her hesapta tüm dex'})"
+                   f" · {lw.get('ok', 0)} yanıt · {lw.get('found', 0)} poz ≥ eşik · izlenen {lw.get('tracked', 0)}"
+                   + (f" · {_dur(now() - int(lw['ts']))} önce" if lw.get("ts") else ""))
     # 🧪 Simülasyon: defter kv'de; sinyal kaynağı kripto liq kapısına bağlı
     if not getattr(cfg, "sim_enabled", True):
         out.append("  sim: kapalı (sim_enabled=0)")

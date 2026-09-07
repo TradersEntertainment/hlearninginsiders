@@ -707,6 +707,9 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     hb, hcur, hot_done = _slice(hot, int(await kv_get("sweep_cursor_hot") or 0), n_hot)
     cb = _cold_head(cold, n_cold, now())        # imleçsiz: kuyruğun başı (bkz. build_pools)
     batch = hb + cb
+    # Sayım açıkken SOĞUK adreslerde ana dex sorulmaz: soğuk kuyruk hisse (HIP-3) keşfi,
+    # ana dex'i sayım + sıcak şerit (fill → dakikalar) kapsıyor; sıcak havuz tam otoriteyle.
+    cold_set = set(cb) if getattr(cfg, "census_enabled", False) else set()
     # Yetişme modunun taban (sweep_batch_size) ÜSTÜ kısmı fırsatçıdır: istemcinin
     # düşük şeridinde gider (pencere %70'i aşınca bekler, 429'da 60 sn susar) —
     # radarların ve kullanıcı sorgularının önünü kesmesin.
@@ -725,7 +728,11 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
         if addr in low_set:
             PRIORITY.set("low")            # gather her coroutine'e kendi bağlam kopyasını verir
         await beat("sweeper")  # ilerleme nabzı
-        dx = base + cdex if addr in cset else base
+        dx = base + cdex if addr in cset else list(base)
+        if addr in cold_set:
+            dx = [d for d in dx if d]
+            if not dx:
+                return                     # yalnız ana dex vardı → sayım halleder
         try:
             resp = await client.clearinghouse_all(addr, dx)
         except Exception as e:

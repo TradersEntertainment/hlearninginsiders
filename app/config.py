@@ -145,6 +145,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "group": "Likidasyon radarı", "desc": "Likidasyon mesafesi kontrol sıklığı (kademeler: %1 → %0.5 → %0.1)"},
     "liq_watch_top_accounts": {"type": "int", "label": "Liq radarı: taranan hesap",
                                "group": "Likidasyon radarı", "desc": "Leaderboard'dan likidasyon radarına alınan hesap sayısı"},
+    "liq_watch_all_dexes": {"type": "bool", "label": "Liq radarı: her hesapta tüm dex'ler",
+                            "group": "Likidasyon radarı",
+                            "desc": "Kapalıyken (vars.) ana dex herkeste, HIP-3 dex'i (xyz/para) yalnız o dex'te bilinen pozisyonu ya da izlenen liq satırı olan hesapta sorulur — 350 hesap × 3 dex = 1050 istek/tur yerine ~400. Açıkken eski davranış (her hesapta 3 dex)"},
     "max_liq_distance_pct": {"type": "float", "label": "Liq tablosu mesafe sınırı (%)",
                              "group": "Likidasyon radarı", "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez; alarm/anlık PNG'de de sınır: bundan uzak seviye çizilmez, pencere dışı ama yakın olanlar kenarda toplu etiket olur"},
     "liq_cluster_window_pct": {"type": "float", "label": "Duvar penceresi (%)",
@@ -861,6 +864,7 @@ class Config:
         self.liq_watch_min_notional = float(os.getenv("LIQ_WATCH_MIN_NOTIONAL", "70000000"))
         self.liq_watch_poll_sec = int(os.getenv("LIQ_WATCH_POLL_SEC", "300"))
         self.liq_watch_top_accounts = int(os.getenv("LIQ_WATCH_TOP_ACCOUNTS", "300"))
+        self.liq_watch_all_dexes = convert_value("bool", os.getenv("LIQ_WATCH_ALL_DEXES", "0"))
         self.liq_cluster_window_pct = float(os.getenv("LIQ_CLUSTER_WINDOW_PCT", "5"))
         self.liq_cluster_min_usd = float(os.getenv("LIQ_CLUSTER_MIN_USD", "1000000"))
         self.liq_cluster_alert_min_usd = float(
