@@ -651,8 +651,13 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
     hip3_floor = float(getattr(cfg, "census_hip3_min_account_value", 1000) or 0)
     mode = await probe_mode(cfg, client, [a for a, _ in order[:2]])
     pace = Pace(await effective_rpm(cfg))
-    fetcher = Fetcher(client, mode, int(getattr(cfg, "census_batch_size", 50) or 50), pace,
-                      sleep=sleep, should_stop=lambda: not enabled(cfg))
+    batch_size = int(getattr(cfg, "census_batch_size", 50) or 50)
+    fetcher = Fetcher(client, mode, batch_size, pace, sleep=sleep, should_stop=lambda: not enabled(cfg))
+    # Sıcak şerit NORMAL şeritten, kendi (küçük) hızıyla: fill → defter dakikalar içinde,
+    # düşük şerit 429'la duraklı olsa bile. Toplu tarama düşük şeritte kalır.
+    hot_pace = Pace(int(getattr(cfg, "census_hot_rpm", 30) or 30))
+    hot_fetcher = Fetcher(client, mode, batch_size, hot_pace, sleep=sleep,
+                          should_stop=lambda: not enabled(cfg), priority="normal")
     total, done0 = await _progress_counts(pass_ts)
     st: dict = {"pass_ts": pass_ts, "mode": mode, "started": t0, "resumed": resumed,
                 "total": total, "done": done0, "ok": 0, "err": 0, "found": 0, "requests": 0,
@@ -665,8 +670,8 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
 
     async def checkpoint(final: bool = False) -> None:
         st["total"], st["done"] = await _progress_counts(pass_ts)
-        st["n_429"] = pace.n_429
-        st["requests"] = fetcher.requests
+        st["n_429"] = pace.n_429 + hot_pace.n_429
+        st["requests"] = fetcher.requests + hot_fetcher.requests
         st["ts"] = max(now(), pass_ts)
         el = max(1, st["ts"] - t0)
         st["rpm"] = round(fetcher.requests / (el / 60.0), 1)
@@ -677,7 +682,7 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
         await kv_set(STATE_KV, st)
         await beat("census")
 
-    async def process(part: list[tuple[str, float | None]]) -> None:
+    async def process(part: list[tuple[str, float | None]], f: Fetcher = fetcher) -> None:
         """Bir parça hesap: ana dex herkeste, kripto dex'ler bakiyesi tabanın üstündekilerde."""
         vals = dict(part)
         addrs = [a for a, _ in part]
@@ -687,15 +692,16 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
             sub = addrs if dex == "" else [a for a in addrs if (vals.get(a) or 0) >= hip3_floor]
             if not sub:
                 continue
-            pairs = await fetcher.fetch(sub, dex)
+            pairs = await f.fetch(sub, dex)
             w = await write_results(cfg, [(a, dex, r) for a, r in pairs], pass_ts, tick, opened)
             st["ok"] += w["ok"] if dex == "" else 0
             st["err"] += w["err"]
             st["found"] += w["found"]
-            if fetcher.fell_back and not st.get("fell_back"):
+            if f.fell_back and not st.get("fell_back"):
                 st["fell_back"], st["mode"] = True, "single"
+                fetcher.mode = hot_fetcher.mode = "single"     # iki şerit aynı modda kalsın
                 await kv_set(MODE_KV, {"mode": "single", "ts": now(), "why": "tur içinde üst üste toplu hata"})
-            if fetcher.stopped:
+            if f.stopped:
                 st["stopped"] = "kapatıldı"
                 break
 
@@ -712,7 +718,7 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
         hot = await hot_rows(CHUNK_HOT)
         if hot:
             st["hot"] += len(hot)
-            await process([(a, v) for a, v, _ in hot])
+            await process([(a, v) for a, v, _ in hot], hot_fetcher)
             await clear_hot([(a, h) for a, _, h in hot])
             if st.get("stopped"):
                 break

@@ -1241,15 +1241,26 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   en başta, aralarında son işlem yapan önce); uğranan `probed_ts` alıp arkaya düşer —
   imleç yok, yeni trader tur sarmasını beklemez. İsteği patlayan adres 1 saat
   yeniden denenmez (başta takılı kalmasın).
-- **HL istek bütçesi, iki şerit** (`app/hl/client.py`): "normal" (radarlar, kullanıcı
-  sorguları) `HL_MAX_RPM` tavanına kadar geçer; "düşük" (sayım, yetişme modunun taban
-  üstü partisi) yalnız pencere kullanımı %70'in altındayken ilerler ve HL'den
-  herhangi bir 429 gelince 60 sn susar — arka plan işi artan kapasiteyi kullanır,
-  fırtınada çekilir. Sayım kendi hızını yalnız KENDİ isteği 429 yiyince yarıya
-  indirir (başkasının fırtınası onu boğmaz). Ağırlık (HL belgesi: 1200/dk/IP;
-  clearinghouse/l2Book 2, mum/meta/recentTrades 20) yalnız sayaç: `/tani`
-  "HL bütçesi: N/550 istek/dk · ~M ağırlık/dk (tahmini) · 429 · düşük şerit" satırı
-  gerçek sınırı canlıda öğretir; bütçe tahminle radarları yavaşlatmaz.
+- **HL istek bütçesi, iki şerit + uyarlanır tavan** (`app/hl/client.py`): "normal"
+  (radarlar, kullanıcı sorguları) etkin tavana kadar geçer; "düşük" (sayım toplu
+  taraması, yetişme modunun taban üstü partisi, mum arşivi, saat istatistiği) yalnız
+  pencere kullanımı tavanın %70'inin altındayken ilerler ve HL'den herhangi bir 429
+  gelince 60 sn susar. **Etkin tavan (AIMD):** her 429'da ×0,8 (10 sn'de en çok bir
+  adım, taban 120), 60 sn 429'suz her dakika +25, üst sınır `HL_MAX_RPM` — HL'nin
+  gerçek hesabını 429 öğretir, biz tahmin etmeyiz. Yetişme modu düşük şerit duraklıyken
+  ya da son 60 sn'de 429 varken taban partiye iner. Sayım kendi hızını yalnız KENDİ
+  isteği 429 yiyince yarıya indirir. Ağırlık (HL belgesi: 1200/dk/IP; clearinghouse/
+  l2Book 2, mum/meta/recentTrades 20) yalnız sayaç: `/tani` "HL bütçesi: N/550
+  istek/dk (etkin tavan T, AIMD) · ~M ağırlık/dk (tahmini) · 429 · düşük şerit".
+- **Talep kısma (aynı bilgi, daha az istek):** (1) kripto/hisse hacim tarayıcıları
+  canlı WS akışında son 10 dakikada sayfa tabanı kadar ($50K / $10K) işlem görmeyen
+  coine 5dk mum sormaz (`VOL_WS_PREFILTER`, `/tani` "ön-süzgeç: N coin atlandı") —
+  yeni rekor ancak son kapanmış mum tabanı aşarsa olur, o mum pencerenin içindedir; WS
+  kopuksa/pencere dolmadıysa eskisi gibi sorar. (2) Liq radarı HIP-3 dex'ini yalnız o
+  dex'te bilinen pozisyonu ya da izlenen liq satırı olan hesapta sorar (1050 → ~400
+  istek/tur; `LIQ_WATCH_ALL_DEXES=1` eski davranış). (3) Sayım açıkken süpürücünün
+  soğuk kuyruğu (fill'den gelen adresler) ana dex'i sormaz — ana dex'i sayım + sıcak
+  şerit kapsıyor; sıcak havuz tam otoriteyle kalır.
 - "HL'nin en büyükleri" panelindeki eşikler **kademelidir** (HIP-3 $1M · kripto $20M ·
   BTC/ETH $50M): altında kalan pozisyon hiç kaydedilmez, eşik yükseltilirse eski
   kayıtlar günlük bakımda budanır. Kapsam yine adres havuzu kadardır — "kesin en
@@ -1306,6 +1317,10 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   erken biter; worker kirası da sıcakları önce verir). Küçük long'lar hiçbir
   sondayı tetiklemiyor, hasat yalnız HIP-3'e bakıyor, soğuk kuyruk/bakiye sırası
   onları en sona atıyordu — 0.0042 bandı vakası. `/tani`: "sıcak şerit: N bekliyor".
+  Sıcak şerit NORMAL şeritten, kendi hızıyla gider (`CENSUS_HOT_RPM`, vars. 30/dk):
+  toplu tarama 429'la duraklı olsa bile fill → defter dakikalar içinde. Toplu sorgu
+  sondası bir 429/5xx'i "desteklenmiyor" saymaz: bu tur tek mod, 5 dk sonra yeniden
+  sonda (4xx = desteklenmiyor, 6 sa); tur içindeki toplu 429'lar tek moda düşürmez.
 
   **Worker'lar (isteğe bağlı, `ROLE=census-worker`):** tek tek moddayken turu
   kısaltmak için aynı repodan Railway'de N ek servis. Worker DB'siz çalışır

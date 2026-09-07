@@ -245,6 +245,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "census_batch_size": {"type": "int", "label": "Sayım: toplu sorguda hesap/istek",
                           "group": "Tarama & performans",
                           "desc": "batchClearinghouseStates bir istekte kaç hesap sorsun (vars. 50). Toplu sorgu çalışmıyorsa (tek tek mod) etkisiz"},
+    "census_hot_rpm": {"type": "int", "label": "Sayım: sıcak şerit hızı (istek/dk)",
+                       "group": "Tarama & performans",
+                       "desc": "Az önce işlem yapan adreslerin defteri (sıcak şerit) NORMAL şeritten, bu hızla çekilir (vars. 30/dk) — düşük şerit 429'la duraklı olsa bile fill → defter dakikalar içinde. Toplu tarama düşük şeritte census_rpm ile kalır"},
     "census_rpm_local": {"type": "int", "label": "Sayım: worker varken ana uygulamanın hızı (istek/dk)",
                          "group": "Tarama & performans",
                          "desc": "ROLE=census-worker servisleri kira alıyorsa (son 15 dk) ana uygulama kendi sayımını bu hıza indirir (vars. 100): Railway çıkış IP'leri paylaşımlıysa hepsi aynı HL bütçesini yer. Worker yoksa census_rpm geçerli"},
@@ -797,6 +800,7 @@ class Config:
         self.census_rpm = int(os.getenv("CENSUS_RPM", "250"))
         self.census_batch_size = int(os.getenv("CENSUS_BATCH_SIZE", "50"))
         self.census_rpm_local = int(os.getenv("CENSUS_RPM_LOCAL", "100"))
+        self.census_hot_rpm = int(os.getenv("CENSUS_HOT_RPM", "30"))
         # Worker modu (env-only, chat id kuralı gibi): ROLE=census-worker ile
         # Dockerfile `python -m app.worker` çalıştırır; worker DB'siz, ana uygulamayla
         # MAIN_URL + WORKER_TOKEN üzerinden konuşur (jeton ana uygulamada da aynı).

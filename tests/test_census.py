@@ -401,6 +401,8 @@ def test_hot_lane():
         assert cli.batch_calls[0] == ((L1, L4), "") and cli.batch_calls[1] == ((Y, Z), ""), cli.batch_calls[:3]
         assert Y not in cli.batch_calls[2][0] and Z not in cli.batch_calls[2][0] and cli.batch_calls[2][1] == ""
         assert st["hot"] == 2 and st["accounts"] == 7, st
+        assert cli.prios[:3] == ["normal", "normal", "low"], ("sonda normal, sıcak parça NORMAL, toplu düşük", cli.prios)
+        assert Config().census_hot_rpm == 30 and "census_hot_rpm" in EDITABLE_FIELDS
         rows = {r["address"]: r for r in await _rows("SELECT * FROM census_accounts")}
         assert rows[Z]["scanned_ts"] and rows[Z]["positions"] == 1 and rows[Z]["hot_ts"] is None and rows[Y]["hot_ts"] is None
         ap = {(r["coin"], r["address"]) for r in await _rows("SELECT coin,address FROM addr_positions WHERE closed_ts IS NULL")}
