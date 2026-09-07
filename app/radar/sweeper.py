@@ -177,7 +177,7 @@ def _dexes(cfg: Config) -> list[str]:
     return ["", *assets.watched_dexes(cfg)]
 
 
-def _adaptive_batch(cfg: Config, client) -> tuple[int, dict]:
+def _adaptive_batch(cfg: Config, client, per_addr: float | None = None) -> tuple[int, dict]:
     """Bu partide kaç adres taransın — BOŞTAKİ istek bütçesine göre.
 
     Sabit parti (varsayılan 40 adres) bütçenin ancak ~%15'ini kullanıyordu;
@@ -207,7 +207,9 @@ def _adaptive_batch(cfg: Config, client) -> tuple[int, dict]:
     headroom = float(getattr(cfg, "sweep_rpm_headroom", 0.85))
     ceiling = u["max"] * max(0.1, min(headroom, 1.0))
     allow_rpm = max(0.0, ceiling - u["rpm"])          # bize kalan istek/dk
-    per_addr = max(1, len(_dexes(cfg)))               # adres başına istek
+    # adres başına istek: verilmezse tüm dex'ler; sweep_batch havuzun kripto dex'e
+    # dokunan payıyla kesirli (ör. 2.1) geçer — parti 3'e bölünüp küçülmesin
+    per_addr = float(per_addr) if per_addr and per_addr > 0 else max(1, len(_dexes(cfg)))
     n = int(allow_rpm * (cfg.sweep_interval_sec / 60.0) / per_addr)
     cap = max(base, int(getattr(cfg, "sweep_batch_max", 250)))
     return max(base, min(n, cap)), {"rpm": u["rpm"], "rpm_max": u["max"]}
@@ -270,8 +272,54 @@ def _parse_all_positions(resp, min_ntl) -> dict[str, dict]:
     return out
 
 
+def _dex_clause(dexes: list[str] | None) -> tuple[str, list]:
+    """Yanıt OTORİTESİ kapsamı: yalnız sorgulanan dex'lerin coinleri silinebilir /
+    kapandı damgası yiyebilir. None = eski davranış (tüm coinler). '' = ana dex
+    (öneksiz coin), 'para' = 'para:%' öneki. Döner: (" AND (...)", parametreler)."""
+    if dexes is None:
+        return "", []
+    parts, params = [], []
+    for d in dexes:
+        if d:
+            parts.append("coin LIKE ?")
+            params.append(f"{d}:%")
+        else:
+            parts.append("instr(coin, ':') = 0")
+    if not parts:
+        return " AND 0", []                       # hiçbir dex sorgulanmadı → hiçbir şeye dokunma
+    return " AND (" + " OR ".join(parts) + ")", params
+
+
+async def crypto_touch_set(cfg: Config) -> set[str]:
+    """Kripto dex'lere (para) DOKUNMUŞ adresler: o dex coinlerinde fill (saklama
+    penceresi), positions_current satırı, açık addr_positions / hl_positions satırı
+    ya da watchlist. Derin keşif kripto dex'i yalnız bunlarda sorgular; kalanlar
+    ana dex + hisse dex'leriyle kalır (adres başına ~2 istek, 3 değil). İz bırakmadan
+    para pozisyonu açan adres tek dex'li yollar (hasat sondası, sayfa taraması,
+    autoscan) satırı yazana kadar görünmez — ama yanlış silinmez (bkz. _dex_clause)."""
+    from .. import assets
+    cdex = assets.crypto_dexes(cfg)
+    if not cdex:
+        return set()
+    likes = " OR ".join("coin LIKE ?" for _ in cdex)
+    params = [f"{d}:%" for d in cdex]
+    since = now() - int(getattr(cfg, "fills_retention_days", 14) or 14) * 86400
+    out: set[str] = set()
+    async with db() as conn:
+        for q, p in ((f"SELECT DISTINCT address FROM fills WHERE ts>=? AND ({likes})", [since, *params]),
+                     (f"SELECT DISTINCT address FROM positions_current WHERE ({likes})", params),
+                     (f"SELECT DISTINCT address FROM addr_positions WHERE closed_ts IS NULL AND ({likes})", params),
+                     (f"SELECT DISTINCT address FROM hl_positions WHERE closed_ts IS NULL AND ({likes})", params),
+                     ("SELECT address FROM addresses WHERE watchlist=1", [])):
+            cur = await conn.execute(q, tuple(p))
+            out.update((r["address"] or "").lower() for r in await cur.fetchall())
+    out.discard("")
+    return out
+
+
 async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int,
-                     held: set[str] | None = None) -> None:
+                     held: set[str] | None = None,
+                     dexes: list[str] | None = None) -> None:
     """hl_positions'a yaz: zirve YALNIZ büyürse güncellenir, kapanan SİLİNMEZ.
 
     Rekor arşivi ("gördüğümüz en büyükler") bu yüzden var: positions_current
@@ -284,6 +332,7 @@ async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int,
     verilmezse eski davranış (yalnız yazılanlar açık sayılır).
     """
     open_coins = held if held is not None else set(positions)
+    scope, sp = _dex_clause(dexes)
     async with db() as conn:
         for coin, p in positions.items():
             await conn.execute(
@@ -314,15 +363,15 @@ async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int,
             q = ",".join("?" * len(open_coins))
             await conn.execute(
                 f"UPDATE hl_positions SET closed_ts=? WHERE address=? AND closed_ts IS NULL"
-                f" AND coin NOT IN ({q})", (ts, addr, *open_coins))
+                f" AND coin NOT IN ({q}){scope}", (ts, addr, *open_coins, *sp))
         else:
             await conn.execute(
-                "UPDATE hl_positions SET closed_ts=? WHERE address=? AND closed_ts IS NULL",
-                (ts, addr))
+                f"UPDATE hl_positions SET closed_ts=? WHERE address=? AND closed_ts IS NULL{scope}",
+                (ts, addr, *sp))
 
 
 async def _upsert_addr_pos(addr: str, positions: dict[str, dict],
-                           ts: int) -> None:
+                           ts: int, dexes: list[str] | None = None) -> None:
     """addr_positions'a yaz: SON BİLİNEN pozisyon, boyut gözetmeksizin.
 
     `hl_positions` kademe altını hiç yazmadığı için "ne oldu" raporunda
@@ -338,6 +387,7 @@ async def _upsert_addr_pos(addr: str, positions: dict[str, dict],
     rows = [(coin, addr, p["dex"], p["side"], p["szi"], p["entry_px"],
              p["leverage"], p["liq_px"], p["upnl"], p["notional"], ts)
             for coin, p in positions.items()]
+    scope, sp = _dex_clause(dexes)             # yanıt otoritesi yalnız sorgulanan dex'ler
     async with db() as conn:
         if rows:
             # executemany: bir adres onlarca pozisyon taşıyabilir ve bu blok
@@ -359,12 +409,12 @@ async def _upsert_addr_pos(addr: str, positions: dict[str, dict],
             q = ",".join("?" * len(positions))
             await conn.execute(
                 f"UPDATE addr_positions SET closed_ts=? WHERE address=?"
-                f" AND closed_ts IS NULL AND coin NOT IN ({q})",
-                (ts, addr, *positions))
+                f" AND closed_ts IS NULL AND coin NOT IN ({q}){scope}",
+                (ts, addr, *positions, *sp))
         else:
             await conn.execute(
-                "UPDATE addr_positions SET closed_ts=? WHERE address=?"
-                " AND closed_ts IS NULL", (ts, addr))
+                f"UPDATE addr_positions SET closed_ts=? WHERE address=?"
+                f" AND closed_ts IS NULL{scope}", (ts, addr, *sp))
     async with db() as conn:
         # Defteri GERÇEKTEN çektik. "hiç uğramadık" ile "uğradık, bu coinde
         # pozisyonu yok"u ayıran işaret bu.
@@ -407,7 +457,12 @@ async def upsert_account_value(addr: str, value: float | None, ts: int,
         return (cur.rowcount or 0) > 0
 
 
-async def _upsert_address(addr: str, positions: dict[str, dict], ts: int) -> None:
+async def _upsert_address(addr: str, positions: dict[str, dict], ts: int,
+                          dexes: list[str] | None = None) -> None:
+    """positions_current'a yaz; yanıtın otoritesi: adresin artık tutmadığı
+    pozisyonlar silinir — `dexes` verilirse YALNIZ sorgulanan dex'lerin coinleri
+    (kripto dex sorgulanmayan adreste para satırı yaşar)."""
+    scope, sp = _dex_clause(dexes)
     async with db() as conn:
         for coin, p in positions.items():
             await conn.execute(
@@ -423,15 +478,15 @@ async def _upsert_address(addr: str, positions: dict[str, dict], ts: int) -> Non
                                        excluded.first_seen_ts)""",
                 (coin, addr, ts, p["side"], p["szi"], p["entry_px"], p["leverage"],
                  p["liq_px"], p["upnl"], p["notional"], None, None, None, None, None, ts))
-        # yanıtın otoritesi: adresin artık tutmadığı pozisyonları sil
+        # yanıtın otoritesi: adresin artık tutmadığı pozisyonları sil (kapsam: dexes)
         if positions:
             q = ",".join("?" * len(positions))
             await conn.execute(
-                f"DELETE FROM positions_current WHERE address=? AND coin NOT IN ({q})",
-                (addr, *positions.keys()))
+                f"DELETE FROM positions_current WHERE address=? AND coin NOT IN ({q}){scope}",
+                (addr, *positions.keys(), *sp))
         else:
             await conn.execute(
-                "DELETE FROM positions_current WHERE address=?", (addr,))
+                f"DELETE FROM positions_current WHERE address=?{scope}", (addr, *sp))
 
 
 def _slice(pool: list[str], cursor: int, count: int) -> tuple[list[str], int, bool]:
@@ -588,7 +643,17 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     # sweep_batch_size ile ÖLÇEKLENİR (30'da sabitlenmez — batch>30 ölü koldu);
     # soğuğa en fazla COLD_PER_BATCH ve bütçenin yarısı ayrılır (bs≤30'da soğuk
     # havuz artık sessizce ölmez); bir havuz tükenince artan slot diğerine geçer.
-    bs, budget = _adaptive_batch(cfg, client)
+    # Dex listesi ADRESE göre: ana dex + hisse dex'leri herkese; kripto dex'ler
+    # (para) yalnız ona dokunmuş adreslere (crypto_touch_set). Yanıt otoritesi
+    # sorgulanan dex'lerle sınırlı (yazıcılara dexes=…), yanlış silme yok.
+    from .. import assets
+    base = ["", *[d for d in (getattr(cfg, "equity_dexes", None) or []) if d]]
+    cdex = [d for d in assets.crypto_dexes(cfg) if d not in base]
+    cset = await crypto_touch_set(cfg) if cdex else set()
+    pool_n = len(hot) + len(cold)
+    n_touch = sum(1 for a in hot if a in cset) + sum(1 for a in cold if a in cset)
+    per_addr = len(base) + len(cdex) * (n_touch / pool_n if pool_n else 0.0)
+    bs, budget = _adaptive_batch(cfg, client, per_addr=per_addr)
     # Soğuk kuyruk da partiyle ÖLÇEKLENİR: COLD_PER_BATCH tabanda kalır ama
     # yetişme modunda partinin üçte birine kadar çıkar — 14.7K adreslik uzun
     # kuyruk sabit 10'ar 10'ar gezilirken günler sürüyordu.
@@ -610,8 +675,9 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
         nonlocal n_pos, n_ok, n_err, n_hlerr
         from ..health import beat
         await beat("sweeper")  # ilerleme nabzı
+        dx = base + cdex if addr in cset else base
         try:
-            resp = await client.clearinghouse_all(addr, _dexes(cfg))
+            resp = await client.clearinghouse_all(addr, dx)
         except Exception as e:
             n_err += 1
             # İlk hatayı GÖRÜNÜR yap: debug seviyesinde kaldığı için canlıda
@@ -625,7 +691,7 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
             n_err += 1
             return  # bozuk yanıt — mevcut kayıtlara dokunma
         n_ok += 1
-        await _upsert_address(addr, positions, ts)
+        await _upsert_address(addr, positions, ts, dexes=dx)
         n_pos += len(positions)
         # Aynı yanıttan TÜM Hyperliquid pozisyonları (ana dex dahil) — ek
         # istek yok, yalnız şimdiye kadar atılan kısmı saklıyoruz.
@@ -634,8 +700,8 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
             floor = _hl_floor(cfg)
             await _upsert_hl(addr, {c: p for c, p in all_pos.items()
                                     if p["notional"] >= floor(c)}, ts,
-                             held=set(all_pos))
-            await _upsert_addr_pos(addr, all_pos, ts)
+                             held=set(all_pos), dexes=dx)
+            await _upsert_addr_pos(addr, all_pos, ts, dexes=dx)
         except Exception:
             # Sayaç ŞART: bu blok sessizdi, kalıcı bir hata olsa panel sonsuza
             # dek "birazdan dolar" der, kullanıcı bozuk olduğunu asla göremezdi.
@@ -670,6 +736,7 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
                                  "err_msg": last_err[0] if last_err else "",
                                  "acct_written": _acct_written[0],
                                  "acct_known": await account_coverage(),
+                                 "crypto_addrs": len(cset), "per_addr": round(per_addr, 2),
                                  **budget, "ts": ts})
     _acct_written[0] = 0
     return {"hot": len(hot), "cold": len(cold), "positions": n_pos,

@@ -1161,6 +1161,12 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
 - Bir adresin defteri her dex için AYRI sorgulanır (ana dex + her HIP-3 dex'i).
   Tek istekte hepsini veren bir kestirme yok; dex'lerden biri hata verirse o adres
   o tur atlanır — eksik yanıtla "pozisyonu kapatmış" saymak kayıt silerdi.
+  **Kripto dex'ler (`CRYPTO_DEXES`, para) yalnız ona dokunmuş adreslerde sorgulanır**
+  (o dex'te fill / pozisyon / açık arşiv satırı ya da watchlist); kalan adresler
+  ana dex + hisse dex'leriyle kalır (adres başına ~2 istek). Yanıtın otoritesi
+  sorgulanan dex'lerle sınırlıdır: `para` sorulmadıysa adresin para satırı
+  silinmez/kapanmaz. `/tani` derin keşif satırı "kripto dex sorgusu N adreste
+  (adres başına ~2.1 istek)" yazar.
 - Leaderboard endpoint'i resmi değildir; düşerse bot fills+watchlist ile çalışmaya devam eder.
 - Yahoo takvimi resmi API değildir; nadiren datacenter IP engeli görülebilir → Finnhub key'i eklemek sağlamlaştırır.
 - Fiyat grafiği HL **perp** mumlarını çizer (balinaların gerçekten işlem gördüğü fiyat);

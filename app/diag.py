@@ -264,7 +264,10 @@ async def _subsystems(cfg) -> list[str]:
         out.append(f"  derin keşif: sıcak {sw.get('hot')} / soğuk {sw.get('cold')}"
                    f" · tur ~{sw.get('tour_min', '?')}dk (soğuk ~{sw.get('cold_min', '?')}dk)"
                    f" · parti {sw.get('batch')} → {sw.get('ok', 0)}✓/{sw.get('err', 0)}✗"
-                   f" · {sw.get('batch_positions', 0)} poz")
+                   f" · {sw.get('batch_positions', 0)} poz"
+                   + (f" · kripto dex sorgusu {_num(sw['crypto_addrs'])} adreste"
+                      f" (adres başına ~{sw.get('per_addr')} istek)"
+                      if sw.get("crypto_addrs") is not None else ""))
         out.append(f"       son tam tur "
                    + (f"{_dur(now() - int(last_full))} önce" if last_full else "YOK (ilk tur sürüyor)")
                    + (f" · hl yazma hatası {sw['hl_err']}" if sw.get("hl_err") else "")
