@@ -65,13 +65,81 @@ def _usd(v: float) -> str:
     return f"${v:.0f}"
 
 
+# Çizim penceresi: ana seviye her zaman içeride; diğer seviyeler ana mesafenin
+# NEAR_FACTOR katı (en az NEAR_MIN_PCT, en çok far_pct) içindeyse çizgi olarak
+# çizilir. Daha uzak ama ≤ far_pct olanlar ölçeği DEĞİŞTİRMEDEN kenarda toplu
+# etiket olur; far_pct'den uzak olanlar grafikte hiç görünmez (mesaj metni zaten
+# satır satır yazıyor). INJ vakası: +%2297'lik short eksene girip 48 saatlik
+# mumları tek çizgiye eziyordu.
+NEAR_FACTOR = 2.0
+NEAR_MIN_PCT = 10.0
+
+
+def _dist_pct(px: float, mark: float) -> float:
+    return abs(float(px) - mark) / mark * 100 if mark else 0.0
+
+
+def plan_levels(cs: list[dict], mark: float, lv: list[dict], target: tuple | None = None,
+                far_pct: float = 50.0) -> dict | None:
+    """Saf: hangi seviye çizilir, hangisi kenarda toplu, hangisi görünmez; y aralığı.
+
+    Dönüş {lo, hi, win, draw, pinned: {top, bottom}, omitted, tpx, target_pinned}
+    ya da None (ana seviye bile far_pct'den uzaksa — grafik anlamsız, çizilmez).
+    Mesafe px'ten hesaplanır (`dist` alanına güvenilmez); kenar px > fiyat → top."""
+    if not cs or not lv or not mark:
+        return None
+    main = next((x for x in lv if x.get("main")), lv[0])
+    far_pct = float(far_pct or 50.0)
+    main_d = _dist_pct(main["px"], mark)
+    if main_d > far_pct:
+        return None
+    win = max(min(far_pct, max(NEAR_FACTOR * main_d, NEAR_MIN_PCT)), main_d)
+    draw, pinned, omitted = [], {"top": [], "bottom": []}, []
+    for x in lv:
+        d = _dist_pct(x["px"], mark)
+        x = {**x, "_d": d}
+        if x.get("main") or d <= win:
+            draw.append(x)
+        elif d <= far_pct:
+            pinned["top" if float(x["px"]) > mark else "bottom"].append(x)
+        else:
+            omitted.append(x)
+    for side in pinned.values():
+        side.sort(key=lambda x: x["_d"])
+    tpx = float(target[0]) if target and target[0] else None
+    target_pinned = bool(tpx and _dist_pct(tpx, mark) > win)
+    extra = [tpx] if tpx and not target_pinned else []
+    lo = min(min(float(c["l"]) for c in cs), min(float(x["px"]) for x in draw), mark, *extra)
+    hi = max(max(float(c["h"]) for c in cs), max(float(x["px"]) for x in draw), mark, *extra)
+    rng = (hi - lo) or (hi * 0.02) or 1.0
+    return {"lo": lo - rng * 0.06, "hi": hi + rng * 0.06, "win": win, "draw": draw,
+            "pinned": pinned, "omitted": omitted, "tpx": tpx, "target_pinned": target_pinned}
+
+
+def _pinned_text(items: list[dict], top: bool) -> str:
+    """Kenar etiketi: tek seviye tam, birden çok toplu (adet · toplam $ · mesafe aralığı)."""
+    arrow, sign = ("▲", "+") if top else ("▼", "−")
+    if len(items) == 1:
+        x = items[0]
+        side = "SHORT" if x.get("side") == "short" else "LONG"
+        return f"{arrow} {side} {_usd(x.get('notional'))} · liq {_px(x['px'])} ({sign}%{x['_d']:.0f})"
+    sides = {x.get("side") for x in items}
+    word = "short" if sides == {"short"} else ("long" if sides == {"long"} else "seviye")
+    total = sum(float(x.get("notional") or 0) for x in items)
+    ds = [x["_d"] for x in items]
+    return f"{arrow} {len(items)} {word} · {_usd(total)} · {sign}%{min(ds):.0f}…%{max(ds):.0f}"
+
+
 def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict],
            *, interval: str = "15dk", span_txt: str = "son 48 saat",
-           target: tuple | None = None, coverage_txt: str | None = None) -> bytes | None:
+           target: tuple | None = None, coverage_txt: str | None = None,
+           far_pct: float = 50.0) -> bytes | None:
     """PNG bayt. `candles`: [{t,o,h,l,c}] (t saniye, artan). `levels`:
     [{px, side, notional, dist, main}] — `main` olan seviyeye kalan mesafe
     köprüsü çizilir, en çok 4 seviye. `target=(px, label)`: zincir hedefi
-    (noktalı amber çizgi + etiket). Mum yoksa ya da Pillow yoksa None."""
+    (noktalı amber çizgi + etiket). Uzak seviyeler ekseni bozmaz (bkz.
+    plan_levels): pencere dışı ≤ far_pct kenarda toplu etiket, ötesi görünmez.
+    Mum yoksa, Pillow yoksa ya da ana seviye far_pct'den uzaksa None."""
     try:
         from PIL import Image, ImageDraw
     except Exception:
@@ -85,12 +153,11 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     main = next((x for x in lv if x.get("main")), lv[0])
     mark = float(mark or cs[-1]["c"])
 
-    # y ekseni: mumlar ∪ seviyeler ∪ fiyat ∪ hedef, %6 pay
-    tpx = float(target[0]) if target and target[0] else None
-    lo = min(min(c["l"] for c in cs), min(x["px"] for x in lv), mark, *([tpx] if tpx else []))
-    hi = max(max(c["h"] for c in cs), max(x["px"] for x in lv), mark, *([tpx] if tpx else []))
-    rng = (hi - lo) or (hi * 0.02) or 1.0
-    lo, hi = lo - rng * 0.06, hi + rng * 0.06
+    # y ekseni: mumlar ∪ ÇİZİLEN seviyeler ∪ fiyat ∪ (yakınsa) hedef, %6 pay
+    plan = plan_levels(cs, mark, lv, target, far_pct)
+    if plan is None:
+        return None
+    lo, hi, tpx = plan["lo"], plan["hi"], plan["tpx"]
     plot_l, plot_r, plot_t, plot_b = PAD_L, W - PAD_R, PAD_T, H - PAD_B
     plot_w, plot_h = plot_r - plot_l, plot_b - plot_t
 
@@ -176,34 +243,51 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
         d.text((x0 + 7, y - 11), text, fill=fg, font=f_lab)
         return y + 13
 
+    def place(y: float, down: bool = True) -> float:
+        """Etiket çakışmasın: önceki etiketlerle 28px içindeyse aşağı (ya da kenar
+        etiketleri için yukarı) kaydır; plot kutusuna kenetli."""
+        ty = y
+        for u in (sorted(used) if down else sorted(used, reverse=True)):
+            if abs(ty - u) < 28:
+                ty = u + 28 if down else u - 28
+        ty = max(plot_t + 13, min(plot_b - 13, ty))
+        used.append(ty)
+        return ty
+
     # fiyat çizgisi
     dashed(y_m, MARK, dash=4, width=1)
     used = [tag(y_m, f"fiyat {_px(mark)}", MARK)]
 
+    # üst kenar: pencere dışı ama ≤ far_pct seviyeler — ölçek değişmez, toplu etiket
+    top_pin = plan["pinned"]["top"]
+    if top_pin:
+        col = LIQ.get(top_pin[0].get("side"), LIQ["short"])
+        tag(place(plot_t + 13, down=True), _pinned_text(top_pin, top=True), col)
+    if plan["target_pinned"] and tpx and tpx > mark:
+        tag(place(plot_t + 13, down=True), f"▲ {target[1] or f'zincir hedefi {_px(tpx)}'}", AMBER)
+
     # liq seviyeleri (en yakın önce çizilir ki etiketi üstte kalsın)
-    lv.sort(key=lambda x: (0 if x.get("main") else 1, abs(x["px"] - mark)))
-    for x in lv[:4]:
+    draw = sorted(plan["draw"], key=lambda x: (0 if x.get("main") else 1, abs(x["px"] - mark)))
+    for x in draw[:4]:
         y = y_of(x["px"])
         col = LIQ.get(x.get("side"), LIQ["long"])
         dashed(y, col, dash=12, width=3 if x.get("main") else 2)
-        # etiket çakışmasın: önceki etiketlerle 28px içindeyse aşağı kaydır
-        ty = y
-        for u in sorted(used):
-            if abs(ty - u) < 28:
-                ty = u + 28
-        used.append(ty)
-        tag(ty, f"{side_of(x)} {_usd(x.get('notional'))} · liq {_px(x['px'])}", col)
+        tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} · liq {_px(x['px'])}", col)
 
-    # zincir hedefi: noktalı amber çizgi + etiket (defter + havuzla "en az buraya")
-    if tpx:
+    # zincir hedefi: pencere içindeyse noktalı amber çizgi + etiket; dışındaysa
+    # yalnız kenar etiketi (aralığa girmez — grafiği bozmaz)
+    if tpx and not plan["target_pinned"]:
         yt = y_of(tpx)
         dashed(yt, AMBER, dash=4, width=2)
-        ty = yt
-        for u in sorted(used):
-            if abs(ty - u) < 28:
-                ty = u + 28
-        used.append(ty)
-        tag(ty, str(target[1] or f"zincir hedefi {_px(tpx)}"), AMBER)
+        tag(place(yt), str(target[1] or f"zincir hedefi {_px(tpx)}"), AMBER)
+    elif plan["target_pinned"] and tpx and tpx <= mark:
+        tag(place(plot_b - 13, down=False), f"▼ {target[1] or f'zincir hedefi {_px(tpx)}'}", AMBER)
+
+    # alt kenar: pencere dışı ≤ far_pct seviyeler (toplu)
+    bot_pin = plan["pinned"]["bottom"]
+    if bot_pin:
+        col = LIQ.get(bot_pin[0].get("side"), LIQ["long"])
+        tag(place(plot_b - 13, down=False), _pinned_text(bot_pin, top=False), col)
 
     # kalan mesafe köprüsü: fiyat ile ana liq arasında dikey çizgi + etiket
     xb = plot_l + 18

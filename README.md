@@ -496,6 +496,13 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
 **özelden** yazan herkes `users` tablosuna kaydolur ve coin adı yazınca
 (`HYPE`, `TSLA`) sahibin `/hype` komutuyla aynı hattan (`cryptoliq.snapshot` +
 `liqchart`) liq'e en yakın büyük pozisyonlar, zincir hedefi ve grafik alır.
+**Uzak seviyeler ekseni bozmaz:** grafiğin penceresi mumlar + fiyat + ana seviye
+(+ ana mesafenin 2 katı, en az %10) — daha uzak ama `max_liq_distance_pct` (%50)
+içindeki seviyeler ölçeği değiştirmeden üst/alt kenarda toplu etiket olur
+(`▲ 2 short · $1.2M · +%61…%119`), %50'den uzak olanlar grafikte hiç görünmez
+(mesaj satırı yine yazar); zincir hedefi de pencere dışındaysa yalnız kenar etiketi.
+Anlık sorguda "en yakın büyük" listesi de önce %50 içindekileri alır; hiç yoksa
+"en yakın uzaklar" der ve grafik çizilmez.
 Ücretsiz katman günde `free_daily_queries` (3) sorgu (TSİ 00:00 yenilenir),
 Pro (`pro_until`) sınırsız + dakikada `pro_query_per_min`. Aynı coin
 `query_cache_sec` içinde tekrar sorulursa HL'ye gidilmez; tüm kullanıcıların

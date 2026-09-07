@@ -144,7 +144,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "liq_watch_top_accounts": {"type": "int", "label": "Liq radarı: taranan hesap",
                                "group": "Likidasyon radarı", "desc": "Leaderboard'dan likidasyon radarına alınan hesap sayısı"},
     "max_liq_distance_pct": {"type": "float", "label": "Liq tablosu mesafe sınırı (%)",
-                             "group": "Likidasyon radarı", "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez"},
+                             "group": "Likidasyon radarı", "desc": "Likidasyonu bundan uzak pozisyonlar liq tablosuna girmez; alarm/anlık PNG'de de sınır: bundan uzak seviye çizilmez, pencere dışı ama yakın olanlar kenarda toplu etiket olur"},
     "liq_cluster_window_pct": {"type": "float", "label": "Duvar penceresi (%)",
                                "group": "Likidasyon radarı", "desc": "Fiyatın bu kadar yakınındaki liq'ler 'duvar' sayılır (tweet'teki heatmap mantığı)"},
     "liq_cluster_min_usd": {"type": "float", "label": "Duvar eşiği — SAYFA ($)",

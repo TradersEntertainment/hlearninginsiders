@@ -302,8 +302,13 @@ def _target(casc: dict | None) -> tuple | None:
     return (casc["end_px"], f"zincir → {px(casc['end_px'])} · {usd(casc['total_usd'])}")
 
 
+def _far_pct(cfg) -> float:
+    """Grafik/anlık mesafe sınırı — liq tablosuyla aynı ayar (max_liq_distance_pct, %50)."""
+    return float(getattr(cfg, "max_liq_distance_pct", 50) or 50)
+
+
 async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | None = None,
-                 coverage_txt: str | None = None) -> bytes | None:
+                 coverage_txt: str | None = None, far_pct: float = 50.0) -> bytes | None:
     """Mesajın resmi: son 48 saatin 15 dk mumları + liq çizgileri + kalan mesafe
     (+ zincir hedefi)."""
     fn = getattr(client, "candles", None)
@@ -321,7 +326,8 @@ async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | Non
                "dist": p.get("dist"), "main": i == 0}
               for i, p in enumerate(sorted(fresh, key=lambda q: q.get("dist") or 0)[:4])]
     return liqchart.render(coin, cands, mark, levels, interval=CHART_LABEL[0],
-                           span_txt=CHART_LABEL[1], target=target, coverage_txt=coverage_txt)
+                           span_txt=CHART_LABEL[1], target=target, coverage_txt=coverage_txt,
+                           far_pct=far_pct)
 
 
 async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5) -> dict:
@@ -366,8 +372,14 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
         cands.append({**r, "notional": float(r.get("notional") or 0), "liq_px": float(r["liq_px"]),
                       "dist": d, "mark": float(mark)})
     cands.sort(key=lambda q: q["dist"])
-    big = [c for c in cands if c["notional"] >= min_usd]
-    show = (big or cands)[:limit]
+    # "liq'e en yakın büyük": önce mesafe sınırı (max_liq_distance_pct, %50) içindekiler —
+    # +%2297'lik 3× short "büyük" diye başa geçip grafiği bozuyordu. İçeride hiç yoksa
+    # eski davranış (en yakın uzaklar) ve mesaj bunu söyler; grafik çizilmez.
+    far_pct = _far_pct(cfg)
+    near = [c for c in cands if c["dist"] <= far_pct]
+    big = [c for c in near if c["notional"] >= min_usd]
+    all_far = bool(cands) and not near
+    show = (big or near or cands)[:limit]
     casc = await _cascade(cfg, client, coin, mark, show[0], rows) if show else None
     # Kapsama (havuz / HL OI): mesaj ve PNG'de — süs, hesaplanamazsa komut düşmez
     from . import coverage as _coverage
@@ -380,12 +392,13 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     if show and getattr(cfg, "crypto_liq_chart", True):
         try:
             png = await _chart(client, coin, mark, show, target=_target(casc),
-                               coverage_txt=_coverage.txt(cov))
+                               coverage_txt=_coverage.txt(cov), far_pct=far_pct)
         except Exception:
             log.debug("anlık grafik üretilemedi (%s)", coin, exc_info=True)
     return {"coin": coin, "kind": kind, "mark": mark, "age": age, "rows": show,
             "n_all": len(cands), "n_big": len(big), "min_usd": min_usd, "png": png,
-            "cascade": casc, "coverage": cov}
+            "cascade": casc, "coverage": cov, "all_far": all_far,
+            "n_far": len(cands) - len(near), "far_pct": far_pct}
 
 
 # ─────────────────────────────────────────────── tarama
@@ -626,7 +639,7 @@ async def scan(cfg, client, notifier=None) -> dict:
         if getattr(cfg, "crypto_liq_chart", True):
             try:
                 png = await _chart(client, coin, marks.get(coin), fresh, target=_target(casc),
-                                   coverage_txt=cov_txt)
+                                   coverage_txt=cov_txt, far_pct=_far_pct(cfg))
             except Exception:
                 log.debug("grafik üretilemedi (%s)", coin, exc_info=True)
         cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"

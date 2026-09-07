@@ -767,7 +767,10 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
         lines.append(f"Havuzda {sym} için liq fiyatı bilinen açık pozisyon yok — süpürme"
                      f" uğradıkça dolar; HL'nin tamamı değil.")
         return "\n".join(lines)
-    if not s.get("n_big"):
+    far = float(s.get("far_pct") or 50)
+    if s.get("all_far"):
+        lines.append(f"<i>%{far:.0f} içinde pozisyon yok — en yakın uzaklar (grafik çizilmez):</i>")
+    elif not s.get("n_big"):
         lines.append(f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>")
     for i, p in enumerate(rows):
         is_long = p.get("side") == "long"
@@ -793,6 +796,8 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
     ctx = [f"havuzda {s.get('n_all', 0)} açık pozisyon, {s.get('n_big', 0)}'ü ≥ {usd(s.get('min_usd'))}"]
     if oldest:
         ctx.append(f"pozisyon ölçümü en eski {age_str(oldest)} önce (süpürme)")
+    if s.get("n_far") and not s.get("all_far"):
+        ctx.append(f"{s['n_far']} pozisyon %{far:.0f}'den uzak (listede/grafikte yok)")
     cc = coverage_ctx(s.get("coverage"))
     ctx.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     lines.append("<i>" + " · ".join(ctx) + "</i>")
