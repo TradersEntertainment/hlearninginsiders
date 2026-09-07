@@ -523,6 +523,33 @@ kullanıcılara, altında Pro çağrısı. Radar çağrılarına `coin=` eklendi
 (anomaly/autoscan/bookwall/cryptoliq/cryptovol/equityvol/liqattack/liqwatch/lowvol/
 offhours/patterns/report/twaplive/collector). Testler: `tests/test_fanout.py`.
 
+**Kripto ağ geçidi (S4) — NOWPayments.** `NOWPAYMENTS_API_KEY` varsa `/pro`'da
+🪙 düğmesi çıkar: `POST /v1/invoice` (order_id `pay:<id>`, `ipn_callback_url` =
+`PUBLIC_BASE_URL/pay/ipn`) → hosted ödeme sayfası (url düğmesi). NOWPayments her
+durumda `POST /pay/ipn`'e yazar; gövde anahtarları özyinelemeli sıralı + kompakt
+JSON'a çevrilip `NOWPAYMENTS_IPN_SECRET` ile HMAC-SHA512'lenir ve `x-nowpayments-sig`
+ile karşılaştırılır — uyuşmazsa kredi yok, örnek kv'de (`/tani`). `finished/
+confirmed` → tahsilat (payment_id ile idempotent); `failed/expired/refunded` →
+bekleyen kapanır; ara durumlar payment_id'yi saklar, `paywatch` 10 dk'da bir
+`GET /v1/payment/<id>` ile kayıp IPN'i yakalar. Sayfalar: **`/kullanicilar`**
+(yönetici; kullanıcılar, Pro, ödemeler, fan-out, ödeme kanalları) ve herkese açık
+**`/bot`** tanıtım sayfası (token istemez; fiyat, `https://t.me/<bot>` — kullanıcı
+adı `getMe`'den, yoksa `BOT_USERNAME`). `/tani` "satış" satırı: kullanıcı/Pro/MRR,
+fan-out, USDC izleyici (eşleşmeyenler + ilk ledger örneği), NOWPayments, ücretsiz
+özet. Testler: `tests/test_nowpay.py`.
+
+**Lansman listesi.** (1) BotFather: açıklama, "about", `/setprivacy` (DM'de fark
+etmez), komut listesi bot açılışta `setMyCommands` ile kendisi yazar. (2) Railway
+env: `PUBLIC_BOT_ENABLED=1`, `PAY_HL_ADDRESS` (önce o adrese bir kez USDC yatırıp
+aktive et — HL yeni adrese ilk gönderimde ücret alır), `SUPPORT_CONTACT`; isteğe
+bağlı `NOWPAYMENTS_API_KEY` + `NOWPAYMENTS_IPN_SECRET` + `PUBLIC_BASE_URL`.
+(3) İkinci bir Telegram hesabıyla prova: `/start` → `hype` → grafik; 4. sorguda
+kilit; `/pro` → 1 Star'lık test yerine gerçek 230 Stars faturası + `/iade`; HL'de
+$2.99 Send → 1–2 dk içinde "Pro açıldı"; `/bildirimler` düğmeleri. (4) İlk gün
+`/tani` ve `/kullanicilar`'ı izle: `satış` satırında kötü imza / eşleşmeyen transfer
+/ engelli sayıları. Sınırlar: HL bütçesi 350 rpm paylaşımlı (sorgu ≈ 3 istek,
+`query_global_per_min` 40), Telegram 30 msg/sn (bot 20/sn ile gider).
+
 ## Simülasyon: `/sim`
 
 Kâğıt üstü, **gerçek emir yok**. Kullanıcı kuralı: kripto liq radarı sondayla

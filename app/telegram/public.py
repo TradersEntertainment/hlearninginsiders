@@ -32,6 +32,10 @@ def kb(rows) -> dict:
     return {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in rows]}
 
 
+def kb_url(text: str, url: str) -> dict:
+    return {"inline_keyboard": [[{"text": text, "url": url}]]}
+
+
 def menu() -> dict:
     return kb([[("📈 Örnek: HYPE", "q:HYPE"), ("🔔 Bildirimler", "m:notif")],
                [("⭐ Pro", "m:pro"), ("❓ Yardım", "m:help")]])
@@ -351,7 +355,16 @@ async def pay_start(bot, u: dict, method: str, code: str) -> None:
         pay = await paycore.create_pending(int(u["id"]), "hl", code, cfg, from_addr=u["hl_address"])
         await bot.send(hl_instructions(cfg, u, pay), chat)
         return
-    await bot.send("🪙 Kripto ağ geçidi bir sonraki sürümde; şimdilik ⭐ Stars ya da 💵 USDC.", chat)
+    from ..pay import nowpay
+    await paycore.cancel_pending(int(u["id"]), "nowpay")
+    pay, url = await nowpay.create_invoice(cfg, getattr(bot, "session", None), u, code)
+    if not pay:
+        await bot.send("❌ Kripto faturası oluşturulamadı; ⭐ Stars ya da 💵 USDC ile dene.", chat)
+        return
+    await bot.send(f"🪙 <b>Kripto ile ödeme</b> — Pro {int(pay['months'])} ay · ${float(pay['amount_usd']):.2f}"
+                   f" · ödeme no <b>#{pay['id']}</b>\nDüğmeden ödeme sayfasını aç, coin/ağı seç ve gönder. Ağ onayı "
+                   "gelince Pro otomatik açılır (birkaç dk); mesajla haber verilir. Fatura 24 saat geçerli.",
+                   chat, reply_markup=kb_url("🪙 Ödeme sayfasını aç", url))
 
 
 def allowed_kinds(cfg) -> list[str]:

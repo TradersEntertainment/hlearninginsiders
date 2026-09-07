@@ -869,6 +869,11 @@ class Config:
         self.pay_hl_address = os.getenv("PAY_HL_ADDRESS", "").strip().lower()
         self.nowpayments_api_key = os.getenv("NOWPAYMENTS_API_KEY", "").strip()
         self.nowpayments_ipn_secret = os.getenv("NOWPAYMENTS_IPN_SECRET", "").strip()
+        # IPN geri çağrısı ve tanıtım sayfası için kamuya açık taban URL (Railway kendi
+        # alan adını RAILWAY_PUBLIC_DOMAIN ile verir); bot kullanıcı adı getMe'den de alınır
+        _dom = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+        self.public_base_url = (os.getenv("PUBLIC_BASE_URL", "").strip() or (f"https://{_dom}" if _dom else "")).rstrip("/")
+        self.bot_username = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
 
         # Dashboard
         self.dashboard_token = os.getenv("DASHBOARD_TOKEN", "")

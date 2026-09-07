@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HL Insider Radar — Telegram botu</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0f1220; color: #e7e9f2; font: 16px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 20px 60px; }
+  h1 { font-size: 30px; margin: 0 0 6px; } h2 { font-size: 20px; margin: 34px 0 10px; }
+  .lead { color: #b6bbd1; margin: 0 0 22px; }
+  .cta { display: inline-block; background: #4f7cff; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 10px; font-weight: 600; }
+  .cta.off { background: #3a3f57; color: #b6bbd1; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .card { background: #171b2e; border: 1px solid #262b45; border-radius: 12px; padding: 16px; }
+  .card b.big { font-size: 24px; display: block; }
+  ol li { margin: 6px 0; } code { background: #1e2338; padding: 1px 6px; border-radius: 6px; }
+  .dim { color: #8f95ad; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; } td, th { text-align: left; padding: 8px 6px; border-bottom: 1px solid #262b45; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🕵️ HL Insider Radar</h1>
+  <p class="lead">Hyperliquid'de balinaların likidasyon seviyelerini, dev pozisyonları ve sessiz birikimleri izleyen Telegram botu.
+    Bir coin adı yaz — <code>HYPE</code>, <code>BTC</code>, <code>TSLA</code> — liq'e en yakın büyük pozisyonlar, zincir hedefi ve grafik gelsin.</p>
+  {% if username and enabled %}<a class="cta" href="https://t.me/{{ username }}">Telegram'da aç → @{{ username }}</a>
+  {% elif username %}<span class="cta off">Bot şu an kapalı (yakında)</span>{% else %}<span class="cta off">Bot bağlantısı yakında</span>{% endif %}
+
+  <h2>Nasıl çalışır</h2>
+  <ol>
+    <li>Bota <code>/start</code> yaz, sonra bir coin adı gönder.</li>
+    <li>Bot süpürülen ~1500 büyük hesaptan o coindeki liq'e en yakın pozisyonları, zorunlu alış/satış toplamlarını, zincir simülasyonunun hedef fiyatını ve 48 saatlik grafiği döndürür.</li>
+    <li>Pro'da anlık bildirimleri açarsın: seçtiğin türler (liq yakını, liq duvarı, liq attack, TWAP birikimi, hacim rekoru, dev pozisyon…) ve coinler için, kendi sessiz saatinle.</li>
+  </ol>
+
+  <h2>Fiyat</h2>
+  <div class="grid">
+    <div class="card"><b class="big">🆓 Ücretsiz</b>günde {{ free }} sorgu · sabah özeti</div>
+    {% for p in plans %}
+    <div class="card"><b class="big">⭐ Pro · {{ p.months }} ay</b>${{ '%.2f'|format(p.usd) }}{% if p.months > 1 %} <span class="dim">(aylık ${{ '%.2f'|format(p.usd / p.months) }})</span>{% endif %}<br><span class="dim">{{ p.stars }} Stars ile de</span></div>
+    {% endfor %}
+  </div>
+  <p class="dim">Ödeme: Telegram Stars · USDC (Hyperliquid içinde Send, ücretsiz){% if nowpay %} · kripto (NOWPayments){% endif %}. Süre mevcut bitişin üstüne eklenir.{% if support %} Destek: {{ support }}.{% endif %}</p>
+
+  <h2>Dürüstlük notu</h2>
+  <p class="dim">Pozisyon verisi Hyperliquid'in tamamı değil, izlenen büyük hesaplardır; her mesaj verinin ne kadar eski olduğunu söyler. Gözlem aracıdır, yatırım tavsiyesi değildir.</p>
+</main>
+</body>
+</html>

@@ -68,6 +68,7 @@ class TelegramBot:
         self._chat_last: dict[str, float] = {}     # sohbet başına son gönderim (1 msg/sn)
         self.blocked_chats: set[str] = set()       # 403 / silinmiş hesap görülen sohbetler
         self.on_blocked = self._default_on_blocked
+        self.username = getattr(cfg, "bot_username", "") or ""   # /bot sayfası ve tanıtım linki (getMe ile dolar)
 
     # ---------- gönderim ----------
 
@@ -307,8 +308,16 @@ class TelegramBot:
         return bool(getattr(self.cfg, "public_bot_enabled", False))
 
     async def _setup_commands(self) -> None:
-        """Açık DM akışı açıksa herkese görünen komut listesi (menü düğmesi)."""
-        if not self._public_on() or self.session is None:
+        """Açık DM akışı açıksa herkese görünen komut listesi (menü düğmesi); getMe ile kullanıcı adı."""
+        if self.session is None:
+            return
+        try:
+            st, data = await self.call("getMe", {}, timeout=10)
+            if st == 200 and data.get("ok"):
+                self.username = (data.get("result") or {}).get("username") or self.username
+        except Exception:
+            log.debug("getMe", exc_info=True)
+        if not self._public_on():
             return
         try:
             await self.set_my_commands(PUBLIC_COMMANDS, {"type": "all_private_chats"})

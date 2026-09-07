@@ -117,7 +117,7 @@ async def loop(cfg, client, bot=None) -> None:
     """Denetimli döngü: bekleyen 'hl' ödeme varken her 60 sn, yokken 600 sn'de bir."""
     from ..health import beat
     await asyncio.sleep(120)
-    last = 0
+    last = last_np = 0
     while True:
         try:
             await beat("paywatch")
@@ -127,6 +127,10 @@ async def loop(cfg, client, bot=None) -> None:
             if pend or ts - last >= IDLE_SEC:
                 await poll(cfg, client, bot)
                 last = ts
+            if ts - last_np >= IDLE_SEC:                 # kayıp NOWPayments IPN'i için yedek yoklama
+                from . import nowpay
+                await nowpay.poll_pending(cfg, getattr(client, "session", None), bot)
+                last_np = ts
             await beat("paywatch")
         except asyncio.CancelledError:
             raise

@@ -416,6 +416,42 @@ async def main():
                                          "candidates": 2, "alerted": 2, "failed": 0,
                                          "skipped": "" if wk else "hafta sonu değil — pencere kapalı",
                                          "ts": now - 240})
+    # 🛒 satılabilir bot: kullanıcılar, abonelikler, ödemeler, fan-out kaydı, kv istatistikleri
+    from app.users import tr_day
+    today = tr_day(now)
+    async with dbm.db() as c:
+        await c.executemany(
+            "INSERT OR REPLACE INTO users(id,chat_id,username,first_name,created_ts,last_seen_ts,pro_until,hl_address,"
+            "blocked_ts,q_day,q_used,q_total,quiet_start,quiet_end) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [(1001, "1001", "ayse_t", "Ayşe", now - 20 * 86400, now - 300, now + 12 * 86400, "0x" + "a1" * 20, None, today, 4, 61, 23, 8),
+             (1002, "1002", "mehmet", "Mehmet", now - 5 * 86400, now - 7200, None, "0x" + "b2" * 20, None, today, 3, 9, None, None),
+             (1003, "1003", "", "Can", now - 40 * 86400, now - 3 * 86400, now - 2 * 86400, "0x" + "c3" * 20, None, "2026-09-01", 1, 30, None, None),
+             (1004, "1004", "spam", "X", now - 2 * 86400, now - 86400, None, None, now - 3600, today, 0, 2, None, None)])
+        await c.executemany("INSERT OR IGNORE INTO user_kinds(user_id,kind) VALUES(?,?)",
+                            [(1001, "cryptoliq"), (1001, "liqmap"), (1001, "twap")])
+        await c.executemany("INSERT OR IGNORE INTO user_coins(user_id,coin) VALUES(?,?)", [(1001, "HYPE"), (1001, "SOL")])
+        await c.executemany(
+            "INSERT INTO payments(user_id,method,plan,months,amount_usd,amount_raw,currency,ext_id,from_addr,status,"
+            "created_ts,paid_ts,raw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [(1001, "hl", "1m", 1, 2.99, 2.99, "USD", "0xhash1", "0x" + "a1" * 20, "paid", now - 18 * 86400, now - 18 * 86400 + 120, None),
+             (1001, "stars", "1m", 1, 2.99, 230, "XTR", "ch_abc", None, "paid", now - 3600, now - 3500, None),
+             (1002, "hl", "3m", 3, 7.99, 7.99, "USD", None, "0x" + "b2" * 20, "pending", now - 900, None, None),
+             (1003, "nowpay", "1m", 1, 2.99, None, "USD", "np_777", None, "expired", now - 30 * 86400, None, None)])
+        await c.executemany(
+            "INSERT INTO fanout_log(ts,kind,coin,key,n_targets,n_sent,n_fail,n_blocked) VALUES(?,?,?,?,?,?,?,?)",
+            [(now - 1200, "cryptoliq", "HYPE", "cryptoliq:HYPE:0xabc", 3, 3, 0, 0),
+             (now - 4000, "liqmap", "CL", "xyz:CL:long", 2, 1, 0, 1)])
+    await dbm.kv_set("sales_stats", {"paid_24h": 1, "usd_24h": 2.99, "paid_30d": 2, "usd_30d": 5.98, "pending": 1,
+                                     "refunded": 0, "pro": 1, "mrr": 2.99, "ts": now - 600})
+    await dbm.kv_set("fanout_stats", {"queued": 12, "dropped": 0, "events": 12, "dup": 1, "targets": 20, "sent": 18,
+                                      "fail": 0, "blocked": 2, "quiet": 3, "last_ts": now - 1200,
+                                      "last": "cryptoliq HYPE → 3/3", "queue": 0, "ts": now - 1200})
+    await dbm.kv_set("paywatch_state", {"ok": 140, "err": 1, "matched_total": 1, "n_raw": 3, "n_in": 1, "skipped": "",
+                                        "unmatched": [{"hash": "0xdeadbeef1234", "from": "0x" + "d4" * 20, "usd": 2.5, "ts": now - 5000}],
+                                        "sample": '[{"time": 1757200000000, "hash": "0x…", "delta": {"type": "internalTransfer", "usdc": "2.99", "user": "0x…", "destination": "0x…"}}]',
+                                        "ts": now - 45})
+    await dbm.kv_set("nowpay_state", {"ipn": 4, "paid": 0, "bad_sig": 0, "last_status": "waiting", "ts": now - 3000})
+    await dbm.kv_set("public_digest_stats", {"targets": 2, "sent": 2, "items": 5, "ts": now - 5 * 3600})
     print(f"tohum hazır → {DB}")
 
 

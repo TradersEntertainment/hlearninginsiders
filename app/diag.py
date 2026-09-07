@@ -533,6 +533,46 @@ async def _subsystems(cfg) -> list[str]:
             out.append(f"       ilk emir snapshot örneği: {str(tl['sample'])[:300]}")
     else:
         out.append("  canlı twap: tur HENÜZ ÇALIŞMADI")
+    # ---- satılabilir bot: kullanıcılar, ödeme kanalları, fan-out
+    try:
+        from . import users as _users
+        us = await _users.stats()
+        ss = await kv_get("sales_stats") or {}
+        fo = await kv_get("fanout_stats") or {}
+        pw = await kv_get("paywatch_state") or {}
+        npst = await kv_get("nowpay_state") or {}
+        pd = await kv_get("public_digest_stats") or {}
+        out.append(f"  satış: bot {'AÇIK' if getattr(cfg, 'public_bot_enabled', False) else 'kapalı'}"
+                   f" · kullanıcı {us['total']} (+{us['new_24h']}/24s · 7g aktif {us['active_7d']} · engelli {us['blocked']})"
+                   f" · Pro {us['pro']} (3 günde biten {us['expiring_3d']}) · MRR ≈ ${float(ss.get('mrr') or 0):.2f}"
+                   f" · ödeme 24s {ss.get('paid_24h', 0)} · bekleyen {ss.get('pending', 0)} · sorgu bugün {us['q_today']}")
+        if fo:
+            out.append(f"       fan-out: {fo.get('events', 0)} olay · {fo.get('sent', 0)} gitti · {fo.get('blocked', 0)} engelli"
+                       f" · {fo.get('dup', 0)} tekrar · {fo.get('quiet', 0)} sessiz · kuyruk {fo.get('queue', 0)}"
+                       + (f" · son: {fo['last']}" if fo.get("last") else ""))
+        if pw:
+            um = pw.get("unmatched") or []
+            out.append(f"       USDC izleyici: {pw.get('ok', 0)} sorgu · {pw.get('err', 0)} hata"
+                       f" · eşleşen {pw.get('matched_total', 0)} · eşleşmeyen {len(um)}"
+                       + (f" · ⚠️ {pw['skipped']}" if pw.get("skipped") else "")
+                       + (f" · {_dur(now() - int(pw['ts']))} önce" if pw.get("ts") else "")
+                       + (f" · son hata {pw['last_err']}" if pw.get("last_err") else ""))
+            for t in um[:3]:
+                out.append(f"         eşleşmeyen: {str(t.get('from', ''))[:12]}… ${float(t.get('usd') or 0):.2f}"
+                           f" {str(t.get('hash', ''))[:14]} (elle: /pro_ver <id> <gün>)")
+            if pw.get("sample"):
+                out.append(f"       ilk ledger örneği: {str(pw['sample'])[:300]}")
+        if npst:
+            out.append(f"       NOWPayments: {npst.get('ipn', 0)} IPN · {npst.get('paid', 0)} tahsilat"
+                       f" · {npst.get('bad_sig', 0)} kötü imza"
+                       + (f" · son durum {npst['last_status']}" if npst.get("last_status") else "")
+                       + (f" · kötü imza örneği: {str(npst['bad_sample'])[:160]}" if npst.get("bad_sample") else ""))
+        if pd:
+            out.append(f"       ücretsiz özet: {pd.get('sent', 0)}/{pd.get('targets', 0)} gitti"
+                       + (f" · {_dur(now() - int(pd['ts']))} önce" if pd.get("ts") else "")
+                       + (f" · {pd['skipped']}" if pd.get("skipped") else ""))
+    except Exception as e:
+        out.append(f"  satış: okunamadı ({type(e).__name__}: {e})")
     tw = await kv_get("twap_stats") or {}
     if tw:
         best = tw.get("best") or {}

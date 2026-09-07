@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}🛒 Satış · HL Radar{% endblock %}
+{% block content %}
+<div class="panel">
+  <h2>🛒 Satılabilir bot <span class="st">· kullanıcılar, Pro, ödemeler (yönetici)</span></h2>
+  <p class="sub">Herkese açık DM akışı: <b>{{ 'AÇIK' if cfg.public_bot_enabled else 'KAPALI' }}</b> ·
+    ücretsiz günde <b>{{ cfg.free_daily_queries }}</b> sorgu · Pro 1 ay <b>${{ '%.2f'|format(cfg.pro_price_usd_1m) }}</b>
+    ({{ stars }} Stars) · USDC adresi {% if cfg.pay_hl_address %}<code>{{ cfg.pay_hl_address[:10] }}…</code>{% else %}<span class="bad">YOK (PAY_HL_ADDRESS)</span>{% endif %}
+    · NOWPayments {{ 'açık' if cfg.nowpayments_api_key else 'kapalı' }} · bot {% if username %}<a href="https://t.me/{{ username }}">@{{ username }}</a>{% else %}<span class="dim">kullanıcı adı bilinmiyor</span>{% endif %}.
+    Sahip komutları: <code>/kullanicilar</code> · <code>/pro_ver id gün</code> · <code>/duyuru metin</code> · <code>/iade charge</code>.</p>
+  <div class="strip">
+    <span class="pill">👥 <b>{{ st.total }}</b> kullanıcı</span>
+    <span class="pill ok">⭐ <b>{{ st.pro }}</b> Pro</span>
+    <span class="pill">MRR ≈ <b>${{ '%.2f'|format(ss.mrr) }}</b></span>
+    <span class="pill">+{{ st.new_24h }} / 24s · 7g aktif {{ st.active_7d }}</span>
+    <span class="pill {{ 'bad' if st.blocked else '' }}">engelli {{ st.blocked }}</span>
+    <span class="pill">3 günde biten {{ st.expiring_3d }}</span>
+    <span class="pill">sorgu bugün {{ st.q_today }} · toplam {{ st.q_total }}</span>
+    <span class="pill">ödeme 24s {{ ss.paid_24h }} (${{ '%.2f'|format(ss.usd_24h) }}) · 30g {{ ss.paid_30d }} (${{ '%.2f'|format(ss.usd_30d) }}) · bekleyen {{ ss.pending }} · iade {{ ss.refunded }}</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>💳 Son ödemeler <span class="st">· {{ pays|length }} kayıt</span></h2>
+  {% if pays %}
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>Kullanıcı</th><th>Yöntem</th><th>Paket</th><th>$</th><th>Durum</th><th>Oluşturma</th><th>Ödeme</th><th>Dış id / adres</th></tr></thead>
+    <tbody>
+    {% for p in pays %}
+    <tr>
+      <td>{{ p.id }}</td>
+      <td>{% if p.username %}@{{ p.username }}{% else %}#{{ p.user_id }}{% endif %}</td>
+      <td>{{ {'hl': '💵 USDC', 'stars': '⭐ Stars', 'nowpay': '🪙 NOWPayments'}.get(p.method, p.method) }}</td>
+      <td>{{ p.plan }}</td>
+      <td><b>${{ '%.2f'|format(p.amount_usd or 0) }}</b>{% if p.method == 'stars' and p.amount_raw %} <span class="dim">({{ p.amount_raw|int }}⭐)</span>{% endif %}</td>
+      <td><span class="pill {{ {'paid': 'ok', 'pending': 'warn', 'expired': 'off', 'refunded': 'bad'}.get(p.status, '') }}">{{ p.status }}</span></td>
+      <td class="dim">{{ p.created_ts|dt }}</td>
+      <td class="dim">{% if p.paid_ts %}{{ p.paid_ts|dt }}{% else %}—{% endif %}</td>
+      <td class="dim"><code>{{ (p.ext_id or p.from_addr or '')[:16] }}</code></td>
+    </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="dim">Henüz ödeme yok.</p>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>👥 Kullanıcılar <span class="st">· son görülene göre, en çok 200</span></h2>
+  {% if rows %}
+  <div class="tw"><table>
+    <thead><tr><th>id</th><th>Ad</th><th>Katman</th><th>Bugün / toplam sorgu</th><th>Türler</th><th>HL adresi</th><th>Sessiz</th><th>Son görülme</th><th>Kayıt</th><th>Durum</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    {% set pro = r.pro_until and r.pro_until > ts %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ r.first_name or '' }}{% if r.username %} <span class="dim">@{{ r.username }}</span>{% endif %}</td>
+      <td>{% if pro %}<span class="pill ok">⭐ Pro</span> <span class="dim">{{ r.pro_until|dt }}</span>{% elif r.pro_until %}<span class="pill off">süresi doldu</span> <span class="dim">{{ r.pro_until|dt }}</span>{% else %}<span class="pill">🆓</span>{% endif %}</td>
+      <td>{{ r.q_used or 0 }} / {{ r.q_total or 0 }}</td>
+      <td class="dim">{{ kinds.get(r.id, 0) }}{% if coins.get(r.id) %} · {{ coins[r.id] }} coin{% endif %}</td>
+      <td class="dim">{% if r.hl_address %}<code>{{ r.hl_address[:10] }}…</code>{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.quiet_start is not none and r.quiet_end is not none and r.quiet_start != r.quiet_end %}{{ '%02d'|format(r.quiet_start) }}–{{ '%02d'|format(r.quiet_end) }}{% else %}—{% endif %}</td>
+      <td class="dim">{{ r.last_seen_ts|dt }}</td>
+      <td class="dim">{{ r.created_ts|dt }}</td>
+      <td>{% if r.blocked_ts %}<span class="pill bad">engelledi</span>{% else %}<span class="pill ok">aktif</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="dim">Henüz kullanıcı yok — bayrak açıkken bota /start yazan herkes buraya düşer.</p>{% endif %}
+</div>
+
+<div class="panel">
+  <h2>📣 Fan-out <span class="st">· Pro abonelerine dağıtım</span></h2>
+  {% if fo %}<p class="sub">{{ fo.events or 0 }} olay · <b>{{ fo.sent or 0 }}</b> gitti · {{ fo.blocked or 0 }} engelli · {{ fo.dup or 0 }} tekrar · {{ fo.quiet or 0 }} sessiz saatte atlandı · kuyruk {{ fo.queue or 0 }}{% if fo.last %} · son: {{ fo.last }}{% endif %}{% if fo.ts %} · {{ fo.ts|dt }}{% endif %}</p>{% else %}<p class="dim">Henüz dağıtım olmadı.</p>{% endif %}
+  {% if fan %}
+  <div class="tw"><table>
+    <thead><tr><th>Zaman</th><th>Tür</th><th>Coin</th><th>Hedef</th><th>Gitti</th><th>Hata</th><th>Engelli</th><th>Anahtar</th></tr></thead>
+    <tbody>{% for f in fan %}<tr><td class="dim">{{ f.ts|dt }}</td><td>{{ f.kind }}</td><td>{{ f.coin }}</td><td>{{ f.n_targets }}</td><td><b>{{ f.n_sent }}</b></td><td>{{ f.n_fail }}</td><td>{{ f.n_blocked }}</td><td class="dim"><code>{{ (f.key or '')[:24] }}</code></td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>🔌 Ödeme kanalları</h2>
+  <p class="kunye">💵 USDC izleyici: {% if pw %}{{ pw.ok or 0 }} sorgu · {{ pw.err or 0 }} hata · eşleşen {{ pw.matched_total or 0 }} · eşleşmeyen {{ (pw.unmatched or [])|length }}{% if pw.skipped %} · <span class="bad">{{ pw.skipped }}</span>{% endif %}{% if pw.ts %} · {{ pw.ts|dt }}{% endif %}{% if pw.last_err %} · <span class="bad">{{ pw.last_err }}</span>{% endif %}{% else %}henüz çalışmadı{% endif %}.
+    {% if pw and pw.unmatched %}<br>Eşleşmeyen transferler (elle <code>/pro_ver</code>): {% for t in pw.unmatched %}<code>{{ (t.from or '')[:10] }}…</code> ${{ '%.2f'|format(t.usd or 0) }} · {% endfor %}{% endif %}</p>
+  <p class="kunye">🪙 NOWPayments: {% if npst %}{{ npst.ipn or 0 }} IPN · {{ npst.paid or 0 }} tahsilat · {{ npst.bad_sig or 0 }} kötü imza{% if npst.last_status %} · son durum {{ npst.last_status }}{% endif %}{% if npst.ts %} · {{ npst.ts|dt }}{% endif %}{% else %}IPN gelmedi{% endif %}.</p>
+</div>
+{% endblock %}

@@ -1249,6 +1249,58 @@ async def sim_reset(request: Request):
         return JSONResponse({"error": f"{type(e).__name__}: {e}"[:200]}, status_code=500)
 
 
+@router.get("/kullanicilar")
+async def users_page(request: Request):
+    """Satılabilir bot: kullanıcılar, Pro, ödemeler, fan-out (yalnız yönetici)."""
+    _guard(request)
+    _require_admin(request)
+    cfg = request.app.state.cfg
+    from .. import users as usersmod
+    from ..pay import core as paycore
+    from ..telegram.public import plans
+    ts = now()
+    async with db() as conn:
+        cur = await conn.execute("SELECT * FROM users ORDER BY last_seen_ts DESC LIMIT 200")
+        rows = [dict(r) for r in await cur.fetchall()]
+        cur = await conn.execute("SELECT user_id, COUNT(*) n FROM user_kinds GROUP BY user_id")
+        kinds = {r["user_id"]: r["n"] for r in await cur.fetchall()}
+        cur = await conn.execute("SELECT user_id, COUNT(*) n FROM user_coins GROUP BY user_id")
+        coins = {r["user_id"]: r["n"] for r in await cur.fetchall()}
+        cur = await conn.execute("SELECT * FROM fanout_log ORDER BY ts DESC LIMIT 20")
+        fan = [dict(r) for r in await cur.fetchall()]
+    bot = getattr(request.app.state, "bot", None)
+    pl = plans(cfg)
+    return _render(request, "kullanicilar.html", {
+        "cfg": cfg, "ts": ts, "st": await usersmod.stats(ts), "ss": await paycore.sales_stats(cfg, ts),
+        "rows": rows, "kinds": kinds, "coins": coins, "pays": await paycore.recent(50), "fan": fan,
+        "pw": await kv_get("paywatch_state") or {}, "fo": await kv_get("fanout_stats") or {},
+        "npst": await kv_get("nowpay_state") or {}, "stars": pl[0]["stars"] if pl else 0,
+        "username": (getattr(bot, "username", "") or getattr(cfg, "bot_username", "") or "").lstrip("@")})
+
+
+@router.get("/bot")
+async def bot_public_page(request: Request):
+    """Herkese açık tanıtım sayfası (token istemez): ne yapar, fiyat, Telegram linki."""
+    cfg = request.app.state.cfg
+    from ..telegram.public import plans
+    bot = getattr(request.app.state, "bot", None)
+    return templates.TemplateResponse(request, "bot_public.html", {
+        "request": request, "plans": plans(cfg), "free": int(getattr(cfg, "free_daily_queries", 3) or 0),
+        "username": (getattr(bot, "username", "") or getattr(cfg, "bot_username", "") or "").lstrip("@"),
+        "enabled": bool(getattr(cfg, "public_bot_enabled", False)),
+        "nowpay": bool(getattr(cfg, "nowpayments_api_key", "")), "support": getattr(cfg, "support_contact", "") or ""})
+
+
+@router.post("/pay/ipn")
+async def pay_ipn(request: Request):
+    """NOWPayments IPN (token istemez; HMAC-SHA512 imza doğrulanır)."""
+    from ..pay import nowpay
+    body = await request.body()
+    code, note = await nowpay.handle_ipn(request.app.state.cfg, getattr(request.app.state, "bot", None),
+                                         body, request.headers.get("x-nowpayments-sig", ""))
+    return JSONResponse({"ok": code == 200, "note": note}, status_code=code)
+
+
 @router.get("/saldiri")
 async def liq_attack_page(request: Request):
     """Liq attack radarı — hafta sonu yakın liq kümesini kim ucuza patlatabilir."""

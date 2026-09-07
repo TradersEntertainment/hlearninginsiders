@@ -261,7 +261,7 @@ def test_pro_menu_and_hl_flow():
         await bot._handle_update(dm(7, "/pro"))
         assert any(d.startswith("pay:np") for d in _btn_data(sent[-1][2]))
         await bot._handle_update(cq(7, "pay:np:1m", "cq4"))
-        assert "sonraki sürümde" in sent[-1][1]
+        assert "oluşturulamadı" in sent[-1][1], "oturum yokken NOWPayments faturası açılamaz (test_nowpay tam akışı pinler)"
         cfg.nowpayments_api_key = ""
         # USDC gelir → 3 ay Pro; /pro artık 'Pro'sun' der
         res = await hl.match(hl.parse_transfers([led("internalTransfer", A, PAY, 7.99, "hx", dbm.now())], PAY), cfg, bot)
