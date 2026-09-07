@@ -37,6 +37,14 @@ def _cmd_lower(s: str) -> str:
 
 
 CAPTION_LIMIT = 1024               # Telegram: ayrıştırılmış altyazı, UTF-16 birim
+# Yalnız GERÇEK etiketler: "</?harf…>". Eski `<[^>]+>` metindeki kaçışsız bir '<'ten
+# ("2 toz pozisyon (< $1K)") sonraki '>'ye kadar her şeyi yutuyordu — /pump metni
+# "toz pozisyon (" diye kesik geliyordu.
+TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
+
+
+def strip_tags(s: str) -> str:
+    return TAG_RE.sub("", s or "")
 
 
 def _caption_fit(caption: str, limit: int = CAPTION_LIMIT,
@@ -47,7 +55,7 @@ def _caption_fit(caption: str, limit: int = CAPTION_LIMIT,
     import html as _html
     if not caption:
         return "", False
-    visible = re.sub(r"<[^>]+>", "", caption)
+    visible = strip_tags(caption)
     if not force_plain and len(visible.encode("utf-16-le")) // 2 <= limit:
         return caption, True
     plain = _html.unescape(visible)
@@ -84,6 +92,17 @@ class TelegramBot:
         for i, chunk in enumerate(chunks):
             await self._pace(chat)
             if not await self._send_chunk(chat, chunk, reply_markup if i == len(chunks) - 1 else None):
+                ok = False
+        return ok
+
+    async def send_pre(self, text: str, chat_id: str | None = None) -> bool:
+        """Ham (HTML'siz) uzun metni <pre> içinde gönder — HER parça kendi
+        <pre>…</pre>'si ile. Eskiden yalnız ilk parça açıp son parça kapatıyordu:
+        4000'i aşan /tani'nin ilk ve son parçası HTML hatası alıp düz metne
+        düşüyordu. Parçalama KAÇIŞLI metin üzerinden (varlıklar uzatır)."""
+        ok = True
+        for chunk in self._split(fmt.esc(text), MAX_LEN - len("<pre></pre>")):
+            if not await self.send(f"<pre>{chunk}</pre>", chat_id):
                 ok = False
         return ok
 
@@ -133,7 +152,7 @@ class TelegramBot:
                                                        reply_markup=reply_markup)
                 if r.status == 400 and is_html and _retry and not self.blocked_reason(400, body):
                     # HTML reddedildi: etiketsiz düz altyazıyla bir kez daha
-                    plain, _ = _caption_fit(re.sub(r"<[^>]+>", "", cap), force_plain=True)
+                    plain, _ = _caption_fit(strip_tags(cap), force_plain=True)
                     return await self._send_photo_once(chat, png, plain, False, _retry=False,
                                                        reply_markup=reply_markup)
                 return False
@@ -176,7 +195,8 @@ class TelegramBot:
             return False
 
     async def _send_plain(self, chat: str, chunk: str, reply_markup: dict | None = None) -> bool:
-        plain = re.sub(r"<[^>]+>", "", chunk)  # tag'leri sıyır
+        import html as _html
+        plain = _html.unescape(strip_tags(chunk))  # etiketleri sıyır, &lt; → <
         payload = {"chat_id": chat, "text": plain, "disable_web_page_preview": True}
         if reply_markup:
             payload["reply_markup"] = reply_markup
@@ -195,13 +215,22 @@ class TelegramBot:
             return False
 
     @staticmethod
-    def _split(text: str) -> list[str]:
-        if len(text) <= MAX_LEN:
+    def _split(text: str, limit: int = MAX_LEN) -> list[str]:
+        """Satır sınırlarından parçala; tek satır sınırı aşarsa SERT kes (eskiden
+        4000'lik parça sınırsız büyüyebiliyor, Telegram 'message is too long' diyordu)."""
+        if len(text) <= limit:
             return [text]
         parts, cur = [], ""
         for line in text.split("\n"):
-            if len(cur) + len(line) + 1 > MAX_LEN:
-                parts.append(cur)
+            while len(line) > limit:
+                if cur:
+                    parts.append(cur)
+                    cur = ""
+                parts.append(line[:limit])
+                line = line[limit:]
+            if len(cur) + len(line) + 1 > limit:
+                if cur:
+                    parts.append(cur)
                 cur = line
             else:
                 cur = f"{cur}\n{line}" if cur else line
@@ -384,10 +413,12 @@ class TelegramBot:
             from . import public                   # Stars tahsilatı (sahip kendi hesabıyla da deneyebilir)
             await public.handle(self, upd)
             return
-        # Yetki: sahip = TELEGRAM_CHAT_ID (BOŞSA KİMSE sahip değil — eskiden boş id
-        # herkese tam komut zincirini açıyordu); kendi kanalları sınırlı komut;
-        # diğer herkes → herkese açık DM akışı (bayrak açıksa) ya da yalnız chat id.
-        is_owner = bool(self.cfg.telegram_chat_id) and chat_id == self.cfg.telegram_chat_id
+        # Yetki: sahip = TELEGRAM_CHAT_ID sohbeti YA DA sahibin kullanıcı id'siyle
+        # yazan kişi (kendi kanalında /tani "bir şey olmuyor"du: sahiplik yalnız chat
+        # id'ye bakıyordu). BOŞSA KİMSE sahip değil. Kendi kanallarında sahip-dışı
+        # sınırlı komut; diğer herkes → herkese açık DM akışı (bayrak açıksa) ya da
+        # yalnız chat id.
+        is_owner = self._is_owner(chat_id, msg)
         if not is_owner and chat_id not in self._own_chats():
             if self._public_on() and chat.get("type") == "private":
                 from . import public
@@ -496,13 +527,13 @@ class TelegramBot:
             from ..health import snapshot
             await self.send(fmt.health_report(await snapshot(self.cfg)), chat_id)
         elif cmd in ("tani", "tanı", "diag"):
-            # Tam sistem dökümü. Uzun — send() zaten MAX_LEN'de parçalıyor.
-            # <pre> içinde: kopyalanınca hizalama bozulmasın.
+            # Tam sistem dökümü. Uzun — send_pre parça parça, her parça kendi <pre>'si ile
+            # (kopyalanınca hizalama bozulmasın).
             # `self` durum nesnesi olarak geçiyor: bot.collector main'de atanıyor,
             # diag yalnız `.collector` özniteliğine bakıyor.
             from ..diag import report
             txt = await report(self.cfg, self)
-            await self.send(f"<pre>{fmt.esc(txt)}</pre>", chat_id)
+            await self.send_pre(txt, chat_id)
         elif cmd in ("devler", "big", "biggest"):
             from ..radar import bigpos
             await self.send(
@@ -562,6 +593,25 @@ class TelegramBot:
             getattr(self.cfg, "pattern_chat_id", ""), getattr(self.cfg, "telegram_channel_id", ""),
             getattr(self.cfg, "sim_chat_id", ""))
             if v and str(v).strip()}
+
+    def _owner_user_id(self) -> str:
+        """Sahibin KULLANICI id'si: TELEGRAM_OWNER_ID varsa o; yoksa TELEGRAM_CHAT_ID
+        özel sohbetse (pozitif sayı — Telegram'da özel sohbetin id'si kullanıcının
+        id'sidir) o; grup id'si (negatif) kullanıcı olamaz → boş."""
+        oid = (getattr(self.cfg, "telegram_owner_id", "") or "").strip()
+        if oid:
+            return oid
+        cid = (self.cfg.telegram_chat_id or "").strip()
+        return cid if cid.isdigit() else ""
+
+    def _is_owner(self, chat_id: str, msg: dict) -> bool:
+        """Sahip DM'i ya da sahibin kullanıcı id'siyle yazan kişi (hangi sohbette
+        olursa olsun — kendi kanalında /tani cevap alsın). Boş id'de kimse sahip değil."""
+        if self.cfg.telegram_chat_id and chat_id == self.cfg.telegram_chat_id:
+            return True
+        uid = str((msg.get("from") or {}).get("id") or "")
+        oid = self._owner_user_id()
+        return bool(uid and oid and uid == oid)
 
     # ---------- komutlar ----------
 

@@ -596,6 +596,10 @@ class Config:
         self.ai_base_url = os.getenv(
             "AI_BASE_URL", "https://api.groq.com/openai/v1/chat/completions")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        # Sahibin KULLANICI id'si (env-only): botun kendi kanallarında bu id ile yazan
+        # kişi tam komut zincirini alır (/tani, /devler…). Boşsa TELEGRAM_CHAT_ID
+        # pozitifse (özel sohbet id'si = kullanıcı id'si) o kullanılır.
+        self.telegram_owner_id = os.getenv("TELEGRAM_OWNER_ID", "").strip()
 
         # Bildirim tercihleri (hepsi /settings'ten canlı değişir)
         self.notify_earnings = True

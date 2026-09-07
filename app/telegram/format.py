@@ -820,7 +820,7 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
     if s.get("n_far") and not s.get("all_far"):
         ctx.append(f"{s['n_far']} pozisyon %{far:.0f}'den uzak (listede/grafikte yok)")
     if s.get("n_dust"):
-        ctx.append(f"{s['n_dust']} toz pozisyon (< {usd(s.get('dust'))}) bantlarda var, tek listesinde yok")
+        ctx.append(f"{s['n_dust']} toz pozisyon (&lt; {usd(s.get('dust'))}) bantlarda var, tek listesinde yok")
     cc = coverage_ctx(s.get("coverage"))
     ctx.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     lines.append("<i>" + " · ".join(ctx) + "</i>")
