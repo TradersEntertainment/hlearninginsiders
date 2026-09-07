@@ -1,4 +1,4 @@
-"""Hacim patlaması: $500K kripto bildirim eşiği, geniş 5 dk grafik, tek mesaj.
+"""Hacim patlaması: $1M bildirim eşiği (kripto + hisse, 500K-1M bandı), geniş 5 dk grafik, tek mesaj.
 
 Pinlenenler:
   • parse_vol_candles h/l tutar (yoksa gövdeden), rekor mantığı değişmez
@@ -108,7 +108,7 @@ def test_scan_threshold_and_chart():
     async def run():
         from app.notify import Notifier
         cfg = _cfg()
-        assert cfg.crypto_vol_alert_min_usd == 500_000, "kullanıcı kuralı: varsayılan $500K"
+        assert cfg.crypto_vol_alert_min_usd == 1_000_000, "kullanıcı kuralı: varsayılan $1M (500K-1M bandı)"
         # (a) $1.2M rekor → tek birleşik mesaj (resim + tam metin)
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "cv.db"))
         bot = Bot()
@@ -121,10 +121,10 @@ def test_scan_threshold_and_chart():
         async with dbm.db() as c:
             cur = await c.execute("SELECT alerted FROM vol_events WHERE coin='PUMP'")
             assert (await cur.fetchone())["alerted"] == 1
-        # (b) $400K rekor → sayfaya yazılır, kanala düşmez
+        # (b) $800K rekor → sayfaya yazılır, kanala düşmez ($1M tabanının altı)
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "cv2.db"))
         bot2 = Bot()
-        out2 = await cv.scan(cfg, Client(raw_candles(300, record_usd=400_000)), Notifier(cfg, bot2))
+        out2 = await cv.scan(cfg, Client(raw_candles(300, record_usd=800_000)), Notifier(cfg, bot2))
         assert out2["events"] == 1 and out2["alerted"] == 0 and out2["below_alert"] == 1, out2
         assert bot2.sent == [] and bot2.photos == []
         # (c) resim reddedilir → metin gider, alerted sayılır
@@ -179,9 +179,12 @@ def test_wiring():
     for f in ("crypto_vol_chart", "equity_vol_chart"):
         assert f in EDITABLE_FIELDS and hasattr(c, f) and getattr(c, f) is True, f
         assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
-    assert "500K" in EDITABLE_FIELDS["crypto_vol_alert_min_usd"]["desc"]
-    assert c.equity_vol_alert_min_usd == 100_000, "hisse eşiği değişmedi"
-    print("✅ bağlantı) grafik ayarları künyeli, hisse eşiği aynı")
+    assert "$1M" in EDITABLE_FIELDS["crypto_vol_alert_min_usd"]["desc"] and "$1M" in EDITABLE_FIELDS["equity_vol_alert_min_usd"]["desc"]
+    assert c.equity_vol_alert_min_usd == 1_000_000 == c.crypto_vol_alert_min_usd, "iki bildirim eşiği de $1M"
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = open(os.path.join(root, ".env.example"), encoding="utf-8").read()
+    assert "CRYPTO_VOL_ALERT_MIN_USD=1000000" in env and "EQUITY_VOL_ALERT_MIN_USD=1000000" in env
+    print("✅ bağlantı) grafik ayarları künyeli, kripto+hisse bildirim eşiği $1M")
 
 
 test_parse()

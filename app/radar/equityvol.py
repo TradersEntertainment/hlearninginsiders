@@ -87,7 +87,7 @@ async def scan(cfg, client, notifier=None) -> dict:
     out["coins"] = len(coins)
     min_usd = float(getattr(cfg, "equity_vol_min_usd", 10000))
     alert_min = max(min_usd,
-                    float(getattr(cfg, "equity_vol_alert_min_usd", 100000)))
+                    float(getattr(cfg, "equity_vol_alert_min_usd", 1_000_000)))
     cool = max(60, int(getattr(cfg, "equity_vol_cooldown", 1800)))
     chat = (getattr(cfg, "crypto_stocks_id", "") or "").strip()
     ts = now()

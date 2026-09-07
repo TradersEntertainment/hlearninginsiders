@@ -131,8 +131,8 @@ bildirim eşiği ayrı**:
 
 | Panel | Evren | Kanal | Sayfa | Bildirim |
 |---|---|---|---|---|
-| 📈 Hisseler | PROPR ∩ **xyz dex** | `CRYPTO_STOCKS_ID` | $10K | **$100K** |
-| 🚀 Kripto | PROPR ∩ **ana dex** | `CRYPTO_CHAT_ID` | $50K | **$500K** |
+| 📈 Hisseler | PROPR ∩ **xyz dex** | `CRYPTO_STOCKS_ID` | $10K | **$1M** |
+| 🚀 Kripto | PROPR ∩ **ana dex** | `CRYPTO_CHAT_ID` | $50K | **$1M** |
 
 **Mesaja grafik — tek mesaj.** Rekor mesajı geniş bir 5 dk grafikle gelir
 (resim + altyazı olarak metin, Telegram `sendPhoto`): üstte son 24 saatin
@@ -146,9 +146,12 @@ patlarsa yalnız metin — alarm resme bağlı değil. Ayar: `crypto_vol_chart`,
 `CRYPTO_CHAT_ID` aynı zamanda **kripto liq yakını** bildiriminin kanalıdır
 (aşağıda) — Railway'de tanımlı değilse iki kripto bildirimi de gitmez.
 
-Hisse eşiği düşük çünkü hisse perp'leri çok daha ince: SHEIN'in 24 saatlik
-**toplam** hacmi $4.2M'ken patlama mumu ~$150K'ydı. Dördü de Ayarlar'dan ayrı
-değiştirilir (*Hisse hacim* / *Kripto hacim*).
+**Bildirim eşiği ikisinde de $1M** (kullanıcı kuralı, 500K–1M bandı): $100K'lık
+hisse eşiği ve $500K'lık kripto eşiği kanalı spam'e boğuyordu; küçük rekorlar
+sayfada kalır, kanala düşmez. Sayfa eşiği hissede düşük çünkü hisse perp'leri
+çok daha ince: SHEIN'in 24 saatlik **toplam** hacmi $4.2M'ken patlama mumu
+~$150K'ydı. Dördü de Ayarlar'dan ayrı değiştirilir (*Hisse hacim* / *Kripto
+hacim*); Ayarlar'da elle kaydedilmiş eski bir değer varsa o geçerlidir.
 
 Eşiği ilk kurduğumuzda **tek** ayar hem kaydı hem bildirimi kesiyordu: eşik
 altı rekorlar sayfaya da yazılmadığı için panel boş kalıyor ve "radar mı
