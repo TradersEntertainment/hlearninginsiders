@@ -233,6 +233,15 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "sweep_batch_max": {"type": "int", "label": "Yetişme: parti tavanı (adres)",
                         "group": "Tarama & performans",
                         "desc": "Yetişme modunda bir partide en fazla kaç adres taransın. Tavan olmasa tek parti diğer görevleri aç bırakabilir"},
+    "crypto_dex_census_enabled": {"type": "bool", "label": "🗳 Kripto dex sayımı (census)",
+                                  "group": "Tarama & performans",
+                                  "desc": "Günde bir, leaderboard'da bakiyesi tabanın üstündeki ve son hafta işlem yapmış HER hesabın defteri her kripto dex'inde (para) sorgulanır — adres başına dex başına 1 istek. Maliyet: N adres ≈ N / istek-dk dakika (20.000 adres, 60/dk ≈ 5,5 saat, bütçenin %17'si; süpürücü o sırada yavaşlar). Kapalıyken hiç istek yok"},
+    "census_min_account_value": {"type": "float", "label": "Sayım: asgari hesap bakiyesi ($)",
+                                 "group": "Tarama & performans",
+                                 "desc": "Leaderboard accountValue bunun altındaki hesaplar sayıma girmez"},
+    "census_rpm": {"type": "int", "label": "Sayım: istek/dk",
+                   "group": "Tarama & performans",
+                   "desc": "Sayımın kendi hızı; küresel HL bütçesi (HL_MAX_RPM) ayrıca uygulanır"},
     "harvest_probe_max": {"type": "int", "label": "Hasat sondası: tur başına adres",
                           "group": "Tarama & performans",
                           "desc": "Her süpürme turunda, o turun hasat coinlerinde işlem yapmış ama pozisyonu bilinmeyen en fazla bu kadar adresin defteri coinin KENDİ dex'inde sorgulanır (adres başına 1 istek; 40/90 sn ≈ bütçenin %8'i). Kripto dex coinleri (para) her tur sırada. 0 = kapalı"},
@@ -758,6 +767,10 @@ class Config:
         self.sweep_batch_max = int(os.getenv("SWEEP_BATCH_MAX", "250"))
         # Hasat sondası: hasat edilen adresin defterine hemen bak (coinin dex'inde, 1 istek)
         self.harvest_probe_max = int(os.getenv("HARVEST_PROBE_MAX", "40"))
+        # Kripto dex sayımı (census): varsayılan KAPALI — bkz. radar/census.py maliyet notu
+        self.crypto_dex_census_enabled = os.getenv("CRYPTO_DEX_CENSUS_ENABLED", "0").strip().lower() in ("1", "true", "on")
+        self.census_min_account_value = float(os.getenv("CENSUS_MIN_ACCOUNT_VALUE", "1000"))
+        self.census_rpm = int(os.getenv("CENSUS_RPM", "60"))
         self.sweep_rpm_headroom = float(os.getenv("SWEEP_RPM_HEADROOM", "0.85"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))
         self.notify_lowvol = True

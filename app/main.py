@@ -419,6 +419,9 @@ async def lifespan(app: FastAPI):
     from .telegram import fanout
     _spawn("fanout", lambda: fanout.loop(bot, cfg), notifier)
     _spawn("public_digest", lambda: fanout.digest_loop(bot, cfg), notifier)
+    # Kripto dex sayımı (varsayılan kapalı; kapalıyken yalnız nabız atar)
+    from .radar.census import loop as census_loop
+    _spawn("census", lambda: census_loop(cfg, client), notifier)
 
     yield
 

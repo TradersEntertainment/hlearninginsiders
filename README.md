@@ -1182,6 +1182,16 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   yeniden sondalanmaz; tavana sığmayanlar `/tani`'de "sıraya kaldı" diye görünür.
   Memecoin'in liq haritası böylece sayfa açılmasını beklemeden dolar.
 
+  **Kripto dex sayımı (census, varsayılan KAPALI — `CRYPTO_DEX_CENSUS_ENABLED`):**
+  zincir geneline yakın kapsama için günde bir, leaderboard'da bakiyesi
+  `CENSUS_MIN_ACCOUNT_VALUE` (vars. $1K) üstünde ve son hafta işlem yapmış HER
+  hesabın defteri her kripto dex'inde (para) sorgulanır — adres başına dex başına
+  1 istek, `CENSUS_RPM` (vars. 60/dk) hızında. Maliyet: N adres ≈ N/60 dakika
+  (20.000 adres ≈ 5,5 saat, küresel 350/dk bütçesinin %17'si; süpürücü o sırada
+  kendiliğinden yavaşlar). Yanıtın otoritesi yalnız o dex: para satırı yazılır/
+  silinir, xyz ve ana dex satırlarına dokunulmaz; bozuk yanıt kayıt silmez.
+  Kaldığı yerden devam eder (`census_state`), özet `/tani` "sayım" satırında.
+
 ## AI Analist (opsiyonel)
 
 Bir dil modeline ham veri verip "örüntü bul" demek kendinden emin uydurma üretir.
