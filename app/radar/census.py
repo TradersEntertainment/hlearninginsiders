@@ -64,7 +64,9 @@ LB_BATCH = 2000            # leaderboard satırları bu parçalarla tabloya
 WORKERS_KV = "census_workers"   # {ad: {ts, leased, ingested, err}} — worker'lar (P3)
 WORKER_ACTIVE_SEC = 900    # bu süre içinde kira almış worker "aktif" sayılır
 CHUNK_PASS = 200           # ana turda bellekten bir seferde alınan hesap (toplu: parti parti bölünür)
-CHUNK_HOT = 50             # sıcak şerit: bir adımda en çok bu kadar hesap (toplu parçadan ÖNCE)
+CHUNK_HOT = 100            # sıcak şerit: bir adımda en çok bu kadar hesap (toplu parçadan ÖNCE)
+HOT_BURST = 4              # bu kadar sıcak parçadan sonra BİR ana parça (ana tur aç kalmasın)
+CKPT_SEC = 30              # kontrol noktası: bu kadar saniyede bir de yazılır (sayıyı bekleme)
 GAP_STEP = 10              # tur arası bekleme adımı: sıcak bekleyen varsa erken çık
 MODE_TR = {"batch": "toplu", "single": "tek tek"}
 
@@ -347,9 +349,11 @@ class Fetcher:
     (sayım kapatıldı) durur (`stopped`). Yanıt alınamayan adres None ile döner."""
 
     def __init__(self, client, mode: str, batch_size: int, pace: Pace, *,
-                 sleep=asyncio.sleep, should_stop=None, priority: str = "low"):
+                 sleep=asyncio.sleep, should_stop=None, priority: str = "low",
+                 on_request=None):
         self.client, self.mode, self.pace, self.sleep = client, mode, pace, sleep
         self.priority = priority
+        self.on_request = on_request       # her istekte çağrılır (nabız): tur uzasa da görev canlı
         self.batch_size = max(1, int(batch_size or 1))
         self.should_stop = should_stop or (lambda: False)
         self.batch_fail = self.requests = 0
@@ -368,6 +372,8 @@ class Fetcher:
             i += len(sub)
             await self.sleep(self.pace.delay())
             self.requests += 1
+            if self.on_request:
+                await self.on_request()
             states = None
             err = ""
             try:
@@ -405,6 +411,8 @@ class Fetcher:
                 break
             await self.sleep(self.pace.delay())
             self.requests += 1
+            if self.on_request:
+                await self.on_request()
             resp = None
             try:
                 resp = await self.client.clearinghouse(a, dex, priority=self.priority, stats=self.pace.stats)
@@ -649,15 +657,20 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
     dexes = _dexes(cfg)
     tick = await _tickers_by_dex(dexes)
     hip3_floor = float(getattr(cfg, "census_hip3_min_account_value", 1000) or 0)
-    mode = await probe_mode(cfg, client, [a for a, _ in order[:2]])
+    sample = [a for a, _ in order[:2]]
+    mode = await probe_mode(cfg, client, sample)
     pace = Pace(await effective_rpm(cfg))
     batch_size = int(getattr(cfg, "census_batch_size", 50) or 50)
-    fetcher = Fetcher(client, mode, batch_size, pace, sleep=sleep, should_stop=lambda: not enabled(cfg))
-    # Sıcak şerit NORMAL şeritten, kendi (küçük) hızıyla: fill → defter dakikalar içinde,
+
+    async def _tick() -> None:
+        await beat("census")               # nabız isteğe bağlı: 200 hesaplık kontrol noktasını bekleme
+    fetcher = Fetcher(client, mode, batch_size, pace, sleep=sleep,
+                      should_stop=lambda: not enabled(cfg), on_request=_tick)
+    # Sıcak şerit NORMAL şeritten, kendi hızıyla: fill → defter dakikalar içinde,
     # düşük şerit 429'la duraklı olsa bile. Toplu tarama düşük şeritte kalır.
-    hot_pace = Pace(int(getattr(cfg, "census_hot_rpm", 30) or 30))
+    hot_pace = Pace(int(getattr(cfg, "census_hot_rpm", 120) or 120))
     hot_fetcher = Fetcher(client, mode, batch_size, hot_pace, sleep=sleep,
-                          should_stop=lambda: not enabled(cfg), priority="normal")
+                          should_stop=lambda: not enabled(cfg), priority="normal", on_request=_tick)
     total, done0 = await _progress_counts(pass_ts)
     st: dict = {"pass_ts": pass_ts, "mode": mode, "started": t0, "resumed": resumed,
                 "total": total, "done": done0, "ok": 0, "err": 0, "found": 0, "requests": 0,
@@ -666,21 +679,59 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
     opened = _Open()
     await opened.load(dexes)
     since_ckpt = 0
+    last_ckpt = t0
+    last_probe = t0
+    hot_streak = 0
     i = 0
 
     async def checkpoint(final: bool = False) -> None:
+        nonlocal since_ckpt, last_ckpt
         st["total"], st["done"] = await _progress_counts(pass_ts)
         st["n_429"] = pace.n_429 + hot_pace.n_429
         st["requests"] = fetcher.requests + hot_fetcher.requests
         st["ts"] = max(now(), pass_ts)
         el = max(1, st["ts"] - t0)
-        st["rpm"] = round(fetcher.requests / (el / 60.0), 1)
+        st["rpm"] = round(st["requests"] / (el / 60.0), 1)     # İKİ şerit (sıcak şerit de sayılır)
+        st["hot_rpm"] = round(hot_fetcher.requests / (el / 60.0), 1)
+        st["hot_pending"] = await hot_pending()
         pace.rpm = await effective_rpm(cfg)          # worker geldiyse/gittiyse hız uyarlanır
         st["rpm_cap"] = round(pace.rpm * pace.factor)
         st["workers"] = len(await workers_active())
         st["finished"] = final
         await kv_set(STATE_KV, st)
+        since_ckpt, last_ckpt = 0, now()
         await beat("census")
+
+    async def ckpt_if_due(n: int) -> None:
+        """Kontrol noktası: her STATE_EVERY hesapta YA DA her CKPT_SEC saniyede.
+        Eskiden yalnız sayıya bağlıydı; tek modda 200 hesap 10+ dakika sürdüğü için
+        /tani turun başındaki anlık görüntüyü ("0 istek/dk") gösteriyordu."""
+        nonlocal since_ckpt
+        since_ckpt += n
+        if since_ckpt >= STATE_EVERY or now() - last_ckpt >= CKPT_SEC:
+            await checkpoint()
+
+    async def maybe_reprobe(addrs: list[str]) -> None:
+        """Tur İÇİNDE toplu sorgu sondasını yenile. Sonda 429/5xx yüzünden belirsiz
+        kaldıysa (bütçe o an doluydu) tek modda kalıyoruz; tek modda tur 50 saat
+        sürdüğü için `probe_mode`'un 5 dakikalık yeniden deneme sözü pratikte hiç
+        gerçekleşmiyordu."""
+        nonlocal last_probe
+        if fetcher.mode == "batch" or not addrs or now() - last_probe < PROBE_RETRY_SEC:
+            return
+        last_probe = now()
+        md = await kv_get(MODE_KV) or {}
+        if not md.get("unknown"):
+            return                       # kesin "desteklenmiyor": PROBE_TTL beklenir
+        m2, why2 = await probe_batch(client, addrs)
+        unknown = m2 == "unknown"
+        await kv_set(MODE_KV, {"mode": "single" if unknown else m2, "ts": now(),
+                               "why": why2, "unknown": unknown})
+        if m2 == "batch":
+            fetcher.mode = hot_fetcher.mode = st["mode"] = "batch"
+            fetcher.batch_fail = hot_fetcher.batch_fail = 0
+            st["reprobed"] = True
+            log.info("sayım: tur içinde toplu sorgu AÇILDI (sonda geçti)")
 
     async def process(part: list[tuple[str, float | None]], f: Fetcher = fetcher) -> None:
         """Bir parça hesap: ana dex herkeste, kripto dex'ler bakiyesi tabanın üstündekilerde."""
@@ -712,21 +763,23 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
         if max_accounts is not None and st["ok"] + st["err"] >= max_accounts:
             st["stopped"] = "tavan"
             break
+        await maybe_reprobe(sample or [a for a, _ in order[i:i + 2]])
         # Sıcak şerit ÖNCE: az önce işlem yapan adresler (fill'i sayımından yeni).
-        # Toplu sıra bitse de sıcaklar kuruyana kadar sürer; işlenen sıcak (bozuk
-        # yanıt dahil) şeritten düşer.
-        hot = await hot_rows(CHUNK_HOT)
+        # Ama ana turu AÇ BIRAKMAZ: HOT_BURST sıcak parçadan sonra bir ana parça
+        # işlenir (kalıcı sıcak birikimi "sürüyor %3"ü aylarca dondurmasın).
+        # Sıra bittiyse sıcaklar kuruyana kadar sürer; işlenen sıcak (bozuk yanıt
+        # dahil) şeritten düşer.
+        hot = await hot_rows(CHUNK_HOT) if (hot_streak < HOT_BURST or i >= len(order)) else []
         if hot:
+            hot_streak += 1
             st["hot"] += len(hot)
             await process([(a, v) for a, v, _ in hot], hot_fetcher)
             await clear_hot([(a, h) for a, _, h in hot])
             if st.get("stopped"):
                 break
-            since_ckpt += len(hot)
-            if since_ckpt >= STATE_EVERY:
-                since_ckpt = 0
-                await checkpoint()
+            await ckpt_if_due(len(hot))
             continue
+        hot_streak = 0
         if i >= len(order):
             break
         part = order[i:i + CHUNK_PASS]
@@ -738,10 +791,7 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
         await process(part)
         if st.get("stopped"):
             break
-        since_ckpt += len(part)
-        if since_ckpt >= STATE_EVERY:
-            since_ckpt = 0
-            await checkpoint()
+        await ckpt_if_due(len(part))
     finished = "stopped" not in st
     await checkpoint(final=finished)
     if finished:
@@ -749,7 +799,8 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
                  "accounts": st["done"], "ok": st["ok"], "err": st["err"], "found": st["found"],
                  "requests": st["requests"], "rpm": st["rpm"], "n_429": st["n_429"],
                  "fell_back": bool(st.get("fell_back")), "universe": uni, "resumed": resumed,
-                 "workers": st.get("workers", 0), "hot": st.get("hot", 0)}
+                 "workers": st.get("workers", 0), "hot": st.get("hot", 0),
+                 "hot_rpm": st.get("hot_rpm", 0), "reprobed": bool(st.get("reprobed"))}
         await kv_set(STATS_KV, stats)
         log.info("sayım turu bitti: %s · %d hesap → %d poz (%d hata) · %d istek · %.1f dk · 429: %d · sıcak %d",
                  MODE_TR.get(st["mode"], st["mode"]), st["done"], st["found"], st["err"],
@@ -875,8 +926,10 @@ async def diag_line(cfg) -> str:
     except Exception:
         pend = None
     hot_now = int(st.get("hot") or 0) if st and not st.get("finished") else int(cst.get("hot") or 0)
+    hot_rpm = (st.get("hot_rpm") if st and not st.get("finished") else cst.get("hot_rpm")) or 0
     parts.append(f"sıcak şerit: {pend if pend is not None else '?'} bekliyor · "
-                 + ("bu tur" if st and not st.get("finished") else "son tur") + f" {hot_now} hesap")
+                 + ("bu tur" if st and not st.get("finished") else "son tur") + f" {hot_now} hesap"
+                 + (f" ({hot_rpm}/dk)" if hot_rpm else ""))
     if lb.get("n") is not None:
         parts.append(f"evren: leaderboard {_n(lb['n'])} hesap (bakiye ≥ ${lb.get('floor', 0):.0f})"
                      + (f" · {_n(st.get('total') or 0)} toplam" if st.get("total") else ""))

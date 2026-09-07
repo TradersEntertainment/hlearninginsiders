@@ -1313,10 +1313,20 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   Eski `CRYPTO_DEX_CENSUS_ENABLED` (yalnız para, günde bir) kalktı.
   **Sıcak şerit:** ana dex kripto coininde (PUMP…) işlem yapan adres (WS fill,
   ≥ $5K) `hot_ts` ile işaretlenir ve sayımın sıradaki adımında toplu parçadan
-  ÖNCE sorgulanır (en yeni önce, en çok 50/adım; tur arası bekleme sıcak belirince
-  erken biter; worker kirası da sıcakları önce verir). Küçük long'lar hiçbir
-  sondayı tetiklemiyor, hasat yalnız HIP-3'e bakıyor, soğuk kuyruk/bakiye sırası
-  onları en sona atıyordu — 0.0042 bandı vakası. `/tani`: "sıcak şerit: N bekliyor".
+  ÖNCE sorgulanır (en yeni önce, en çok 100/adım, NORMAL şeritten `CENSUS_HOT_RPM`
+  = 120/dk ile — düşük şerit 429'la duraklı olsa bile; tur arası bekleme sıcak
+  belirince erken biter; worker kirası da sıcakları önce verir). Küçük long'lar
+  hiçbir sondayı tetiklemiyor, hasat yalnız HIP-3'e bakıyor, soğuk kuyruk/bakiye
+  sırası onları en sona atıyordu — 0.0042 bandı vakası. Kapsamayı asıl yükselten
+  şerit budur. Ana turu aç bırakmaz: dört sıcak parçadan sonra bir ana parça
+  işlenir. `/tani`: "sıcak şerit: N bekliyor · bu tur M hesap (K/dk)".
+
+  **Tur içi sonda ve ilerleme:** toplu sorgu sondası 429 yüzünden belirsiz kaldıysa
+  (bütçe o an doluysa) tur İÇİNDE 5 dakikada bir yeniden denenir — tek modda tur
+  50 saat sürdüğü için "yeni tur başında yeniden dene" pratikte hiç gerçekleşmiyordu;
+  sonda geçince tur ortasında toplu moda geçilir. Kontrol noktası hem 200 hesapta
+  hem 30 saniyede bir yazılır ve nabız HER istekte atar, böylece `/tani` turun
+  başındaki donmuş anlık görüntüyü değil gerçek ilerlemeyi gösterir.
   Sıcak şerit NORMAL şeritten, kendi hızıyla gider (`CENSUS_HOT_RPM`, vars. 30/dk):
   toplu tarama 429'la duraklı olsa bile fill → defter dakikalar içinde. Toplu sorgu
   sondası bir 429/5xx'i "desteklenmiyor" saymaz: bu tur tek mod, 5 dk sonra yeniden

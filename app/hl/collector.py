@@ -19,7 +19,8 @@ from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
 
-FLOW_WINDOW = 600            # ön-süzgeç penceresi (sn): son kapanmış 5 dk mumu tamamen içinde
+FLOW_WINDOW = 900            # ön-süzgeç penceresi (sn): son kapanmış 5 dk mumu tamamen içinde
+                             # (600 tam sınırdı; tur 5 dk'yı aşarsa mum pencereden taşabilirdi)
 LIVE = None                  # çalışan Collector (radar döngüleri ön-süzgeç için import eder)
 
 WHALE_FILL_COOLDOWN = 1800  # aynı adres+coin için 30 dk'da bir alert

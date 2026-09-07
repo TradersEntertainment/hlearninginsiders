@@ -402,7 +402,7 @@ def test_hot_lane():
         assert Y not in cli.batch_calls[2][0] and Z not in cli.batch_calls[2][0] and cli.batch_calls[2][1] == ""
         assert st["hot"] == 2 and st["accounts"] == 7, st
         assert cli.prios[:3] == ["normal", "normal", "low"], ("sonda normal, sıcak parça NORMAL, toplu düşük", cli.prios)
-        assert Config().census_hot_rpm == 30 and "census_hot_rpm" in EDITABLE_FIELDS
+        assert Config().census_hot_rpm == 120 and "census_hot_rpm" in EDITABLE_FIELDS
         rows = {r["address"]: r for r in await _rows("SELECT * FROM census_accounts")}
         assert rows[Z]["scanned_ts"] and rows[Z]["positions"] == 1 and rows[Z]["hot_ts"] is None and rows[Y]["hot_ts"] is None
         ap = {(r["coin"], r["address"]) for r in await _rows("SELECT coin,address FROM addr_positions WHERE closed_ts IS NULL")}
@@ -479,4 +479,80 @@ def test_probe_classification_and_fetcher_429():
         await f3.fetch([L1], "")
         assert c3.prios == ["normal"]
         print("✅ sonda) 429 belirsiz → 5 dk sonra yeniden (normal şerit); 422 → 6 sa; Fetcher 429'da düşmez, nefes alır; öncelik parametresi")
+    asyncio.run(run())
+
+
+def test_hot_interleave_and_checkpoint():
+    """Sıcak şerit ana turu aç bırakmaz (HOT_BURST); kontrol noktası ZAMANA da bağlı."""
+    async def run():
+        cfg, t = await _fresh()
+        cli = Client(batch=False)                      # tek mod: istek sırası okunur
+        await census.refresh_universe(cfg, cli)
+        async with dbm.db() as c:                      # sıcaklar: Y, X (yeni) → L5, L3
+            for a, h in ((Y, t + 4), (X, t + 3), (L5, t + 2), (L3, t + 1)):
+                await c.execute("UPDATE census_accounts SET hot_ts=? WHERE address=?", (h, a))
+        seen = []
+
+        async def sleep(d):
+            rec = await dbm.kv_get(census.STATE_KV) or {}
+            seen.append(int(rec.get("requests") or 0))
+        old = (census.CHUNK_HOT, census.HOT_BURST, census.CHUNK_PASS, census.CKPT_SEC)
+        census.CHUNK_HOT, census.HOT_BURST, census.CHUNK_PASS, census.CKPT_SEC = 2, 1, 2, 0
+        try:
+            st = await census.run_pass(cfg, cli, sleep=sleep)
+        finally:
+            census.CHUNK_HOT, census.HOT_BURST, census.CHUNK_PASS, census.CKPT_SEC = old
+        main = [a for a, d in cli.calls if d == ""]
+        assert main == [Y, X, L1, L4, L5, L3, L2], main   # 1 sıcak parça → 1 ana parça → …
+        assert st["hot"] == 4 and st["accounts"] == 6 and st["mode"] == "single", st
+        assert max(seen) > 0, "tur ORTASINDA kontrol noktası yazılmalı (zamana bağlı)"
+        assert st["requests"] > 0 and st["rpm"] > 0 and st["hot_rpm"] > 0, st   # iki şerit de sayılır
+        assert st.get("hot_rpm") <= st["rpm"] and (await dbm.kv_get(census.STATE_KV))["hot_pending"] == 0
+        from app import diag
+        line = next((ln.strip() for ln in (await diag.report(cfg, None)).splitlines() if ln.strip().startswith("sayım (census)")), "")
+        assert "sıcak şerit: 0 bekliyor · son tur 4 hesap (" in line and "/dk)" in line, line
+        print("✅ zamanlayıcı) HOT_BURST: sıcak parça → ana parça → …; kontrol noktası zamana bağlı; rpm iki şeridi sayar")
+    asyncio.run(run())
+
+
+def test_reprobe_midpass():
+    """Sonda 429 yüzünden belirsiz kaldıysa tur İÇİNDE yeniden denenir → toplu moda geçiş."""
+    async def run():
+        cfg, t = await _fresh()
+
+        class C(Client):
+            def __init__(self, fail=1):
+                super().__init__()
+                self.fail_429 = fail
+
+            async def batch_clearinghouse(self, users, dex="", priority=None, stats=None):
+                self.batch_calls.append((tuple(users), dex))
+                self.prios.append(priority)
+                if self.fail_429 > 0:
+                    self.fail_429 -= 1
+                    raise RuntimeError("HL info batchClearinghouseStates HTTP 429: null")
+                return [self._state(u, dex) for u in users]
+        cli = C()
+        old = census.PROBE_RETRY_SEC
+        census.PROBE_RETRY_SEC = 0
+        try:
+            st = await census.run_pass(cfg, cli, sleep=lambda d: asyncio.sleep(0))
+        finally:
+            census.PROBE_RETRY_SEC = old
+        assert st["mode"] == "batch" and st["reprobed"] is True and st["accounts"] == 6, st
+        md = await dbm.kv_get(census.MODE_KV)
+        assert md["mode"] == "batch" and md["unknown"] is False and md["why"] == ""
+        assert cli.calls == [] and len(cli.batch_calls) >= 3, (cli.calls, cli.batch_calls)
+        assert cli.batch_calls[0][0] == (L1, L4) and cli.batch_calls[1][0] == (L1, L4), "sonda + yeniden sonda"
+        assert cli.prios[:2] == ["normal", "normal"], cli.prios[:2]
+        # kesin hata (4xx): tur içinde yeniden denenmez (PROBE_TTL bekler)
+        cfg2, _ = await _fresh()
+        cli2 = Client(batch=False)
+        census.PROBE_RETRY_SEC = 0
+        try:
+            st2 = await census.run_pass(cfg2, cli2, sleep=lambda d: asyncio.sleep(0))
+        finally:
+            census.PROBE_RETRY_SEC = old
+        assert st2["mode"] == "single" and not st2.get("reprobed") and len(cli2.batch_calls) == 1, cli2.batch_calls
+        print("✅ tur içi sonda) 429 belirsizse tur içinde yeniden denenir ve toplu moda geçilir; 4xx'te denenmez")
     asyncio.run(run())
