@@ -45,7 +45,7 @@ def ctx(hst, **over):
                 liq=liqmap.build(ROWS, 100.0, 50.0), bwalls=[], pxchart=False, tv_sym=None,
                 propr=False, n_long=1, n_short=0, panel_err={},
                 hchart=hchart, hmeta=hs.chart_meta(hst) if hchart else None,
-                hstats_pending=hst is None,
+                hstats_pending=hst is None, coverage=None,
                 now_verdict=({"v": "nötr", "b": hst["hours"][0], "tsi_now": 7} if hchart else None))
     base.update(over)
     return base
@@ -100,6 +100,20 @@ def test_crypto_kind_renders():
     assert "son mumun kapanışı" in html2
 
 
+def test_coverage_tile_renders():
+    """Kapsama kutusu: oran + havuz/OI/tarama sayımı; %100 üstü uyarısı; oran yoksa dürüst boş."""
+    cov = {"long": 240000.0, "short": 100000.0, "oi_ntl": 2e6, "pct_long": 12.0, "pct_short": 5.0,
+           "n": 3, "latest_ts": 1, "over": False, "scan": {"ts": 1, "n_addrs": 312, "n_found": 41}}
+    html = render(**ctx(V2, coverage=cov))
+    assert "Kapsama (havuz / HL OI)" in html and "L %12 · S %5" in html and "312 adres → 41 poz" in html
+    assert "kapsama: long %12 / short %5 (havuz / HL OI)" in html and "bayat satır" not in html
+    html = render(**ctx(V2, coverage={**cov, "pct_short": 125.0, "over": True}))
+    assert "⚠️ %100 üstü = bayat satır" in html
+    html = render(**ctx(V2, coverage={**cov, "oi_ntl": None, "pct_long": None, "pct_short": None}))
+    assert "HL OI bilinmiyor" in html and "kapsama: long" not in html
+    assert "Kapsama (havuz / HL OI)" in render(**ctx(V2))          # coverage=None → kutu var, oran yok
+
+
 def test_not_found_renders():
     base = dict(request=_Req(), k="", is_admin=False, has_pw=False, ticker=None, symbol="XXX")
     html = render(**base, crypto_n=0)
@@ -110,5 +124,5 @@ def test_not_found_renders():
 
 if __name__ == "__main__":
     for f in (test_renders_every_hstats_shape, test_panel_error_branches_render, test_no_positions_no_mark,
-              test_crypto_kind_renders, test_not_found_renders):
+              test_crypto_kind_renders, test_coverage_tile_renders, test_not_found_renders):
         f(); print("✓", f.__name__)

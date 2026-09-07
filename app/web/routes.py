@@ -776,7 +776,16 @@ async def coin_page(request: Request, symbol: str):
         except Exception:                      # noqa: BLE001 — legend süsü, sayfa düşmesin
             log.exception("now_verdict %s", coin)
 
+    # Kapsama: havuz / HL OI (dürüstlük satırı). Süs — hesaplanamazsa sayfa düşmez.
+    try:
+        from ..radar import coverage as _coverage
+        cov = await _coverage.coverage(coin, kind, cfg, summ=summ)
+    except Exception:                          # noqa: BLE001
+        log.exception("coverage %s", coin)
+        cov = None
+
     return _render(request, "coin.html", {
+        "coverage": cov,
         "hmeta": hmeta, "hchart": hchart, "panel_err": panel_err,
         "hstats_pending": hstats_pending, "now_verdict": now_verdict,
         "ticker": t, "symbol": t["symbol"], "coin": coin, "summ": summ,

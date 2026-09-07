@@ -392,6 +392,18 @@ mesafenin (`max_liq_distance_pct`, vars. %50) dışına düşenler eskiden sessi
 yok oluyordu; artık sayılıp künyede yazılıyor. Likidasyon fiyatları son süpürme
 anına ait; teminat değişince kayar — künye bunu da söyler.
 
+**Kapsama yüzdesi (havuz / HL OI):** "dış sitede olanlar bizde yok" sorusunun
+sayısı. HL'de "marketteki tüm pozisyonlar" API'si yok; yalnız tanıdığımız
+adreslerin defteri sorgulanır, dış ısı haritaları ise ya tüm zinciri indeksler
+ya da kaldıraç modeliyle *tahmin* eder. Coin sayfasındaki "Kapsama" kutusu,
+liq künyesi, `/sembol` mesajı, alarm PNG'sinin alt başlığı ve `/tani`'nin
+"kapsama" satırı aynı hesabı yazar (`app/radar/coverage.py`): havuzdaki long $
+/ HL OI ve short $ / HL OI. HL `openInterest` tek taraflıdır (long toplamı =
+short toplamı = OI × mark), iki yüzde birbirinden bağımsızdır; **%100 üstü =
+bayat satır** (kapanmış pozisyon hâlâ tabloda), gizlenmez ⚠️ ile yazılır.
+HIP-3 coinlerinde kutu ayrıca son tam taramanın "N adres → M poz" sayımını
+gösterir (`scans.n_addrs/n_found`).
+
 ### Grafikte likidasyon barları
 
 Mum grafiğinin sağında, fiyat eksenine hizalı yatay bloklar: **likidasyon

@@ -678,10 +678,22 @@ def liq_attack_alert(s: dict, wk: tuple | None = None) -> str:
 CRYPTO_LIQ_STAGE = {1: ("💥", ""), 2: ("🔥", " · 2. uyarı"), 3: ("🚨", " · SON UYARI")}
 
 
+def coverage_ctx(cov: dict | None) -> str | None:
+    """Kapsama bağlam parçası: 'kapsama long %12 · short %8 (havuz / HL OI)';
+    oran yoksa None (bkz. radar/coverage.py — tek taraflı OI, %100 üstü bayat)."""
+    if not cov or cov.get("pct_long") is None or cov.get("pct_short") is None:
+        return None
+    s = f"kapsama long %{cov['pct_long']:.0f} · short %{cov['pct_short']:.0f} (havuz / HL OI)"
+    if cov.get("over"):
+        s += " ⚠️ %100 üstü = bayat satır"
+    return s
+
+
 def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
                      old: list[dict], dist_pct: float, stage: int = 1,
                      list_max: int = 6, cascade: dict | None = None,
-                     offers: list[int] | None = None) -> str:
+                     offers: list[int] | None = None,
+                     coverage: dict | None = None) -> str:
     """Kripto liq yakını — coin başına TEK mesaj, pozisyonlar yakından uzağa.
 
     `stage` 1/2/3 = ≤%2,5 / ≤%1 / ≤%0,5 kademesi (başlık ve satır işareti);
@@ -731,7 +743,8 @@ def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
     else:
         oldest = min(int(p.get("ts") or 0) for p in unverified)
         ctx.append(f"ölçüm {age_str(oldest)} önce (son süpürme; sonda alınamadı)")
-    ctx.append("havuzdaki adresler — HL'nin tamamı değil")
+    cc = coverage_ctx(coverage)
+    ctx.append("havuzdaki adresler — HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     lines.append("<i>" + " · ".join(ctx) + "</i>")
     lines.append(DISCLAIMER)
     return "\n".join(lines)
@@ -780,7 +793,8 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
     ctx = [f"havuzda {s.get('n_all', 0)} açık pozisyon, {s.get('n_big', 0)}'ü ≥ {usd(s.get('min_usd'))}"]
     if oldest:
         ctx.append(f"pozisyon ölçümü en eski {age_str(oldest)} önce (süpürme)")
-    ctx.append("HL'nin tamamı değil")
+    cc = coverage_ctx(s.get("coverage"))
+    ctx.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     lines.append("<i>" + " · ".join(ctx) + "</i>")
     lines.append(DISCLAIMER)
     return "\n".join(lines)

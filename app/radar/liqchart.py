@@ -67,7 +67,7 @@ def _usd(v: float) -> str:
 
 def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict],
            *, interval: str = "15dk", span_txt: str = "son 48 saat",
-           target: tuple | None = None) -> bytes | None:
+           target: tuple | None = None, coverage_txt: str | None = None) -> bytes | None:
     """PNG bayt. `candles`: [{t,o,h,l,c}] (t saniye, artan). `levels`:
     [{px, side, notional, dist, main}] — `main` olan seviyeye kalan mesafe
     köprüsü çizilir, en çok 4 seviye. `target=(px, label)`: zincir hedefi
@@ -112,6 +112,8 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     d.text((PAD_L, 22), title, fill=TEXT, font=f_title)
     sub = (f"liq {_px(main['px'])} · fiyat {_px(mark)} · %{float(main.get('dist') or 0):.2f} {where}"
            f" · {interval} mumlar · {span_txt}")
+    if coverage_txt:
+        sub += f" · {coverage_txt}"           # havuz / HL OI — dürüstlük (bkz. radar/coverage.py)
     d.text((PAD_L, 60), sub, fill=DIM, font=f_sub)
 
     # ızgara + sağ eksen etiketleri

@@ -302,7 +302,8 @@ def _target(casc: dict | None) -> tuple | None:
     return (casc["end_px"], f"zincir → {px(casc['end_px'])} · {usd(casc['total_usd'])}")
 
 
-async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | None = None) -> bytes | None:
+async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | None = None,
+                 coverage_txt: str | None = None) -> bytes | None:
     """Mesajın resmi: son 48 saatin 15 dk mumları + liq çizgileri + kalan mesafe
     (+ zincir hedefi)."""
     fn = getattr(client, "candles", None)
@@ -320,7 +321,7 @@ async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | Non
                "dist": p.get("dist"), "main": i == 0}
               for i, p in enumerate(sorted(fresh, key=lambda q: q.get("dist") or 0)[:4])]
     return liqchart.render(coin, cands, mark, levels, interval=CHART_LABEL[0],
-                           span_txt=CHART_LABEL[1], target=target)
+                           span_txt=CHART_LABEL[1], target=target, coverage_txt=coverage_txt)
 
 
 async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5) -> dict:
@@ -334,6 +335,7 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     n_all, n_big, min_usd, png}."""
     min_usd = float(getattr(cfg, "crypto_liq_min_usd", 500_000))
     age = None
+    ctx, summ = None, None
     if kind == "crypto":
         from ..hl.universe import main_dex_ctx
         ctx = await main_dex_ctx(client, ttl=60, fetch=True)
@@ -347,7 +349,8 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
             rows = [dict(r) for r in await cur.fetchall()]
     else:
         from .metrics import summary
-        mark = (await summary(coin)).get("mark")
+        summ = await summary(coin)
+        mark = summ.get("mark")
         async with db() as conn:
             cur = await conn.execute(
                 """SELECT p.coin, p.address, p.side, p.notional, p.liq_px, p.leverage,
@@ -366,15 +369,23 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     big = [c for c in cands if c["notional"] >= min_usd]
     show = (big or cands)[:limit]
     casc = await _cascade(cfg, client, coin, mark, show[0], rows) if show else None
+    # Kapsama (havuz / HL OI): mesaj ve PNG'de — süs, hesaplanamazsa komut düşmez
+    from . import coverage as _coverage
+    try:
+        cov = await _coverage.coverage(coin, kind, cfg, summ=summ, ctx=ctx)
+    except Exception:
+        log.debug("kapsama hesaplanamadı (%s)", coin, exc_info=True)
+        cov = None
     png = None
     if show and getattr(cfg, "crypto_liq_chart", True):
         try:
-            png = await _chart(client, coin, mark, show, target=_target(casc))
+            png = await _chart(client, coin, mark, show, target=_target(casc),
+                               coverage_txt=_coverage.txt(cov))
         except Exception:
             log.debug("anlık grafik üretilemedi (%s)", coin, exc_info=True)
     return {"coin": coin, "kind": kind, "mark": mark, "age": age, "rows": show,
             "n_all": len(cands), "n_big": len(big), "min_usd": min_usd, "png": png,
-            "cascade": casc}
+            "cascade": casc, "coverage": cov}
 
 
 # ─────────────────────────────────────────────── tarama
@@ -597,8 +608,16 @@ async def scan(cfg, client, notifier=None) -> dict:
             offers = await offer_positions(coin, coin, fresh[:LIST_MAX])
         except Exception:
             log.debug("takip teklifi yazılamadı (%s)", coin, exc_info=True)
+        # Kapsama satırı: havuz HL OI'sinin yüzde kaçı (dürüstlük; süs, alarmı düşürmez)
+        try:
+            from . import coverage as _coverage
+            cov = await _coverage.coverage(coin, "crypto", cfg, ctx=ctx)
+            cov_txt = _coverage.txt(cov)
+        except Exception:
+            log.debug("kapsama hesaplanamadı (%s)", coin, exc_info=True)
+            cov, cov_txt = None, ""
         text = fmt.crypto_liq_alert(coin, marks.get(coin), fresh, old.get(coin) or [],
-                                    thr[stage], stage, cascade=casc, offers=offers)
+                                    thr[stage], stage, cascade=casc, offers=offers, coverage=cov)
         key = f"cryptoliq:{coin}:{stage}:{ts}"
         # Grafik ÖNCE üretilir: sığıyorsa tam metin resmin altyazısı olur → tek
         # mesaj (kullanıcı isteği). Resim yoksa / metin uzunsa / resim
@@ -606,7 +625,8 @@ async def scan(cfg, client, notifier=None) -> dict:
         png = None
         if getattr(cfg, "crypto_liq_chart", True):
             try:
-                png = await _chart(client, coin, marks.get(coin), fresh, target=_target(casc))
+                png = await _chart(client, coin, marks.get(coin), fresh, target=_target(casc),
+                                   coverage_txt=cov_txt)
             except Exception:
                 log.debug("grafik üretilemedi (%s)", coin, exc_info=True)
         cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"

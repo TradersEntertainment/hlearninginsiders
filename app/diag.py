@@ -506,6 +506,21 @@ async def _subsystems(cfg) -> list[str]:
                       " — kalanlar 'ne oldu' raporunda 'hiç uğramadık' der"))
     except Exception as e:
         out.append(f"  pozisyon kapsaması okunamadı ({type(e).__name__}: {e})")
+    # Kapsama yüzdesi: havuz / HL OI, coin coin — "bizimki neden eksik" sorusunun
+    # sayısı. En düşükler önce; OI küçükse yüzde oynak, o yüzden taban var.
+    try:
+        from .radar import coverage as _coverage
+        ov = await _coverage.overview(cfg, limit=5)
+        floor_txt = f"${_coverage.COVERAGE_MIN_OI / 1000:.0f}K"
+        if ov["n"]:
+            worst = " · ".join(f"{r['symbol']} %{r['pct_long']:.0f}/%{r['pct_short']:.0f} ({r['dex'] or 'ana'})"
+                               for r in ov["worst"])
+            out.append(f"  kapsama (havuz/HL OI long/short, OI ≥ {floor_txt}): en düşük {worst}"
+                       f" · ortanca %{ov['median']:.0f} · {ov['n']} coin")
+        else:
+            out.append(f"  kapsama (havuz/HL OI, OI ≥ {floor_txt}): OI verisi yok — metrik turu koşmadı")
+    except Exception as e:
+        out.append(f"  kapsama okunamadı ({type(e).__name__}: {e})")
     # Kapalı seans alarmı: "neden gelmedi" sorusunun ilk durağı. Tur sonucu
     # eskiden main.py tarafından ATILIYORDU, hiçbir yerde görünmüyordu.
     oh = await kv_get("offhours_stats") or {}

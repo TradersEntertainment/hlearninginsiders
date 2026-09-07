@@ -36,6 +36,9 @@
       <div class="s">{% if summ.px_change_pct is not none %}<b class="{{ 'long' if summ.px_change_pct > 0 else ('short' if summ.px_change_pct < 0 else 'dim') }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</b> · 24 saat{% else %}24 saatlik değişim henüz yok{% endif %}{% if mark_src == 'candle' %} · <span class="warn">fiyat = son mumun kapanışı, metrik yok</span>{% endif %}</div></div>
     <div><div class="l">Açık pozisyon (OI)</div><div class="v">{{ summ.oi_ntl|usd }}</div>
       <div class="s">{% if summ.oi_change_pct is not none %}24 saatte <b>{{ '%+.0f'|format(summ.oi_change_pct) }}%</b>{% if summ.oi_change_pct >= 50 %} ⚠️ hızlı büyüme{% endif %}{% else %}24 saatlik kıyas henüz yok{% endif %}</div></div>
+    <div><div class="l">Kapsama (havuz / HL OI)</div>
+      <div class="v">{% if coverage and coverage.pct_long is not none %}L %{{ '%.0f'|format(coverage.pct_long) }} · S %{{ '%.0f'|format(coverage.pct_short) }}{% else %}—{% endif %}</div>
+      <div class="s">{% if coverage and coverage.oi_ntl %}{{ coverage.n }} pozisyon havuzda · HL OI {{ coverage.oi_ntl|usd }}{% if coverage.scan and coverage.scan.n_addrs is not none %} · son tarama {{ coverage.scan.n_addrs }} adres → {{ coverage.scan.n_found }} poz{% endif %}{% if coverage.over %} · <span class="warn">⚠️ %100 üstü = bayat satır</span>{% endif %}{% else %}HL OI bilinmiyor — oran hesaplanamaz{% endif %}</div></div>
     <div><div class="l">Funding</div>
       <div class="v">{% if summ.funding is not none %}{{ '%+.4f'|format(summ.funding * 100) }}%{% else %}—{% endif %}</div>
       <div class="s">{% if summ.funding is none %}ölçüm yok{% elif summ.funding > 0 %}saatlik · longlar shortlara ödüyor{% elif summ.funding < 0 %}saatlik · shortlar longlara ödüyor{% else %}saatlik · sıfır{% endif %}</div></div>
@@ -393,7 +396,8 @@
       ({{ liq.meta.far_total|usd }}) %{{ liq.meta.max_dist|int }}'den uzakta, gösterilmiyor{% endif %}
     {%- if liq.meta.dropped_noliq %} · {{ liq.meta.dropped_noliq }} pozisyonun likidasyon fiyatı yok{% endif %}
     · likidasyon fiyatları son süpürme anına ait, teminat değişince kayar
-    {%- if liq.meta.latest_ts %} · son ölçüm {{ liq.meta.latest_ts|age }} önce{% endif %}.</p>
+    {%- if liq.meta.latest_ts %} · son ölçüm {{ liq.meta.latest_ts|age }} önce{% endif %}
+    {%- if coverage and coverage.pct_long is not none %} · kapsama: long %{{ '%.0f'|format(coverage.pct_long) }} / short %{{ '%.0f'|format(coverage.pct_short) }} (havuz / HL OI){% endif %}.</p>
   {% elif not summ.mark %}
   {{ m.empty(["Güncel fiyat yok — harita çizilemez.", "Fiyat metrikleri HL'den çekilemediyse birazdan gelir."]) }}
   {% elif scanning %}
