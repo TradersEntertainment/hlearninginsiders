@@ -53,7 +53,8 @@ IDLE_SEC = 600             # kapalıyken bekleme (nabız atar)
 PASS_GAP = 60              # iki tur arası nefes
 LB_TTL = 6 * 3600          # leaderboard evrene bu sıklıkla işlenir
 UNI_TTL = 900              # addresses ∪ fills birleştirmesi bu sıklıkla (toplu modda tur 4 dk)
-PROBE_TTL = 6 * 3600       # tek moddayken toplu sorgu sondası bu sıklıkla yenilenir
+PROBE_TTL = 6 * 3600       # "desteklenmiyor" (4xx/şekil) sondası bu sıklıkla yenilenir
+PROBE_RETRY_SEC = 300      # sonda BELİRSİZ (429/5xx/ağ) kaldıysa bu kadar sonra yeniden
 LEASE_SEC = 600            # worker kirası
 STATE_EVERY = 200          # kaç hesapta bir ilerleme kaydı
 BATCH_FAIL_MAX = 3         # üst üste bu kadar toplu hata → bu tur tek mod
@@ -251,20 +252,30 @@ def _batch_states(resp, addrs: list[str]) -> list | None:
     return out
 
 
+def inconclusive(err: str) -> bool:
+    """HL sıkışıklığı / ağ: 429, 5xx, zaman aşımı — "desteklenmiyor" DEĞİL, "şimdi bilemedik".
+    Canlıda sonda bir 429'u desteklenmiyor sayıp 6 saat tek moda düşmüştü."""
+    e = str(err or "")
+    return ("HTTP 429" in e) or ("HTTP 5" in e) or ("ağ hatası" in e) or ("Timeout" in e)
+
+
 async def probe_batch(client, addrs: list[str]) -> tuple[str, str]:
-    """Toplu sorgu sondası (kv'siz — worker da kullanır): ('batch'|'single', neden)."""
+    """Toplu sorgu sondası (kv'siz — worker da kullanır): ('batch'|'single'|'unknown', neden).
+    'unknown' = 429/5xx/ağ: yeniden denenecek. Normal şerit (2 istek; düşük şerit
+    duraklıyken açlıktan ölmesin)."""
     fn = getattr(client, "batch_clearinghouse", None)
     if fn is None:
         return "single", "istemci toplu sorgu bilmiyor"
     if not addrs:
-        return "single", "sonda için adres yok"
+        return "unknown", "sonda için adres yok"
     sample = list(addrs[:2])
     try:
-        resp = await fn(sample, priority="low")
+        resp = await fn(sample, priority="normal")
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        return "single", f"{type(e).__name__}: {str(e)[:120]}"
+        why = f"{type(e).__name__}: {str(e)[:120]}"
+        return ("unknown" if inconclusive(str(e)) else "single"), why
     states = _batch_states(resp, sample)
     if states is not None and any(isinstance(x, dict) for x in states):
         return "batch", ""
@@ -273,15 +284,22 @@ async def probe_batch(client, addrs: list[str]) -> tuple[str, str]:
 
 async def probe_mode(cfg, client, addrs: list[str], *, force: bool = False) -> str:
     """'batch' ya da 'single'. Sonuç MODE_KV'de: toplu bulunduysa kalıcı (tur içi
-    hata sayacı düşürür), tek bulunduysa PROBE_TTL sonra yeniden denenir."""
+    hata sayacı düşürür); "desteklenmiyor" ise PROBE_TTL, belirsizse (429/5xx)
+    PROBE_RETRY_SEC sonra yeniden denenir."""
     rec = await kv_get(MODE_KV) or {}
     if not force and rec.get("mode"):
-        if rec["mode"] == "batch" or now() - int(rec.get("ts") or 0) < PROBE_TTL:
-            return rec["mode"]
+        age = now() - int(rec.get("ts") or 0)
+        if rec["mode"] == "batch":
+            return "batch"
+        if age < (PROBE_RETRY_SEC if rec.get("unknown") else PROBE_TTL):
+            return "single"
     mode, why = await probe_batch(client, addrs)
-    await kv_set(MODE_KV, {"mode": mode, "ts": now(), "why": why})
-    log.info("sayım modu: %s%s", MODE_TR[mode], f" ({why})" if why else "")
-    return mode
+    unknown = mode == "unknown"
+    eff = "single" if unknown else mode
+    await kv_set(MODE_KV, {"mode": eff, "ts": now(), "why": why, "unknown": unknown})
+    log.info("sayım modu: %s%s%s", MODE_TR[eff], f" ({why})" if why else "",
+             f" — belirsiz, {PROBE_RETRY_SEC // 60} dk sonra yeniden sonda" if unknown else "")
+    return eff
 
 
 # ────────────────────────────────────────────── hız
@@ -329,8 +347,9 @@ class Fetcher:
     (sayım kapatıldı) durur (`stopped`). Yanıt alınamayan adres None ile döner."""
 
     def __init__(self, client, mode: str, batch_size: int, pace: Pace, *,
-                 sleep=asyncio.sleep, should_stop=None):
+                 sleep=asyncio.sleep, should_stop=None, priority: str = "low"):
         self.client, self.mode, self.pace, self.sleep = client, mode, pace, sleep
+        self.priority = priority
         self.batch_size = max(1, int(batch_size or 1))
         self.should_stop = should_stop or (lambda: False)
         self.batch_fail = self.requests = 0
@@ -350,17 +369,23 @@ class Fetcher:
             await self.sleep(self.pace.delay())
             self.requests += 1
             states = None
+            err = ""
             try:
                 states = _batch_states(await self.client.batch_clearinghouse(
-                    sub, dex, priority="low", stats=self.pace.stats), sub)
+                    sub, dex, priority=self.priority, stats=self.pace.stats), sub)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                err = str(e)
                 log.debug("sayım toplu (%s, %d adres): %s", dex or "ana", len(sub), e)
             self.pace.observe()
             if states is None:
-                self.batch_fail += 1
                 pairs.extend((a, None) for a in sub)
+                if inconclusive(err):
+                    # HL sıkıştı (429/5xx/ağ): mod hatası DEĞİL — nefes al, parti sonraki turda
+                    await self.sleep(self.pace.delay() * 2)
+                    continue
+                self.batch_fail += 1
                 if self.batch_fail >= BATCH_FAIL_MAX:
                     self.mode, self.fell_back = "single", True
                     log.warning("sayım: toplu sorgu üst üste %d kez hata verdi — tek tek moda düşüldü",
@@ -382,7 +407,7 @@ class Fetcher:
             self.requests += 1
             resp = None
             try:
-                resp = await self.client.clearinghouse(a, dex, priority="low", stats=self.pace.stats)
+                resp = await self.client.clearinghouse(a, dex, priority=self.priority, stats=self.pace.stats)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -818,7 +843,8 @@ async def diag_line(cfg) -> str:
     mode = (st.get("mode") if st else None) or cst.get("mode") or md.get("mode")
     head = "sayım (census): " + (MODE_TR.get(mode, mode) if mode else "açık")
     if mode == "single" and md.get("why"):
-        head += f" ({md['why']})"
+        head += (f" (sonda belirsiz: {md['why']} — {PROBE_RETRY_SEC // 60} dk sonra yeniden)"
+                 if md.get("unknown") else f" ({md['why']})")
     parts = [head]
     t = now()
     if st and not st.get("finished"):

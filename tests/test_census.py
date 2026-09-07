@@ -90,7 +90,7 @@ class Client:
             raise RuntimeError("HL info batchClearinghouseStates HTTP 422: unknown type")
         if self.fail_batch > 0:
             self.fail_batch -= 1
-            raise RuntimeError("HL info batchClearinghouseStates HTTP 500: boom")
+            raise RuntimeError("HL info batchClearinghouseStates HTTP 400: bad batch")   # kesin hata (429/5xx değil)
         return [self._state(u, dex) for u in users]
 
 
@@ -267,7 +267,7 @@ def test_single_pass_429_stop_resume():
         cli.n_429 += 10
         pace2.observe()
         assert pace2.factor == 1.0 and pace2.n_429 == 0
-        assert all(p == "low" for p in cli.prios), "sayım istekleri düşük şeritten"
+        assert cli.prios[0] == "normal" and all(p == "low" for p in cli.prios[1:]), "sonda normal, sayım istekleri düşük şeritten"
         # kapatınca durur; yeniden açınca AYNI tur kaldığı yerden (bozuk L2 yeniden denenir)
         cfg2, _ = await _fresh()
         cli2 = Client(batch=False)
@@ -425,4 +425,56 @@ def test_hot_lane():
         line = next((ln.strip() for ln in (await diag.report(cfg, None)).splitlines() if ln.strip().startswith("sayım (census)")), "")
         assert "sıcak şerit: 1 bekliyor · son tur 1 hesap" in line, line
         print("✅ sıcak şerit) fill → hot_ts (kapalıyken yok); en yeni önce; tur sıcakları ÖNCE işler (evren dışı adres dahil); bozuk düşer; erken uyanma; /tani")
+    asyncio.run(run())
+
+
+def test_probe_classification_and_fetcher_429():
+    """Sonda: 429/5xx = belirsiz (5 dk sonra yeniden), 4xx = desteklenmiyor (6 sa); Fetcher 429'da düşmez."""
+    async def run():
+        cfg, t = await _fresh()
+        await census.refresh_universe(cfg, Client())
+
+        class C429(Client):
+            async def batch_clearinghouse(self, users, dex="", priority=None, stats=None):
+                self.batch_calls.append((tuple(users), dex))
+                self.prios.append(priority)
+                raise RuntimeError("HL info batchClearinghouseStates HTTP 429: null")
+        c = C429()
+        assert await census.probe_mode(cfg, c, [L1, L4]) == "single"
+        md = await dbm.kv_get(census.MODE_KV)
+        assert md["unknown"] is True and "HTTP 429" in md["why"] and c.prios == ["normal"], md
+        assert await census.probe_mode(cfg, c, [L1, L4]) == "single" and len(c.batch_calls) == 1, "5 dk içinde yeniden sondalanmaz"
+        await dbm.kv_set(census.MODE_KV, {**md, "ts": md["ts"] - census.PROBE_RETRY_SEC - 1})
+        assert await census.probe_mode(cfg, c, [L1, L4]) == "single" and len(c.batch_calls) == 2, "süre dolunca yeniden sonda"
+        from app import diag
+        line = next((ln.strip() for ln in (await diag.report(cfg, None)).splitlines() if ln.strip().startswith("sayım (census)")), "")
+        assert "sonda belirsiz: RuntimeError: HL info batchClearinghouseStates HTTP 429: null — 5 dk sonra yeniden" in line, line
+        # 4xx → desteklenmiyor: PROBE_TTL dolmadan yeniden sondalanmaz
+        c2 = Client(batch=False)
+        assert await census.probe_mode(cfg, c2, [L1, L4], force=True) == "single"
+        md = await dbm.kv_get(census.MODE_KV)
+        assert md["unknown"] is False and "HTTP 422" in md["why"]
+        await dbm.kv_set(census.MODE_KV, {**md, "ts": md["ts"] - census.PROBE_RETRY_SEC - 1})
+        assert await census.probe_mode(cfg, c2, [L1, L4]) == "single" and len(c2.batch_calls) == 1
+        assert census.inconclusive("HL info x HTTP 503: gateway") and census.inconclusive("HL info x ağ hatası: boom")
+        assert not census.inconclusive("HL info x HTTP 422: unknown") and not census.inconclusive("")
+        # Fetcher: toplu 429 üst üste 3 → tek moda DÜŞMEZ, parti None, nefes (delay×2); 4xx ×3 → düşer
+        pace = census.Pace(250)
+        delays = []
+
+        async def sleep(d):
+            delays.append(round(d, 3))
+        f = census.Fetcher(C429(), "batch", 2, pace, sleep=sleep)
+        pairs = await f.fetch([L1, L4, L2, L5, L3, X], "")
+        assert f.mode == "batch" and not f.fell_back and len(pairs) == 6 and all(r is None for _, r in pairs)
+        assert delays == [0.24, 0.48] * 3, delays
+        f2 = census.Fetcher(Client(batch=False), "batch", 2, pace, sleep=sleep)
+        pairs = await f2.fetch([L1, L4, L2, L5, L3, X, Y], "")
+        assert f2.fell_back and f2.mode == "single" and len(pairs) == 7 and pairs[-1][0] == Y and pairs[-1][1] is not None
+        # öncelik parametresi (sıcak şerit normal şeritten gidecek)
+        c3 = Client()
+        f3 = census.Fetcher(c3, "single", 2, pace, sleep=sleep, priority="normal")
+        await f3.fetch([L1], "")
+        assert c3.prios == ["normal"]
+        print("✅ sonda) 429 belirsiz → 5 dk sonra yeniden (normal şerit); 422 → 6 sa; Fetcher 429'da düşmez, nefes alır; öncelik parametresi")
     asyncio.run(run())

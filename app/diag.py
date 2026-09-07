@@ -268,7 +268,7 @@ def _budget_line(state) -> str | None:
         return f"  HL bütçesi okunamadı ({type(e).__name__}: {e})"
     ago = u.get("last_429_ago")
     paused = float(u.get("low_paused") or 0)
-    return (f"  HL bütçesi: {u.get('rpm', 0)}/{u.get('max', '?')} istek/dk"
+    return (f"  HL bütçesi: {u.get('rpm', 0)}/{u.get('max', '?')} istek/dk (etkin tavan {u.get('cap', u.get('max', '?'))}, AIMD)"
             f" · ~{_num(u.get('weight', 0))} ağırlık/dk (tahmini; HL sınırı {u.get('weight_max', 1200)})"
             f" · 429 toplam {u.get('n_429', 0)}" + (f", son {_dur(ago)} önce" if ago is not None else ", hiç")
             + " · düşük şerit (sayım/yetişme): "
@@ -289,7 +289,8 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    f" · {sw.get('batch_positions', 0)} poz"
                    + (f" · kripto dex sorgusu {_num(sw['crypto_addrs'])} adreste"
                       f" (adres başına ~{sw.get('per_addr')} istek)"
-                      if sw.get("crypto_addrs") is not None else ""))
+                      if sw.get("crypto_addrs") is not None else "")
+                   + (" · yetişme kapalı (429/duraklama)" if sw.get("catchup_off") else ""))
         out.append(f"       son tam tur "
                    + (f"{_dur(now() - int(last_full))} önce" if last_full else "YOK (ilk tur sürüyor)")
                    + (f" · hl yazma hatası {sw['hl_err']}" if sw.get("hl_err") else "")

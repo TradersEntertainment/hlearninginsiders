@@ -107,13 +107,75 @@ def test_lanes_and_stats():
     asyncio.run(run())
 
 
+def test_aimd_cap():
+    import time as _t
+    cli = HLClient(Sess(), "https://x/", "https://lb", min_interval=0, max_rpm=550)
+    assert cli.usage()["cap"] == 550
+    cli._note_429()
+    assert cli.usage()["cap"] == 440 and cli.n_429 == 1, "429 → ×0.8"
+    cli._note_429()
+    assert cli.usage()["cap"] == 440, "10 sn içinde ikinci 429 tek adım sayılır"
+    cli._cap_down_ts -= hlc.CAP_DOWN_MIN_GAP
+    cli._note_429()
+    assert cli.usage()["cap"] == 352
+    for _ in range(40):
+        cli._cap_down_ts -= hlc.CAP_DOWN_MIN_GAP
+        cli._note_429()
+    assert cli.usage()["cap"] == hlc.CAP_FLOOR, "taban"
+    # sessizlik: son 429'dan ve son artıştan 60 sn geçince +25; 429 taze ise çıkmaz
+    cli._last_429 = _t.monotonic() - hlc.CAP_UP_EVERY - 1
+    cli._cap_up_ts = _t.monotonic() - hlc.CAP_UP_EVERY - 1
+    assert cli.usage()["cap"] == hlc.CAP_FLOOR + hlc.CAP_UP_STEP
+    assert cli.usage()["cap"] == hlc.CAP_FLOOR + hlc.CAP_UP_STEP, "dakikada bir adım"
+    cli._cap_up_ts = _t.monotonic() - hlc.CAP_UP_EVERY - 1
+    assert cli.usage()["cap"] == hlc.CAP_FLOOR + 2 * hlc.CAP_UP_STEP
+    cli._cap = 540.0
+    cli._cap_up_ts = _t.monotonic() - hlc.CAP_UP_EVERY - 1
+    assert cli.usage()["cap"] == 550, "hl_max_rpm üst sınır"
+    # şeritler etkin tavana göre
+    cli2 = HLClient(Sess(), "https://x/", "https://lb", min_interval=0, max_rpm=10)
+    cli2._cap = 4.0
+    cli2._last_429 = 0.0
+
+    async def run():
+        for _ in range(3):
+            await cli2._acquire_budget("normal", 2)
+        assert not await _passes(cli2._acquire_budget("low", 2)), "düşük: 4×0.7=2.8 < 3"
+        assert await _passes(cli2._acquire_budget("normal", 2))
+        assert not await _passes(cli2._acquire_budget("normal", 2)), "normal: etkin tavan 4"
+    asyncio.run(run())
+    # süpürücü yetişme: etkin tavana bakar; 429/duraklamada taban parti
+    from app.config import Config
+    from app.radar import sweeper
+
+    class U:
+        def __init__(self, d):
+            self.d = d
+
+        def usage(self):
+            return self.d
+    cfg = Config()
+    cfg.sweep_catchup, cfg.sweep_batch_size, cfg.sweep_interval_sec, cfg.sweep_batch_max = True, 40, 90, 250
+    cfg.sweep_rpm_headroom = 0.85
+    base_u = {"rpm": 50, "max": 550, "cap": 300, "window": 60.0, "low_paused": 0, "last_429_ago": None}
+    n, info = sweeper._adaptive_batch(cfg, U(base_u), per_addr=2.0)
+    assert n == int((300 * 0.85 - 50) * 1.5 / 2) and info["rpm_max"] == 300 and "catchup_off" not in info, (n, info)
+    n, info = sweeper._adaptive_batch(cfg, U({**base_u, "low_paused": 30}), per_addr=2.0)
+    assert n == 40 and info["catchup_off"] == "429"
+    n, info = sweeper._adaptive_batch(cfg, U({**base_u, "last_429_ago": 20}), per_addr=2.0)
+    assert n == 40 and info["catchup_off"] == "429"
+    n, info = sweeper._adaptive_batch(cfg, U({**base_u, "last_429_ago": 120}), per_addr=2.0)
+    assert n > 40
+    print("✅ AIMD) 429 → tavan ×0.8 (10 sn'de bir), taban 120; sessizlikte +25/dk; şeritler etkin tavana göre; yetişme 429'da kapalı")
+
+
 def test_diag_budget_line():
     from app import diag
 
     class St:
         client = HLClient(Sess(), "https://x/", "https://lb", min_interval=0, max_rpm=550)
     line = diag._budget_line(St())
-    assert line.startswith("  HL bütçesi: 0/550 istek/dk · ~0 ağırlık/dk (tahmini; HL sınırı 1200) · 429 toplam 0, hiç · düşük şerit"), line
+    assert line.startswith("  HL bütçesi: 0/550 istek/dk (etkin tavan 550, AIMD) · ~0 ağırlık/dk (tahmini; HL sınırı 1200) · 429 toplam 0, hiç · düşük şerit"), line
     assert "açık (kullanım %70 üstünde bekler)" in line
     St.client._last_429 = __import__("time").monotonic()
     St.client.n_429 = 3

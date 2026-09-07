@@ -31,6 +31,14 @@ DEFAULT_WEIGHT = 20
 HL_WEIGHT_LIMIT = 1200      # HL: dakikada IP başına toplam ağırlık (belge)
 LOW_SHARE = 0.70            # düşük şerit: pencere kullanımı bunun üstündeyse bekler
 LOW_PAUSE_SEC = 60.0        # herhangi bir 429'dan sonra düşük şerit bu kadar susar
+# Uyarlanır tavan (AIMD): HL'nin gerçek hesabını 429 öğretir. Her 429'da etkin tavan
+# CAP_DOWN ile iner (fırtınada 10 sn'de en çok bir adım), CAP_UP_EVERY sn 429'suz her
+# dakika CAP_UP_STEP çıkar; hl_max_rpm üst sınır, CAP_FLOOR alt sınır.
+CAP_FLOOR = 120
+CAP_DOWN = 0.8
+CAP_DOWN_MIN_GAP = 10.0
+CAP_UP_STEP = 25
+CAP_UP_EVERY = 60.0
 
 
 def weight_of(payload: dict) -> int:
@@ -57,6 +65,25 @@ class HLClient:
         # düşük şerit LOW_PAUSE_SEC susar. Retry içinde yutulan 429'lar da sayılır.
         self.n_429 = 0
         self._last_429 = 0.0
+        self._cap = float(max_rpm)          # etkin tavan (AIMD)
+        self._cap_down_ts = 0.0
+        self._cap_up_ts = time.monotonic()
+
+    def _note_429(self) -> None:
+        t = time.monotonic()
+        self.n_429 += 1
+        self._last_429 = t
+        if t - self._cap_down_ts >= CAP_DOWN_MIN_GAP:
+            self._cap = max(float(CAP_FLOOR), self._cap * CAP_DOWN)
+            self._cap_down_ts = t
+            log.warning("HL 429 — etkin tavan %.0f istek/dk", self._cap)
+
+    def _cap_tick(self, t: float) -> None:
+        """Sessizlikte kademeli geri: son 429'dan ve son artıştan CAP_UP_EVERY geçtiyse +CAP_UP_STEP."""
+        if (self._cap < self._max_rpm and t - self._last_429 >= CAP_UP_EVERY
+                and t - self._cap_up_ts >= CAP_UP_EVERY):
+            self._cap = min(float(self._max_rpm), self._cap + CAP_UP_STEP)
+            self._cap_up_ts = t
 
     def _trim(self, t: float) -> None:
         while self._req_times and t - self._req_times[0] >= self._rpm_window:
@@ -75,18 +102,19 @@ class HLClient:
             async with self._rl_lock:
                 t = time.monotonic()
                 self._trim(t)
+                self._cap_tick(t)
                 used = len(self._req_times)
                 if low:
                     pause = self.low_paused(t)
                     if pause > 0:
                         wait = pause
-                    elif used < self._max_rpm * LOW_SHARE:
+                    elif used < self._cap * LOW_SHARE:
                         self._req_times.append(t)
                         self._w_times.append((t, int(weight)))
                         return
                     else:
                         wait = (self._req_times[0] + self._rpm_window - t) if self._req_times else 0.25
-                elif used < self._max_rpm:
+                elif used < self._cap:
                     self._req_times.append(t)
                     self._w_times.append((t, int(weight)))
                     return
@@ -104,9 +132,10 @@ class HLClient:
         """
         t = time.monotonic()
         self._trim(t)
+        self._cap_tick(t)
         used = len(self._req_times)
-        return {"rpm": used, "max": self._max_rpm,
-                "free": max(0, self._max_rpm - used),
+        return {"rpm": used, "max": self._max_rpm, "cap": int(round(self._cap)),
+                "free": max(0, int(round(self._cap)) - used),
                 "window": self._rpm_window,
                 "weight": sum(w for _, w in self._w_times), "weight_max": HL_WEIGHT_LIMIT,
                 "low_share": LOW_SHARE, "low_paused": round(self.low_paused(t), 1),
@@ -131,8 +160,7 @@ class HLClient:
                             await asyncio.sleep(self._min_interval)
                             return data
                         if r.status == 429:
-                            self.n_429 += 1
-                            self._last_429 = time.monotonic()
+                            self._note_429()
                             if stats is not None:
                                 stats["429"] = int(stats.get("429", 0)) + 1
                         if r.status in (429, 500, 502, 503, 504) and attempt < retries:

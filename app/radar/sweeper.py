@@ -212,15 +212,21 @@ def _adaptive_batch(cfg: Config, client, per_addr: float | None = None) -> tuple
         return base, {}          # istemci bütçe bildirmiyorsa sabit partiye dön
     if cfg.sweep_interval_sec < u.get("window", 60):
         return base, {}
+    cap = int(u.get("cap") or u["max"])
+    # Yetişme yalnız SAĞLIKLI istemcide: düşük şerit duraklıysa ya da son 60 sn'de 429
+    # geldiyse taban parti (fırsatçı kısım isteği yalnız geciktiriyor, azaltmıyordu).
+    ago = u.get("last_429_ago")
+    if (u.get("low_paused") or 0) > 0 or (ago is not None and ago < 60):
+        return base, {"rpm": u["rpm"], "rpm_max": cap, "catchup_off": "429"}
     headroom = float(getattr(cfg, "sweep_rpm_headroom", 0.85))
-    ceiling = u["max"] * max(0.1, min(headroom, 1.0))
+    ceiling = cap * max(0.1, min(headroom, 1.0))
     allow_rpm = max(0.0, ceiling - u["rpm"])          # bize kalan istek/dk
     # adres başına istek: verilmezse tüm dex'ler; sweep_batch havuzun kripto dex'e
     # dokunan payıyla kesirli (ör. 2.1) geçer — parti 3'e bölünüp küçülmesin
     per_addr = float(per_addr) if per_addr and per_addr > 0 else max(1, len(_dexes(cfg)))
     n = int(allow_rpm * (cfg.sweep_interval_sec / 60.0) / per_addr)
-    cap = max(base, int(getattr(cfg, "sweep_batch_max", 250)))
-    return max(base, min(n, cap)), {"rpm": u["rpm"], "rpm_max": u["max"]}
+    top = max(base, int(getattr(cfg, "sweep_batch_max", 250)))
+    return max(base, min(n, top)), {"rpm": u["rpm"], "rpm_max": cap}
 
 
 def _hl_floor(cfg: Config):
