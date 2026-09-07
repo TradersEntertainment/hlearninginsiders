@@ -42,6 +42,26 @@ KINDS: dict[str, tuple[str, str, str]] = {
 }
 
 
+# Satılabilir bota fan-out edilebilen türler: kind → (kısa etiket, grup). Sahibe özel
+# olanlar (sim, track, health, digest, test, listing, eval) BİLEREK yok.
+PUBLIC_KINDS: dict[str, tuple[str, str]] = {
+    "cryptoliq": ("💥 Kripto liq yakını", "kripto"),
+    "liqmap":    ("🧲 Likidasyon duvarı", "genel"),
+    "liq":       ("💥 Dev pozisyon liq radarı", "genel"),
+    "liqattack": ("🎯 Liq attack adayı", "hisse"),
+    "twap":      ("⏳ TWAP birikimi", "genel"),
+    "cryptovol": ("🚀 Kripto hacim rekoru", "kripto"),
+    "equityvol": ("📈 Hisse hacim rekoru", "hisse"),
+    "new_big":   ("🆕 Yeni büyük pozisyon", "genel"),
+    "whale_fill": ("🐋 Büyük işlem / sicilli balina", "genel"),
+    "wall":      ("🧱 Emir defteri duvarı", "genel"),
+    "offhours":  ("🌙 Kapalı seans hareketi", "hisse"),
+    "lowvol":    ("🐘 Sessiz su devi", "hisse"),
+    "anomaly":   ("📡 OI/funding anomalisi", "genel"),
+    "pattern":   ("🔮 Örüntü sinyali", "genel"),
+    "earnings":  ("📊 Earnings raporu", "hisse"),
+}
+
 CAPTION_MAX = 1000     # Telegram altyazı sınırı 1024 görünür karakter; pay bırak
 
 
@@ -72,8 +92,20 @@ class Notifier:
         self.bot = bot
         self.suppressed = 0
 
+    def _publish(self, kind: str, coin: str, text: str, png: bytes | None, key: str) -> None:
+        """Satılabilir bot fan-out'u: sahibin toggle/sessiz saati/kanalından BAĞIMSIZ —
+        ürünün kapısı public_bot_enabled + public_kinds (telegram/fanout.py)."""
+        try:
+            from .telegram import fanout
+            fanout.publish(self.cfg, kind, coin, text, png, key)
+        except Exception:
+            log.debug("fan-out yayını", exc_info=True)
+
     async def send(self, kind: str, text: str, *, priority: str = "",
-                   key: str = "", chat_id: str = "") -> bool:
+                   key: str = "", chat_id: str = "", coin: str = "", png: bytes | None = None,
+                   public: bool = True) -> bool:
+        if public:
+            self._publish(kind, coin, text, png, key)
         if not self.bot:
             return False
         prio = priority or KINDS.get(kind, ("", "", "normal"))[2]
@@ -130,18 +162,19 @@ class Notifier:
 
     async def send_rich(self, kind: str, text: str, png: bytes | None, *, key: str = "",
                         chat_id: str = "", priority: str = "high", short_caption: str = "",
-                        limit: int = CAPTION_MAX) -> tuple[bool, str]:
+                        limit: int = CAPTION_MAX, coin: str = "") -> tuple[bool, str]:
         """Metin + resim, mümkünse TEK mesaj (resim + altyazı olarak tam metin).
 
         Dönüş (gitti mi, yol): 'combined' tek mesaj · 'split' metin + kısa
         altyazılı resim (metin sığmadı) · 'text' yalnız metin (resim yok ya da
         reddedildi) · '' gitmedi. Resim reddedilirse metin yine gider — alarm
         resme bağlı değil. Marker kararı çağıranın, `ok`'a göre."""
+        self._publish(kind, coin, text, png, key)       # fan-out tek sefer, resimle
         if png and visible_len(text) <= limit:
             if await self.send_photo(kind, png, text, key=key, chat_id=chat_id):
                 return True, "combined"
             png = None                       # reddedildi: metin yedek, resim tekrar denenmez
-        ok = await self.send(kind, text, priority=priority, key=key, chat_id=chat_id)
+        ok = await self.send(kind, text, priority=priority, key=key, chat_id=chat_id, public=False)
         if not ok:
             return False, ""
         if png and short_caption and await self.send_photo(

@@ -502,7 +502,26 @@ kredi vermez):
 ile tekil), 24 saatlik bekleyen kayıtları bayatlatır, `sales_stats` kv'sini yazar.
 Sahip komutları: `/kullanicilar` (kullanıcı/Pro/MRR/ödeme), `/odemeler`,
 `/pro_ver <id> <gün>`, `/duyuru <metin>` (engelsiz herkese, 20 msg/sn), `/iade`.
-Testler: `tests/test_payments.py`. Bildirim aboneliği (`/bildirimler`) S3'te.
+Testler: `tests/test_payments.py`.
+
+**Bildirim aboneliği (S3) — fan-out.** `Notifier.send` / `send_rich` her olayı
+(tür, coin, metin, resim, anahtar) `telegram/fanout.py` kuyruğuna yayınlar —
+**sahibin kanal gönderimi, toggle'ı ve sessiz saatinden bağımsız**; ürünün kapısı
+`public_bot_enabled` + `public_kinds` + `notify.PUBLIC_KINDS` (sahibe özel türler
+— sim, track, health, digest, listing, eval — bilerek dışarıda). Tek tüketici
+döngü (`fanout`) her olayı `users.subscribers(kind, sembol)` ile hedefler: Pro +
+engelsiz + türe abone + coin filtresi yok ya da eşleşiyor (`xyz:TSLA` → `TSLA`),
+kişisel sessiz saatteki kullanıcı atlanır (ertelenmez). (tür, anahtar) 12 saat
+tekil: sahibe yeniden denenen gönderim kullanıcıya ikinci kez gitmez. Resim altyazıya
+sığıyorsa foto, reddedilirse metin; hız `bot._pace`, 403 → engel. Kayıt
+`fanout_log`. Kullanıcı tarafı: `/bildirimler` (Pro) tür düğmeleri ✅/☐ +
+"hepsi açık/kapalı" (klavye yerinde güncellenir), `/coinler HYPE,BTC` / `hepsi`,
+`/sessiz 23-08` / `kapat`; Pro açılınca (tahsilat ya da `/pro_ver`) `pro_default_kinds`
+otomatik. **Ücretsiz sabah özeti** (`public_digest`, `public_digest_hour` 09 TSİ):
+dünkü `sent:%` kayıtlarından satılan türlerin ilk 5 tekil başlığı, yalnız ücretsiz
+kullanıcılara, altında Pro çağrısı. Radar çağrılarına `coin=` eklendi
+(anomaly/autoscan/bookwall/cryptoliq/cryptovol/equityvol/liqattack/liqwatch/lowvol/
+offhours/patterns/report/twaplive/collector). Testler: `tests/test_fanout.py`.
 
 ## Simülasyon: `/sim`
 

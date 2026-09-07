@@ -403,6 +403,9 @@ async def lifespan(app: FastAPI):
     from .pay.hl import loop as paywatch_loop
     _spawn("paywatch", lambda: paywatch_loop(cfg, client, bot), notifier)
     _spawn("billing", lambda: billing_loop(cfg, bot), notifier)
+    from .telegram import fanout
+    _spawn("fanout", lambda: fanout.loop(bot, cfg), notifier)
+    _spawn("public_digest", lambda: fanout.digest_loop(bot, cfg), notifier)
 
     yield
 

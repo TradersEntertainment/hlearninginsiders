@@ -107,7 +107,7 @@ async def check_alerts(cfg: Config, notifier) -> int:
             continue
         text = fmt.lowvol_alert(p)
         try:
-            if await notifier.send("lowvol", text, priority="high", key=key):
+            if await notifier.send("lowvol", text, priority="high", key=key, coin=p["coin"]):
                 await alert_log("lowvol", key, text)
                 sent += 1
         except Exception as e:

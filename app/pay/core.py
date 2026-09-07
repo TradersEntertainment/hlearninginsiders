@@ -102,7 +102,7 @@ async def already_credited(method: str, ext_id: str) -> bool:
         return (await cur.fetchone()) is not None
 
 
-async def credit(pid: int, ext_id: str, amount_raw=None, raw: str | None = None) -> dict | None:
+async def credit(pid: int, ext_id: str, amount_raw=None, raw: str | None = None, cfg=None) -> dict | None:
     """Tahsilat: pending → paid (+ext_id), Pro süresi uzar. Aynı ext_id daha önce
     kredilendiyse ya da kayıt bekleyen değilse None (çift kredi yok)."""
     row = await get(pid)
@@ -121,6 +121,13 @@ async def credit(pid: int, ext_id: str, amount_raw=None, raw: str | None = None)
         return None
     days = PLAN_DAYS.get(row.get("plan") or "", int(row.get("months") or 1) * 30)
     until = await users.grant(int(row["user_id"]), days, f"{row['method']}:{row['plan']}")
+    try:                                            # Pro açılınca varsayılan bildirim türleri
+        if cfg is None:
+            from ..config import get_config
+            cfg = get_config()
+        await users.ensure_default_kinds(int(row["user_id"]), cfg)
+    except Exception:
+        log.debug("varsayılan türler", exc_info=True)
     log.info("ödeme alındı #%s %s %s $%.2f → kullanıcı %s Pro %s'e kadar",
              pid, row["method"], row["plan"], float(row.get("amount_usd") or 0), row["user_id"], until)
     return {"payment": await get(pid), "until": until}

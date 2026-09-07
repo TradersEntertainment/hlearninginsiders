@@ -62,7 +62,7 @@ async def on_successful_payment(bot, cfg, msg: dict) -> dict | None:
     if not pid or not charge:
         log.warning("successful_payment şekli beklenmedik: %s", core.dumps(sp)[:200])
         return None
-    res = await core.credit(pid, charge, amount_raw=sp.get("total_amount"), raw=core.dumps(sp))
+    res = await core.credit(pid, charge, amount_raw=sp.get("total_amount"), raw=core.dumps(sp), cfg=cfg)
     if res:
         await core.notify_paid(bot, cfg, res["payment"], res["until"])
     return res

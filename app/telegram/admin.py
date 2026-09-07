@@ -65,6 +65,7 @@ async def _grant(bot, args: list[str], chat_id: str) -> None:
         await bot.send(f"#{uid} diye kayıtlı kullanıcı yok (önce bota /start yazmalı).", chat_id)
         return
     until = await users.grant(uid, days, "elle")
+    await users.ensure_default_kinds(uid, bot.cfg)
     await bot.send(f"✅ #{uid} Pro → {users.tr_dt(until)}", chat_id)
     if u.get("chat_id"):
         try:

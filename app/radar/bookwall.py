@@ -213,7 +213,7 @@ async def scan_walls(cfg: Config, client: HLClient, notifier) -> int:
                     "UPDATE book_walls SET active=0 WHERE id=?", (a["id"],))
             if a.get("alerted") and (a.get("peak_notional") or 0) >= alert_min:
                 await notifier.send("wall", fmt.wall_gone({**a, "symbol": symbol}),
-                                    priority="normal", key=f"gone:{coin}:{a['side']}")
+                                    priority="normal", key=f"gone:{coin}:{a['side']}", coin=coin)
             log.info("duvar kalktı: %s %s (tepe %s)", symbol, a["side"],
                      fmt.usd(a.get("peak_notional")))
     if coins and n_bookerr >= len(coins):
@@ -269,7 +269,7 @@ async def _upsert_and_alert(cfg: Config, client: HLClient, notifier,
     text = fmt.wall_alert({**w, "symbol": symbol, "address": addr}, day_vol)
     # alerted=1'i YALNIZ başarılı gönderimden sonra yaz — 429/400'de duvar aktif
     # kaldığı sürece bir daha bildirilmiyordu (send'den ÖNCE işaretleniyordu).
-    if await notifier.send("wall", text, key=key):
+    if await notifier.send("wall", text, key=key, coin=coin):
         async with db() as conn:
             await conn.execute(
                 "UPDATE book_walls SET alerted=1, address=? WHERE id=?", (addr, wall_id))

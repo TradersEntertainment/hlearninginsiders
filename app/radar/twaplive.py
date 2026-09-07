@@ -527,7 +527,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         if can:
                             ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
                                    "cancelled": bool(order and order.get("status") in ("terminated", "error"))}
-                            ok = await notifier.send("twap", fmt.twap_end(mm, ctx), priority="high",
+                            ok = await notifier.send("twap", fmt.twap_end(mm, ctx), priority="high", coin=run.coin,
                                                      key=f"twap_end:{key}", chat_id=chat)
                             if not ok and not (not chat and in_quiet_hours(cfg)):
                                 out["failed"] += 1
@@ -542,7 +542,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         chat, can = chat_for(cfg, run.coin)
                         if can:
                             ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin)}
-                            ok = await notifier.send("twap", fmt.twap_progress(mm, ctx), priority="high",
+                            ok = await notifier.send("twap", fmt.twap_progress(mm, ctx), priority="high", coin=run.coin,
                                                      key=f"twap_prog:{key}", chat_id=chat)
                             out["progress"] += 1
                             if not ok and not (not chat and in_quiet_hours(cfg)):
@@ -588,7 +588,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                    "vol_pct": (planned / day_vol * 100) if day_vol else None,
                    "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or ""}
             text = fmt.twap_alert(m, ctx)
-            ok = await notifier.send("twap", text, priority="high", key=f"twap:{key}", chat_id=chat)
+            ok = await notifier.send("twap", text, priority="high", key=f"twap:{key}", chat_id=chat, coin=run.coin)
             if ok:
                 await alert_log("twap", key, text)
                 out["alerted"] += 1

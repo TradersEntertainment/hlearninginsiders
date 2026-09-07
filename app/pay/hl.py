@@ -73,7 +73,7 @@ async def match(transfers: list[dict], cfg, bot=None) -> dict:
         if not pend:
             out["unmatched"].append(t)
             continue
-        res = await core.credit(pend["id"], t["hash"], amount_raw=t["usd"], raw=core.dumps(t))
+        res = await core.credit(pend["id"], t["hash"], amount_raw=t["usd"], raw=core.dumps(t), cfg=cfg)
         if not res:
             out["dup"] += 1
             continue

@@ -149,7 +149,7 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
             continue
         if row["stage"] >= 1 and notifier:
             try:
-                await notifier.send("liq", fmt.liq_closed(key[1], key[0], row),
+                await notifier.send("liq", fmt.liq_closed(key[1], key[0], row), coin=key[1],
                                     priority="normal", key=f"{key[1]}:{key[0]}:closed")
             except Exception as e:
                 log.warning("liq kapanış notu gönderilemedi: %s", e)
@@ -169,7 +169,7 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
             if notifier:
                 try:
                     sent_ok = await notifier.send(
-                        "liq", fmt.liq_alert(coin, addr, p, mark, dist, need),
+                        "liq", fmt.liq_alert(coin, addr, p, mark, dist, need), coin=coin,
                         priority="critical" if need >= 3 else "high",
                         key=f"{coin}:{addr}:{need}")
                 except Exception as e:
@@ -280,7 +280,7 @@ async def check_clusters(cfg: Config, notifier) -> dict:
         await alert_log("liq_cluster", key, text)  # cooldown, gönderim sonucundan bağımsız
         if notifier:
             try:
-                if await notifier.send("liqmap", text, key=key):
+                if await notifier.send("liqmap", text, key=key, coin=c["coin"]):
                     out["alerted"] += 1
             except Exception as e:
                 log.warning("liq duvarı alerti gönderilemedi: %s", e)

@@ -166,11 +166,37 @@ async def get_coins(uid: int) -> set[str]:
         return {r["coin"] for r in await cur.fetchall()}
 
 
-async def set_coins(uid: int, coins) -> None:
+def norm_coins(coins) -> set[str]:
+    """Kullanıcı girdisi → sembol kümesi: 'hype, btc xyz:TSLA' → {HYPE, BTC, TSLA}."""
+    out = set()
+    for c in re.split(r"[,\s;]+", " ".join(coins) if isinstance(coins, (list, tuple, set)) else str(coins or "")):
+        c = c.strip().split(":")[-1].upper()
+        if c and re.fullmatch(r"[A-Z0-9_.\-]{1,20}", c):
+            out.add(c)
+    return out
+
+
+async def set_coins(uid: int, coins) -> set[str]:
+    """Coin filtresi (boş küme = tüm coinler). Semboller büyük harf, dex öneki düşer."""
+    syms = norm_coins(coins)
     async with db() as conn:
         await conn.execute("DELETE FROM user_coins WHERE user_id=?", (int(uid),))
         await conn.executemany("INSERT OR IGNORE INTO user_coins(user_id, coin) VALUES(?,?)",
-                               [(int(uid), c) for c in sorted(csv_set(coins))])
+                               [(int(uid), c) for c in sorted(syms)])
+    return syms
+
+
+async def ensure_default_kinds(uid: int, cfg) -> set[str]:
+    """Pro açılınca hiç tür seçmemiş kullanıcıya varsayılan türler (pro_default_kinds ∩ public_kinds)."""
+    have = await get_kinds(uid)
+    if have:
+        return have
+    from .notify import PUBLIC_KINDS
+    allowed = csv_set(getattr(cfg, "public_kinds", "")) & set(PUBLIC_KINDS)
+    want = csv_set(getattr(cfg, "pro_default_kinds", "")) & allowed
+    if want:
+        await set_kinds(uid, want)
+    return want
 
 
 # ---------------- kota ----------------

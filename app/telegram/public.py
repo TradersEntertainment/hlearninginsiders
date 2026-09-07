@@ -223,20 +223,39 @@ async def handle(bot, upd: dict) -> bool:
     return await run_query(bot, u, text)
 
 
+async def _ack(bot, cq_id, text: str = "") -> None:
+    try:
+        await bot.answer_callback(cq_id, text)
+    except Exception:
+        log.debug("answerCallbackQuery", exc_info=True)
+
+
 async def _callback(bot, cq: dict) -> bool:
     frm = cq.get("from") or {}
     msg = cq.get("message") or {}
     chat = msg.get("chat") or {}
     data = str(cq.get("data") or "")
-    try:
-        await bot.answer_callback(cq.get("id"))
-    except Exception:
-        log.debug("answerCallbackQuery", exc_info=True)
+    cq_id = cq.get("id")
     if not frm.get("id") or chat.get("type") != "private":
+        await _ack(bot, cq_id)
         return False
     if not users.flood_ok(int(frm["id"])):
+        await _ack(bot, cq_id)
         return True
     u = await users.upsert_from_update(frm, str(chat.get("id")))
+    if data.startswith("k:"):                      # tür düğmesi: cevap metni + klavye yerinde güncellenir
+        if not users.is_pro(u):
+            await _ack(bot, cq_id, "Pro gerekir")
+            await notif_menu(bot, u)
+            return True
+        have, ack = await toggle_kind(bot, u, data[2:])
+        await _ack(bot, cq_id, ack)
+        try:
+            await bot.edit_reply_markup(u["chat_id"], msg.get("message_id"), kinds_keyboard(bot.cfg, have))
+        except Exception:
+            log.debug("klavye güncelleme", exc_info=True)
+        return True
+    await _ack(bot, cq_id)
     if data.startswith("q:"):
         return await run_query(bot, u, data[2:])
     if data.startswith("m:"):
@@ -335,13 +354,106 @@ async def pay_start(bot, u: dict, method: str, code: str) -> None:
     await bot.send("🪙 Kripto ağ geçidi bir sonraki sürümde; şimdilik ⭐ Stars ya da 💵 USDC.", chat)
 
 
+def allowed_kinds(cfg) -> list[str]:
+    """Satılan türler: notify.PUBLIC_KINDS ∩ cfg.public_kinds (sıra PUBLIC_KINDS'ınki)."""
+    from ..notify import PUBLIC_KINDS
+    pk = users.csv_set(getattr(cfg, "public_kinds", ""))
+    return [k for k in PUBLIC_KINDS if k in pk]
+
+
+def kinds_keyboard(cfg, have: set[str]) -> dict:
+    from ..notify import PUBLIC_KINDS
+    rows, row = [], []
+    for k in allowed_kinds(cfg):
+        row.append((("✅ " if k in have else "☐ ") + PUBLIC_KINDS[k][0], f"k:{k}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([("🎯 Hepsi açık", "k:*on"), ("🔕 Hepsi kapalı", "k:*off")])
+    return kb(rows)
+
+
+def notif_text(u: dict, kinds: set[str], coins: set[str]) -> str:
+    qs, qe = u.get("quiet_start"), u.get("quiet_end")
+    quiet = (f"{int(qs):02d}–{int(qe):02d}" if qs is not None and qe is not None and int(qs) != int(qe) else "kapalı")
+    return ("🔔 <b>Bildirimler</b> — açık türler olduğu anda DM'ine gelir.\n"
+            f"Coin filtresi: <b>{'hepsi' if not coins else fmt.esc(', '.join(sorted(coins)))}</b>"
+            " · <code>/coinler HYPE,BTC</code> ya da <code>/coinler hepsi</code>\n"
+            f"Sessiz saat (TSİ): <b>{quiet}</b> · <code>/sessiz 23-08</code> ya da <code>/sessiz kapat</code>\n"
+            f"<b>{len(kinds)}</b> tür açık — düğmelerle aç/kapat:")
+
+
 async def notif_menu(bot, u: dict, cmd: str = "bildirimler", args: list[str] | None = None) -> None:
-    """Abonelik menüsü (S3'te tür/coin seçimi). Şimdilik katmanı söyler."""
-    if users.is_pro(u):
-        await bot.send("🔔 Bildirim türü seçimi bir sonraki sürümde açılıyor; şimdilik tüm Pro "
-                       "bildirimleri kapalı, sorgular sınırsız.", u["chat_id"])
+    """Abonelik: tür düğmeleri (k:<tür>), /coinler filtresi, /sessiz saat. Yalnız Pro."""
+    cfg = bot.cfg
+    chat = u["chat_id"]
+    args = args or []
+    if not users.is_pro(u):
+        await bot.send("🔔 Anlık bildirimler Pro'da: tür seçimi, coin filtresi, sessiz saat. ⭐ /pro",
+                       chat, reply_markup=menu())
+        return
+    uid = int(u["id"])
+    if cmd == "coinler":
+        if not args:
+            coins = await users.get_coins(uid)
+            await bot.send("Coin filtresi: <b>" + (fmt.esc(", ".join(sorted(coins))) if coins else "hepsi") + "</b>\n"
+                           "<code>/coinler HYPE,BTC,SOL</code> · <code>/coinler hepsi</code>", chat)
+            return
+        if args[0].lower() in ("hepsi", "tümü", "tumu", "all", "kapat"):
+            await users.set_coins(uid, "")
+            await bot.send("✅ Coin filtresi kaldırıldı: tüm coinler.", chat)
+            return
+        syms = await users.set_coins(uid, args)
+        if not syms:
+            await bot.send("❌ Geçerli sembol yok. Örnek: <code>/coinler HYPE,BTC,SOL</code>", chat)
+            return
+        await bot.send(f"✅ Coin filtresi: <b>{fmt.esc(', '.join(sorted(syms)))}</b> — yalnız bu coinlerin "
+                       "bildirimleri gelir.", chat)
+        return
+    if cmd == "sessiz":
+        if not args:
+            await bot.send("Sessiz saat: <code>/sessiz 23-08</code> (TSİ; o aralıkta bildirim gelmez, sorgular "
+                           "çalışır) · <code>/sessiz kapat</code>", chat)
+            return
+        if args[0].lower() in ("kapat", "off", "yok"):
+            await users.set_quiet(uid, None, None)
+            await bot.send("✅ Sessiz saat kapatıldı.", chat)
+            return
+        m = re.fullmatch(r"(\d{1,2})\s*[-–:]\s*(\d{1,2})", args[0])
+        if not m or not (0 <= int(m.group(1)) <= 23 and 0 <= int(m.group(2)) <= 23) or m.group(1) == m.group(2):
+            await bot.send("❌ Biçim: <code>/sessiz 23-08</code> (0-23 arası, başlangıç ≠ bitiş).", chat)
+            return
+        s, e = int(m.group(1)), int(m.group(2))
+        await users.set_quiet(uid, s, e)
+        await bot.send(f"✅ Sessiz saat: <b>{s:02d}–{e:02d}</b> TSİ — o aralıkta bildirim gelmez, sorgular çalışır.", chat)
+        return
+    kinds = await users.ensure_default_kinds(uid, cfg)
+    coins = await users.get_coins(uid)
+    await bot.send(notif_text(u, kinds, coins), chat, reply_markup=kinds_keyboard(cfg, kinds))
+
+
+async def toggle_kind(bot, u: dict, what: str) -> tuple[set[str], str]:
+    """k:<tür> | k:*on | k:*off → yeni küme ve düğme cevabı."""
+    uid = int(u["id"])
+    allowed = allowed_kinds(bot.cfg)
+    have = await users.get_kinds(uid)
+    if what == "*on":
+        have, ack = set(allowed), "hepsi açık ✅"
+    elif what == "*off":
+        have, ack = set(), "hepsi kapalı 🔕"
+    elif what in allowed:
+        if what in have:
+            have.discard(what)
+            ack = "kapalı"
+        else:
+            have.add(what)
+            ack = "açık ✅"
     else:
-        await bot.send("🔔 Anlık bildirimler Pro'da. ⭐ /pro", u["chat_id"], reply_markup=menu())
+        return have, "bu tür satışta değil"
+    await users.set_kinds(uid, have)
+    return have, ack
 
 
 def _bucket_ok(cfg, ts: int) -> bool:

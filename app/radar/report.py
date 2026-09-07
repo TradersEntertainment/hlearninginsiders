@@ -66,7 +66,7 @@ async def run_stage(cfg: Config, client: HLClient, notifier, event: dict, stage:
     text = fmt.earnings_report(event, stage, summ, rows, cfg,
                                cluster_list=cluster_list, peer_list=peer_list)
     if notifier:
-        await notifier.send("earnings", text, priority="critical" if stage == "t1" else "high",
+        await notifier.send("earnings", text, priority="critical" if stage == "t1" else "high", coin=coin,
                             key=f"{event['symbol']}:{stage}")
     await scanner.snapshot(event["id"], "T-1h" if stage == "t1" else "pre", rows)
     flag = "alerted_t1" if stage == "t1" else "alerted_pre"

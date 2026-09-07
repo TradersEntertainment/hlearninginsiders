@@ -141,7 +141,7 @@ async def check_anomalies(cfg: Config, notifier) -> None:
         text = fmt.anomaly_alert(sym, coin, triggers, ev)
         try:
             prio = "high" if has_event else "normal"
-            await notifier.send("anomaly", text, priority=prio, key=key)
+            await notifier.send("anomaly", text, priority=prio, key=key, coin=coin)
         except Exception as e:
             log.warning("anomali alerti gönderilemedi: %s", e)
         await alert_log("anomaly", key, text)

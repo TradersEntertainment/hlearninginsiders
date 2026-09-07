@@ -518,6 +518,10 @@ EDITABLE_FIELDS: dict[str, dict] = {
                      "desc": "Pro kullanıcılara fan-out edilebilen türler (virgülle; notify.PUBLIC_KINDS içinden). Boş = fan-out yok. Sahibin kanalları etkilenmez"},
     "pro_default_kinds": {"type": "csv", "label": "Pro açılınca varsayılan türler", "group": "Satış / Kullanıcılar",
                           "desc": "Yeni Pro kullanıcı /bildirimler'e dokunmadan bu türleri alır; sonradan değiştirir"},
+    "public_digest_enabled": {"type": "bool", "label": "Ücretsiz sabah özeti", "group": "Satış / Kullanıcılar",
+                              "desc": "Ücretsiz kullanıcılara günde bir 'dünün öne çıkanları' (satılan türlerden ilk 5 başlık) — tadımlık, altında Pro çağrısı"},
+    "public_digest_hour": {"type": "int", "label": "Ücretsiz özet saati (TSİ)", "group": "Satış / Kullanıcılar",
+                           "desc": "0-23; sahibin kendi özeti (digest_hour) ayrı"},
     "support_contact": {"type": "str", "label": "Destek iletişimi", "group": "Satış / Kullanıcılar",
                         "desc": "Mesajlarda gösterilen destek adresi, ör. @kullanici. Boş = satır yok"},
 }
@@ -858,6 +862,8 @@ class Config:
         self.pro_default_kinds = _csv(os.getenv(
             "PRO_DEFAULT_KINDS", "cryptoliq,liqmap,liqattack,twap,cryptovol,new_big,whale_fill"))
         self.support_contact = os.getenv("SUPPORT_CONTACT", "")
+        self.public_digest_enabled = True
+        self.public_digest_hour = int(os.getenv("PUBLIC_DIGEST_HOUR", "9"))
         # Ödeme (env-only, chat id kuralı gibi): botun HL adresi (USDC 'Send' hedefi),
         # NOWPayments anahtarları — boşsa o ödeme yolu menüde görünmez
         self.pay_hl_address = os.getenv("PAY_HL_ADDRESS", "").strip().lower()

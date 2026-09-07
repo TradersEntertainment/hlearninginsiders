@@ -138,7 +138,7 @@ async def scan_all(cfg, notifier=None) -> dict:
                     continue
                 from ..telegram import format as fmt
                 text = fmt.pattern_alert({**r, "record": await record()})
-                if await notifier.send("pattern", text, priority="high",
+                if await notifier.send("pattern", text, priority="high", coin=coin,
                                        key=f"{key}:{r['last_ts']}", chat_id=chat):
                     await alert_log("pattern", key, text)
                     async with db() as conn:

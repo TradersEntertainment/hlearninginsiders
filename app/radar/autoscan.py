@@ -109,7 +109,7 @@ async def _alert_new_big(cfg: Config, notifier, coin: str, rows: list[dict]) -> 
         text = fmt.new_big_position_alert(coin, p, event)
         try:
             prio = "critical" if (p.get("score") or 0) >= 70 else "high"
-            if await notifier.send("new_big", text, priority=prio, key=key):
+            if await notifier.send("new_big", text, priority=prio, key=key, coin=coin):
                 await alert_log("new_big_pos", key, text)
         except Exception as e:
             log.warning("yeni-poz alerti gönderilemedi: %s", e)

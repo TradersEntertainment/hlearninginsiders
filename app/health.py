@@ -80,6 +80,8 @@ def limits(cfg: Config) -> dict[str, int]:
         "ai": cfg.ai_interval_sec * 3 + 600,
         "paywatch": 60 * 5 + 600,          # ödeme izleyici: 60 sn tur (bekleyen yokken de nabız)
         "billing": 3600 * 3 + 600,         # faturalama: saatlik
+        "fanout": 600,                     # dağıtım: 60 sn'de bir nabız (olay güdümlü)
+        "public_digest": 2400,
     }
     # telegram görevi YALNIZ bot token'ı varken spawn edilir (main.lifespan);
     # token'sız 'sadece dashboard' kurulumunda beklenirse kalp atışı hiç
@@ -125,6 +127,8 @@ def periods(cfg: Config) -> dict[str, int]:
         "ai": cfg.ai_interval_sec,
         "paywatch": 60,
         "billing": 3600,
+        "fanout": 60,
+        "public_digest": 600,
     }
     if cfg.telegram_bot_token:
         per["telegram"] = 0    # olay güdümlü: uzun yoklama

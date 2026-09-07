@@ -261,7 +261,7 @@ async def _one(cfg, client, notifier, r, scr, marks, p) -> dict:
         # hiçbir şey anlatmaz. Son bir saate bakılır ve mesajda AÇIKÇA yazılır.
         brief = await _brief(cfg, client, r["coin"], ts - DEV_BRIEF_SEC, ts)
         text = fmt_move({**base, "kind": "dev", "pct": r["dev"], "brief": brief})
-        if await notifier.send("offhours", text, priority="high", key=key):
+        if await notifier.send("offhours", text, priority="high", key=key, coin=r["coin"]):
             # MARKER YALNIZ GİDERSE. Eskiden koşulsuz yazılıyordu: geçici bir
             # HTTP hatası ya da sessiz saat bastırması o bandı 30 GÜN
             # susturuyordu ve çıpa hafta sonu boyunca sabit olduğu için hafta
@@ -292,7 +292,7 @@ async def _one(cfg, client, notifier, r, scr, marks, p) -> dict:
     brief = await _brief(cfg, client, r["coin"], ts - win, ts)
     text = fmt_move({**base, "kind": "spike", "pct": jump, "brief": brief,
                      "ref_px": ref["mark_px"], "window_min": win // 60})
-    if await notifier.send("offhours", text, priority="high",
+    if await notifier.send("offhours", text, priority="high", coin=r["coin"],
                            key=f"{key}:{ts // cool}"):
         await alert_log("offhours", key, text)      # bant dalıyla aynı kural
         out["spike"] += 1

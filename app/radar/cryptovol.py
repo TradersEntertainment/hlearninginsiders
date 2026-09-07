@@ -228,7 +228,7 @@ async def scan(cfg, client, notifier=None) -> dict:
         # Geniş 5 dk grafik (mumlar zaten elde, ek istek yok) — mümkünse tek mesaj.
         png = (vol_chart(coin, candles, rec, vols.get(coin))
                if getattr(cfg, "crypto_vol_chart", True) else None)
-        ok, mode = await notifier.send_rich("cryptovol", text, png, key=f"{key}:{rec['bucket_ts']}",
+        ok, mode = await notifier.send_rich("cryptovol", text, png, key=f"{key}:{rec['bucket_ts']}", coin=coin,
                                             chat_id=chat, short_caption=short_caption(coin, rec))
         if ok:
             await alert_log("cryptovol", key, text)

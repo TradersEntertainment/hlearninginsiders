@@ -521,6 +521,6 @@ class Collector:
                                     brief=brief)
         try:
             prio = "high" if is_watch else "normal"
-            await self.notifier.send("whale_fill", text, priority=prio, key=key)
+            await self.notifier.send("whale_fill", text, priority=prio, key=key, coin=coin)
         except Exception as e:
             log.warning("alert gönderilemedi: %s", e)

@@ -310,7 +310,7 @@ async def scan(cfg, client, notifier=None) -> dict:
             text = fmt.liq_attack_alert(s, wk)
             # MARKER YALNIZ GİDERSE (kapalı seans dersi): başarısız gönderim
             # cooldown'u yakmasın, bir sonraki tur yeniden denesin.
-            if await notifier.send("liqattack", text, priority="high", key=key,
+            if await notifier.send("liqattack", text, priority="high", key=key, coin=s["coin"],
                                    chat_id=chat):
                 await alert_log("liqattack", key, text)
                 out["alerted"] += 1

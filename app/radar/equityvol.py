@@ -153,7 +153,7 @@ async def scan(cfg, client, notifier=None) -> dict:
         from .cryptovol import short_caption, vol_chart
         png = (vol_chart(coin, candles, rec, vols.get(coin))
                if getattr(cfg, "equity_vol_chart", True) else None)
-        ok, mode = await notifier.send_rich("equityvol", text, png, key=f"{key}:{rec['bucket_ts']}",
+        ok, mode = await notifier.send_rich("equityvol", text, png, key=f"{key}:{rec['bucket_ts']}", coin=coin,
                                             chat_id=chat, short_caption=short_caption(coin, rec))
         if ok:
             await alert_log("equityvol", key, text)

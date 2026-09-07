@@ -611,7 +611,7 @@ async def scan(cfg, client, notifier=None) -> dict:
                 log.debug("grafik üretilemedi (%s)", coin, exc_info=True)
         cap = (f"📈 <b>{fmt.esc(coin)}</b> · liq {fmt.px(fresh[0]['liq_px'])}"
                f" · %{fresh[0]['dist']:.2f} kaldı")
-        sent, mode = await notifier.send_rich("cryptoliq", text, png, key=key, chat_id=chat,
+        sent, mode = await notifier.send_rich("cryptoliq", text, png, key=key, chat_id=chat, coin=coin,
                                               short_caption=cap, limit=CAPTION_MAX)
         if sent:
             for p in fresh:
@@ -661,7 +661,7 @@ async def _closure_notes(cfg, notifier, chat: str, ts: int, out: dict) -> None:
     for coin, rs in groups.items():
         text = fmt.crypto_liq_closed(coin, rs)
         key = f"cryptoliq_close:{coin}:{ts}"
-        if await notifier.send("cryptoliq", text, priority="high", key=key, chat_id=chat):
+        if await notifier.send("cryptoliq", text, priority="high", key=key, chat_id=chat, coin=coin):
             for r in rs:
                 await _watch_set(coin, r["address"], notified_ts=ts)
             out["close_notes"] += 1
