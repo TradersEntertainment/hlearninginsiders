@@ -80,9 +80,11 @@ olanlar (son likidasyon uyarısı, 70+ skorlu insider) her zaman geçer.
 seçicidir: sayfada bağlam olan şey Telegram'da gürültüdür. Likidasyon duvarları
 bunun en net örneği — `liq_cluster_min_usd` ($1M) yalnız **ana sayfadaki
 likidasyon haritasını** besler, Telegram'a düşmek için duvarın
-`liq_cluster_alert_min_usd` ($5M) eşiğini geçmesi gerekir; likit/endeks
-varlıklarda (GOLD, XYZ100, FX…) o eşik zaten `liq_cluster_big_min_usd`
-($20M)'dir. Aynı ayrım `/saatler` (hepsi listelenir, kanala yalnız "güçlü"
+`liq_cluster_alert_min_usd` ($5M) eşiğini geçmesi gerekir; hacimce top-10
+hisselerde o eşik `liq_cluster_big_min_usd` ($20M)'dir. Endeks/emtia/FX'te
+(GOLD, CL, XYZ100, FX…) duvar bildirimi liq attack ile **aynı kapıyı** kullanır:
+fiyatın ≤%1 içindeki liq ≥ $50M değilse mesaj gitmez (CL vakası — $31.6M'lik
+duvar %3.9'da gelmişti — artık sessiz; sayfa duvarı yine gösterir). Aynı ayrım `/saatler` (hepsi listelenir, kanala yalnız "güçlü"
 saatler gider), `/hacim` (her rekor kaydedilir, bildirimde coin başına bekleme
 var) ve `/kapali` (her bant kaydedilir, kümülatif bant bildirimi yalnız hafta sonu)
 için de geçerlidir.
@@ -311,7 +313,10 @@ $ yetmedi ya da oran düşük); strip'te "N aday bildirim kapısının altında"
 çok daha sıkı: ≤%1 içinde ≥ $50M** (`liq_attack_alert_big_dist_pct`,
 `liq_attack_alert_big_min_usd`). Likit perp'te $2-4M'lik küme %2'de kolayca
 3-7× oran verip ana kanalı dolduruyordu; mesaj başlığında "endeks/emtia
-kapısı" yazar, sayfada 📐 rozeti.
+kapısı" yazar, sayfada 📐 rozeti. Aynı kapı 🧲 **likidasyon duvarı**
+bildiriminde de geçerli (`liqwatch.check_clusters` → `gate_for`; mesajda
+"📐 endeks/emtia/FX kapısı" satırı): CL'de $31.6M'lik duvar %3.9'da gelmişti,
+artık gelmez.
 
 **Bildirim markerı yalnız gönderim başarılıysa yazılır** — kapalı seans
 bandındaki dersin aynısı; başarısız gönderim cooldown'u yakmaz.

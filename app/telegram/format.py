@@ -252,6 +252,10 @@ def liq_cluster_alert(c: dict) -> str:
     ]
     if c.get("other_total"):
         lines.append(f"⚖️ Karşı yönde de {usd(c['other_total'])} liq var — iki yönlü sıkışma")
+    if c.get("gate"):   # endeks/emtia/FX: liq attack ile aynı kapı (≤%1 içinde ≥ $50M)
+        g = c["gate"]
+        lines.append(f"📐 endeks/emtia/FX kapısı: ≤%{float(g['dist']):g} içinde {usd(g['near'])}"
+                     f" (eşik {usd(g['min'])})")
     if is_listed(sym):
         lines.append(PROPR_NOTE)
     lines.append(DISCLAIMER)

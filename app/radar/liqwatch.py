@@ -238,35 +238,57 @@ async def find_clusters(cfg: Config) -> list[dict]:
     return out
 
 
-async def check_clusters(cfg: Config, notifier) -> None:
+async def check_clusters(cfg: Config, notifier) -> dict:
+    """Duvar → Telegram. Hisse: toplam ≥ liq_cluster_alert_min_usd ($5M); hacimce
+    top-10 hisse: ≥ liq_cluster_big_min_usd ($20M). Endeks/emtia/FX (assets.kind ==
+    non_equity: GOLD, CL, XYZ100, FX…): liq attack ile AYNI kapı (`liqattack.gate_for`)
+    — fiyatın ≤%1 içindeki liq ≥ $50M değilse gitmez. CL vakası ($31.6M, 13 poz,
+    %3.9) eski $20M-toplam kuralıyla geçmişti; kullanıcı kuralı "$50M ve %1
+    yakınlık değilse atma". Sayfa (find_clusters, ana sayfa haritası) etkilenmez."""
+    out = {"walls": 0, "gated": 0, "gated_big": 0, "cooldown": 0, "alerted": 0}
     clusters = await find_clusters(cfg)
     if not clusters:
-        return
+        return out
     from .bookwall import big_coin_set  # döngüsel importu kır
+    from .liqattack import gate_for
     bigs = await big_coin_set(cfg)
+    out["walls"] = len(clusters)
     for c in clusters:
-        # JPY/GOLD/XYZ100 gibi likit varlıklarda küçük kümeler gürültü —
-        # onlarda alarm için büyük-sınıf tabanı gerekir (ana sayfa etkilenmez)
-        big = assets.kind(c["symbol"]) == "non_equity" or c["coin"] in bigs
-        # BİLDİRİM eşiği sayfa eşiğinden AYRI ve daha yüksek: find_clusters
-        # $1M'den itibaren duvar sayıyor (ana sayfada bağlam), ama $1.1M'lik bir
-        # duvarı Telegram'a düşürmek gürültü — kullanıcı bunu bildirdi.
-        alert_min = (cfg.liq_cluster_big_min_usd if big
-                     else cfg.liq_cluster_alert_min_usd)
-        if c["total"] < alert_min:
-            continue
+        if assets.kind(c["symbol"]) == "non_equity":
+            # Likit perp'te uzak/küçük küme gürültü: yalnız mesafe içindeki liq sayılır
+            a_dist, a_min, _ = gate_for(cfg, c["symbol"])
+            near = sum(m["notional"] for m in c["members"] if abs(m["dist"]) <= a_dist)
+            if near < a_min:
+                out["gated"] += 1
+                out["gated_big"] += 1
+                continue
+            c["gate"] = {"dist": a_dist, "min": a_min, "near": near}
+        else:
+            # BİLDİRİM eşiği sayfa eşiğinden AYRI ve daha yüksek: find_clusters
+            # $1M'den itibaren duvar sayıyor (ana sayfada bağlam), ama $1.1M'lik bir
+            # duvarı Telegram'a düşürmek gürültü — kullanıcı bunu bildirdi.
+            alert_min = (cfg.liq_cluster_big_min_usd if c["coin"] in bigs
+                         else cfg.liq_cluster_alert_min_usd)
+            if c["total"] < alert_min:
+                out["gated"] += 1
+                continue
         key = f"{c['coin']}:{c['side']}"
         if await alert_recent("liq_cluster", key, CLUSTER_COOLDOWN):
+            out["cooldown"] += 1
             continue
         text = fmt.liq_cluster_alert(c)
         await alert_log("liq_cluster", key, text)  # cooldown, gönderim sonucundan bağımsız
         if notifier:
             try:
-                await notifier.send("liqmap", text, key=key)
+                if await notifier.send("liqmap", text, key=key):
+                    out["alerted"] += 1
             except Exception as e:
                 log.warning("liq duvarı alerti gönderilemedi: %s", e)
-        log.info("liq duvarı: %s %s %d poz, toplam $%.0f (ort mesafe %%%.1f)",
-                 c["symbol"], c["side"], c["count"], c["total"], c["avg_dist"])
+        g = c.get("gate")
+        log.info("liq duvarı: %s %s %d poz, toplam $%.0f (ort mesafe %%%.1f)%s",
+                 c["symbol"], c["side"], c["count"], c["total"], c["avg_dist"],
+                 f" · endeks kapısı ≤%{g['dist']:g} içinde ${g['near']:,.0f}" if g else "")
+    return out
 
 
 async def loop(cfg: Config, client: HLClient, notifier=None) -> None:
