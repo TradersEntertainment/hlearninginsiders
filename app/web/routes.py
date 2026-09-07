@@ -674,7 +674,7 @@ async def coin_page(request: Request, symbol: str):
         cfg = request.app.state.cfg
         return _render(request, "coin.html", {"ticker": None, "symbol": symbol.upper(),
                                               "crypto_n": len(await crypto_names()),
-                                              "hip3": await find_in_hip3(symbol, cfg.equity_dexes),
+                                              "hip3": await find_in_hip3(symbol, assets.watched_dexes(cfg)),
                                               "hip3_known": await hip3_known(),
                                               "similar": await similar_names(symbol),
                                               "excluded": is_excluded(symbol)})
@@ -785,8 +785,9 @@ async def coin_page(request: Request, symbol: str):
         "liq": _safe(panel_err, "liq", liqmap.build, rows, mark, cfg.max_liq_distance_pct),
         "bwalls": bwalls,
         "pxchart": pxchart,
+        "klass": t.get("klass") or assets.klass(coin),
         "tv_sym": (tv_symbol(t["symbol"]) if cfg.show_tradingview and kind != "crypto"
-                   else None),
+                   and t.get("klass") != "kripto" else None),
         "propr": propr_listed(t["symbol"]),
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
@@ -985,7 +986,7 @@ async def whale_page(request: Request, address: str):
 
     live = []
     live_fail = 0
-    for dex in [*cfg.equity_dexes, ""]:
+    for dex in [*assets.watched_dexes(cfg), ""]:
         try:
             state = await client.clearinghouse(addr, dex)
         except Exception as e:
@@ -1018,7 +1019,7 @@ async def whale_page(request: Request, address: str):
         sym_map = {r["coin"]: r["symbol"] for r in await cur.fetchall()}
     return _render(request, "whale.html", {
         "address": addr, "arow": arow, "live": live, "fills": fills, "snaps": snaps,
-        "live_fail": live_fail, "live_dex_n": len(cfg.equity_dexes) + 1,
+        "live_fail": live_fail, "live_dex_n": len(assets.watched_dexes(cfg)) + 1,
         "linked": linked, "sym_map": sym_map,
     })
 

@@ -27,6 +27,17 @@ from .cryptovol import (INTERVAL, LOOKBACK_SEC, MIN_BUCKETS, find_record,
 log = logging.getLogger("radar.equityvol")
 
 
+def route_for(cfg, coin: str, min_usd: float, alert_min: float, chat: str) -> dict:
+    """Coin sınıfına göre gönderim: kripto dex (para:ANSEM) → 'cryptovol' türü, kripto
+    kanalı, kripto bildirim tabanı, kripto metni; hisse → eskisi gibi."""
+    from .. import assets
+    if assets.is_crypto_dex(coin):
+        return {"kind": "cryptovol", "chat": (getattr(cfg, "crypto_chat_id", "") or "").strip(),
+                "alert_min": max(min_usd, float(getattr(cfg, "crypto_vol_alert_min_usd", 1_000_000))),
+                "crypto": True}
+    return {"kind": "equityvol", "chat": chat, "alert_min": alert_min, "crypto": False}
+
+
 async def _tickers() -> list[dict]:
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
@@ -136,27 +147,28 @@ async def scan(cfg, client, notifier=None) -> dict:
 
         # SAYFA eşiği ≠ BİLDİRİM eşiği: satır kaydedildi (sayfada bağlam),
         # ama kanala düşmesi için daha yüksek eşiği geçmesi gerekiyor.
-        if rec["notional"] < alert_min:
+        rt = route_for(cfg, coin, min_usd, alert_min, chat)
+        if rec["notional"] < rt["alert_min"]:
             out["below_alert"] += 1
             continue
-        if notifier is None or not chat:
+        if notifier is None or not rt["chat"]:
             continue                       # kanal yoksa GÖNDERME (ana kanalı kirletme)
-        key = f"equityvol:{coin}"
-        if await alert_recent("equityvol", key, cool):
+        key = f"{rt['kind']}:{coin}"
+        if await alert_recent(rt["kind"], key, cool):
             continue                       # olay kaydedildi ama bildirilmiyor
         from ..telegram import format as fmt
         from .forensics import alert_brief
         brief = await alert_brief(cfg, client, coin, rec["bucket_ts"],
                                   rec["bucket_ts"] + 300)
-        text = fmt.equity_vol_alert({**rec, "coin": coin, "brief": brief,
-                                     "day_vol": vols.get(coin)})
+        text = (fmt.crypto_vol_alert if rt["crypto"] else fmt.equity_vol_alert)(
+            {**rec, "coin": coin, "brief": brief, "day_vol": vols.get(coin)})
         from .cryptovol import short_caption, vol_chart
         png = (vol_chart(coin, candles, rec, vols.get(coin))
                if getattr(cfg, "equity_vol_chart", True) else None)
-        ok, mode = await notifier.send_rich("equityvol", text, png, key=f"{key}:{rec['bucket_ts']}", coin=coin,
-                                            chat_id=chat, short_caption=short_caption(coin, rec))
+        ok, mode = await notifier.send_rich(rt["kind"], text, png, key=f"{key}:{rec['bucket_ts']}", coin=coin,
+                                            chat_id=rt["chat"], short_caption=short_caption(coin, rec))
         if ok:
-            await alert_log("equityvol", key, text)
+            await alert_log(rt["kind"], key, text)
             async with db() as conn:
                 await conn.execute(
                     "UPDATE vol_events SET alerted=1 WHERE coin=? AND bucket_ts=?",

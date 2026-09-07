@@ -67,10 +67,13 @@ async def screener(cfg=None, limit: int | None = None) -> dict:
             " GROUP BY coin")
         pos = {r["coin"]: (r["n"], r["ntl"] or 0) for r in await cur.fetchall()}
 
+    from .. import assets
     from ..propr import is_listed as propr_listed
     rows, n_stale, n_nodata = [], 0, 0
     for t in tickers:
         coin = t["coin"]
+        if assets.is_crypto_dex(coin):
+            continue                        # kripto dex (para): kapalı seans kavramı yok
         base = await metrics.metric_at(coin, anchor)
         cur_m = await metrics.metric_at(coin, measure_ts)
         if not base or not cur_m or not base.get("mark_px") or not cur_m.get("mark_px"):

@@ -64,7 +64,8 @@ def classify(coin: str) -> str:
     ana dex (öneksiz coin) kriptodur. assets.kind() ayrımı hisse/emtia için,
     burada gereken ayrım 'kripto mu değil mi'.
     """
-    return "equity" if ":" in (coin or "") else "crypto"
+    from .. import assets
+    return "crypto" if (":" not in (coin or "") or assets.is_crypto_dex(coin or "")) else "equity"
 
 
 def _decorate(rows: list[dict], sym_map: dict[str, str]) -> list[dict]:

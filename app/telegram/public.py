@@ -118,7 +118,11 @@ async def unknown_message(cfg, q: str) -> str:
     from ..assets import is_excluded
     from ..hl.universe import find_in_hip3, similar_names
     sym = fmt.esc(q[:24].upper())
-    h = await find_in_hip3(q, getattr(cfg, "equity_dexes", None))
+    from .. import assets
+    h = await find_in_hip3(q, assets.watched_dexes(cfg))
+    if h and h.get("watched"):
+        return (f"⏳ <b>{sym}</b> Hyperliquid'de <b>{fmt.esc(h['dex'])}</b> dex'inde listeli ve izleme listesinde; "
+                "evren yenilemesi (en geç 6 saat) sonrasında sorgulanabilir — birazdan tekrar dene.")
     if h:
         return (f"ℹ️ <b>{sym}</b> Hyperliquid'de <b>{fmt.esc(h['dex'])}</b> builder dex'inde listeli ama bu bot o "
                 "dex'i izlemiyor — pozisyon ve liq verisi yok. Başka bir coin dene: HYPE, BTC, SOL…")

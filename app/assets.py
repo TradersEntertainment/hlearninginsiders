@@ -35,6 +35,60 @@ def _extra(name: str) -> set[str]:
     return {s.strip().upper() for s in raw.replace(";", ",").split(",") if s.strip()}
 
 
+# ---- HIP-3 KRİPTO dex'leri (ör. `para`: para:ANSEM). Veri hattı hisse gibi (tickers,
+# positions_current, asset_metrics — süpürücü adres başına +1 istek), SINIF kripto:
+# bilanço takvimi yok, mesajlarda "kripto", kripto kanalına gider, endeks/emtia kapıları
+# uygulanmaz. Hangi sembollerin bu dex'lerde olduğu evren yenilemesinde kv'ye yazılır
+# (`crypto_dex_symbols`) ve açılışta yüklenir — `kind("ANSEM")` gibi öneksiz çağrılar da
+# doğru sınıfı bulsun.
+CRYPTO_DEX_SYMBOLS: set[str] = set()
+CRYPTO_DEX_KV = "crypto_dex_symbols"
+
+
+def crypto_dexes(cfg=None) -> list[str]:
+    raw = getattr(cfg or get_config(), "crypto_dexes", None) or []
+    if isinstance(raw, str):
+        raw = raw.replace(";", ",").split(",")
+    return [str(d).strip() for d in raw if str(d).strip()]
+
+
+def watched_dexes(cfg) -> list[str]:
+    """İzlenen tüm HIP-3 dex'leri: hisse dex'leri + kripto dex'leri (sırayla, tekrarsız)."""
+    out = [str(d).strip() for d in (getattr(cfg, "equity_dexes", None) or []) if str(d).strip()]
+    for d in crypto_dexes(cfg):
+        if d not in out:
+            out.append(d)
+    return out
+
+
+def is_crypto_dex(coin_or_symbol: str, cfg=None) -> bool:
+    s = (coin_or_symbol or "").strip()
+    if not s:
+        return False
+    if ":" in s:
+        return s.split(":")[0] in set(crypto_dexes(cfg))
+    return s.upper() in CRYPTO_DEX_SYMBOLS
+
+
+def set_crypto_dex_symbols(syms) -> None:
+    CRYPTO_DEX_SYMBOLS.clear()
+    CRYPTO_DEX_SYMBOLS.update(str(x).upper() for x in (syms or []) if str(x).strip())
+
+
+async def save_crypto_dex_symbols(syms) -> None:
+    from .db import kv_set, now
+    set_crypto_dex_symbols(syms)
+    await kv_set(CRYPTO_DEX_KV, {"syms": sorted(CRYPTO_DEX_SYMBOLS), "ts": now()})
+
+
+async def load_crypto_dex_symbols() -> int:
+    """Açılış: evren yenilemesi koşana kadar kv'deki son küme geçerli."""
+    from .db import kv_get
+    rec = await kv_get(CRYPTO_DEX_KV) or {}
+    set_crypto_dex_symbols(rec.get("syms") or [])
+    return len(CRYPTO_DEX_SYMBOLS)
+
+
 def excluded_set() -> set[str]:
     """Tamamen takip dışı semboller (evren + tarama + takvim yok)."""
     return _extra("exclude_symbols")
@@ -46,7 +100,9 @@ def is_excluded(symbol_or_coin: str) -> bool:
 
 
 def kind(symbol_or_coin: str) -> str:
-    """'equity' | 'non_equity' | 'no_calendar'"""
+    """'equity' | 'non_equity' | 'no_calendar' | 'crypto' (HIP-3 kripto dex'i, ör. para:ANSEM)"""
+    if is_crypto_dex(symbol_or_coin or ""):
+        return "crypto"
     sym = (symbol_or_coin or "").split(":")[-1].upper()
     if sym in NON_EQUITY or sym in _extra("non_equity_extra"):
         return "non_equity"
@@ -67,3 +123,12 @@ def is_index_perp(coin_or_symbol: str) -> bool:
 def has_earnings(symbol_or_coin: str) -> bool:
     """Bu enstrüman için bilanço takvimi aranmalı mı?"""
     return kind(symbol_or_coin) == "equity"
+
+
+def klass(coin_or_symbol: str) -> str:
+    """Görünüm/yönlendirme sınıfı: 'kripto' (ana dex ya da kripto dex) | 'endeks' | 'hisse'.
+    Coin kimliği bekler (öneksiz = ana dex kripto; 'xyz:SP500' = endeks; 'para:ANSEM' = kripto)."""
+    s = coin_or_symbol or ""
+    if ":" not in s or is_crypto_dex(s):
+        return "kripto"
+    return "endeks" if kind(s) == "non_equity" else "hisse"

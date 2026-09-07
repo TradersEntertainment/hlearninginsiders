@@ -114,6 +114,13 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
    karşılığı olmayan sembolleri yazar; arama ve bot "X `abc` dex'inde listeli ama
    izlenmiyor" der. Arama PROPR listesine değil HL evrenine bakar — PROPR'a bir
    sembol eklemek onu aranır yapmaz, HL'de o adla var olması gerekir.
+   **Kripto builder dex'leri** (`CRYPTO_DEXES`, varsayılan `para` — `para:ANSEM`):
+   veri hattı HIP-3 gibi (tickers, positions_current, asset_metrics; süpürücü adres
+   başına +1 istek) ama sınıf **kripto** (`assets.kind` → `crypto`, `assets.klass` →
+   `kripto`): bilanço takvimi sorgulanmaz, kapalı seans ve liq attack mantığına
+   girmez, hacim rekoru kripto mesajıyla kripto kanalına gider, endeks/emtia kapıları
+   uygulanmaz, TWAP alarmı kripto kanalına düşer. Sembol kümesi evren yenilemesinde
+   kv'ye (`crypto_dex_symbols`) yazılır, açılışta yüklenir.
 2. Yahoo'dan (yfinance) evrendeki sembollerin earnings tarihleri çekilir; `FINNHUB_API_KEY` verilirse çapraz doğrulanır.
 3. WebSocket `trades` kanalı 7/24 dinlenir — her trade'de alıcı+satıcı adresi gelir; $5K üstü fill'ler ve adresleri DB'ye yazılır.
    Ana dex'in hacimce ilk 30 kripto coin'i de dinlenir ama YALNIZ tetikleyici olarak:

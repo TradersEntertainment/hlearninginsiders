@@ -45,7 +45,7 @@ def _iter_states(resp):
 
 async def _mark_map(cfg: Config, client: HLClient) -> dict[str, float]:
     marks: dict[str, float] = {}
-    for dex in ["", *cfg.equity_dexes]:
+    for dex in ["", *assets.watched_dexes(cfg)]:
         try:
             data = await client.meta_and_ctxs(dex)
             meta, ctxs = data[0], data[1]
@@ -110,7 +110,7 @@ async def run_cycle(cfg: Config, client: HLClient, notifier) -> None:
             # ESKİDEN: ALL_DEXES dene, patlarsa dex="" ile devam. ALL_DEXES HER
             # ZAMAN patladığı için likidasyon radarı fiilen YALNIZ ana dex'i
             # görüyordu — asıl işi olan HIP-3 hisse pozisyonlarını hiç değil.
-            resp = await client.clearinghouse_all(addr, ["", *cfg.equity_dexes])
+            resp = await client.clearinghouse_all(addr, ["", *assets.watched_dexes(cfg)])
         except Exception:
             # API hatası ya da eksik dex — 'kapandı' SAYMA (ok_addrs'e girmez)
             return

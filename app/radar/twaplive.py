@@ -319,11 +319,9 @@ def next_progress_step(run: Run) -> float | None:
 
 
 def klass_of(coin: str) -> str:
-    """kripto | hisse | endeks (mesaj rozeti ve yönlendirme)."""
-    if ":" not in (coin or ""):
-        return "kripto"
+    """kripto | hisse | endeks (mesaj rozeti ve yönlendirme) — assets.klass (para:ANSEM → kripto)."""
     from .. import assets
-    return "endeks" if assets.kind(coin) == "non_equity" else "hisse"
+    return assets.klass(coin)
 
 
 # ---------------- DB yardımcıları ----------------
@@ -461,9 +459,9 @@ async def _rehydrate(window_sec: int) -> int:
 
 
 def chat_for(cfg, coin: str) -> tuple[str, bool]:
-    """(chat_id, gönderilebilir mi): kripto → CRYPTO_CHAT_ID (boşsa gönderme),
-    hisse/endeks → ana sohbet."""
-    if ":" not in (coin or ""):
+    """(chat_id, gönderilebilir mi): kripto (ana dex ya da kripto dex) → CRYPTO_CHAT_ID
+    (boşsa gönderme), hisse/endeks → ana sohbet."""
+    if klass_of(coin) == "kripto":
         chat = (getattr(cfg, "crypto_chat_id", "") or "").strip()
         return chat, bool(chat)
     return "", True

@@ -160,8 +160,9 @@ def _parse_equity_positions(resp, coin_set: set[str],
 
 
 def _dexes(cfg: Config) -> list[str]:
-    """Sorgulanacak dex'ler: ana dex ("") + tüm HIP-3 hisse dex'leri."""
-    return ["", *cfg.equity_dexes]
+    """Sorgulanacak dex'ler: ana dex ("") + izlenen tüm HIP-3 dex'leri (hisse + kripto)."""
+    from .. import assets
+    return ["", *assets.watched_dexes(cfg)]
 
 
 def _adaptive_batch(cfg: Config, client) -> tuple[int, dict]:

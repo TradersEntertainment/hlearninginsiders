@@ -174,8 +174,11 @@ async def _equity_positions() -> dict[str, list[dict]]:
                FROM positions_current p JOIN tickers t ON t.coin = p.coin
                WHERE p.liq_px IS NOT NULL AND p.notional > 0""")
         rows = [dict(r) for r in await cur.fetchall()]
+    from .. import assets
     by: dict[str, list[dict]] = {}
     for r in rows:
+        if assets.is_crypto_dex(r["coin"]):
+            continue                        # kripto dex (para): dayanak piyasa kapanmaz, saldırı tezi yok
         by.setdefault(r["coin"], []).append(r)
     return by
 

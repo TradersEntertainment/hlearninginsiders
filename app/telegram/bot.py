@@ -706,7 +706,8 @@ class TelegramBot:
                          + (" │ ⭐ watchlist" if r.get("watchlist") else ""))
         pos_found = False
         n_fail = 0
-        for dex in [*self.cfg.equity_dexes, ""]:
+        from .. import assets
+        for dex in [*assets.watched_dexes(self.cfg), ""]:
             try:
                 state = await self.client.clearinghouse(addr, dex)
             except Exception as e:
@@ -727,7 +728,7 @@ class TelegramBot:
                 side = "🔴SHORT" if szi < 0 else "🟢LONG"
                 lines.append(f"  {p.get('coin')} {side} {fmt.usd(float(p.get('positionValue') or 0))} "
                              f"@{fmt.px(float(p.get('entryPx') or 0))}")
-        n_dex = len(self.cfg.equity_dexes) + 1
+        n_dex = len(assets.watched_dexes(self.cfg)) + 1
         if not pos_found and n_fail >= n_dex:
             lines.append("⚠️ Hiçbir dex sorgusu yanıt vermedi — <b>poz yok demiyoruz</b>, "
                          "HL'ye ulaşılamadı. Birazdan tekrar dene.")

@@ -165,6 +165,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "group": "Tarama & performans", "desc": "HL API paralellik (rate limit'e dikkat)"},
     "equity_dexes": {"type": "csv", "label": "Hisse dex'leri (HIP-3)",
                      "group": "Takvim & semboller", "desc": "İzlenen HIP-3 builder dex'leri, virgülle (ör: xyz). HL'deki TÜM builder dex'leri /tani 'evren' satırında keşfedilmiş olarak listelenir; bir coin 'şu dex'te listeli ama izlenmiyor' çıkarsa dex adını buraya ekle. Her ek dex derin keşifte adres başına +1 istek demektir"},
+    "crypto_dexes": {"type": "csv", "label": "Kripto dex'leri (HIP-3)",
+                     "group": "Takvim & semboller", "desc": "Kripto builder dex'leri, virgülle (ör: para — para:ANSEM). Coinleri veri hattında HIP-3 gibi izlenir (süpürücü adres başına +1 istek) ama KRİPTO sınıfındadır: bilanço takvimi yok, mesajlarda kripto, kripto kanalı, endeks/emtia kapıları uygulanmaz. Boş = yok"},
     "calendar_horizon_days": {"type": "int", "label": "Takvim ufku (gün)",
                               "group": "Takvim & semboller", "desc": "Kaç gün ilerisinin earnings'leri çekilsin"},
     "metrics_poll_sec": {"type": "int", "label": "Metrik periyodu (sn)",
@@ -781,6 +783,8 @@ class Config:
         )
         # Hisse perp'lerinin yaşadığı HIP-3 dex'leri (virgülle ayrık)
         self.equity_dexes = _csv(os.getenv("EQUITY_DEXES", "xyz"))
+        # HIP-3 kripto dex'leri (para:ANSEM gibi) — sınıf kripto, veri hattı HIP-3 (bkz. assets)
+        self.crypto_dexes = _csv(os.getenv("CRYPTO_DEXES", "para"))
 
         # Eşikler
         self.min_fill_notional = float(os.getenv("MIN_FILL_NOTIONAL", "5000"))

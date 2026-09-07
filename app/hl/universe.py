@@ -19,22 +19,32 @@ def symbol_of(coin: str) -> str:
 
 
 async def refresh_universe(client: HLClient, equity_dexes: list[str],
-                           new_out: list[dict] | None = None) -> list[str]:
-    """Evreni yenile. new_out verilirse YENİ listelenen coin'ler oraya eklenir
-    (tickers boşken — ilk açılış — hiçbir şey eklenmez, 100 coin spam olmasın)."""
+                           new_out: list[dict] | None = None,
+                           crypto_dexes: list[str] | None = None) -> list[str]:
+    """Evreni yenile: hisse dex'leri + kripto dex'leri (para gibi; sembolleri
+    assets.CRYPTO_DEX_SYMBOLS/kv'ye yazılır — sınıflandırma oradan). new_out verilirse
+    YENİ listelenen coin'ler oraya eklenir (tickers boşken — ilk açılış — hiçbir şey
+    eklenmez, 100 coin spam olmasın)."""
+    from .. import assets
     from ..assets import excluded_set, is_excluded
     coins: list[str] = []
     all_ok = True  # tüm dex meta'ları alındı mı (kısmi hata varsa silme yapma)
+    cdex = [str(d).strip() for d in (crypto_dexes or []) if str(d).strip()]
+    dexes = [d for d in equity_dexes] + [d for d in cdex if d not in equity_dexes]
+    crypto_syms: set[str] = set()
+    crypto_ok = True
     async with db() as conn:
         cur = await conn.execute("SELECT coin FROM tickers")
         known = {r["coin"] for r in await cur.fetchall()}
     first_boot = not known
-    for dex in equity_dexes:
+    for dex in dexes:
         try:
             meta = await client.meta(dex)
         except Exception as e:
             log.warning("meta(%s) alınamadı: %s", dex, e)
             all_ok = False
+            if dex in cdex:
+                crypto_ok = False
             continue
         universe = (meta or {}).get("universe") or []
         async with db() as conn:
@@ -47,6 +57,8 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str],
                 if is_excluded(sym):
                     continue  # kullanıcı bu hisseyi tamamen takip dışı bıraktı
                 coins.append(coin)
+                if dex in cdex:
+                    crypto_syms.add(sym)
                 if new_out is not None and not first_boot and coin not in known:
                     new_out.append({"coin": coin, "symbol": sym,
                                     "max_leverage": asset.get("maxLeverage")})
@@ -78,6 +90,11 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str],
                 f"DELETE FROM tickers WHERE coin NOT IN ({placeholders})", tuple(coins))
             if cur.rowcount:
                 log.info("evrenden düşen %d coin tickers'tan silindi", cur.rowcount)
+    if crypto_ok:
+        try:
+            await assets.save_crypto_dex_symbols(crypto_syms)   # kripto dex yoksa küme boşalır
+        except Exception:
+            log.debug("kripto dex sembolleri yazılamadı", exc_info=True)
     if coins:
         log.info("evren yenilendi: %d coin (%s)", len(coins), ", ".join(coins[:8]) + ("…" if len(coins) > 8 else ""))
     return coins
@@ -293,17 +310,19 @@ async def resolve_coin(symbol_or_coin: str) -> dict | None:
     sessizce davranış değiştirirdi. Kripto kimliği yalnız bu dönüş değerinde
     yaşar. Sembol çakışmasında (aynı ad iki yerde) hisse kazanır.
     """
+    from .. import assets
     t = await find_ticker(symbol_or_coin)
     if t:
-        return {**t, "kind": "equity"}
+        # kind = VERİ hattı (HIP-3: positions_current/asset_metrics); klass = sınıf
+        # (para:ANSEM → kripto: takvim yok, kripto kanalı, endeks kapısı yok)
+        return {**t, "kind": "equity", "klass": assets.klass(t["coin"])}
     s = (symbol_or_coin or "").strip()
     if not s or ":" in s:
         return None
-    from ..assets import is_excluded
     name = (await crypto_names()).get(s.upper())
-    if not name or is_excluded(name):
+    if not name or assets.is_excluded(name):
         return None
-    return {"coin": name, "symbol": name, "dex": "", "kind": "crypto"}
+    return {"coin": name, "symbol": name, "dex": "", "kind": "crypto", "klass": "kripto"}
 
 
 # ---------------- HIP-3 (builder) dex keşfi — yalnız tanı ve arama cevabı için ----------------

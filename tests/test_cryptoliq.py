@@ -589,7 +589,7 @@ def test_resolve():
         assert eq and eq["kind"] == "equity" and eq["coin"] == "xyz:SNDK"
         assert (await uni.resolve_coin("xyz:SNDK"))["kind"] == "equity"
         pump = await uni.resolve_coin("pump")
-        assert pump == {"coin": "PUMP", "symbol": "PUMP", "dex": "", "kind": "crypto"}, pump
+        assert pump == {"coin": "PUMP", "symbol": "PUMP", "dex": "", "kind": "crypto", "klass": "kripto"}, pump
         assert (await uni.resolve_coin("KPEPE"))["coin"] == "kPEPE", "büyük harf → gerçek ad"
         assert (await uni.resolve_coin("hype"))["coin"] == "HYPE", "ctx kv'si de evren"
         assert await uni.resolve_coin("xxx") is None and await uni.resolve_coin("") is None

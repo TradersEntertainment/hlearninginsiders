@@ -88,7 +88,7 @@ async def universe_loop(cfg, client, notifier=None):
     while True:
         try:
             fresh: list[dict] = []
-            coins = await uni.refresh_universe(client, cfg.equity_dexes, fresh)
+            coins = await uni.refresh_universe(client, cfg.equity_dexes, fresh, cfg.crypto_dexes)
             try:
                 await uni.discover_dexes(client)     # tanı + arama cevabı için (izleme listesi değişmez)
             except Exception:
@@ -332,6 +332,15 @@ async def lifespan(app: FastAPI):
     if overrides:
         cfg.apply_overrides(overrides)
         log.info("%d ayar override'ı yüklendi: %s", len(overrides), ", ".join(overrides))
+
+    # Kripto dex sembolleri (para:ANSEM…): evren yenilemesi koşana kadar kv'deki küme
+    from . import assets as _assets
+    try:
+        n_cd = await _assets.load_crypto_dex_symbols()
+        if n_cd:
+            log.info("kripto dex sembolleri yüklendi: %d", n_cd)
+    except Exception:
+        log.debug("kripto dex sembolleri yüklenemedi", exc_info=True)
 
     # Sicil eşiği değiştiyse eski kayıtları yeni kurala göre yeniden hesapla (bir kez)
     from .recompute import recompute_records

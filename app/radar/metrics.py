@@ -16,7 +16,8 @@ async def poll_metrics(cfg: Config, client: HLClient) -> int:
     # ANA DEX ("") de geziliyor: kripto OI'si olmadan "long mu kapattılar,
     # short mu açtılar" sorusu cevaplanamıyor (OI↑fiyat↓ = yeni short,
     # OI↓fiyat↓ = long kapanışı). Poll başına +1 istek.
-    dexes = list(cfg.equity_dexes)
+    from .. import assets as _assets
+    dexes = _assets.watched_dexes(cfg)              # hisse + kripto HIP-3 dex'leri
     if getattr(cfg, "crypto_metrics_enabled", True):
         dexes = ["", *dexes]
     for dex in dexes:

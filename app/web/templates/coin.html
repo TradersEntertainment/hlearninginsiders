@@ -6,9 +6,12 @@
 {% block content %}
 {% if not ticker %}
 <div class="panel">
-  {% if hip3 %}
+  {% if hip3 and hip3.watched %}
+  {{ m.empty([symbol ~ " Hyperliquid'de " ~ hip3.dex ~ " dex'inde listeli" ~ (" (" ~ hip3.full_name ~ ")" if hip3.full_name else "") ~ " ve bu dex izleme listesinde; evren yenilemesi (en geç 6 saat, ya da restart) sonrasında sayfa açılır — birazdan tekrar dene.",
+              "Yenileme koşmuş ama hâlâ yoksa /tani 'evren' satırına bak: o dex'in meta'sı alınamamış olabilir."]) }}
+  {% elif hip3 %}
   {{ m.empty([symbol ~ " Hyperliquid'de " ~ hip3.dex ~ " builder dex'inde listeli" ~ (" (" ~ hip3.full_name ~ ")" if hip3.full_name else "") ~ " ama bu bot o dex'i izlemiyor — pozisyon ve liq verisi yok.",
-              "İzlemek için Ayarlar → Takvim & semboller → 'Hisse dex'leri' (EQUITY_DEXES) alanına " ~ hip3.dex ~ " ekle; evrene 6 saat içinde (ya da restart'ta) girer. Her ek dex derin keşifte adres başına +1 istek demektir."]) }}
+              "İzlemek için Ayarlar → Takvim & semboller → 'Hisse dex'leri' (EQUITY_DEXES) — kripto dex'iyse 'Kripto dex'leri' (CRYPTO_DEXES) — alanına " ~ hip3.dex ~ " ekle; evrene 6 saat içinde (ya da restart'ta) girer. Her ek dex derin keşifte adres başına +1 istek demektir."]) }}
   {% elif excluded %}
   {{ m.empty([symbol ~ " hariç tutulmuş — Ayarlar → 'Takip dışı semboller' listesinde.", "Aramak için oradan çıkar; evren yenilemesinde geri gelir."]) }}
   {% else %}
@@ -25,7 +28,7 @@
 <div class="scanbar"><span class="swimmer">🐋</span> Balinalar aranıyor<span class="dots"></span> veriler kendiliğinden gelecek (sayfa zıplamaz)</div>
 {% endif %}
 <div class="panel">
-  <h2>{{ symbol }} <span class="st">({{ coin }}{% if kind == 'crypto' %} · ana dex kripto{% endif %})</span>
+  <h2>{{ symbol }} <span class="st">({{ coin }}{% if kind == 'crypto' %} · ana dex kripto{% elif klass == 'kripto' %} · {{ coin.split(':')[0] }} dex kripto{% endif %})</span>
     {% if propr %}<span class="pbadge"
       title="propr.xyz'de listeli — trade ettiğin platformda işlem açabilirsin">✅ PROPR'da listeli</span>{% endif %}</h2>
   <div class="kpi">
@@ -172,7 +175,7 @@
   Sağdaki yatay bloklar likidasyon haritasının fiyat eksenine izdüşümü: blok uzunluğu o fiyat bandında
   patlayacak toplam $ (altta long, üstte short); ayrıntı ve adresler aşağıdaki 💥 haritada.
   Alttaki ince şerit o saatin tarihsel karnesi (yeşil = güçlü saat, kırmızı = zayıf).
-  {% if kind != 'crypto' %}📊 işaretli mumlar geçmiş bilanço günleri.{% endif %}</p>
+  {% if kind != 'crypto' and klass != 'kripto' %}📊 işaretli mumlar geçmiş bilanço günleri.{% endif %}</p>
   <div id="pxchart" data-sym="{{ symbol }}{{ k }}"
        data-pending="{{ 0 if pxchart else 1 }}"
       >

@@ -107,6 +107,7 @@ def test_page_bot_diag():
         cfg.public_bot_enabled = True
         cfg.quiet_start_hour = cfg.quiet_end_hour = 0
         cfg.equity_dexes = ["xyz"]
+        cfg.crypto_dexes = []          # bu test yalnız hisse dex'lerini pinler (kripto dex: test_crypto_dex)
         # coin sayfası bulunamadı dalı
         from app.web.routes import templates
         T = lambda h: _html.unescape(re.sub(r"<[^>]+>", " ", h))  # noqa: E731 — autoescape: ' → &#39;

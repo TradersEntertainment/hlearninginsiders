@@ -423,12 +423,12 @@ async def _subsystems(cfg) -> list[str]:
     # sembol burada yazar — arama PROPR listesine değil HL evrenine bakar)
     try:
         from . import propr as _propr
-        from .assets import excluded_set
+        from .assets import excluded_set, watched_dexes
         from .hl import universe as _uni
         names = await _uni.crypto_names()
         ctx = await kv_get(_uni.MAIN_CTX_KV) or {}
         hip = await kv_get(_uni.HIP3_KV) or {}
-        watched = {str(x).strip() for x in (getattr(cfg, "equity_dexes", None) or []) if str(x).strip()}
+        watched = set(watched_dexes(cfg))
         async with db() as c:
             cur = await c.execute("SELECT symbol FROM tickers")
             tick = {str(r["symbol"]).upper() for r in await cur.fetchall() if r["symbol"]}
