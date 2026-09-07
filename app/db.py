@@ -208,7 +208,8 @@ CREATE TABLE IF NOT EXISTS census_accounts(
   scanned_ts INTEGER,                   -- son sayım (NULL = hiç)
   positions INTEGER,                    -- son sayımda bulunan açık pozisyon (ana dex)
   leased_ts INTEGER,                    -- worker kirası (NULL = kirada değil)
-  lease_worker TEXT
+  lease_worker TEXT,
+  hot_ts INTEGER                        -- sıcak şerit: son ana dex kripto fill'i (> scanned_ts ise sırada önce)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_census_value ON census_accounts(account_value DESC);
 CREATE INDEX IF NOT EXISTS idx_census_scanned ON census_accounts(scanned_ts);
@@ -393,6 +394,10 @@ async def db():
 
 # Var olan (canlı) DB'lere kolon ekleyen migration'lar — "zaten var" hatası yutulur
 MIGRATIONS = [
+    # Sayım sıcak şeridi: ana dex kripto coininde işlem yapan adresin defteri dakikalar
+    # içinde çekilsin. İndeks ALTER'dan SONRA (şema betiği canlı DB'de sütunsuz koşar).
+    "ALTER TABLE census_accounts ADD COLUMN hot_ts INTEGER",
+    "CREATE INDEX IF NOT EXISTS idx_census_hot ON census_accounts(hot_ts)",
     # Defteri GERÇEKTEN çektiğimiz an. "bakmadık" ile "baktık ama bu coinde
     # pozisyonu yok"u ayıran tek güvenilir işaret; account_ts proxy olurdu ama
     # o yalnız marginSummary gelirse yazılıyor.

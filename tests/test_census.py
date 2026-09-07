@@ -15,6 +15,7 @@ Pinlenenler:
     parti 50, HL_MAX_RPM 550), _spawn, health, istemci payload'ı + 429 sayacı, README/.env
 """
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -358,3 +359,70 @@ def test_batch_states_and_wiring():
     assert "CRYPTO_DEX_CENSUS_ENABLED" not in env
     assert "batchClearinghouseStates" in rd("README.md") and "Sayım (census" in rd("README.md")
     print("✅ bağlantı) toplu yanıt şekilleri; istemci payload + 429 sayacı; ayar künyeleri/varsayılanlar; _spawn/health; .env/README")
+
+
+def test_hot_lane():
+    """Sıcak şerit: ana dex kripto fill'i → hot_ts → sıradaki adımda ÖNCE (0.0042 bandı vakası)."""
+    async def run():
+        cfg, t = await _fresh()
+        cfg.crypto_fill_min_notional = 5000.0
+        cli = Client()
+        await census.refresh_universe(cfg, cli)
+        Z = "0x" + "c" * 40                                   # evrende yok, az önce PUMP aldı
+        cli.main[Z] = [("PUMP", 40_000)]
+        cli.main[Y] = [("PUMP", 36_000)]
+        # collector kancası: PUMP trade'i (≥ $5K) → hot_ts (alıcı+satıcı); toz fill girmez; sayım kapalıysa yazılmaz
+        from app.hl.collector import Collector
+        col = Collector(cfg, None)
+        col.crypto_coins = {"PUMP"}
+
+        def trade(tid, buyer, seller, sz, ts):
+            return {"coin": "PUMP", "px": "0.0043", "sz": str(sz), "time": ts * 1000, "tid": tid, "side": "B",
+                    "users": [buyer, seller]}
+        await col._handle(json.dumps({"channel": "trades", "data": [trade(1, Z.upper(), Y, 2_000_000, t - 5),
+                                                                    trade(2, L5, X, 100, t - 4)]}))
+        rows = {r["address"]: r for r in await _rows("SELECT * FROM census_accounts")}
+        assert rows[Z]["hot_ts"] == t - 5 and rows[Z]["src"] == "fills" and rows[Y]["hot_ts"] == t - 5, rows.get(Z)
+        assert rows[L5]["hot_ts"] is None and col.hot_marked == 2
+        cfg.census_enabled = False
+        await col._handle(json.dumps({"channel": "trades", "data": [trade(3, L3, L1, 2_000_000, t - 3)]}))
+        assert (await _rows("SELECT hot_ts FROM census_accounts WHERE address=?", L3))[0]["hot_ts"] is None
+        cfg.census_enabled = True
+        # sıra: en yeni fill önce; bekleyen sayısı
+        async with dbm.db() as c:
+            await c.execute("UPDATE census_accounts SET hot_ts=? WHERE address=?", (t - 1, Y))
+        assert [a for a, _, _ in await census.hot_rows(10)] == [Y, Z] and await census.hot_pending() == 2
+        # tur: sonda → SICAK parça (Y, Z; Z tur sırasında bile değil) → toplu parça (Y/Z atlanır)
+        delays = []
+
+        async def sleep(d):
+            delays.append(d)
+        st = await census.run_pass(cfg, cli, sleep=sleep)
+        assert cli.batch_calls[0] == ((L1, L4), "") and cli.batch_calls[1] == ((Y, Z), ""), cli.batch_calls[:3]
+        assert Y not in cli.batch_calls[2][0] and Z not in cli.batch_calls[2][0] and cli.batch_calls[2][1] == ""
+        assert st["hot"] == 2 and st["accounts"] == 7, st
+        rows = {r["address"]: r for r in await _rows("SELECT * FROM census_accounts")}
+        assert rows[Z]["scanned_ts"] and rows[Z]["positions"] == 1 and rows[Z]["hot_ts"] is None and rows[Y]["hot_ts"] is None
+        ap = {(r["coin"], r["address"]) for r in await _rows("SELECT coin,address FROM addr_positions WHERE closed_ts IS NULL")}
+        assert ("PUMP", Z) in ap and ("PUMP", Y) in ap and await census.hot_pending() == 0
+        # bozuk yanıt veren sıcak (L2) şeritten düşer (sonsuz döngü yok), sayılmış olmaz
+        async with dbm.db() as c:
+            await c.execute("UPDATE census_accounts SET hot_ts=? WHERE address=?", (dbm.now() + 1, L2))
+        st2 = await census.run_pass(cfg, Client(), sleep=sleep)
+        r2 = (await _rows("SELECT hot_ts, scanned_ts FROM census_accounts WHERE address=?", L2))[0]
+        assert r2["hot_ts"] is None and r2["scanned_ts"] is None and st2["hot"] == 1, (r2, st2["hot"])
+        # tur arası bekleme: sıcak yoksa tam bekler, sıcak belirince erken çıkar
+        slept = []
+
+        async def s2(d):
+            slept.append(d)
+        assert await census.gap_wait(30, sleep=s2) == 30 and slept == [10, 10, 10]
+        async with dbm.db() as c:
+            await c.execute("UPDATE census_accounts SET hot_ts=? WHERE address=?", (dbm.now() + 5, Y))
+        slept.clear()
+        assert await census.gap_wait(30, sleep=s2) == 0 and slept == []
+        from app import diag
+        line = next((ln.strip() for ln in (await diag.report(cfg, None)).splitlines() if ln.strip().startswith("sayım (census)")), "")
+        assert "sıcak şerit: 1 bekliyor · son tur 1 hesap" in line, line
+        print("✅ sıcak şerit) fill → hot_ts (kapalıyken yok); en yeni önce; tur sıcakları ÖNCE işler (evren dışı adres dahil); bozuk düşer; erken uyanma; /tani")
+    asyncio.run(run())

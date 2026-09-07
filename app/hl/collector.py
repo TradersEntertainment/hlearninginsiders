@@ -35,6 +35,7 @@ class Collector:
         self.subscribed: set[str] = set()
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
         self.crypto_coins: set[str] = set()  # yalnız sonda tetikleyicisi (ana dex)
+        self.hot_marked = 0                  # sayım sıcak şeridine yazılan adres (kümülatif)
         self.crypto_dex_coins: set[str] = set()  # kripto dex coinleri (para:…) — fill tabanı ayrı
         self.crypto_err = ""                 # liste alınamadıysa SEBEBİ (/status okur)
         self.last_trade: dict[str, int] = {}  # coin -> son işlem ts (zombi nöbetçisi)
@@ -389,6 +390,18 @@ class Collector:
                     " ON CONFLICT(address) DO NOTHING",
                     [(r[2], r[7]) for r in rows])
                 self.fills_seen += len(rows)
+                # Sayım "sıcak şeridi": ana dex kripto coininde (PUMP…) işlem yapan
+                # adresin defteri dakikalar içinde çekilsin — küçük long'lar ($36K)
+                # hiçbir sondayı tetiklemiyor, hasat yalnız HIP-3'e bakıyor, soğuk
+                # kuyruk/sayım sırası onları en sona atıyordu (0.0042 bandı vakası).
+                if getattr(self.cfg, "census_enabled", False):
+                    hot = {r[2]: r[7] for r in rows if r[0] in self.crypto_coins}
+                    if hot:
+                        try:
+                            from ..radar.census import mark_hot
+                            self.hot_marked += await mark_hot(conn, hot)
+                        except Exception:
+                            log.debug("sıcak şerit yazılamadı", exc_info=True)
                 addr_list = list({r[2] for r in rows})
                 q = ",".join("?" * len(addr_list))
                 cur = await conn.execute(

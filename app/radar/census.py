@@ -63,6 +63,8 @@ LB_BATCH = 2000            # leaderboard satırları bu parçalarla tabloya
 WORKERS_KV = "census_workers"   # {ad: {ts, leased, ingested, err}} — worker'lar (P3)
 WORKER_ACTIVE_SEC = 900    # bu süre içinde kira almış worker "aktif" sayılır
 CHUNK_PASS = 200           # ana turda bellekten bir seferde alınan hesap (toplu: parti parti bölünür)
+CHUNK_HOT = 50             # sıcak şerit: bir adımda en çok bu kadar hesap (toplu parçadan ÖNCE)
+GAP_STEP = 10              # tur arası bekleme adımı: sıcak bekleyen varsa erken çık
 MODE_TR = {"batch": "toplu", "single": "tek tek"}
 
 
@@ -151,6 +153,48 @@ async def refresh_universe(cfg, client, *, force: bool = False) -> dict:
         await kv_set(LB_KV, rec)
     out["merged"] = merge
     return out
+
+
+# ────────────────────────────────────────────── sıcak şerit
+
+async def mark_hot(conn, addr_ts: dict[str, int]) -> int:
+    """Collector'dan: {adres: fill ts} → census_accounts.hot_ts (yoksa satır açılır,
+    src='fills'). hot_ts > scanned_ts olan hesap sıradaki adımda ÖNCE sorgulanır."""
+    rows = [(a.lower(), int(t), int(t)) for a, t in addr_ts.items() if str(a).lower().startswith("0x")]
+    if not rows:
+        return 0
+    await conn.executemany(
+        "INSERT INTO census_accounts(address, src, seen_ts, hot_ts) VALUES(?,'fills',?,?)"
+        " ON CONFLICT(address) DO UPDATE SET hot_ts=excluded.hot_ts,"
+        " seen_ts=MAX(COALESCE(census_accounts.seen_ts, 0), excluded.seen_ts)", rows)
+    return len(rows)
+
+
+async def hot_rows(n: int) -> list[tuple[str, float | None, int]]:
+    """Sıcak bekleyenler: fill'i sayımından yeni (hot_ts > scanned_ts), kirasız, en yeni önce.
+    Döner: [(adres, bakiye, hot_ts)]."""
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT address, account_value, hot_ts FROM census_accounts"
+            " WHERE hot_ts IS NOT NULL AND hot_ts > COALESCE(scanned_ts, 0)"
+            " AND COALESCE(leased_ts, 0) < ? ORDER BY hot_ts DESC LIMIT ?", (now() - LEASE_SEC, int(n)))
+        return [(r["address"], r["account_value"], int(r["hot_ts"])) for r in await cur.fetchall()]
+
+
+async def hot_pending() -> int:
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) n FROM census_accounts WHERE hot_ts IS NOT NULL AND hot_ts > COALESCE(scanned_ts, 0)")
+        return int((await cur.fetchone())["n"] or 0)
+
+
+async def clear_hot(rows: list[tuple[str, int]]) -> None:
+    """İşlenen sıcaklar (başarılı ya da bozuk) şeritten düşer — bozuk yanıt sonsuz
+    döngü kurmasın; o sırada gelen daha yeni fill (hot_ts büyüdüyse) korunur."""
+    if rows:
+        async with db() as conn:
+            await conn.executemany(
+                "UPDATE census_accounts SET hot_ts=NULL WHERE address=? AND hot_ts <= ?", rows)
 
 
 async def pass_order(pass_ts: int) -> list[tuple[str, float | None]]:
@@ -519,7 +563,8 @@ async def lease(cfg, worker: str, n: int) -> dict:
         cur = await conn.execute(
             "SELECT address, account_value FROM census_accounts"
             " WHERE COALESCE(scanned_ts, 0) < ? AND COALESCE(leased_ts, 0) < ?"
-            " ORDER BY account_value DESC LIMIT ?", (pass_ts, t - LEASE_SEC, n))
+            " ORDER BY CASE WHEN hot_ts > COALESCE(scanned_ts, 0) THEN 0 ELSE 1 END,"
+            " hot_ts DESC, account_value DESC LIMIT ?", (pass_ts, t - LEASE_SEC, n))
         rows = [(r["address"], r["account_value"]) for r in await cur.fetchall()]
         if rows:
             await conn.executemany(
@@ -586,7 +631,7 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
     total, done0 = await _progress_counts(pass_ts)
     st: dict = {"pass_ts": pass_ts, "mode": mode, "started": t0, "resumed": resumed,
                 "total": total, "done": done0, "ok": 0, "err": 0, "found": 0, "requests": 0,
-                "n_429": 0, "finished": False, "ts": t0, "universe": uni}
+                "n_429": 0, "hot": 0, "finished": False, "ts": t0, "universe": uni}
     await kv_set(STATE_KV, st)
     opened = _Open()
     await opened.load(dexes)
@@ -607,19 +652,8 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
         await kv_set(STATE_KV, st)
         await beat("census")
 
-    while i < len(order):
-        if not enabled(cfg):
-            st["stopped"] = "kapatıldı"
-            break
-        if max_accounts is not None and st["ok"] + st["err"] >= max_accounts:
-            st["stopped"] = "tavan"
-            break
-        part = order[i:i + CHUNK_PASS]
-        i += CHUNK_PASS
-        skip = await _skip_set([a for a, _ in part], pass_ts)
-        part = [(a, v) for a, v in part if a not in skip]
-        if not part:
-            continue
+    async def process(part: list[tuple[str, float | None]]) -> None:
+        """Bir parça hesap: ana dex herkeste, kripto dex'ler bakiyesi tabanın üstündekilerde."""
         vals = dict(part)
         addrs = [a for a, _ in part]
         for dex in dexes:
@@ -639,9 +673,41 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
             if fetcher.stopped:
                 st["stopped"] = "kapatıldı"
                 break
+
+    while True:
+        if not enabled(cfg):
+            st["stopped"] = "kapatıldı"
+            break
+        if max_accounts is not None and st["ok"] + st["err"] >= max_accounts:
+            st["stopped"] = "tavan"
+            break
+        # Sıcak şerit ÖNCE: az önce işlem yapan adresler (fill'i sayımından yeni).
+        # Toplu sıra bitse de sıcaklar kuruyana kadar sürer; işlenen sıcak (bozuk
+        # yanıt dahil) şeritten düşer.
+        hot = await hot_rows(CHUNK_HOT)
+        if hot:
+            st["hot"] += len(hot)
+            await process([(a, v) for a, v, _ in hot])
+            await clear_hot([(a, h) for a, _, h in hot])
+            if st.get("stopped"):
+                break
+            since_ckpt += len(hot)
+            if since_ckpt >= STATE_EVERY:
+                since_ckpt = 0
+                await checkpoint()
+            continue
+        if i >= len(order):
+            break
+        part = order[i:i + CHUNK_PASS]
+        i += CHUNK_PASS
+        skip = await _skip_set([a for a, _ in part], pass_ts)
+        part = [(a, v) for a, v in part if a not in skip]
+        if not part:
+            continue
+        await process(part)
         if st.get("stopped"):
             break
-        since_ckpt += len(addrs)
+        since_ckpt += len(part)
         if since_ckpt >= STATE_EVERY:
             since_ckpt = 0
             await checkpoint()
@@ -652,13 +718,26 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
                  "accounts": st["done"], "ok": st["ok"], "err": st["err"], "found": st["found"],
                  "requests": st["requests"], "rpm": st["rpm"], "n_429": st["n_429"],
                  "fell_back": bool(st.get("fell_back")), "universe": uni, "resumed": resumed,
-                 "workers": st.get("workers", 0)}
+                 "workers": st.get("workers", 0), "hot": st.get("hot", 0)}
         await kv_set(STATS_KV, stats)
-        log.info("sayım turu bitti: %s · %d hesap → %d poz (%d hata) · %d istek · %.1f dk · 429: %d",
+        log.info("sayım turu bitti: %s · %d hesap → %d poz (%d hata) · %d istek · %.1f dk · 429: %d · sıcak %d",
                  MODE_TR.get(st["mode"], st["mode"]), st["done"], st["found"], st["err"],
-                 st["requests"], stats["sec"] / 60, st["n_429"])
+                 st["requests"], stats["sec"] / 60, st["n_429"], st.get("hot", 0))
         return stats
     return dict(st)
+
+
+async def gap_wait(total: int = PASS_GAP, *, sleep=asyncio.sleep) -> int:
+    """Tur arası nefes: GAP_STEP'lik adımlarla bekler, sıcak bekleyen belirirse erken
+    çıkar (fill → defter dakikalar içinde). Döner: beklenen saniye."""
+    waited = 0
+    while waited < total:
+        if await hot_pending():
+            break
+        step = min(GAP_STEP, total - waited)
+        await sleep(step)
+        waited += step
+    return waited
 
 
 async def loop(cfg, client) -> None:
@@ -669,7 +748,7 @@ async def loop(cfg, client) -> None:
             if enabled(cfg):
                 await run_pass(cfg, client)
                 await beat("census")
-                await asyncio.sleep(PASS_GAP)
+                await gap_wait(PASS_GAP)
                 continue
         except asyncio.CancelledError:
             raise
@@ -759,6 +838,13 @@ async def diag_line(cfg) -> str:
     n429 = (st.get("n_429") if st and not st.get("finished") else None) or cst.get("n_429")
     if n429:
         parts.append(f"429: {n429}")
+    try:
+        pend = await hot_pending()
+    except Exception:
+        pend = None
+    hot_now = int(st.get("hot") or 0) if st and not st.get("finished") else int(cst.get("hot") or 0)
+    parts.append(f"sıcak şerit: {pend if pend is not None else '?'} bekliyor · "
+                 + ("bu tur" if st and not st.get("finished") else "son tur") + f" {hot_now} hesap")
     if lb.get("n") is not None:
         parts.append(f"evren: leaderboard {_n(lb['n'])} hesap (bakiye ≥ ${lb.get('floor', 0):.0f})"
                      + (f" · {_n(st.get('total') or 0)} toplam" if st.get("total") else ""))

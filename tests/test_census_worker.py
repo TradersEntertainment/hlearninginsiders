@@ -272,3 +272,14 @@ def test_wiring():
     r = rd("README.md")
     assert "ROLE=census-worker" in r and "/api/census/lease" in r and "WORKER_TOKEN" in r and "çıkış IP" in r
     print("✅ bağlantı) Dockerfile ROLE dalı (geçerli JSON CMD); env-only alanlar; census_rpm_local künyesi; .env/README")
+
+
+def test_lease_hot_first():
+    async def run():
+        cfg, t, cli, app = await _setup()
+        async with dbm.db() as c:
+            await c.execute("UPDATE census_accounts SET hot_ts=? WHERE address=?", (t, Y))     # fills-only, bakiyesiz: normalde en son
+        st, body = await call(app, "GET", "/api/census/lease", f"worker=w1&n=2&token={TOKEN}")
+        assert [x["a"] for x in body["accounts"]] == [Y, L1], body["accounts"]
+        print("✅ kira) sıcak hesap bakiye sırasının önüne geçer")
+    asyncio.run(run())
