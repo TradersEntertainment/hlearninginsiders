@@ -128,7 +128,7 @@ def test_snapshot_prefers_near():
         assert [r["address"] for r in s["rows"]] == [A], s["rows"]            # uzak büyük short başa geçmez
         assert s["all_far"] is False and s["n_far"] == 1 and s["n_big"] == 0 and s["n_all"] == 2
         txt = fmt.crypto_liq_snapshot(s)
-        assert "≥ $500K pozisyon yok — en yakın küçükler" in txt and "1 pozisyon %50'den uzak" in txt, txt
+        assert "liq bantları" in txt and "LONG bandı <b>$20K</b>" in txt and "1 pozisyon %50'den uzak" in txt, txt
         assert s["png"] is None or s["png"][:8] == b"\x89PNG\r\n\x1a\n"
         # yalnız uzak: eski davranış (en yakın uzaklar) + all_far + grafik yok
         async with dbm.db() as c:
@@ -189,11 +189,18 @@ def test_hemi_clusters():
         assert cl[1]["side"] == "short" and cl[1]["total"] == 3_000 and len(cl) == 2
         # anlık görüntü uçtan uca
         s = await cryptoliq.snapshot(cfg, ClientH(), "HEMI")
-        assert s["clusters"] and s["clusters"][0]["n"] == 40 and s["n_dust"] == 2 and abs(s["dust"] - 1_950) < 1, (s["n_dust"], s["dust"])
+        longb = max((c for c in s["clusters"] if c["side"] == "long"), key=lambda c: c["total"])
+        assert longb["n"] == 40 and s["main_band"] is longb and s["n_dust"] == 2 and abs(s["dust"] - 1_950) < 1, (s["n_dust"], s["dust"])
+        dl = [c["dist_lo"] for c in s["clusters"]]
+        assert dl == sorted(dl) and s["clusters"][0]["total"] == 136, "mesajda bantlar mesafeye göre (toz long %0.9 önce)"
+        # toz bantlara DAHİL (kendi kovalarında $136/$388'lık ayrı bantlar), tek listesinde yok
+        assert sum(c["n"] for c in s["clusters"]) == 43 and all(c["total"] >= 100 for c in s["clusters"]), s["clusters"]
         assert s["rows"][0]["notional"] == 5_250 and all(r["notional"] >= 1_950 for r in s["rows"]) and s["n_big"] == 0
         txt = fmt.crypto_liq_snapshot(s)
-        assert "LONG kümesi <b>$210K</b>" in txt and "40 pozisyon" in txt and "altta" in txt and "En büyük tekler" in txt, txt
-        assert "$136" not in txt and "2 toz pozisyon" in txt and "zorunlu <b>SATIŞ</b> ~$210K" in txt, txt
+        assert "LONG bandı <b>$210K</b>" in txt and "40 pozisyon ⭐" in txt and "altta" in txt and "En büyük tekler" in txt, txt
+        assert "$136" in txt and "2 toz pozisyon" in txt and "bantlarda var" in txt and "zorunlu <b>SATIŞ</b> ~$211K" in txt, txt
+        assert "👤" not in txt.split("En büyük tekler")[0], "tek listesi bantlardan sonra; tozlar tek listesinde yok"
+        assert all(("$136" not in ln and "$388" not in ln) for ln in txt.splitlines() if "👤" in ln), txt
         if s["png"] is not None:
             assert s["png"][:8] == b"\x89PNG\r\n\x1a\n"
             sp = os.environ.get("HLR_PNG_OUT")
@@ -204,8 +211,8 @@ def test_hemi_clusters():
             await c.execute("INSERT INTO addr_positions(coin,address,dex,side,szi,entry_px,leverage,liq_px,upnl,notional,ts,closed_ts)"
                             " VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)", ("HEMI", "0x" + "1" * 40, "", "long", 1, MARKH, 2, 0.0085, 0, 600_000.0, t))
         s2 = await cryptoliq.snapshot(cfg, ClientH(), "HEMI")
-        assert not s2["clusters"] and s2["rows"][0]["notional"] == 600_000 and s2["n_big"] == 1
-        assert "kümesi" not in fmt.crypto_liq_snapshot(s2)
+        assert s2["clusters"] and s2["rows"][0]["notional"] == 600_000 and s2["n_big"] == 1
+        assert "Büyük tekler" in fmt.crypto_liq_snapshot(s2), "büyük tek varken de bantlar + büyük tekler"
         # render: küme bandı başlık ve etiket
         lv = [{"px": 0.0074, "px_lo": 0.0072, "px_hi": 0.0074, "side": "long", "notional": 210_000, "dist": 16.7, "main": True,
                "cluster": True, "n": 40}]
@@ -215,4 +222,48 @@ def test_hemi_clusters():
         assert png is None or png[:8] == b"\x89PNG\r\n\x1a\n"
         assert "Toz değil küme" in open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
         print("✅ HEMI) toz elenir; 40 pozisyonluk $210K küme başlık; grafik bandı; tek büyük varsa eski davranış")
+    asyncio.run(run())
+
+
+def test_pump_near_band_beats_far_single():
+    """PUMP vakası: %19'da $986K ve %24'te $5.2M tekler varken %5,4-6,3'teki 30 küçük pozisyonluk
+    $1.1M band (tek kova: %5-7,5) ana başlık olur (en büyük bandın %10'undan büyük ve %10 içinde)."""
+    async def run():
+        from app.radar import cryptoliq
+        from app.telegram import format as fmt
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "pumpband.db"))
+        cfg = Config()
+        cfg.max_liq_distance_pct, cfg.crypto_liq_min_usd = 50.0, 500_000
+        t = dbm.now()
+        M = 0.00443
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": M, "oi": 60e6 / M, "v": 1e8}}, "ts": t})
+        rows = [("0x" + f"{i:040x}", "long", 36_000.0, 0.00415 + 0.00001 * (i % 5)) for i in range(30)]   # $1.08M @ %5,4-6,3 (tek kova)
+        rows += [("0x" + "a" * 40, "long", 986_000.0, 0.00358), ("0x" + "b" * 40, "long", 5_200_000.0, 0.00336)]
+        async with dbm.db() as c:
+            for addr, side, ntl, liq in rows:
+                await c.execute("INSERT INTO addr_positions(coin,address,dex,side,szi,entry_px,leverage,liq_px,upnl,notional,ts,closed_ts)"
+                                " VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)", ("PUMP", addr, "", side, 1, M, 3, liq, 0, ntl, t))
+
+        class Cli(ClientH):
+            async def meta_and_ctxs(self, dex=""):
+                return [{"universe": [{"name": "PUMP"}]},
+                        [{"markPx": str(M), "openInterest": str(60e6 / M), "funding": "0", "dayNtlVlm": "1e8"}]]
+
+            async def candles(self, coin, interval, start_ms, end_ms):
+                return [{"t": c["t"] * 1000, "o": str(c["o"]), "h": str(c["h"]), "l": str(c["l"]), "c": str(c["c"]), "v": "1"}
+                        for c in candles(M)]
+        s = await cryptoliq.snapshot(cfg, Cli(), "PUMP")
+        mb = s["main_band"]
+        assert mb and mb["n"] == 30 and abs(mb["total"] - 1_080_000) < 1 and mb["dist_lo"] < 6, mb
+        assert [r["notional"] for r in s["rows"]] == [986_000.0, 5_200_000.0] and s["n_big"] == 2, "büyük tekler yakından uzağa"
+        assert [c["side"] for c in s["clusters"]] == ["long", "long", "long"] and s["clusters"][0] is mb
+        txt = fmt.crypto_liq_snapshot(s)
+        assert "LONG bandı <b>$1.1M</b>" in txt and "30 pozisyon ⭐" in txt and "Büyük tekler" in txt and "$5.2M" in txt, txt
+        assert s["cascade"] is None or s["cascade"].get("direction") == "down"
+        if s["png"]:
+            assert s["png"][:8] == b"\x89PNG\r\n\x1a\n"
+            sp = os.environ.get("HLR_PNG_OUT")
+            if sp:
+                open(os.path.join(sp, "pump_band.png"), "wb").write(s["png"])
+        print("✅ PUMP) yakın $1.1M band ana başlık, uzak $986K/$5.2M tekler 'Büyük tekler'; bantlar mesafe sıralı")
     asyncio.run(run())

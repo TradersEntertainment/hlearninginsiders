@@ -521,7 +521,8 @@ def test_snapshot():
         t = fmt.crypto_liq_snapshot(s)
         assert t.startswith("🎯 <b>PUMP</b>") and "%0.90 üstte" in t and "$4.0M" in t and "canlı" in t
         assert s["cascade"] and s["cascade"]["direction"] == "up" and "💣 <b>Zincir</b>" in t, t
-        assert "$700K short" in t and "zorunlu alış" in t
+        # zincir tetiği artık ana band (%10 içindeki en büyük: D'nin $4.0M short kovası), tek pozisyon değil
+        assert "$4.0M short" in t and "zorunlu alış" in t, t
         # ayar kapalı → satır yok, defter isteği yok
         cfg.crypto_liq_cascade = False
         cli_off = Client(rows, candles=synth_candles(MARK["PUMP"]))
@@ -534,7 +535,7 @@ def test_snapshot():
         await _seed(small)
         s2 = await cl.snapshot(cfg, Client(small), "PUMP")
         t2 = fmt.crypto_liq_snapshot(s2)
-        assert s2["n_big"] == 0 and len(s2["rows"]) == 1 and "en yakın küçükler" in t2 and s2["png"] is None
+        assert s2["n_big"] == 0 and len(s2["rows"]) == 1 and "liq bantları" in t2 and "En büyük tekler" in t2 and s2["png"] is None
         s3 = await cl.snapshot(cfg, Client([]), "HYPE")
         assert s3["rows"] == [] and "açık pozisyon yok" in fmt.crypto_liq_snapshot(s3)
         # fiyat yoksa nedeni (kv'de olmayan coin, istek de boş dönüyor)

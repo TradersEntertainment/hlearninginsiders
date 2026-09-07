@@ -47,6 +47,8 @@ CLOSE_NOTE_MAX_AGE = 24 * 3600     # bundan eski kapanışa not gitmez (kanal ye
 FILLS_LOOKBACK = 48 * 3600         # kapanış teyidi: fill'lere en çok bu kadar geriye bak
 CHART_INTERVAL, CHART_SPAN = "15m", 48 * 3600   # 192 mum; sağda pay renderer'da
 CHART_LABEL = ("15dk", "son 48 saat")
+NEAR_BAND_PCT = 10.0         # ana başlık: bu mesafe içindeki en büyük band (varsa)
+NEAR_BAND_MIN_SHARE = 0.10   # …ama en büyük bandın %10'undan küçükse en büyük band kazanır
 CAPTION_MAX = 1000                 # Telegram altyazı sınırı 1024 görünür karakter; pay bırak
 WATCH_KEEP_CLOSED = 7 * 86400
 WATCH_KEEP_IDLE = 3 * 86400
@@ -302,6 +304,16 @@ def _target(casc: dict | None) -> tuple | None:
     return (casc["end_px"], f"zincir → {px(casc['end_px'])} · {usd(casc['total_usd'])}")
 
 
+def _in_band(r: dict, band: dict) -> bool:
+    """Pozisyon bandın üyesi mi (aynı yön, liq fiyatı bandın kenarları arasında)."""
+    try:
+        lp = float(r.get("liq_px") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (r.get("side") == band.get("side") and lp > 0
+            and float(band["px_lo"]) - 1e-12 <= lp <= float(band["px_hi"]) + 1e-12)
+
+
 def _far_pct(cfg) -> float:
     """Grafik/anlık mesafe sınırı — liq tablosuyla aynı ayar (max_liq_distance_pct, %50)."""
     return float(getattr(cfg, "max_liq_distance_pct", 50) or 50)
@@ -322,10 +334,12 @@ async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | Non
         log.debug("grafik mumu alınamadı (%s): %s", coin, e)
         return None
     cands = pricechart.parse_candles(raw)
+    # `main` işaretli satır varsa o ana seviye (band bazlı görünüm), yoksa en yakın
+    ordered = sorted(fresh, key=lambda q: (0 if q.get("main") else 1, q.get("dist") or 0))[:4]
     levels = [{"px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
                "dist": p.get("dist"), "main": i == 0,
                **{k: p[k] for k in ("px_lo", "px_hi", "cluster", "n") if k in p}}   # küme bandı
-              for i, p in enumerate(sorted(fresh, key=lambda q: q.get("dist") or 0)[:4])]
+              for i, p in enumerate(ordered)]
     return liqchart.render(coin, cands, mark, levels, interval=CHART_LABEL[0],
                            span_txt=CHART_LABEL[1], target=target, coverage_txt=coverage_txt,
                            far_pct=far_pct)
@@ -393,30 +407,40 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     n_dust = len(near) - len(solid)
     big = [c for c in solid if c["notional"] >= min_usd]
     all_far = bool(cands) and not near
-    # ≥ min_usd tek pozisyon yoksa KÜME: kovalı liq haritasının en büyük bantları
-    # (yön başına 2) başlık olur; toz en yakın diye öne geçmez. Grafik bandı çizer.
+    # HER ZAMAN band bazlı (PUMP vakası): kovalı liq haritasının bantları başlık olur —
+    # tek büyük pozisyon %19'da diye 0.0042'deki onlarca küçük pozisyonun toplamı
+    # gizlenmez. Bantlar TÜM yakın pozisyonları toplar (toz dahil — dış sitelerin
+    # bandı da öyle; PUMP'ta $36K'lık 30 pozisyon "toz" sayılıp eksik çıkıyordu);
+    # toz yalnız tek listesinden düşer. Ana başlık = %10 içindeki en büyük band (en
+    # büyük bandın en az %10'u ise), yoksa en büyük band. Mesajda bantlar mesafeye
+    # göre; büyük tekler altta.
     clusters: list[dict] = []
+    main_band: dict | None = None
     chart_rows: list[dict]
-    if big:
-        show = big[:limit]
-        chart_rows = show
-    elif solid:
+    casc_rows = rows
+    if near:
         from . import liqmap
-        # Küme ancak ≥2 pozisyonlu bantta anlamlı; tek tük pozisyonda eski "en yakın küçükler"
-        clusters = [c for c in liqmap.clusters(solid, mark, far_pct) if c["n"] >= 2]
-        if clusters:
-            show = sorted(solid, key=lambda c: -c["notional"])[:min(limit, 3)]
-            chart_rows = [{"liq_px": c["px"], "side": c["side"], "notional": c["total"], "dist": c["dist_lo"],
-                           "px_lo": c["px_lo"], "px_hi": c["px_hi"], "cluster": True, "n": c["n"],
-                           "mark": float(mark)} for c in clusters]
-        else:
-            show = solid[:limit]
-            chart_rows = show
+        bands = liqmap.clusters(near, mark, far_pct, per_side=3)
+        if bands:
+            biggest = bands[0]["total"]
+            near_b = [b for b in bands if b["dist_lo"] <= NEAR_BAND_PCT
+                      and b["total"] >= biggest * NEAR_BAND_MIN_SHARE]
+            main_band = max(near_b, key=lambda b: b["total"]) if near_b else bands[0]
+            clusters = sorted(bands, key=lambda b: b["dist_lo"])
+        show = (big or sorted(solid or near, key=lambda c: -c["notional"]))[:min(limit, 3)]
+        order = sorted(bands, key=lambda b: (0 if b is main_band else 1, b["dist_lo"]))[:4]
+        chart_rows = [{"liq_px": b["px"], "side": b["side"], "notional": b["total"], "dist": b["dist_lo"],
+                       "px_lo": b["px_lo"], "px_hi": b["px_hi"], "cluster": True, "n": b["n"],
+                       "main": b is main_band, "mark": float(mark)} for b in order] or show
+        if main_band:
+            # zincir tetiği = ana band (toplamı, fiyata yakın kenarından); üyeleri
+            # "arada patlayan" diye ikinci kez sayılmasın
+            casc_rows = [r for r in rows if not _in_band(r, main_band)]
     else:
-        show = (near or cands)[:limit]
+        show = cands[:limit]
         chart_rows = show
     trigger = chart_rows[0] if chart_rows else None
-    casc = await _cascade(cfg, client, coin, mark, trigger, rows) if trigger else None
+    casc = await _cascade(cfg, client, coin, mark, trigger, casc_rows) if trigger else None
     # Kapsama (havuz / HL OI): mesaj ve PNG'de — süs, hesaplanamazsa komut düşmez
     from . import coverage as _coverage
     try:
@@ -435,7 +459,7 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
             "n_all": len(cands), "n_big": len(big), "min_usd": min_usd, "png": png,
             "cascade": casc, "coverage": cov, "all_far": all_far,
             "n_far": len(cands) - len(near), "far_pct": far_pct,
-            "clusters": clusters, "n_dust": n_dust, "dust": dust}
+            "clusters": clusters, "main_band": main_band, "n_dust": n_dust, "dust": dust}
 
 
 # ─────────────────────────────────────────────── tarama

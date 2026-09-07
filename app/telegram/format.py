@@ -769,17 +769,24 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
         return "\n".join(lines)
     far = float(s.get("far_pct") or 50)
     cl = s.get("clusters") or []
+    mb = s.get("main_band")
     if s.get("all_far"):
         lines.append(f"<i>%{far:.0f} içinde pozisyon yok — en yakın uzaklar (grafik çizilmez):</i>")
     elif cl:
-        lines.append(f"<i>≥ {usd(s.get('min_usd'))} tek pozisyon yok — liq kümeleri (kovalı, toz hariç):</i>")
+        lines.append(f"<i>liq bantları (kovalı, toz hariç; ≥ {usd(s.get('min_usd'))} tek pozisyon:"
+                     f" {s.get('n_big', 0)}):</i>")
         for c in cl:
             is_long = c.get("side") == "long"
-            lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} kümesi <b>{usd(c['total'])}</b>"
-                         f" · {px(c['px_lo'])}–{px(c['px_hi'])} (%{c['dist_lo']:.1f}–%{c['dist_hi']:.1f}"
-                         f" {'altta' if is_long else 'üstte'}) · {c['n']} pozisyon")
+            star = " ⭐" if mb and c is mb else ""
+            if c.get("n", 0) > 1 and px(c["px_lo"]) != px(c["px_hi"]):
+                where = (f"{px(c['px_lo'])}–{px(c['px_hi'])} (%{c['dist_lo']:.1f}–%{c['dist_hi']:.1f}"
+                         f" {'altta' if is_long else 'üstte'})")
+            else:
+                where = f"liq {px(c['px'])} (%{c['dist_lo']:.1f} {'altta' if is_long else 'üstte'})"
+            lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} bandı <b>{usd(c['total'])}</b>"
+                         f" · {where} · {c['n']} pozisyon{star}")
         if rows:
-            lines.append("<i>En büyük tekler:</i>")
+            lines.append("<i>Büyük tekler:</i>" if s.get("n_big") else "<i>En büyük tekler:</i>")
     elif not s.get("n_big"):
         lines.append(f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>")
     for i, p in enumerate(rows):
@@ -810,7 +817,7 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
     if s.get("n_far") and not s.get("all_far"):
         ctx.append(f"{s['n_far']} pozisyon %{far:.0f}'den uzak (listede/grafikte yok)")
     if s.get("n_dust"):
-        ctx.append(f"{s['n_dust']} toz pozisyon (< {usd(s.get('dust'))}) sayılmadı")
+        ctx.append(f"{s['n_dust']} toz pozisyon (< {usd(s.get('dust'))}) bantlarda var, tek listesinde yok")
     cc = coverage_ctx(s.get("coverage"))
     ctx.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     lines.append("<i>" + " · ".join(ctx) + "</i>")
