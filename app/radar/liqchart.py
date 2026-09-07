@@ -282,7 +282,7 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
         col = LIQ.get(x.get("side"), LIQ["long"])
         dashed(y, col, dash=12, width=3 if x.get("main") else 2)
         if x.get("cluster"):
-            tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} · {_px(x['px_lo'])}–{_px(x['px_hi'])}", col)
+            tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} {_px(x['px_lo'])}–{_px(x['px_hi'])}", col)   # oluğa sığsın
         else:
             tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} · liq {_px(x['px'])}", col)
 
