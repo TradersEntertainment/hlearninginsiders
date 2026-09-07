@@ -70,6 +70,24 @@ def is_crypto_dex(coin_or_symbol: str, cfg=None) -> bool:
     return s.upper() in CRYPTO_DEX_SYMBOLS
 
 
+def fill_floor_for(cfg, coin: str) -> float:
+    """Bu coin'de kaç dolardan büyük İŞLEMLER havuza yazılsın: kripto dex (para:ANSEM)
+    → `crypto_dex_fill_min_notional` ($1K), diğer tickers coinleri → `min_fill_notional`.
+    Ana dex kripto tabanı collector'da ayrı (crypto_fill_min_notional)."""
+    if is_crypto_dex(coin, cfg):
+        return float(getattr(cfg, "crypto_dex_fill_min_notional", 1000) or 0)
+    return float(cfg.min_fill_notional)
+
+
+def position_floor_for(cfg, coin: str) -> float:
+    """Bu coin'de kaç dolardan büyük POZİSYONLAR yazılsın (toz filtresi): kripto dex →
+    `crypto_dex_min_position_notional` ($1K), diğerleri → `min_position_notional` ($10K).
+    Yalnız kayıt tabanı — bildirim eşikleri (autoscan/liqwatch/lowvol, $1M+) ayrıdır."""
+    if is_crypto_dex(coin, cfg):
+        return float(getattr(cfg, "crypto_dex_min_position_notional", 1000) or 0)
+    return float(cfg.min_position_notional)
+
+
 def set_crypto_dex_symbols(syms) -> None:
     CRYPTO_DEX_SYMBOLS.clear()
     CRYPTO_DEX_SYMBOLS.update(str(x).upper() for x in (syms or []) if str(x).strip())

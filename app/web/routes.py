@@ -607,6 +607,13 @@ def _index_kpis(events: list[dict], liq_map: list[dict], suspicious: list[dict],
     return out
 
 
+# Sayfa/chart.json'a kaç pozisyon satırı gelsin. Tablo yine ilk 50'yi gösterir;
+# liq/entry haritası ve Long/Short toplamları TÜM satırları görür. Memecoin'de
+# (para:ANSEM, $1K tabanı) yüzlerce küçük pozisyon var — 100'de kesmek haritayı
+# eksik gösteriyordu. Kapsama yüzdesi (coverage) ise SQL toplamıdır, tavansız.
+COIN_ROWS_MAX = 400
+
+
 async def _coin_data(coin: str, kind: str, cfg) -> tuple[list[dict], dict, str]:
     """Sayfa ve chart.json'un ORTAK verisi: pozisyon satırları + fiyat özeti.
 
@@ -624,8 +631,8 @@ async def _coin_data(coin: str, kind: str, cfg) -> tuple[list[dict], dict, str]:
                 """SELECT p.*, a.account_value, a.account_ts
                    FROM positions_current p
                    LEFT JOIN addresses a ON a.address = p.address
-                   WHERE p.coin=? ORDER BY p.notional DESC LIMIT 100""",
-                (coin,))
+                   WHERE p.coin=? ORDER BY p.notional DESC LIMIT ?""",
+                (coin, COIN_ROWS_MAX))
             rows = [dict(r) for r in await cur.fetchall()]
         summ = await metrics.summary(coin)
         return rows, summ, "metrics" if summ.get("mark") else ""
@@ -638,7 +645,7 @@ async def _coin_data(coin: str, kind: str, cfg) -> tuple[list[dict], dict, str]:
                       ad.account_value, ad.account_ts, ad.entity
                FROM addr_positions a LEFT JOIN addresses ad ON ad.address = a.address
                WHERE a.coin=? AND a.closed_ts IS NULL AND a.notional > 0
-               ORDER BY a.notional DESC LIMIT 100""", (coin,))
+               ORDER BY a.notional DESC LIMIT ?""", (coin, COIN_ROWS_MAX))
         rows = [dict(r) for r in await cur.fetchall()]
     # Fiyat: en TAZE kaynak kazanır — asset_metrics (PROPR coinleri, 24s kıyaslı)
     # ya da ana dex özeti kv'si (tüm coinler, metrik döngüsü yazar); ikisi de

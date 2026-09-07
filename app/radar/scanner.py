@@ -197,13 +197,14 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
 
     found: list[dict] = []
     ts = now()
+    from .. import assets
+    floor = assets.position_floor_for(cfg, coin)   # kripto dex (para) → $1K, hisse → $10K
     async with db() as conn:
         for addr, positions in results:
             if positions is None:
                 continue
             # toz filtresi: eşik altı pozisyon = yok say
-            positions = [p for p in positions
-                         if p["notional"] >= cfg.min_position_notional]
+            positions = [p for p in positions if p["notional"] >= floor]
             if not positions:
                 await conn.execute(
                     "DELETE FROM positions_current WHERE coin=? AND address=?", (coin, addr))

@@ -121,6 +121,10 @@ EDITABLE_FIELDS: dict[str, dict] = {
                              "group": "Skorlama eşikleri", "desc": "Bu boyut üstü tek işlemde hemen Telegram alert"},
     "min_position_notional": {"type": "float", "label": "Min pozisyon boyutu ($)",
                               "group": "Skorlama eşikleri", "desc": "Bundan küçük pozisyonlar listelenmez (toz filtresi)"},
+    "crypto_dex_fill_min_notional": {"type": "float", "label": "Kripto dex: min fill boyutu ($)",
+                                     "group": "Skorlama eşikleri", "desc": "Kripto builder dex'lerinde (para:ANSEM) bu boyut üstü işlemler adres havuzuna yazılır. Memecoin'de $5K'lık hisse tabanı traderların çoğunu görünmez yapıyordu — sayfa daha çok gösterir, alarm eşikleri değişmez"},
+    "crypto_dex_min_position_notional": {"type": "float", "label": "Kripto dex: min pozisyon boyutu ($)",
+                                         "group": "Skorlama eşikleri", "desc": "Kripto dex coinlerinde bundan küçük pozisyonlar yazılmaz (toz filtresi). $10K'lık hisse tabanı ANSEM'de $1K–$9K'lık pozisyonların tamamını atıyordu; bildirim eşikleri ($1M+) bundan etkilenmez"},
     "big_position_usd": {"type": "float", "label": "Büyük pozisyon eşiği ($)",
                          "group": "Skorlama eşikleri", "desc": "Bu boyut üstü pozisyona +10 şüphe puanı"},
     "huge_position_usd": {"type": "float", "label": "Dev pozisyon eşiği ($)",
@@ -789,6 +793,10 @@ class Config:
         # Eşikler
         self.min_fill_notional = float(os.getenv("MIN_FILL_NOTIONAL", "5000"))
         self.min_position_notional = float(os.getenv("MIN_POSITION_NOTIONAL", "10000"))
+        # Kripto dex (para) tabanları: memecoin'de $5K fill / $10K pozisyon tabanı
+        # trader ve pozisyonların çoğunu gizliyordu (bkz. assets.fill_floor_for)
+        self.crypto_dex_fill_min_notional = float(os.getenv("CRYPTO_DEX_FILL_MIN_NOTIONAL", "1000"))
+        self.crypto_dex_min_position_notional = float(os.getenv("CRYPTO_DEX_MIN_POSITION_NOTIONAL", "1000"))
         self.big_position_usd = float(os.getenv("BIG_POSITION_USD", "1000000"))
         # "Yeni büyük pozisyon" BİLDİRİMİ kademeli (sitede/skorlamada değişmez)
         self.big_alert_index_usd = float(os.getenv("BIG_ALERT_INDEX_USD", "10000000"))

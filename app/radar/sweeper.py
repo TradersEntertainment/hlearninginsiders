@@ -113,9 +113,14 @@ def parse_account_value(resp) -> float | None:
 
 def _parse_equity_positions(resp, coin_set: set[str],
                             sym_map: dict[str, str],
-                            min_ntl: float) -> tuple[dict[str, dict], bool]:
+                            min_ntl) -> tuple[dict[str, dict], bool]:
     """Çok-dex yanıtından hisse pozisyonları: (coin -> pozisyon, yanıt geçerli mi).
-    Yanıtta hiç state yoksa 'geçersiz' döner — bozuk yanıtla kayıt SİLİNMEZ."""
+    Yanıtta hiç state yoksa 'geçersiz' döner — bozuk yanıtla kayıt SİLİNMEZ.
+
+    `min_ntl` sayı YA DA `coin -> alt sınır` çağrılabiliri (`_pos_floor(cfg)`):
+    kripto dex coinlerinde (para:ANSEM) taban $1K, hissede $10K — tek sayı
+    memecoin pozisyonlarının tamamını atıyordu."""
+    floor = min_ntl if callable(min_ntl) else (lambda _c: float(min_ntl))
     out: dict[str, dict] = {}
     exact: set[str] = set()  # doğrudan coin_set eşleşmesiyle yazılanlar
     states = list(_iter_states(resp))
@@ -132,7 +137,7 @@ def _parse_equity_positions(resp, coin_set: set[str],
                 ntl = float(pos.get("positionValue") or 0)
             except (TypeError, ValueError):
                 continue
-            if szi == 0 or ntl < min_ntl:
+            if szi == 0 or ntl < floor(coin):
                 continue
             # İki dex aynı sembolü tutuyorsa (ör. xyz:TSLA + abc:TSLA) sym_map ikisini
             # de aynı coin'e eşliyor → son gelen üsttekini eziyordu (yön/boyut
@@ -205,6 +210,13 @@ def _hl_floor(cfg: Config):
     """coin -> alt sınır çözücüsü (kademeli: HIP-3 / BTC-ETH / diğer kripto)."""
     from .bigpos import threshold
     return lambda coin: threshold(coin, cfg)
+
+
+def _pos_floor(cfg: Config):
+    """positions_current kayıt tabanı çözücüsü: kripto dex $1K, hisse $10K
+    (assets.position_floor_for) — yalnız kayıt, bildirim eşikleri ayrı."""
+    from .. import assets
+    return lambda coin: assets.position_floor_for(cfg, coin)
 
 
 def _parse_all_positions(resp, min_ntl) -> dict[str, dict]:
@@ -465,8 +477,7 @@ async def probe_address(cfg: Config, client: HLClient, addr: str) -> int:
     sym_map = {(r["symbol"] or "").upper(): r["coin"] for r in rows}
     async with _sem():
         resp = await client.clearinghouse_all(addr, _dexes(cfg))
-    positions, valid = _parse_equity_positions(resp, coin_set, sym_map,
-                                               cfg.min_position_notional)
+    positions, valid = _parse_equity_positions(resp, coin_set, sym_map, _pos_floor(cfg))
     if not valid:
         return 0                      # bozuk yanıt — mevcut kayıtlara dokunma
     ts = now()
@@ -602,8 +613,7 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
                 last_err.append(f"{type(e).__name__}: {e}"[:200])
                 log.warning("derin keşif isteği başarısız (%s…): %s", addr[:10], e)
             return
-        positions, valid = _parse_equity_positions(resp, coin_set, sym_map,
-                                                   cfg.min_position_notional)
+        positions, valid = _parse_equity_positions(resp, coin_set, sym_map, _pos_floor(cfg))
         if not valid:
             n_err += 1
             return  # bozuk yanıt — mevcut kayıtlara dokunma
@@ -690,6 +700,8 @@ async def harvest_trades(cfg: Config, client: HLClient) -> int:
             log.debug("recentTrades %s: %s", coin, e)
             continue
         rows = []
+        from .. import assets
+        floor = assets.fill_floor_for(cfg, coin)     # kripto dex (para) $1K, hisse $5K
         for t in trades or []:
             try:
                 px = float(t["px"])
@@ -700,7 +712,7 @@ async def harvest_trades(cfg: Config, client: HLClient) -> int:
             except (KeyError, TypeError, ValueError):
                 continue
             notional = px * sz
-            if not tid or len(users) < 2 or notional < cfg.min_fill_notional:
+            if not tid or len(users) < 2 or notional < floor:
                 continue
             # `side` agresörü söyler: "B" = alıcı süpürdü, "A" = satıcı (collector ile aynı)
             aggr = str(t.get("side") or "").upper()

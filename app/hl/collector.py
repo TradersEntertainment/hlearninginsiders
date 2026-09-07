@@ -35,6 +35,7 @@ class Collector:
         self.subscribed: set[str] = set()
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
         self.crypto_coins: set[str] = set()  # yalnız sonda tetikleyicisi (ana dex)
+        self.crypto_dex_coins: set[str] = set()  # kripto dex coinleri (para:…) — fill tabanı ayrı
         self.crypto_err = ""                 # liste alınamadıysa SEBEBİ (/status okur)
         self.last_trade: dict[str, int] = {}  # coin -> son işlem ts (zombi nöbetçisi)
         self.fills_seen = 0
@@ -65,6 +66,9 @@ class Collector:
             cur = await conn.execute("SELECT coin FROM tickers")
             equity = [r["coin"] for r in await cur.fetchall()]
         eq = set(equity)
+        from .. import assets
+        # Sıcak yolda (her işlem) is_crypto_dex çağırmamak için önhesaplı küme
+        self.crypto_dex_coins = {c for c in equity if assets.is_crypto_dex(c, self.cfg)}
         crypto = [c for c in await self._crypto_coins() if c not in eq]
         self.crypto_coins = set(crypto)
         # Neyi DİNLEDİĞİMİZİ dışarı yaz. Alarm zenginleştirmesi bunu okuyup
@@ -87,7 +91,12 @@ class Collector:
         görünmez yapıyordu. Kripto fill'leri yalnız "ne oldu" incelemesi ve
         /twap için saklanır — ALARM ÜRETMEZLER (aşağıdaki _maybe_alert kapısı
         korunuyor), yoksa ana kanal kripto seline boğulur.
+
+        Kripto dex coinleri (para:ANSEM) `tickers`'ta olduğu için hisse dalına
+        düşüyordu ($5K); memecoin'de bu, traderların çoğunu gizler → ayrı taban.
         """
+        if coin in self.crypto_dex_coins:
+            return float(getattr(self.cfg, "crypto_dex_fill_min_notional", 1000) or 0)
         if coin in self.crypto_coins:
             v = float(getattr(self.cfg, "crypto_fill_min_notional", 0) or 0)
             return v if v > 0 else float("inf")   # 0 = kripto kaydı kapalı
