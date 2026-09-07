@@ -38,7 +38,14 @@ ACCOUNT_STALE_SEC = 3 * 3600
 
 TR = ZoneInfo("Europe/Istanbul")
 
-HARVEST_COINS_PER_CYCLE = 6   # tur başına recentTrades çekilecek coin sayısı
+HARVEST_COINS_PER_CYCLE = 6   # tur başına recentTrades çekilecek coin sayısı (genel rotasyon)
+HARVEST_CDEX_PER_CYCLE = 6    # kripto dex coinleri (para) kendi imleciyle HER tur (kapsaması en zayıf olanlar)
+HARVEST_PROBE_WINDOW = 24 * 3600   # hasat sondası adayları: son 24 saatte fill'i olanlar
+HARVEST_PROBE_TTL = 6 * 3600       # aynı (coin, adres) çifti bu süre içinde yeniden sondalanmaz
+# Hasat sondası işaretleri: (coin, adres) -> ts. Bellek içi; kv/tablo reddedildi —
+# 90 sn'de bir binlerce kaydı yazmak ağır, restart'ta en fazla bir parti tekrar
+# sorgulanır (tur başına tavan var).
+_harvest_probed: dict[tuple[str, str], int] = {}
 HOT_PER_BATCH = 30            # parti başına sıcak havuz adedi
 COLD_PER_BATCH = 10           # parti başına soğuk havuz adedi (uzun kuyruk)
 SPEC_INTERVAL = 600           # uzman paneli önbelleği tazeleme aralığı (sn)
@@ -683,15 +690,92 @@ async def account_coverage() -> dict:
             "stale": r["stale"] or 0, "newest": r["newest"] or 0}
 
 
+def _prune_probed(ts: int) -> None:
+    cut = ts - HARVEST_PROBE_TTL
+    for k in [k for k, v in _harvest_probed.items() if v < cut]:
+        del _harvest_probed[k]
+
+
+async def _harvest_probe(cfg: Config, client: HLClient, coins: list[str],
+                         dex_map: dict[str, str], stats: dict) -> int:
+    """Hasat edilen adresin defterine HEMEN bak — coinin KENDİ dex'inde, adres başına
+    1 istek (`scanner.scan(addrs=…)`, scans damgası yok).
+
+    Adaylar: son 24 saatte bu coinde fill'i olan, positions_current'ta bu coinde
+    satırı olmayan ve tam defteri yakın zamanda çekilmemiş (addresses.probed_ts —
+    süpürücü zaten bakmış, pozisyonu yok) adresler; büyük fill önce. Bellek içi
+    işaret (`_harvest_probed`, 6 saat) aynı çifti turlar boyunca tekrar sondalamaz.
+    Bütçe: tur başına `harvest_probe_max` adres (40/90 sn ≈ küresel bütçenin %8'i);
+    sığmayanlar `probe_skipped` olarak sayılır, sonraki turda sıra onlara gelir."""
+    cap = int(getattr(cfg, "harvest_probe_max", 40) or 0)
+    if cap <= 0 or not coins:
+        return 0
+    ts = now()
+    _prune_probed(ts)
+    from . import scanner
+    since, cut = ts - HARVEST_PROBE_WINDOW, ts - HARVEST_PROBE_TTL
+    total = 0
+    for coin in coins:
+        async with db() as conn:
+            cur = await conn.execute(
+                """SELECT f.address, MAX(f.notional) n, MAX(f.ts) t FROM fills f
+                   WHERE f.coin=? AND f.ts>=?
+                     AND NOT EXISTS (SELECT 1 FROM positions_current p
+                                     WHERE p.coin=f.coin AND p.address=f.address)
+                     AND COALESCE((SELECT a.probed_ts FROM addresses a WHERE a.address=f.address), 0) < ?
+                   GROUP BY f.address ORDER BY n DESC, t DESC LIMIT ?""",
+                (coin, since, cut, cap * 3))
+            cands = [r["address"] for r in await cur.fetchall()]
+        cands = [a for a in cands if _harvest_probed.get((coin, a), 0) < cut]
+        room = max(0, cap - total)
+        batch, rest = cands[:room], cands[room:]
+        stats["probe_skipped"] = int(stats.get("probe_skipped", 0)) + len(rest)
+        if not batch:
+            continue
+        try:
+            found = await scanner.scan(cfg, client, coin, dex_map.get(coin, ""),
+                                       addrs=batch, stamp=False, beat_name="sweeper")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            stats["probe_err"] = int(stats.get("probe_err", 0)) + 1
+            log.debug("hasat sondası %s: %s", coin, e)
+            continue
+        for a in batch:
+            _harvest_probed[(coin, a)] = ts
+        total += len(batch)
+        stats["probed"] = int(stats.get("probed", 0)) + len(batch)
+        stats["found"] = int(stats.get("found", 0)) + len(found)
+    return total
+
+
 async def harvest_trades(cfg: Config, client: HLClient) -> int:
-    """WS'in kaçırdığı işlemleri REST recentTrades'ten topla (evren rotasyonu)."""
+    """WS'in kaçırdığı işlemleri REST recentTrades'ten topla (evren rotasyonu) ve
+    yeni görülen adreslerin defterine hemen bak (`_harvest_probe`).
+
+    İki imleç: kripto dex coinleri (para — kapsaması en zayıf olanlar, recentTrades
+    onların tek REST yedeği) `harvest_cursor_cdex` ile HER tur; kalan tickers
+    `harvest_cursor` ile genel rotasyon. Tur başına ≤12 recentTrades (~8 rpm)."""
+    from .. import assets
     async with db() as conn:
-        cur = await conn.execute("SELECT coin FROM tickers ORDER BY coin")
-        coins = [r["coin"] for r in await cur.fetchall()]
+        cur = await conn.execute("SELECT coin, dex FROM tickers ORDER BY coin")
+        trows = [dict(r) for r in await cur.fetchall()]
+    coins = [r["coin"] for r in trows]
+    dex_map = {r["coin"]: (r["dex"] or "") for r in trows}
     if not coins:
         return 0
-    start = int(await kv_get("harvest_cursor") or 0) % len(coins)
-    todo = [coins[(start + i) % len(coins)] for i in range(min(HARVEST_COINS_PER_CYCLE, len(coins)))]
+    cdex = [c for c in coins if assets.is_crypto_dex(c, cfg)]
+    rot = [c for c in coins if c not in set(cdex)]
+    todo_c: list[str] = []
+    todo_r: list[str] = []
+    start = start_c = 0
+    if cdex:
+        start_c = int(await kv_get("harvest_cursor_cdex") or 0) % len(cdex)
+        todo_c = [cdex[(start_c + i) % len(cdex)] for i in range(min(HARVEST_CDEX_PER_CYCLE, len(cdex)))]
+    if rot:
+        start = int(await kv_get("harvest_cursor") or 0) % len(rot)
+        todo_r = [rot[(start + i) % len(rot)] for i in range(min(HARVEST_COINS_PER_CYCLE, len(rot)))]
+    todo = todo_c + todo_r
     added = 0
     for coin in todo:
         try:
@@ -732,14 +816,26 @@ async def harvest_trades(cfg: Config, client: HLClient) -> int:
                 await conn.execute(
                     "INSERT INTO addresses(address, first_seen) VALUES(?,?)"
                     " ON CONFLICT(address) DO NOTHING", (r[2], r[7]))
-    await kv_set("harvest_cursor", (start + len(todo)) % len(coins))
-    if added:
-        stats = await kv_get("harvest_stats") or {"total": 0}
-        stats["total"] = int(stats.get("total") or 0) + added
-        stats["ts"] = now()
-        await kv_set("harvest_stats", stats)
-        log.info("işlem hasadı: %d yeni fill (%s)", added, ", ".join(
-            fmt.short(c) if c.startswith("0x") else c.split(":")[-1] for c in todo))
+    if rot:
+        await kv_set("harvest_cursor", (start + len(todo_r)) % len(rot))
+    if cdex:
+        await kv_set("harvest_cursor_cdex", (start_c + len(todo_c)) % len(cdex))
+    # İstatistik HER tur yazılır (eskiden yalnız yeni fill varsa): /tani "sonda kaç
+    # adres → kaç poz, kaçı sıraya kaldı" sorusunu tur tur cevaplayabilsin.
+    stats = await kv_get("harvest_stats") or {"total": 0}
+    stats["total"] = int(stats.get("total") or 0) + added
+    stats.update({"ts": now(), "cycle_added": added, "coins": [c.split(":")[-1] for c in todo],
+                  "cdex": len(todo_c), "probed": 0, "found": 0, "probe_err": 0, "probe_skipped": 0})
+    try:
+        await _harvest_probe(cfg, client, todo, dex_map, stats)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("hasat sondası hatası")
+    await kv_set("harvest_stats", stats)
+    if added or stats["probed"]:
+        log.info("işlem hasadı: %d yeni fill · sonda %d adres → %d poz (%s)", added, stats["probed"],
+                 stats["found"], ", ".join(c.split(":")[-1] for c in todo))
     return added
 
 

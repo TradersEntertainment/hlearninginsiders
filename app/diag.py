@@ -641,8 +641,15 @@ async def _subsystems(cfg) -> list[str]:
                       f" {_num(best.get('total'))}$ / {best.get('n')} dilim"
                       if best else ""))
     hv = await kv_get("harvest_stats") or {}
-    if hv.get("total"):
-        out.append(f"  işlem hasadı: {_num(hv['total'])} fill REST'ten toplandı")
+    if hv:
+        line = f"  işlem hasadı: {_num(hv.get('total', 0))} fill REST'ten toplandı"
+        if "probed" in hv:
+            line += (f" · bu tur +{hv.get('cycle_added', 0)} · sonda {hv.get('probed', 0)} adres"
+                     f" → {hv.get('found', 0)} poz ({hv.get('probe_err', 0)} hata,"
+                     f" {hv.get('probe_skipped', 0)} sıraya kaldı) · kripto dex: {hv.get('cdex', 0)} coin/tur")
+        if hv.get("ts"):
+            line += f" · {_dur(now() - int(hv['ts']))} önce"
+        out.append(line)
     cal = await kv_get("calendar_stats") or {}
     if cal:
         out.append(f"  takvim: yahoo={cal.get('yahoo')} tv={cal.get('tradingview')}"

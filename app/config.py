@@ -233,6 +233,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "sweep_batch_max": {"type": "int", "label": "Yetişme: parti tavanı (adres)",
                         "group": "Tarama & performans",
                         "desc": "Yetişme modunda bir partide en fazla kaç adres taransın. Tavan olmasa tek parti diğer görevleri aç bırakabilir"},
+    "harvest_probe_max": {"type": "int", "label": "Hasat sondası: tur başına adres",
+                          "group": "Tarama & performans",
+                          "desc": "Her süpürme turunda, o turun hasat coinlerinde işlem yapmış ama pozisyonu bilinmeyen en fazla bu kadar adresin defteri coinin KENDİ dex'inde sorgulanır (adres başına 1 istek; 40/90 sn ≈ bütçenin %8'i). Kripto dex coinleri (para) her tur sırada. 0 = kapalı"},
     "sweep_rpm_headroom": {"type": "float", "label": "Yetişme: bütçe tavanı (oran)",
                            "group": "Tarama & performans",
                            "desc": "Küresel istek bütçesinin en fazla bu kadarı doldurulsun (0.85 = %85, kalanı ani işler için pay). Yükseltmek turu hızlandırır ama diğer görevleri geciktirir"},
@@ -753,6 +756,8 @@ class Config:
         self.sweep_batch_size = int(os.getenv("SWEEP_BATCH_SIZE", "40"))
         self.sweep_catchup = convert_value("bool", os.getenv("SWEEP_CATCHUP", "1"))
         self.sweep_batch_max = int(os.getenv("SWEEP_BATCH_MAX", "250"))
+        # Hasat sondası: hasat edilen adresin defterine hemen bak (coinin dex'inde, 1 istek)
+        self.harvest_probe_max = int(os.getenv("HARVEST_PROBE_MAX", "40"))
         self.sweep_rpm_headroom = float(os.getenv("SWEEP_RPM_HEADROOM", "0.85"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))
         self.notify_lowvol = True

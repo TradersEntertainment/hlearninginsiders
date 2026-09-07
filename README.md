@@ -1168,6 +1168,14 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   **hisse senedinin** grafiğidir — seansları ve fiyatı birebir aynı değildir.
 - Bu bir gözlem/istihbarat aracıdır; **yatırım tavsiyesi değildir**.
 
+  **Hasat sondası** (`HARVEST_PROBE_MAX`, vars. 40): süpürücü her turda
+  `recentTrades` ile topladığı adreslerden o coinde pozisyonu bilinmeyenlerin
+  defterine HEMEN bakar — coinin kendi dex'inde, adres başına 1 istek (40/90 sn ≈
+  küresel bütçenin %8'i). Kripto dex coinleri (para) kendi imleciyle her tur
+  sırada; genel rotasyon 6 coin/tur sürer. Aynı (coin, adres) çifti 6 saat
+  yeniden sondalanmaz; tavana sığmayanlar `/tani`'de "sıraya kaldı" diye görünür.
+  Memecoin'in liq haritası böylece sayfa açılmasını beklemeden dolar.
+
 ## AI Analist (opsiyonel)
 
 Bir dil modeline ham veri verip "örüntü bul" demek kendinden emin uydurma üretir.
