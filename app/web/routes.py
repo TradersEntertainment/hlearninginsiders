@@ -718,12 +718,13 @@ async def coin_page(request: Request, symbol: str):
     lo = sum(p["notional"] for p in rows if p["side"] == "long")
     sh = sum(p["notional"] for p in rows if p["side"] == "short")
 
-    scanned_ts, scanning = None, False
+    scanned_ts, scanning, scan_info = None, False, None
     if kind != "crypto":
         async with db() as conn:
-            cur = await conn.execute("SELECT ts FROM scans WHERE coin=?", (coin,))
+            cur = await conn.execute("SELECT ts, n_addrs, n_found FROM scans WHERE coin=?", (coin,))
             srow = await cur.fetchone()
         scanned_ts = srow["ts"] if srow else None
+        scan_info = dict(srow) if srow else None       # {ts, n_addrs, n_found} — kapsama satırı
         # Bayatsa arka planda otomatik tara — kullanıcı butona basmak zorunda kalmasın
         scanning = autoscan.is_scanning(coin)
         stale = scanned_ts is None or (now() - scanned_ts) > cfg.scan_stale_min * 60
@@ -781,7 +782,7 @@ async def coin_page(request: Request, symbol: str):
         "ticker": t, "symbol": t["symbol"], "coin": coin, "summ": summ,
         "kind": kind, "mark_src": mark_src,
         "rows": rows[:50], "liq_rows": liq_rows, "fills": fills, "event": ev,
-        "long_total": lo, "short_total": sh, "scanned_ts": scanned_ts,
+        "long_total": lo, "short_total": sh, "scanned_ts": scanned_ts, "scan_info": scan_info,
         "scanning": scanning, "max_liq": cfg.max_liq_distance_pct,
         "tg": request.query_params.get("tg"), "tz": request.query_params.get("tz"),
         "has_bot": request.app.state.bot is not None,

@@ -73,10 +73,17 @@ async def _store_leaderboard_equity(rows: list[dict]) -> int:
 
 
 async def candidates(cfg: Config, client: HLClient, coin: str) -> list[str]:
+    """Bu coin için kimlerin defterine bakalım — tutma OLASILIĞI sırasıyla:
+    (1) bilinen sahipler (kapanış tespiti; bayat satır kapsamayı şişirir),
+    (2) coinin KENDİ trader'ları, en son işlem yapan önce, (3) watchlist,
+    (4) leaderboard. Eskiden watchlist öndeydi: sicil büyüdükçe 250 adaylık
+    hızlı taramayı ANSEM tutmayan devler dolduruyor, coinin trader'ları sıraya
+    giremiyordu. Watchlist'i süpürücünün sıcak havuzu zaten her tur gezer."""
     since = now() - cfg.fills_lookback_days * 86400
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT DISTINCT address FROM fills WHERE coin=? AND ts>=?", (coin, since))
+            "SELECT address FROM fills WHERE coin=? AND ts>=?"
+            " GROUP BY address ORDER BY MAX(ts) DESC", (coin, since))
         pool = [r["address"] for r in await cur.fetchall()]
         cur = await conn.execute("SELECT address FROM addresses WHERE watchlist=1")
         watch = [r["address"] for r in await cur.fetchall()]
@@ -87,7 +94,7 @@ async def candidates(cfg: Config, client: HLClient, coin: str) -> list[str]:
 
     ordered: list[str] = []
     seen: set[str] = set()
-    for group in (watch, known, pool, lb):
+    for group in (known, pool, watch, lb):
         for a in group:
             a = a.lower()
             if a and a not in seen:
@@ -164,20 +171,35 @@ async def timeline_from_fills(coin: str, address: str, side: str,
 
 async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
                max_candidates: int | None = None,
-               beat_name: str | None = None) -> list[dict]:
+               beat_name: str | None = None, *,
+               addrs: list[str] | None = None,
+               stamp: bool = True) -> list[dict]:
     """Coin'deki pozisyonları bul, positions_current'ı güncelle, notional'a göre sırala.
 
     beat_name: ilerleme nabzının HANGİ göreve yazılacağı. Eskiden koşulsuz
     'autoscan'dı — web 'şimdi tara', /scan, due raporları da hb:autoscan'ı
     tazeliyor, oto-tarayıcı görevi ölmüşken bile bekçiye 'canlı' gösteriyordu.
     Sadece autoscan.loop 'autoscan' geçsin; diğer çağıranlar None geçip
-    hiçbir görevin nabzını yanlış tazelemesin."""
-    addrs = await candidates(cfg, client, coin)
-    if max_candidates:
-        addrs = addrs[:max_candidates]
-    async with db() as conn:
-        await conn.execute("INSERT OR REPLACE INTO scans(coin, ts) VALUES(?,?)",
-                           (coin, now()))
+    hiçbir görevin nabzını yanlış tazelemesin.
+
+    addrs: verilirse aday listesi YERİNE bu adresler taranır (kısmi tarama —
+    hasat sondası); `max_candidates` yok sayılır. stamp=False → `scans`
+    damgası atılmaz: kısmi tarama sayfayı "taze tarandı" sanmasın.
+    `dex` coinin KENDİ dex'i olmalı (tickers.dex): yanlış dex'in yanıtı boş
+    gelir ve taranan adresin geçerli satırını siler."""
+    if addrs is None:
+        addrs = await candidates(cfg, client, coin)
+        if max_candidates:
+            addrs = addrs[:max_candidates]
+    else:
+        addrs = list(dict.fromkeys(a.lower() for a in addrs if a))
+    if stamp:
+        async with db() as conn:
+            # INSERT OR REPLACE değil: n_addrs/n_found kolonları tarama boyunca
+            # NULL'lanmasın, önceki sayım bitene kadar görünür kalsın
+            await conn.execute(
+                "INSERT INTO scans(coin, ts) VALUES(?,?)"
+                " ON CONFLICT(coin) DO UPDATE SET ts=excluded.ts", (coin, now()))
     if not addrs:
         return []
     log.info("%s taranıyor: %d aday adres", coin, len(addrs))
@@ -259,6 +281,11 @@ async def scan(cfg: Config, client: HLClient, coin: str, dex: str,
                  p.get("last_add_ts"), p.get("last_trim_ts"), ts))
 
     found.sort(key=lambda p: p["notional"], reverse=True)
+    if stamp:
+        n_answered = sum(1 for _a, p in results if p is not None)
+        async with db() as conn:
+            await conn.execute("UPDATE scans SET n_addrs=?, n_found=? WHERE coin=?",
+                               (n_answered, len(found), coin))
     log.info("%s: %d pozisyon bulundu (en büyük: $%.0f)",
              coin, len(found), found[0]["notional"] if found else 0)
     return found

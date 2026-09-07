@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS alerts_log(
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_kind_key ON alerts_log(kind, key, ts);
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
-CREATE TABLE IF NOT EXISTS scans(coin TEXT PRIMARY KEY, ts INTEGER);
+CREATE TABLE IF NOT EXISTS scans(coin TEXT PRIMARY KEY, ts INTEGER,
+  n_addrs INTEGER, n_found INTEGER);   -- son tam taramada sorgulanan / pozisyonlu adres
 CREATE TABLE IF NOT EXISTS address_wins(
   address TEXT, coin TEXT, event_id INTEGER, notional REAL, ts INTEGER,
   PRIMARY KEY(address, event_id)
@@ -440,6 +441,10 @@ MIGRATIONS = [
     # uğruyor, yani rakam 2 saate kadar bayat olabilir. Yaşını göstermeden
     # bakiye yazmak sessizce yanlış bilgi vermektir.
     "ALTER TABLE addresses ADD COLUMN account_ts INTEGER",
+    # Tarama sayımı: son tam taramada kaç adres yanıt verdi, kaçında pozisyon
+    # çıktı — coin sayfasındaki kapsama satırı "312 adres → 41 poz" bunu okur.
+    "ALTER TABLE scans ADD COLUMN n_addrs INTEGER",
+    "ALTER TABLE scans ADD COLUMN n_found INTEGER",
 ]
 
 
