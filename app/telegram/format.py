@@ -768,8 +768,18 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
                      f" uğradıkça dolar; HL'nin tamamı değil.")
         return "\n".join(lines)
     far = float(s.get("far_pct") or 50)
+    cl = s.get("clusters") or []
     if s.get("all_far"):
         lines.append(f"<i>%{far:.0f} içinde pozisyon yok — en yakın uzaklar (grafik çizilmez):</i>")
+    elif cl:
+        lines.append(f"<i>≥ {usd(s.get('min_usd'))} tek pozisyon yok — liq kümeleri (kovalı, toz hariç):</i>")
+        for c in cl:
+            is_long = c.get("side") == "long"
+            lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} kümesi <b>{usd(c['total'])}</b>"
+                         f" · {px(c['px_lo'])}–{px(c['px_hi'])} (%{c['dist_lo']:.1f}–%{c['dist_hi']:.1f}"
+                         f" {'altta' if is_long else 'üstte'}) · {c['n']} pozisyon")
+        if rows:
+            lines.append("<i>En büyük tekler:</i>")
     elif not s.get("n_big"):
         lines.append(f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>")
     for i, p in enumerate(rows):
@@ -780,8 +790,9 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
         lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
                      f" · liq {px(p['liq_px'])} (%{p['dist']:.2f} {'altta' if is_long else 'üstte'})"
                      f"{lev} · 👤 {alink(p['address'])}{ent}{tk}")
-    sell = sum(p["notional"] for p in rows if p.get("side") == "long")
-    buy = sum(p["notional"] for p in rows if p.get("side") == "short")
+    src = cl if cl else rows
+    sell = sum(float(p.get("total") if "total" in p else p["notional"]) for p in src if p.get("side") == "long")
+    buy = sum(float(p.get("total") if "total" in p else p["notional"]) for p in src if p.get("side") == "short")
     imp = []
     if sell:
         imp.append(f"📉 long'lar patlarsa zorunlu <b>SATIŞ</b> ~{usd(sell)}")
@@ -798,6 +809,8 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
         ctx.append(f"pozisyon ölçümü en eski {age_str(oldest)} önce (süpürme)")
     if s.get("n_far") and not s.get("all_far"):
         ctx.append(f"{s['n_far']} pozisyon %{far:.0f}'den uzak (listede/grafikte yok)")
+    if s.get("n_dust"):
+        ctx.append(f"{s['n_dust']} toz pozisyon (< {usd(s.get('dust'))}) sayılmadı")
     cc = coverage_ctx(s.get("coverage"))
     ctx.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     lines.append("<i>" + " · ".join(ctx) + "</i>")

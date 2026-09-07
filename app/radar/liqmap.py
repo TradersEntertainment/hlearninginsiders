@@ -193,6 +193,42 @@ def build(rows: list[dict], mark: float | None, max_dist_pct: float = 50.0) -> d
     }
 
 
+def clusters(cands: list[dict], mark: float | None, max_dist_pct: float = 50.0,
+             per_side: int = 2, top: int = 3) -> list[dict]:
+    """Anlık görüntü için KÜME seçimi (HEMI vakası): pozisyon tavanı $80K olan bir
+    coinde ≥ $500K tek pozisyon olamaz; "en yakın"lar toz ($136) çıkar, asıl kütle
+    %18 aşağıdaki onlarca küçük pozisyonun toplamıdır. Aynı kovalar (SLOT_EDGES)
+    kullanılır; kova toplamı büyükten küçüğe, yön başına en çok `per_side` küme.
+    `cands`: {side, notional, liq_px, dist}. Dönüş: {side, px_lo, px_hi, px (fiyata en
+    yakın kenar), dist_lo, dist_hi, total, n, top: [en büyük `top` pozisyon]}."""
+    if not mark or mark <= 0 or not cands:
+        return []
+    edges = _edges(float(max_dist_pct or 50.0))
+    out = []
+    for side in ("long", "short"):
+        ps = [c for c in cands if c.get("side") == side and c.get("dist") is not None
+              and float(c["dist"]) <= edges[-1] and c.get("liq_px")]
+        for lo, hi in zip(edges, edges[1:]):
+            last = hi == edges[-1]
+            grp = [c for c in ps if lo <= float(c["dist"]) < hi or (last and float(c["dist"]) == hi)]
+            if not grp:
+                continue
+            pxs = [float(c["liq_px"]) for c in grp]
+            out.append({"side": side, "px_lo": min(pxs), "px_hi": max(pxs),
+                        "px": max(pxs) if side == "long" else min(pxs),
+                        "dist_lo": min(float(c["dist"]) for c in grp),
+                        "dist_hi": max(float(c["dist"]) for c in grp),
+                        "total": sum(float(c.get("notional") or 0) for c in grp), "n": len(grp),
+                        "top": sorted(grp, key=lambda c: -float(c.get("notional") or 0))[:top]})
+    out.sort(key=lambda c: -c["total"])
+    picked, cnt = [], {"long": 0, "short": 0}
+    for c in out:
+        if cnt[c["side"]] < per_side:
+            picked.append(c)
+            cnt[c["side"]] += 1
+    return picked
+
+
 def chart_bars(liq: dict | None) -> list[dict]:
     """Mum grafiği için kova listesi — `build()` çıktısından, boş ve katlanmış
     kovalar atlanır. Grafik ve alttaki harita AYNI kovaları çizer (tek kaynak);

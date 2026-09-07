@@ -531,7 +531,13 @@ içindeki seviyeler ölçeği değiştirmeden üst/alt kenarda toplu etiket olur
 (`▲ 2 short $1.2M +%61…119`), %50'den uzak olanlar grafikte hiç görünmez
 (mesaj satırı yine yazar); zincir hedefi de pencere dışındaysa yalnız kenar etiketi.
 Anlık sorguda "en yakın büyük" listesi de önce %50 içindekileri alır; hiç yoksa
-"en yakın uzaklar" der ve grafik çizilmez.
+"en yakın uzaklar" der ve grafik çizilmez. **Toz değil küme (HEMI vakası):** ≥ $500K
+tek pozisyon yoksa (pozisyon tavanlı dex'lerde hiç olamaz) OI'nin %0,1'i / $1K altı
+pozisyonlar toz sayılır, kalanlar kovalı haritanın bantlarına ayrılır ve yön başına
+en büyük 2 **küme** başlık olur ("🟢 LONG kümesi $210K · 0.0072–0.0074 (%16.7–%18.9
+altta) · 40 pozisyon"); grafik bandı şerit olarak çizer, altında en büyük 3 tek
+pozisyon listelenir. Dış sitedeki "$591K long liq" bandının bizdeki karşılığı budur
+(kapsama yüzdesiyle birlikte okunur).
 Ücretsiz katman günde `free_daily_queries` (3) sorgu (TSİ 00:00 yenilenir),
 Pro (`pro_until`) sınırsız + dakikada `pro_query_per_min`. Aynı coin
 `query_cache_sec` içinde tekrar sorulursa HL'ye gidilmez; tüm kullanıcıların

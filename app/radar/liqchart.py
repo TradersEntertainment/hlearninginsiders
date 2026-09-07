@@ -109,8 +109,8 @@ def plan_levels(cs: list[dict], mark: float, lv: list[dict], target: tuple | Non
     tpx = float(target[0]) if target and target[0] else None
     target_pinned = bool(tpx and _dist_pct(tpx, mark) > win)
     extra = [tpx] if tpx and not target_pinned else []
-    lo = min(min(float(c["l"]) for c in cs), min(float(x["px"]) for x in draw), mark, *extra)
-    hi = max(max(float(c["h"]) for c in cs), max(float(x["px"]) for x in draw), mark, *extra)
+    lo = min(min(float(c["l"]) for c in cs), min(float(x.get("px_lo") or x["px"]) for x in draw), mark, *extra)
+    hi = max(max(float(c["h"]) for c in cs), max(float(x.get("px_hi") or x["px"]) for x in draw), mark, *extra)
     rng = (hi - lo) or (hi * 0.02) or 1.0
     return {"lo": lo - rng * 0.06, "hi": hi + rng * 0.06, "win": win, "draw": draw,
             "pinned": pinned, "omitted": omitted, "tpx": tpx, "target_pinned": target_pinned}
@@ -176,9 +176,11 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     sym = coin.split(":")[-1]
     side_txt = side_of(main)
     where = "üstte" if main.get("side") == "short" else "altta"
-    title = f"{sym} · {side_txt} {_usd(main.get('notional'))}"
+    title = f"{sym} · {side_txt} {'kümesi ' if main.get('cluster') else ''}{_usd(main.get('notional'))}"
     d.text((PAD_L, 22), title, fill=TEXT, font=f_title)
-    sub = (f"liq {_px(main['px'])} · fiyat {_px(mark)} · %{float(main.get('dist') or 0):.2f} {where}"
+    liq_txt = (f"liq {_px(main['px_lo'])}–{_px(main['px_hi'])} ({main.get('n')} poz)" if main.get("cluster")
+               else f"liq {_px(main['px'])}")
+    sub = (f"{liq_txt} · fiyat {_px(mark)} · %{float(main.get('dist') or 0):.2f} {where}"
            f" · {interval} mumlar · {span_txt}")
     if coverage_txt:
         sub += f" · {coverage_txt}"           # havuz / HL OI — dürüstlük (bkz. radar/coverage.py)
@@ -197,6 +199,12 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     y_m, y_l = y_of(mark), y_of(main["px"])
     od.rectangle([plot_l, min(y_m, y_l), plot_r, max(y_m, y_l)],
                  fill=BAND.get(main.get("side"), BAND["long"]))
+    # küme bantları: iki liq fiyatı arası şerit (kovalı haritanın bandı)
+    for x in plan["draw"]:
+        if x.get("cluster") and x.get("px_lo") and x.get("px_hi"):
+            y1, y2 = y_of(float(x["px_hi"])), y_of(float(x["px_lo"]))
+            od.rectangle([plot_l, min(y1, y2), plot_r, max(y1, y2) + 1],
+                         fill=BAND.get(x.get("side"), BAND["long"]))
     img.paste(Image.alpha_composite(img.convert("RGBA"), over).convert("RGB"))
     d = ImageDraw.Draw(img)
 
@@ -273,7 +281,10 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
         y = y_of(x["px"])
         col = LIQ.get(x.get("side"), LIQ["long"])
         dashed(y, col, dash=12, width=3 if x.get("main") else 2)
-        tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} · liq {_px(x['px'])}", col)
+        if x.get("cluster"):
+            tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} · {_px(x['px_lo'])}–{_px(x['px_hi'])}", col)
+        else:
+            tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} · liq {_px(x['px'])}", col)
 
     # zincir hedefi: pencere içindeyse noktalı amber çizgi + etiket; dışındaysa
     # yalnız kenar etiketi (aralığa girmez — grafiği bozmaz)

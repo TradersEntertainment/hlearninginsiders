@@ -141,3 +141,78 @@ def test_snapshot_prefers_near():
         assert "far_pct=_far_pct(cfg)" in rd("app", "radar", "cryptoliq.py") and "Uzak seviyeler ekseni bozmaz" in rd("README.md")
         print("✅ anlık) önce %50 içindekiler; uzak sayısı notu; hepsi uzaksa 'en yakın uzaklar' + grafik yok")
     asyncio.run(run())
+
+
+MARKH = 0.00888
+
+
+class ClientH:
+    async def meta_and_ctxs(self, dex=""):
+        return [{"universe": [{"name": "HEMI"}]},
+                [{"markPx": str(MARKH), "openInterest": str(1.95e6 / MARKH), "funding": "0", "dayNtlVlm": "4450000"}]]
+
+    async def l2_book(self, coin, n_sig_figs=None):
+        return {"levels": [[{"px": str(MARKH * 0.995), "sz": "1e8"}, {"px": str(MARKH * 0.98), "sz": "1e8"}],
+                           [{"px": str(MARKH * 1.005), "sz": "1e8"}, {"px": str(MARKH * 1.02), "sz": "1e8"}]]}
+
+    async def candles(self, coin, interval, start_ms, end_ms):
+        return [{"t": c["t"] * 1000, "o": str(c["o"]), "h": str(c["h"]), "l": str(c["l"]), "c": str(c["c"]), "v": "1"}
+                for c in candles(MARKH)]
+
+
+def test_hemi_clusters():
+    """Pozisyon tavanlı coin: ≥ $500K tek pozisyon yok; toz ($136) başlığa çıkmaz, %17-19 aşağıdaki
+    40 küçük pozisyonun kümesi ($210K) başlık olur; grafik bandı çizer."""
+    async def run():
+        from app.radar import cryptoliq, liqmap
+        from app.telegram import format as fmt
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "hemi.db"))
+        cfg = Config()
+        cfg.max_liq_distance_pct, cfg.crypto_liq_min_usd = 50.0, 500_000
+        t = dbm.now()
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"HEMI": {"m": MARKH, "oi": 1.95e6 / MARKH, "v": 4.45e6}}, "ts": t})
+        rows = []
+        for i in range(40):                                   # $5.25K × 40 = $210K, liq 0.0072–0.0074
+            rows.append(("0x" + f"{i:040x}", "long", 5_250.0, 0.0072 + 0.0002 * i / 39))
+        rows += [("0x" + "e" * 40, "long", 136.0, 0.00879), ("0x" + "f" * 40, "long", 388.0, 0.00870),
+                 ("0x" + "d" * 40, "short", 3_000.0, 0.0090)]
+        async with dbm.db() as c:
+            for addr, side, ntl, liq in rows:
+                await c.execute("INSERT INTO addr_positions(coin,address,dex,side,szi,entry_px,leverage,liq_px,upnl,notional,ts,closed_ts)"
+                                " VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)", ("HEMI", addr, "", side, 1, MARKH, 2, liq, 0, ntl, t))
+        # saf küme seçimi
+        cands = [{"side": s, "notional": n, "liq_px": l, "dist": abs(MARKH - l) / MARKH * 100} for _a, s, n, l in rows if n >= 1950]
+        cl = liqmap.clusters(cands, MARKH, 50)
+        assert cl[0]["side"] == "long" and abs(cl[0]["total"] - 210_000) < 1 and cl[0]["n"] == 40, cl[0]
+        assert abs(cl[0]["px_lo"] - 0.0072) < 1e-9 and abs(cl[0]["px_hi"] - 0.0074) < 1e-9 and cl[0]["px"] == cl[0]["px_hi"]
+        assert 16.6 < cl[0]["dist_lo"] < 16.8 and 18.8 < cl[0]["dist_hi"] < 19.0 and len(cl[0]["top"]) == 3
+        assert cl[1]["side"] == "short" and cl[1]["total"] == 3_000 and len(cl) == 2
+        # anlık görüntü uçtan uca
+        s = await cryptoliq.snapshot(cfg, ClientH(), "HEMI")
+        assert s["clusters"] and s["clusters"][0]["n"] == 40 and s["n_dust"] == 2 and abs(s["dust"] - 1_950) < 1, (s["n_dust"], s["dust"])
+        assert s["rows"][0]["notional"] == 5_250 and all(r["notional"] >= 1_950 for r in s["rows"]) and s["n_big"] == 0
+        txt = fmt.crypto_liq_snapshot(s)
+        assert "LONG kümesi <b>$210K</b>" in txt and "40 pozisyon" in txt and "altta" in txt and "En büyük tekler" in txt, txt
+        assert "$136" not in txt and "2 toz pozisyon" in txt and "zorunlu <b>SATIŞ</b> ~$210K" in txt, txt
+        if s["png"] is not None:
+            assert s["png"][:8] == b"\x89PNG\r\n\x1a\n"
+            sp = os.environ.get("HLR_PNG_OUT")
+            if sp:
+                open(os.path.join(sp, "hemi_cluster.png"), "wb").write(s["png"])
+        # tek büyük pozisyon varsa eski davranış (küme yok)
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO addr_positions(coin,address,dex,side,szi,entry_px,leverage,liq_px,upnl,notional,ts,closed_ts)"
+                            " VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)", ("HEMI", "0x" + "1" * 40, "", "long", 1, MARKH, 2, 0.0085, 0, 600_000.0, t))
+        s2 = await cryptoliq.snapshot(cfg, ClientH(), "HEMI")
+        assert not s2["clusters"] and s2["rows"][0]["notional"] == 600_000 and s2["n_big"] == 1
+        assert "kümesi" not in fmt.crypto_liq_snapshot(s2)
+        # render: küme bandı başlık ve etiket
+        lv = [{"px": 0.0074, "px_lo": 0.0072, "px_hi": 0.0074, "side": "long", "notional": 210_000, "dist": 16.7, "main": True,
+               "cluster": True, "n": 40}]
+        p = liqchart.plan_levels(candles(MARKH), MARKH, lv, None, 50)
+        assert p["lo"] < 0.0072 and p["draw"][0]["cluster"] is True
+        png = liqchart.render("HEMI", candles(MARKH), MARKH, lv)
+        assert png is None or png[:8] == b"\x89PNG\r\n\x1a\n"
+        assert "Toz değil küme" in open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+        print("✅ HEMI) toz elenir; 40 pozisyonluk $210K küme başlık; grafik bandı; tek büyük varsa eski davranış")
+    asyncio.run(run())

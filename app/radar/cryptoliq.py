@@ -323,7 +323,8 @@ async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | Non
         return None
     cands = pricechart.parse_candles(raw)
     levels = [{"px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
-               "dist": p.get("dist"), "main": i == 0}
+               "dist": p.get("dist"), "main": i == 0,
+               **{k: p[k] for k in ("px_lo", "px_hi", "cluster", "n") if k in p}}   # küme bandı
               for i, p in enumerate(sorted(fresh, key=lambda q: q.get("dist") or 0)[:4])]
     return liqchart.render(coin, cands, mark, levels, interval=CHART_LABEL[0],
                            span_txt=CHART_LABEL[1], target=target, coverage_txt=coverage_txt,
@@ -377,10 +378,45 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     # eski davranış (en yakın uzaklar) ve mesaj bunu söyler; grafik çizilmez.
     far_pct = _far_pct(cfg)
     near = [c for c in cands if c["dist"] <= far_pct]
-    big = [c for c in near if c["notional"] >= min_usd]
+    # Toz: OI'nin %0,1'i ya da $1K altı pozisyon başlık/küme için sayılmaz (HEMI: "LONG $136")
+    oi_ntl = 0.0
+    try:
+        if summ:
+            oi_ntl = float(summ.get("oi_ntl") or 0)
+        elif ctx:
+            c0 = (ctx.get("c") or {}).get(coin) or {}
+            oi_ntl = float(c0.get("oi") or 0) * float(mark or 0)
+    except (TypeError, ValueError):
+        oi_ntl = 0.0
+    dust = max(1_000.0, oi_ntl * 0.001)
+    solid = [c for c in near if c["notional"] >= dust]
+    n_dust = len(near) - len(solid)
+    big = [c for c in solid if c["notional"] >= min_usd]
     all_far = bool(cands) and not near
-    show = (big or near or cands)[:limit]
-    casc = await _cascade(cfg, client, coin, mark, show[0], rows) if show else None
+    # ≥ min_usd tek pozisyon yoksa KÜME: kovalı liq haritasının en büyük bantları
+    # (yön başına 2) başlık olur; toz en yakın diye öne geçmez. Grafik bandı çizer.
+    clusters: list[dict] = []
+    chart_rows: list[dict]
+    if big:
+        show = big[:limit]
+        chart_rows = show
+    elif solid:
+        from . import liqmap
+        # Küme ancak ≥2 pozisyonlu bantta anlamlı; tek tük pozisyonda eski "en yakın küçükler"
+        clusters = [c for c in liqmap.clusters(solid, mark, far_pct) if c["n"] >= 2]
+        if clusters:
+            show = sorted(solid, key=lambda c: -c["notional"])[:min(limit, 3)]
+            chart_rows = [{"liq_px": c["px"], "side": c["side"], "notional": c["total"], "dist": c["dist_lo"],
+                           "px_lo": c["px_lo"], "px_hi": c["px_hi"], "cluster": True, "n": c["n"],
+                           "mark": float(mark)} for c in clusters]
+        else:
+            show = solid[:limit]
+            chart_rows = show
+    else:
+        show = (near or cands)[:limit]
+        chart_rows = show
+    trigger = chart_rows[0] if chart_rows else None
+    casc = await _cascade(cfg, client, coin, mark, trigger, rows) if trigger else None
     # Kapsama (havuz / HL OI): mesaj ve PNG'de — süs, hesaplanamazsa komut düşmez
     from . import coverage as _coverage
     try:
@@ -389,16 +425,17 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
         log.debug("kapsama hesaplanamadı (%s)", coin, exc_info=True)
         cov = None
     png = None
-    if show and getattr(cfg, "crypto_liq_chart", True):
+    if chart_rows and getattr(cfg, "crypto_liq_chart", True):
         try:
-            png = await _chart(client, coin, mark, show, target=_target(casc),
+            png = await _chart(client, coin, mark, chart_rows, target=_target(casc),
                                coverage_txt=_coverage.txt(cov), far_pct=far_pct)
         except Exception:
             log.debug("anlık grafik üretilemedi (%s)", coin, exc_info=True)
     return {"coin": coin, "kind": kind, "mark": mark, "age": age, "rows": show,
             "n_all": len(cands), "n_big": len(big), "min_usd": min_usd, "png": png,
             "cascade": casc, "coverage": cov, "all_far": all_far,
-            "n_far": len(cands) - len(near), "far_pct": far_pct}
+            "n_far": len(cands) - len(near), "far_pct": far_pct,
+            "clusters": clusters, "n_dust": n_dust, "dust": dust}
 
 
 # ─────────────────────────────────────────────── tarama
