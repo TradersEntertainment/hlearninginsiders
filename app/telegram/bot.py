@@ -36,15 +36,11 @@ def _cmd_lower(s: str) -> str:
     return s.lower().replace("̇", "")
 
 
-CAPTION_LIMIT = 1024               # Telegram: ayrıştırılmış altyazı, UTF-16 birim
+CAPTION_LIMIT = fmt.CAPTION_VISIBLE   # Telegram: ayrıştırılmış altyazı, UTF-16 birim
 # Yalnız GERÇEK etiketler: "</?harf…>". Eski `<[^>]+>` metindeki kaçışsız bir '<'ten
 # ("2 toz pozisyon (< $1K)") sonraki '>'ye kadar her şeyi yutuyordu — /pump metni
-# "toz pozisyon (" diye kesik geliyordu.
-TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
-
-
-def strip_tags(s: str) -> str:
-    return TAG_RE.sub("", s or "")
+# "toz pozisyon (" diye kesik geliyordu. Tanım format.py'de (bot'u import edemez).
+TAG_RE, strip_tags = fmt.TAG_RE, fmt.strip_tags
 
 
 def _caption_fit(caption: str, limit: int = CAPTION_LIMIT,
@@ -618,8 +614,8 @@ class TelegramBot:
     async def _cmd_coin_liq(self, cmd: str, chat_id: str) -> bool:
         """/hype, /pump, /sndk → o coinin liq'e en yakın büyük pozisyonları +
         grafik, canlı fiyat ve güncel kalan mesafeyle. Dönüş: komut bir coin
-        miydi (değilse çağıran 'komut yok' der). Resim + tam metin tek mesaj;
-        sığmazsa metin ayrı, resim kısa altyazıyla."""
+        miydi (değilse çağıran 'komut yok' der). Resim + sığdırılmış altyazı TEK
+        mesaj; sığmazsa tam metin ayrı, resim ⭐ band altyazısıyla."""
         from ..hl.universe import resolve_coin
         from ..radar import cryptoliq
         t = await resolve_coin(cmd)
@@ -639,15 +635,16 @@ class TelegramBot:
                 offers = await offer_positions(t["coin"], t["symbol"], s["rows"])
             except Exception:
                 log.debug("takip teklifi yazılamadı (%s)", t["coin"], exc_info=True)
-        text = fmt.crypto_liq_snapshot(s, offers=offers)
         png = s.get("png")
-        if png and _caption_fit(text)[1] and await self.send_photo(png, text, chat_id):
-            return True
-        await self.send(text, chat_id)
-        if png and s.get("rows"):
-            p = s["rows"][0]
-            await self.send_photo(png, f"📈 <b>{sym}</b> · liq {fmt.px(p['liq_px'])}"
-                                       f" · %{p['dist']:.2f} kaldı", chat_id)
+        if png:
+            # TEK mesaj: foto + sığdırılmış altyazı (⭐ band, yakın bantlar, tekler, bağlam);
+            # ayrıntı sayfada. Sığmazsa (nadir) tam metin + foto (⭐ band altyazısı).
+            cap = fmt.crypto_liq_snapshot(s, offers=offers, compact=True)
+            if _caption_fit(cap)[1] and await self.send_photo(png, cap, chat_id):
+                return True
+        await self.send(fmt.crypto_liq_snapshot(s, offers=offers), chat_id)
+        if png:
+            await self.send_photo(png, fmt.crypto_liq_photo_caption(s), chat_id)
         return True
 
     async def _cmd_status(self, chat_id: str) -> None:

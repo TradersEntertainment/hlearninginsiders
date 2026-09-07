@@ -1,6 +1,7 @@
 """Telegram mesaj şablonları (HTML)."""
 import html
 import json
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -18,6 +19,18 @@ def esc(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=False)
 
 DISCLAIMER = "\n<i>ℹ️ Gözlem aracıdır, yatırım tavsiyesi değildir.</i>"
+# Yalnız GERÇEK etiketler ("</?harf…>"): metindeki kaçışsız '<' yutulmaz.
+TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
+CAPTION_VISIBLE = 1024      # Telegram altyazı sınırı: GÖRÜNÜR metin, UTF-16 birim
+
+
+def strip_tags(s: str) -> str:
+    return TAG_RE.sub("", s or "")
+
+
+def visible_len(s: str) -> int:
+    """Telegram'ın saydığı uzunluk: etiketler hariç, UTF-16 kod birimi."""
+    return len(strip_tags(s).encode("utf-16-le")) // 2
 
 
 def short(addr: str) -> str:
@@ -753,10 +766,66 @@ def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
     return "\n".join(lines)
 
 
-def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
-    """/hype, /pump… cevabı: liq'e en yakın büyük pozisyonlar, canlı fiyat ve
-    güncel kalan mesafe. Boşsa nedenini söyler (fiyat yok / pozisyon yok /
-    hepsi eşik altı)."""
+def _liq_band_line(c: dict, star: bool) -> str:
+    is_long = c.get("side") == "long"
+    if c.get("n", 0) > 1 and px(c["px_lo"]) != px(c["px_hi"]):
+        where = (f"{px(c['px_lo'])}–{px(c['px_hi'])} (%{c['dist_lo']:.1f}–%{c['dist_hi']:.1f}"
+                 f" {'altta' if is_long else 'üstte'})")
+    else:
+        where = f"liq {px(c['px'])} (%{c['dist_lo']:.1f} {'altta' if is_long else 'üstte'})"
+    return (f"{'🟢 LONG' if is_long else '🔴 SHORT'} bandı <b>{usd(c['total'])}</b>"
+            f" · {where} · {c['n']} pozisyon{' ⭐' if star else ''}")
+
+
+def _liq_single_line(p: dict, offer: int | None) -> str:
+    is_long = p.get("side") == "long"
+    lev = f" · {float(p['leverage']):g}x" if p.get("leverage") else ""
+    ent = {"mm": " 🤖MM", "vault": " 🏦VAULT"}.get(p.get("entity") or "", "")
+    tk = f" → /takip_{offer}" if offer else ""
+    return (f"{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
+            f" · liq {px(p['liq_px'])} (%{p['dist']:.2f} {'altta' if is_long else 'üstte'})"
+            f"{lev} · 👤 {alink(p['address'])}{ent}{tk}")
+
+
+def _liq_impact_line(src: list[dict]) -> str:
+    sell = sum(float(p.get("total") if "total" in p else p["notional"]) for p in src if p.get("side") == "long")
+    buy = sum(float(p.get("total") if "total" in p else p["notional"]) for p in src if p.get("side") == "short")
+    imp = []
+    if sell:
+        imp.append(f"📉 long'lar patlarsa zorunlu <b>SATIŞ</b> ~{usd(sell)}")
+    if buy:
+        imp.append(f"📈 short'lar patlarsa zorunlu <b>ALIŞ</b> ~{usd(buy)}")
+    return " · ".join(imp)
+
+
+def _liq_ctx(s: dict, rows: list[dict]) -> tuple[list[str], list[str]]:
+    """(zorunlu bağlam, ekler): zorunlu = havuz sayısı + 'HL'nin tamamı değil' + kapsama/sayım;
+    ekler = ölçüm yaşı, uzak sayısı, toz notu (compact'ta yer kalırsa)."""
+    far = float(s.get("far_pct") or 50)
+    core = [f"havuzda {s.get('n_all', 0)} açık pozisyon, {s.get('n_big', 0)}'ü ≥ {usd(s.get('min_usd'))}"]
+    extra = []
+    oldest = min((int(p.get("ts") or 0) for p in rows), default=0)
+    if oldest:
+        extra.append(f"pozisyon ölçümü en eski {age_str(oldest)} önce (süpürme)")
+    if s.get("n_far") and not s.get("all_far"):
+        extra.append(f"{s['n_far']} pozisyon %{far:.0f}'den uzak (listede/grafikte yok)")
+    if s.get("n_dust"):
+        extra.append(f"{s['n_dust']} toz pozisyon (&lt; {usd(s.get('dust'))}) bantlarda var, tek listesinde yok")
+    cc = coverage_ctx(s.get("coverage"))
+    core.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
+    return core, extra
+
+
+def crypto_liq_snapshot(s: dict, offers: list[int] | None = None, compact: bool = False,
+                        limit: int = CAPTION_VISIBLE, extra: str = "") -> str:
+    """/hype, /pump… cevabı: liq bantları (⭐ ana band), büyük tekler, zorunlu
+    satış/alış, zincir, bağlam. Boşsa nedenini söyler (fiyat yok / pozisyon yok).
+
+    `compact=True`: FOTO ALTYAZISI için sığdırılmış sürüm — görünür uzunluk
+    `limit` (Telegram 1024) altına inene kadar en düşük öncelikli blok düşer:
+    zincir → 3. band → 2. tek → bağlam ekleri → 2. band → tekler/etki satırı.
+    Başlık, ⭐ ana band, zorunlu bağlam, DISCLAIMER ve `extra` (herkese açık bot
+    altbilgisi) asla düşmez. Sayfa tam metni gösterir; alarm daha sıkı."""
     sym = esc((s.get("coin") or "").split(":")[-1])
     mark = s.get("mark")
     rows = s.get("rows") or []
@@ -765,67 +834,96 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None) -> str:
                 f" birazdan yeniden dene.")
     age = s.get("age")
     when = f" ({age_str(now() - int(age))} önce)" if age is not None and age > 30 else " (canlı)"
-    lines = [f"🎯 <b>{sym}</b> — liq'e en yakın büyük pozisyonlar · fiyat <b>{px(mark)}</b>{when}"]
+    head = f"🎯 <b>{sym}</b> — liq'e en yakın büyük pozisyonlar · fiyat <b>{px(mark)}</b>{when}"
     if not rows:
-        lines.append(f"Havuzda {sym} için liq fiyatı bilinen açık pozisyon yok — süpürme"
-                     f" uğradıkça dolar; HL'nin tamamı değil.")
-        return "\n".join(lines)
+        return "\n".join([head, f"Havuzda {sym} için liq fiyatı bilinen açık pozisyon yok — süpürme"
+                                f" uğradıkça dolar; HL'nin tamamı değil."] + ([extra] if extra else []))
     far = float(s.get("far_pct") or 50)
     cl = s.get("clusters") or []
     mb = s.get("main_band")
+    offers = offers or []
+    core_ctx, extra_ctx = _liq_ctx(s, rows)
+    if not compact:
+        lines = [head]
+        if s.get("all_far"):
+            lines.append(f"<i>%{far:.0f} içinde pozisyon yok — en yakın uzaklar (grafik çizilmez):</i>")
+        elif cl:
+            lines.append(f"<i>liq bantları (kovalı, toz hariç; ≥ {usd(s.get('min_usd'))} tek pozisyon:"
+                         f" {s.get('n_big', 0)}):</i>")
+            lines += [_liq_band_line(c, bool(mb) and c is mb) for c in cl]
+            if rows:
+                lines.append("<i>Büyük tekler:</i>" if s.get("n_big") else "<i>En büyük tekler:</i>")
+        elif not s.get("n_big"):
+            lines.append(f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>")
+        for i, p in enumerate(rows):
+            lines.append(_liq_single_line(p, offers[i] if i < len(offers) else None))
+        imp = _liq_impact_line(cl if cl else rows)
+        if imp:
+            lines.append(imp)
+        if s.get("cascade"):
+            from ..radar.cascade import describe
+            lines += describe(s["cascade"], mark)
+        lines.append("<i>" + " · ".join(core_ctx + extra_ctx) + "</i>")
+        lines.append(DISCLAIMER)
+        if extra:
+            lines.append(extra)
+        return "\n".join(lines)
+    # ── compact: (öncelik, satır) — büyük sayı önce düşer; 0 asla düşmez
+    blocks: list[tuple[int, str]] = [(0, head)]
     if s.get("all_far"):
-        lines.append(f"<i>%{far:.0f} içinde pozisyon yok — en yakın uzaklar (grafik çizilmez):</i>")
-    elif cl:
-        lines.append(f"<i>liq bantları (kovalı, toz hariç; ≥ {usd(s.get('min_usd'))} tek pozisyon:"
-                     f" {s.get('n_big', 0)}):</i>")
-        for c in cl:
-            is_long = c.get("side") == "long"
-            star = " ⭐" if mb and c is mb else ""
-            if c.get("n", 0) > 1 and px(c["px_lo"]) != px(c["px_hi"]):
-                where = (f"{px(c['px_lo'])}–{px(c['px_hi'])} (%{c['dist_lo']:.1f}–%{c['dist_hi']:.1f}"
-                         f" {'altta' if is_long else 'üstte'})")
-            else:
-                where = f"liq {px(c['px'])} (%{c['dist_lo']:.1f} {'altta' if is_long else 'üstte'})"
-            lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} bandı <b>{usd(c['total'])}</b>"
-                         f" · {where} · {c['n']} pozisyon{star}")
-        if rows:
-            lines.append("<i>Büyük tekler:</i>" if s.get("n_big") else "<i>En büyük tekler:</i>")
+        blocks.append((0, f"<i>%{far:.0f} içinde pozisyon yok — en yakın uzaklar:</i>"))
+    if cl:
+        main = mb if mb in cl else cl[0]
+        blocks.append((0, _liq_band_line(main, main is mb)))
+        others = sorted((c for c in cl if c is not main), key=lambda c: c["dist_lo"])[:2]
+        for j, c in enumerate(others):
+            blocks.append((2 if j == 0 else 5, _liq_band_line(c, False)))
     elif not s.get("n_big"):
-        lines.append(f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>")
-    for i, p in enumerate(rows):
-        is_long = p.get("side") == "long"
-        lev = f" · {float(p['leverage']):g}x" if p.get("leverage") else ""
-        ent = {"mm": " 🤖MM", "vault": " 🏦VAULT"}.get(p.get("entity") or "", "")
-        tk = f" → /takip_{offers[i]}" if offers and i < len(offers) and offers[i] else ""
-        lines.append(f"{'🟢 LONG' if is_long else '🔴 SHORT'} <b>{usd(p['notional'])}</b>"
-                     f" · liq {px(p['liq_px'])} (%{p['dist']:.2f} {'altta' if is_long else 'üstte'})"
-                     f"{lev} · 👤 {alink(p['address'])}{ent}{tk}")
-    src = cl if cl else rows
-    sell = sum(float(p.get("total") if "total" in p else p["notional"]) for p in src if p.get("side") == "long")
-    buy = sum(float(p.get("total") if "total" in p else p["notional"]) for p in src if p.get("side") == "short")
-    imp = []
-    if sell:
-        imp.append(f"📉 long'lar patlarsa zorunlu <b>SATIŞ</b> ~{usd(sell)}")
-    if buy:
-        imp.append(f"📈 short'lar patlarsa zorunlu <b>ALIŞ</b> ~{usd(buy)}")
+        blocks.append((0, f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>"))
+    for i, p in enumerate(rows[:2]):
+        line = _liq_single_line(p, offers[i] if i < len(offers) else None)
+        if i == 0 and cl:
+            line = ("<i>Büyük tekler:</i> " if s.get("n_big") else "<i>En büyük tekler:</i> ") + line
+        blocks.append((1 if i == 0 else 4, line))
+    imp = _liq_impact_line(cl if cl else rows)
     if imp:
-        lines.append(" · ".join(imp))
+        blocks.append((1, imp))
     if s.get("cascade"):
-        from ..radar.cascade import describe
-        lines += describe(s["cascade"], mark)
-    oldest = min((int(p.get("ts") or 0) for p in rows), default=0)
-    ctx = [f"havuzda {s.get('n_all', 0)} açık pozisyon, {s.get('n_big', 0)}'ü ≥ {usd(s.get('min_usd'))}"]
-    if oldest:
-        ctx.append(f"pozisyon ölçümü en eski {age_str(oldest)} önce (süpürme)")
-    if s.get("n_far") and not s.get("all_far"):
-        ctx.append(f"{s['n_far']} pozisyon %{far:.0f}'den uzak (listede/grafikte yok)")
-    if s.get("n_dust"):
-        ctx.append(f"{s['n_dust']} toz pozisyon (&lt; {usd(s.get('dust'))}) bantlarda var, tek listesinde yok")
-    cc = coverage_ctx(s.get("coverage"))
-    ctx.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
-    lines.append("<i>" + " · ".join(ctx) + "</i>")
-    lines.append(DISCLAIMER)
-    return "\n".join(lines)
+        from ..radar.cascade import describe_short
+        blocks.append((6, describe_short(s["cascade"])))
+    blocks.append((0, "<i>" + " · ".join(core_ctx) + "</i>"))
+    if extra_ctx:
+        blocks.append((3, "<i>" + " · ".join(extra_ctx) + "</i>"))
+    blocks.append((0, DISCLAIMER))
+    if extra:
+        blocks.append((0, extra))
+
+    def text_of(bl):
+        return "\n".join(t for _, t in bl)
+    while visible_len(text_of(blocks)) > limit:
+        drop = max((p for p, _ in blocks), default=0)
+        if drop <= 0:
+            break
+        idx = max(i for i, (p, _) in enumerate(blocks) if p == drop)
+        del blocks[idx]
+    return text_of(blocks)
+
+
+def crypto_liq_photo_caption(s: dict) -> str:
+    """Metin ayrı gittiğinde fotonun kısa altyazısı: ⭐ ana band (yoksa en yakın tek)."""
+    sym = esc((s.get("coin") or "").split(":")[-1])
+    mb = s.get("main_band") or ((s.get("clusters") or [None])[0])
+    if mb:
+        is_long = mb.get("side") == "long"
+        rng = (f"{px(mb['px_lo'])}–{px(mb['px_hi'])}" if px(mb.get("px_lo")) != px(mb.get("px_hi"))
+               else px(mb.get("px")))
+        return (f"📈 <b>{sym}</b> · {'LONG' if is_long else 'SHORT'} bandı {usd(mb['total'])} · {rng}"
+                f" · %{mb['dist_lo']:.1f} {'altta' if is_long else 'üstte'}")
+    rows = s.get("rows") or []
+    if rows:
+        p = rows[0]
+        return f"📈 <b>{sym}</b> · liq {px(p['liq_px'])} · %{p['dist']:.2f} kaldı"
+    return f"📈 <b>{sym}</b> · likidasyon grafiği"
 
 
 def crypto_liq_closed(coin: str, rows: list[dict]) -> str:

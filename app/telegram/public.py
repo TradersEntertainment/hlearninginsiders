@@ -24,7 +24,7 @@ DISCLAIMER = "<i>Gözlem aracıdır, yatırım tavsiyesi değildir.</i>"
 _SYM_RE = re.compile(r"^[A-Za-z0-9:_.\-]{1,24}$")
 CACHE_MAX = 500
 
-_cache: dict[str, tuple[int, str, bytes | None]] = {}   # coin → (ts, metin, png)
+_cache: dict[str, tuple[int, dict]] = {}   # coin → (ts, anlık görüntü); metin/altyazı kullanıcıya göre üretilir
 _bucket: deque = deque()                                 # HL'ye giden sorgular (son 60 sn)
 
 
@@ -523,7 +523,7 @@ async def run_query(bot, u: dict, raw: str) -> bool:
     ttl = int(getattr(cfg, "query_cache_sec", 60) or 0)
     c = _cache.get(coin)
     if c and ts - c[0] < ttl:
-        text, png = c[1], c[2]
+        s = c[1]
     else:
         if not _bucket_ok(cfg, ts):
             await bot.send(BUSY_TEXT, chat)
@@ -535,20 +535,25 @@ async def run_query(bot, u: dict, raw: str) -> bool:
             log.exception("açık sorgu hatası: %s", coin)
             await bot.send(f"❌ <b>{sym}</b> şu an okunamadı, birazdan tekrar dene.", chat)
             return True
-        text, png = fmt.crypto_liq_snapshot(s), s.get("png")
         if len(_cache) >= CACHE_MAX:
             _cache.pop(next(iter(_cache)))
-        _cache[coin] = (ts, text, png)
+        _cache[coin] = (ts, s)
     left = await users.consume_query(u, cfg, ts)
-    await send_snapshot(bot, chat, text + "\n" + footer(u, cfg, left), png, sym)
+    foot = footer(u, cfg, left)
+    await send_snapshot(bot, chat, fmt.crypto_liq_snapshot(s) + "\n" + foot, s.get("png"), sym,
+                        caption=fmt.crypto_liq_snapshot(s, compact=True, extra=foot),
+                        fallback=fmt.crypto_liq_photo_caption(s))
     return True
 
 
-async def send_snapshot(bot, chat: str, text: str, png: bytes | None, sym: str) -> None:
-    """Resim + tam metin tek mesaj; sığmazsa metin ayrı, resim kısa altyazıyla."""
+async def send_snapshot(bot, chat: str, text: str, png: bytes | None, sym: str,
+                        caption: str | None = None, fallback: str | None = None) -> None:
+    """Resim + sığdırılmış altyazı (`caption`, yoksa metin) TEK mesaj; sığmazsa tam
+    metin ayrı, resim kısa altyazıyla (`fallback`, yoksa genel)."""
     from .bot import _caption_fit
-    if png and _caption_fit(text)[1] and await bot.send_photo(png, text, chat):
+    cap = caption if caption is not None else text
+    if png and _caption_fit(cap)[1] and await bot.send_photo(png, cap, chat):
         return
     await bot.send(text, chat)
     if png:
-        await bot.send_photo(png, f"📈 <b>{sym}</b> · likidasyon grafiği", chat)
+        await bot.send_photo(png, fallback or f"📈 <b>{sym}</b> · likidasyon grafiği", chat)

@@ -112,6 +112,22 @@ def simulate(bids: list[dict], asks: list[dict], trigger: dict, positions: list[
             "book_reach_pct": reach_pct}
 
 
+def describe_short(c: dict | None) -> str:
+    """Foto altyazısı için TEK satır: tetik → varış · toplam · hareket (kaba/uzanmıyor notu)."""
+    if not c:
+        return ""
+    from ..telegram.format import px, usd
+    up = c["direction"] == UP
+    who = "short" if up else "long"
+    head = f"💣 <b>Zincir</b>: {usd(c['trigger_usd'])} {who} {px(c['start_px'])}'te patlarsa"
+    if c.get("no_book"):
+        return head + " — görünen defter liq'e uzanmıyor, derinlik bilinmiyor"
+    move = f" · {c['move_pct']:+.1f}%" if c.get("move_pct") is not None else ""
+    tail = " · kaba defter" if c.get("coarse") else ""
+    more = " · defter bitti, ötesi bilinmiyor" if c.get("exhausted") else ""
+    return head + f" → <b>{px(c['end_px'])}</b> · toplam <b>{usd(c['total_usd'])}</b>{move}{tail}{more}"
+
+
 def describe(c: dict | None, mark: float | None = None) -> list[str]:
     """Mesaj satırları (HTML). Boş zincir → []."""
     if not c:
