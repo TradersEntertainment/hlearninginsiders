@@ -46,6 +46,11 @@ HARVEST_PROBE_TTL = 6 * 3600       # aynı (coin, adres) çifti bu süre içinde
 # 90 sn'de bir binlerce kaydı yazmak ağır, restart'ta en fazla bir parti tekrar
 # sorgulanır (tur başına tavan var).
 _harvest_probed: dict[tuple[str, str], int] = {}
+# Soğuk kuyruk: bu partide/yakın zamanda denenen adres (adres -> ts). Kuyruk artık
+# imleçsiz — "en uzun süredir uğranmayan önce" — ama isteği patlayan adres
+# probed_ts alamayınca başta takılı kalırdı; bu süre boyunca yeniden alınmaz.
+_cold_tried: dict[str, int] = {}
+COLD_RETRY_SEC = 3600
 HOT_PER_BATCH = 30            # parti başına sıcak havuz adedi
 COLD_PER_BATCH = 10           # parti başına soğuk havuz adedi (uzun kuyruk)
 SPEC_INTERVAL = 600           # uzman paneli önbelleği tazeleme aralığı (sn)
@@ -68,13 +73,16 @@ async def build_pools(cfg: Config, client: HLClient) -> tuple[list[str], list[st
     lb = await _leaderboard_addrs(client, cfg.sweep_leaderboard_top)
     since = now() - cfg.fills_lookback_days * 86400
     async with db() as conn:
-        # SIRA ÖNEMLİ: eskiden düz DISTINCT'ti, yani soğuk havuz rastgele
-        # sırayla geziliyordu ve imleç her partide yeniden kurulan bir listeyi
-        # indeksliyordu — bir adrese hiç sıra gelmeyebiliyordu. Son işlem
-        # yapana öncelik veriyoruz: adli raporlarda karşımıza çıkanlar onlar.
+        # SIRA ÖNEMLİ: soğuk kuyruk "EN UZUN SÜREDİR UĞRANMAYAN ÖNCE" (probed_ts
+        # ASC, hiç uğranmayan en başta; eşitlikte son işlem yapan önce). Eski
+        # "MAX(ts) DESC + konumsal imleç" düzeninde yeni işlem yapan adres
+        # listenin BAŞINA giriyor, imleç ise ortada kaldığı için ona ancak tur
+        # sarınca sıra geliyordu — yeni PUMP alıcıları en son gezilen oluyordu.
+        # Uğranan adres probed_ts alıp kuyruğun arkasına düşer: kendini düzeltir.
         cur = await conn.execute(
-            "SELECT address FROM fills WHERE ts >= ? GROUP BY address"
-            " ORDER BY MAX(ts) DESC", (since,))
+            "SELECT f.address FROM fills f LEFT JOIN addresses ad ON ad.address = f.address"
+            " WHERE f.ts >= ? GROUP BY f.address"
+            " ORDER BY COALESCE(MAX(ad.probed_ts), 0) ASC, MAX(f.ts) DESC", (since,))
         traded = [r["address"] for r in await cur.fetchall()]
         cur = await conn.execute("SELECT DISTINCT address FROM positions_current")
         holders = [r["address"] for r in await cur.fetchall()]
@@ -498,6 +506,26 @@ async def _upsert_address(addr: str, positions: dict[str, dict], ts: int,
                 f"DELETE FROM positions_current WHERE address=?{scope}", (addr, *sp))
 
 
+def _cold_head(cold: list[str], n: int, ts: int) -> list[str]:
+    """Soğuk kuyruğun başından n adres — COLD_RETRY_SEC içinde denenmişler atlanır
+    (isteği patlayan adres probed_ts alamaz, başta takılı kalmasın); alınanlar
+    'denendi' damgası yer. Süresi geçen damgalar temizlenir."""
+    if n <= 0 or not cold:
+        return []
+    for a, t in list(_cold_tried.items()):
+        if ts - t >= COLD_RETRY_SEC:
+            _cold_tried.pop(a, None)
+    out: list[str] = []
+    for a in cold:
+        if a in _cold_tried:
+            continue
+        out.append(a)
+        _cold_tried[a] = ts
+        if len(out) >= n:
+            break
+    return out
+
+
 def _slice(pool: list[str], cursor: int, count: int) -> tuple[list[str], int, bool]:
     """Dönüşümlü dilim: (adresler, yeni imleç, tur tamamlandı mı)."""
     if not pool:
@@ -671,7 +699,7 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     if n_hot < bs - n_cold:            # sıcak havuz tükendi → artan soğuğa
         n_cold = min(len(cold), bs - n_hot)
     hb, hcur, hot_done = _slice(hot, int(await kv_get("sweep_cursor_hot") or 0), n_hot)
-    cb, ccur, _ = _slice(cold, int(await kv_get("sweep_cursor_cold") or 0), n_cold)
+    cb = _cold_head(cold, n_cold, now())        # imleçsiz: kuyruğun başı (bkz. build_pools)
     batch = hb + cb
     # Yetişme modunun taban (sweep_batch_size) ÜSTÜ kısmı fırsatçıdır: istemcinin
     # düşük şeridinde gider (pencere %70'i aşınca bekler, 429'da 60 sn susar) —
@@ -727,7 +755,6 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     await asyncio.gather(*(one(a) for a in batch))
 
     await kv_set("sweep_cursor_hot", hcur)
-    await kv_set("sweep_cursor_cold", ccur)
     # Parti tamamen başarısızsa (API reddi vb.) tur muhasebesini damgalama:
     # eskiden %100 hatada bile 'son tam tur şimdi' yazılıp tablo donmuşken
     # 'derin keşif çalışıyor' sanılıyordu (PLTR $1.26M yanılgısının dönüşü).
