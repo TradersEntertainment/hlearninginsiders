@@ -332,6 +332,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "Rekor mesajı geniş 5 dk grafikle tek mesaj: fiyat mumları + $ hacim barları, rekor kovası vurgulu, önceki rekor çizgisi. Ek istek yok (mumlar zaten elde)"},
     "crypto_vol_cooldown": {"type": "int", "label": "Coin başına bekleme (sn)", "group": "Kripto hacim",
                             "desc": "Uzun bir yükselişte her yeni kova yeni bir 24s rekoru olabilir; hepsi bildirilmesin"},
+    "vol_ws_prefilter": {"type": "bool", "label": "WS ön-süzgeci (kripto + hisse hacim)", "group": "Kripto hacim",
+                         "desc": "Canlı akışta son 10 dakikada sayfa tabanı kadar bile işlem görmeyen coine 5dk mum sorulmaz (HL ağırlık 20). Yeni rekor ancak son kapanmış mum tabanı aşarsa olur, o mum pencerenin içindedir — kaçırmaz. WS kopuksa/pencere dolmadıysa eskisi gibi sorar"},
     "crypto_vol_max_coins": {"type": "int", "label": "Evren tavanı (coin)", "group": "Kripto hacim",
                              "desc": "Kaç coin taranacak (PROPR ∩ ana dex, hacimce büyükten). Her coin turda 1 istek eder"},
     "crypto_liq_enabled": {"type": "bool", "label": "Kripto liq radarı", "group": "Kripto liq",
@@ -627,6 +629,7 @@ class Config:
         self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "550"))
         self.notify_cryptovol = True
         self.crypto_vol_enabled = True
+        self.vol_ws_prefilter = convert_value("bool", os.getenv("VOL_WS_PREFILTER", "1"))
         self.crypto_vol_poll_sec = int(os.getenv("CRYPTO_VOL_POLL_SEC", "300"))
         # SAYFA eşiği bilerek DÜŞÜK: eşik altı rekor hiçbir yere yazılmadığı
         # sürece "panel neden boş" sorusu cevapsız kalıyordu. Bildirim eşiği ayrı.

@@ -22,7 +22,7 @@ import logging
 
 from ..db import alert_log, alert_recent, db, kv_set, now
 from .cryptovol import (INTERVAL, LOOKBACK_SEC, MIN_BUCKETS, find_record,
-                        n_closed, note_miss, parse_vol_candles, unit_sane)
+                        n_closed, note_miss, parse_vol_candles, prefilter_skip, unit_sane)
 
 log = logging.getLogger("radar.equityvol")
 
@@ -84,7 +84,7 @@ async def scan(cfg, client, notifier=None) -> dict:
            # aynı görünüyordu — mum gelmiyor / rekor çıkmadı / eşik eledi.
            "n_nodata": 0, "n_bucket": 0, "n_record": 0,
            "below_page": 0, "below_alert": 0, "best_miss": None,
-           "photos": 0, "combined": 0}
+           "photos": 0, "combined": 0, "prefiltered": 0}
     if not getattr(cfg, "equity_vol_enabled", True):
         out["skipped"] = "kapalı"
         return out
@@ -105,6 +105,13 @@ async def scan(cfg, client, notifier=None) -> dict:
     end_ms, start_ms = ts * 1000, (ts - LOOKBACK_SEC) * 1000
 
     for coin in coins:
+        # WS ön-süzgeci: yeni rekor ancak son KAPANMIŞ 5 dk mumu sayfa tabanını aşarsa
+        # olur; o mum 10 dakikalık canlı akış penceresinin tamamen içindedir. Pencere
+        # tabanın altındaysa mum sormak (ağırlık 20) boşa — atla. Bilinmiyorsa (WS
+        # kopuk / abone değil / pencere dolmadı) eskisi gibi sor.
+        if prefilter_skip(cfg, coin, min_usd):
+            out["prefiltered"] += 1
+            continue
         try:
             candles = parse_vol_candles(
                 await client.candles(coin, INTERVAL, start_ms, end_ms))

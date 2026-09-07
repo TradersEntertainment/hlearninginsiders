@@ -143,6 +143,21 @@ async def universe(cfg, client) -> tuple[list[str], dict]:
     return coins, vols
 
 
+def prefilter_skip(cfg, coin: str, floor: float) -> bool:
+    """WS akış penceresi biliniyor VE sayfa tabanının altında → mum sorma."""
+    if not getattr(cfg, "vol_ws_prefilter", True):
+        return False
+    from ..hl import collector as _col
+    live = _col.LIVE
+    if live is None:
+        return False
+    try:
+        f = live.flow_notional(coin)
+    except Exception:
+        return False
+    return f is not None and f < float(floor or 0)
+
+
 async def scan(cfg, client, notifier=None) -> dict:
     """Bir tur: her coin için 5dk mumlarını çek, rekoru bul, kaydet, bildir."""
     out = {"checked": 0, "events": 0, "alerted": 0, "err": 0,
@@ -151,7 +166,7 @@ async def scan(cfg, client, notifier=None) -> dict:
            # aynı görünüyordu — mum gelmiyor / rekor çıkmadı / eşik eledi.
            "n_nodata": 0, "n_bucket": 0, "n_record": 0,
            "below_page": 0, "below_alert": 0, "best_miss": None,
-           "photos": 0, "combined": 0}
+           "photos": 0, "combined": 0, "prefiltered": 0}
     if not getattr(cfg, "crypto_vol_enabled", True):
         out["skipped"] = "kapalı"
         return out
@@ -171,6 +186,13 @@ async def scan(cfg, client, notifier=None) -> dict:
     end_ms, start_ms = ts * 1000, (ts - LOOKBACK_SEC) * 1000
 
     for coin in coins:
+        # WS ön-süzgeci: yeni rekor ancak son KAPANMIŞ 5 dk mumu sayfa tabanını aşarsa
+        # olur; o mum 10 dakikalık canlı akış penceresinin tamamen içindedir. Pencere
+        # tabanın altındaysa mum sormak (ağırlık 20) boşa — atla. Bilinmiyorsa (WS
+        # kopuk / abone değil / pencere dolmadı) eskisi gibi sor.
+        if prefilter_skip(cfg, coin, min_usd):
+            out["prefiltered"] += 1
+            continue
         try:
             candles = parse_vol_candles(
                 await client.candles(coin, INTERVAL, start_ms, end_ms))

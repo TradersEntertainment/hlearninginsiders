@@ -5,6 +5,7 @@ büyük fill'leri kaydeder, eşik üstü / sicilli (watchlist) işlemlerde anlı
 Telegram alert'i gönderir.
 """
 import asyncio
+from collections import deque
 import json
 import logging
 import time
@@ -17,6 +18,9 @@ from ..radar import twaplive
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
+
+FLOW_WINDOW = 600            # ön-süzgeç penceresi (sn): son kapanmış 5 dk mumu tamamen içinde
+LIVE = None                  # çalışan Collector (radar döngüleri ön-süzgeç için import eder)
 
 WHALE_FILL_COOLDOWN = 1800  # aynı adres+coin için 30 dk'da bir alert
 WS_RECEIVE_TIMEOUT = 90     # 90 sn hiç mesaj gelmezse (pong dahil) bağlantı ölü say
@@ -36,6 +40,13 @@ class Collector:
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
         self.crypto_coins: set[str] = set()  # yalnız sonda tetikleyicisi (ana dex)
         self.hot_marked = 0                  # sayım sıcak şeridine yazılan adres (kümülatif)
+        # Coin başına canlı akış penceresi: (ts, notional) — hacim tarayıcılarının
+        # "mum sormaya değer mi" ön-süzgeci (FLOW_WINDOW sn). Bağlantı anı da tutulur:
+        # pencere dolmadan "0 hacim" demek yalan olur → None (bilinmiyor).
+        self.flow: dict[str, deque] = {}
+        self.connected_since: float = 0.0
+        global LIVE
+        LIVE = self
         self.crypto_dex_coins: set[str] = set()  # kripto dex coinleri (para:…) — fill tabanı ayrı
         self.crypto_err = ""                 # liste alınamadıysa SEBEBİ (/status okur)
         self.last_trade: dict[str, int] = {}  # coin -> son işlem ts (zombi nöbetçisi)
@@ -158,6 +169,8 @@ class Collector:
                 timeout=aiohttp.ClientWSTimeout(ws_close=10,
                                                 ws_receive=WS_RECEIVE_TIMEOUT)) as ws:
             self.connected = True
+            self.connected_since = time.time()
+            self.flow.clear()                 # eski bağlantının penceresi eksik olabilir
             self._ws = ws
             self.subscribed = set()
             self.valid_coins = set(coins)
@@ -326,6 +339,7 @@ class Collector:
                 continue
             notional = px * sz
             self.last_trade[coin] = max(self.last_trade.get(coin, 0), ts)
+            self._note_flow(coin, ts, notional)
             # HL trade'inde `side` AGRESÖRÜ söyler: "B" = alıcı süpürdü, "A" = satıcı.
             # İnsider sinyalinde bilgi taşıyan taraf pasif maker değil, fiyatı
             # süpüren taker'dır — bu yüzden adres perspektifinden kaydediyoruz.
@@ -440,6 +454,30 @@ class Collector:
         # Büyük işlem gördüğümüz adresin TÜM defterine HEMEN bak. Süpürücü
         # havuzu sırayla geziyor; bu adrese sıra saatler sonra gelebilirdi.
         await self._kick_probes(agg)
+
+    def _note_flow(self, coin: str, ts: int, notional: float) -> None:
+        q = self.flow.get(coin)
+        if q is None:
+            q = self.flow[coin] = deque()
+        q.append((int(ts), float(notional)))
+        cut = int(ts) - FLOW_WINDOW
+        while q and q[0][0] < cut:
+            q.popleft()
+
+    def flow_notional(self, coin: str, window: int = FLOW_WINDOW) -> float | None:
+        """Son `window` sn'de bu coinde WS'te görülen işlem hacmi ($). **None** = bilinmiyor
+        (WS bağlı değil, coin abone değil ya da bağlantı `window`'dan yeni) → çağıran
+        mum sorar. 0.0 gerçek "hiç işlem yok"tur — abone olunan coinin HER işlemi buradan
+        geçer, o yüzden ön-süzgeç kaçırmaz."""
+        if not self.connected or coin not in self.subscribed:
+            return None
+        if time.time() - float(self.connected_since or 0) < window:
+            return None
+        cut = int(time.time()) - int(window)
+        q = self.flow.get(coin)
+        if not q:
+            return 0.0
+        return float(sum(n for t, n in q if t >= cut))
 
     async def _kick_probes(self, agg: dict) -> None:
         """Eşiği aşan adresler için anlık profil sondası (arka planda).
