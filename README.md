@@ -231,27 +231,36 @@ aceleci demektir.
 Tetikleyen vaka: INJ'e 6 saate yayılmış **$1.6M TWAP** — dilimler ~$2.2K,
 kripto yakalama tabanı $5K; arşiv radarı bunu **hiç göremez**. Collector abone
 olduğu her coinin her trade'ini adresle aldığı için `app/radar/twaplive.py`
-bunları **bellekte** sayar (ekstra istek yok): 2 sn içindeki parçalar tek dilim
-(HL alt-emri IOC, ince defterde bölünür), düzenlilik son 64 dilimden HL'nin
-rastgeleleştirmesine göre gevşek eşikle (CV 0,5 / 0,6), ortanca aralık 25-35
-sn ise mesaj "HL TWAP düzenine uyuyor" der, değilse "özel dilimleme".
+bunları **bellekte** sayar (kanca ekstra istek yapmaz): 2 sn içindeki parçalar
+tek dilim (HL alt-emri IOC, ince defterde bölünür), düzenlilik son 64 dilimden
+HL'nin rastgeleleştirmesine göre gevşek eşikle (CV 0,5 / 0,6).
 
-- **Bildirim kapısı:** toplam ≥ $100K **ve** dilim hızı güne yayılınca coinin
-  24s hacminin ≥ %20'si (INJ: $2.2K/30 sn ≈ $6.3M/gün, hacim $9.9M → %64); ya
-  da toplam ≥ $5M (hacimden bağımsız). En az 20 dilim ve 10 dk; hacim
-  bilinmiyor/bayatsa yalnız mutlak kapı çalışır. mm/vault etiketli adres elenir.
+**Tahmin yok.** Düzenli dizi görülünce (≥10 dilim, ≥5 dk, gözlenen ≥ $50K)
+adresin **HL TWAP emri** canlı sokete kısa abonelikle sorgulanır
+(`userTwapHistory` snapshot — hypurrscan'in Orders sekmesindeki veri):
+planlanan adet × bugünkü fiyat, dolan tutar, kalan süre. "Bu hızla 24 saatte…"
+gibi ekstrapolasyon mesajlarda yer almaz; ADA vakasındaki gibi bitmiş bir emir
+bildirilmez.
+
+- **Bildirim kapısı (kullanıcı kuralı):** emir toplamı ≥ **$2M**, kalan ≥ **$1M**
+  ve emir coinin 24s hacminin ≥ **%20**'si. Emir yok / bitmiş / iptal / hacim
+  bilinmiyor → bildirim yok (sayaçlar `/tani`'da: emir yok, bitmiş, eşik altı,
+  hacme göre küçük). mm/vault etiketli adres elenir. `twap_alert_big_usd` 0 =
+  kapalı; açılırsa o tutarı geçen emirde hacme bakılmaz.
 - **Kanal:** kripto → `CRYPTO_CHAT_ID` (boşsa gönderilmez), hisse/endeks → ana
-  sohbet. Mesaj: dilim sayısı/boyutu/aralığı, toplam ve adet, hız, hacim oranı,
-  adresin pozisyonu (canlı sorgu, 1 istek), fiyat ilk→son, taker %.
-- **İlerleme ve bitiş:** toplam $250K/500K/1M/2M/5M… basamaklarını geçince kısa
-  not (tur başına ≥30 dk ara); 3 aralık (≥5 dk) dilim gelmeyince 🏁 bitiş notu
-  (toplam, süre, fiyat, 24s hacme oranı). Sekmede 📡 satırlar, 24s hacim ve
-  hız/gün kolonları.
+  sohbet. Mesaj: emir (adet ≈ $, süre, başlangıç, kalan), dolan / kalan,
+  gördüğümüz dilimler, adresin pozisyonu (canlı sorgu), fiyat ilk→son, taker %.
+- **İlerleme ve bitiş:** emrin yarısı dolunca tek not; emir bitince 🏁 / iptal
+  edilince ⛔ gerçek dolan tutar, plan, süre, fiyat, hacme oran. Bildirilmiş tur
+  10 dk'da bir yeniden sorgulanır. Sekmede 📡 satırlar; Emir / Doldu / Kalan
+  kolonları.
 - **Kapsam:** yalnız WS'in dinlediği coinler — hisseler + hacme göre ilk
   `crypto_watch_top` kripto; sekme ve `/tani` sayıyı yazar.
+- **Şekil güvencesi:** snapshot mesaj şekli canlıda doğrulanır; ilk ham örnek
+  `/tani`'da görünür. Şekil tutmazsa emir "yok" sayılır ve bildirim gitmez —
+  uydurma yok.
 - **Restart:** bekleme (6 saat) `alerts_log`'da; bildirilmiş turlar açılışta
-  geri yüklenir, bitiş notu kaybolmaz. İşaret gönderimden ÖNCE yazılır: 60 sn'lik
-  döngü sessiz saatte her dakika yeni özet kaydı üretmesin. Ayarlar → **TWAP radarı**.
+  geri yüklenir, bitiş notu kaybolmaz. Ayarlar → **TWAP radarı**.
 
 ## Liq attack radarı: `/saldiri`
 

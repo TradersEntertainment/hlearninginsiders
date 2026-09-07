@@ -333,15 +333,26 @@ async def main():
         await c.executemany(
             "INSERT OR REPLACE INTO twap_runs(coin,address,side,first_ts,last_ts,n_slices,total,avg_slice,"
             "avg_gap,cv_gap,cv_size,taker_pct,ts,day_volume,rate_day,src,alerted_ts,ended_ts,px_first,px_last,"
-            "sz_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "sz_total,planned_usd,planned_sz,executed_usd,remaining_usd,order_ts,order_min,order_status,lookup_ts)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [("INJ", tw_a, "buy", now - 1260, now - 30, 42, 92_000, 2_190, 30, 0.06, 0.18, 100, now,
-              9.9e6, 6.3e6, "live", now - 600, None, 12.34, 12.44, 7_450),
+              9.9e6, 6.3e6, "live", now - 600, None, 12.34, 12.44, 7_450,
+              # HL TWAP emri (WS sorgusu): 337.7K INJ ≈ $4.15M, 6 saat, %38 doldu
+              4_154_000, 337_720, 1_599_000, 2_555_000, now - 3000, 360, "activated", now - 45),
              ("xyz:UANSEM", tw_b, "sell", now - 7200, now - 3600, 118, 1_590_000, 13_475, 30, 0.05, 0.22, 97,
-              now - 3500, 4.1e6, 38.8e6, "live", now - 6000, now - 3500, 0.2310, 0.2268, 6_950_000)])
+              now - 3500, 4.1e6, 38.8e6, "live", now - 6000, now - 3500, 0.2310, 0.2268, 6_950_000,
+              4_536_000, 20_000_000, 4_536_000, 0, now - 7200, 60, "finished", now - 3500)])
     await dbm.kv_set("twaplive_stats", {"keys": 3120, "observed": 184_000, "errors": 0, "cands": 4, "regular": 2,
-                                        "alerted": 1, "progress": 0, "ended": 1, "skipped_mm": 1, "no_chat": 0,
-                                        "no_vol": 0, "failed": 0,
-                                        "best": {"coin": "INJ", "side": "buy", "total": 92_000, "rate_pct": 64, "n": 42},
+                                        "lookups": 3, "lookup_fail": 0, "alerted": 1, "progress": 0, "ended": 1,
+                                        "skipped_mm": 1, "no_chat": 0, "no_order": 1, "order_done": 1,
+                                        "order_small": 0, "order_left": 0, "no_vol": 0, "vol_small": 0,
+                                        "no_lookup": 0, "failed": 0,
+                                        "best": {"coin": "INJ", "side": "buy", "planned": 4_154_000,
+                                                 "left": 2_555_000, "status": "activated", "vol_pct": 42.0},
+                                        "sample": '{"user": "0x…", "isSnapshot": true, "history": [{"state": '
+                                                  '{"coin": "INJ", "side": "B", "sz": "337720.0", "executedSz": '
+                                                  '"130000.0", "executedNtl": "1599000.0", "minutes": 360, '
+                                                  '"timestamp": 1757200000000}, "status": {"status": "activated"}}]}',
                                         "ts": now - 45})
     await dbm.kv_set("fills_count", 8)
     # 🧪 SİM: kâğıt üstü defter — 1 açık ön bacak (HYPE), hedefli kapanış + ters bacak,

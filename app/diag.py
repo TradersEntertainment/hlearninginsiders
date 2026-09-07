@@ -511,16 +511,26 @@ async def _subsystems(cfg) -> list[str]:
         out.append("  canlı twap: " + (f"⚠️ {tl['error']}" if tl.get("error") else (
             f"{_num(tl.get('keys'))} dizi bellekte · {tl.get('cands', 0)} aday · {tl.get('regular', 0)} düzenli"
             f" · {tl.get('alerted', 0)} bildirim · {tl.get('progress', 0)} ilerleme · {tl.get('ended', 0)} bitiş"
+            + (f" · {tl['lookups']} emir sorgusu" + (f" (⚠️ {tl['lookup_fail']} başarısız)" if tl.get("lookup_fail") else "")
+               if tl.get("lookups") or tl.get("lookup_fail") else "")
+            + (f" · {tl['no_order']} emir yok" if tl.get("no_order") else "")
+            + (f" · {tl['order_done']} bitmiş" if tl.get("order_done") else "")
+            + (f" · {tl['order_small'] + tl.get('order_left', 0)} eşik altı" if tl.get("order_small") or tl.get("order_left") else "")
+            + (f" · {tl['vol_small']} hacme göre küçük" if tl.get("vol_small") else "")
+            + (f" · ⚠️ collector yok ({tl['no_lookup']} sorgusuz aday)" if tl.get("no_lookup") else "")
             + (f" · ⚠️ CRYPTO_CHAT_ID TANIMSIZ ({tl['no_chat']} kripto alarmı gönderilmedi)" if tl.get("no_chat") else "")
             + (f" · {tl['no_vol']} hacim bilinmiyor" if tl.get("no_vol") else "")
             + (f" · {tl['skipped_mm']} mm/vault elendi" if tl.get("skipped_mm") else "")
             + (f" · ⚠️ {tl['failed']} gönderilemedi" if tl.get("failed") else "")
             + (f" · ⚠️ hata {tl['errors']}" if tl.get("errors") else "")
-            + ((f" · en büyüğü {best.get('coin')} {best.get('side')} ${float(best.get('total') or 0):,.0f}"
-                + (f" (hacmin %{float(best['rate_pct']):.0f}'i/gün)" if best.get("rate_pct") is not None else ""))
+            + ((f" · en büyük emir {best.get('coin')} {best.get('side')} ${float(best.get('planned') or 0):,.0f}"
+                + (f" (hacmin %{float(best['vol_pct']):.0f}'i)" if best.get("vol_pct") is not None else "")
+                + (f", {best.get('status')}" if best.get("status") else ""))
                if best else "")
             + (f" · ⚠️ {tl['skipped']}" if tl.get("skipped") else "")))
             + f" · {_dur(now() - int(tl['ts']))} önce")
+        if tl.get("sample"):
+            out.append(f"       ilk emir snapshot örneği: {str(tl['sample'])[:300]}")
     else:
         out.append("  canlı twap: tur HENÜZ ÇALIŞMADI")
     tw = await kv_get("twap_stats") or {}

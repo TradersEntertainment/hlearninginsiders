@@ -42,6 +42,13 @@ class Collector:
         self.probes_ok = 0
         self.probes_err = 0
         self.probes_skipped = 0
+        # Canlı TWAP radarı: adresin HL TWAP emrini sokete kısa abonelikle sorgular
+        self._ws = None
+        self._twap_waiters: dict[str, asyncio.Future] = {}
+        self.twap_lookups_ok = 0
+        self.twap_lookups_timeout = 0
+        self.twap_lookups_err = 0
+        self.twap_sample = None              # ilk ham userTwapHistory mesajı (şekil kontrolü, /tani)
 
     async def _current_coins(self) -> list[str]:
         """Abone olunacak coin'ler: HIP-3 hisse perp'leri + ana dex'in hacimce
@@ -141,6 +148,7 @@ class Collector:
                 timeout=aiohttp.ClientWSTimeout(ws_close=10,
                                                 ws_receive=WS_RECEIVE_TIMEOUT)) as ws:
             self.connected = True
+            self._ws = ws
             self.subscribed = set()
             self.valid_coins = set(coins)
             for coin in coins:
@@ -160,8 +168,80 @@ class Collector:
                         break
             finally:
                 self.connected = False
+                self._ws = None
+                for fut in self._twap_waiters.values():
+                    if not fut.done():
+                        fut.set_result(None)
+                self._twap_waiters.clear()
                 ping_task.cancel()
                 resub_task.cancel()
+
+    async def fetch_twap_history(self, addr: str, timeout: float = 6.0) -> list | None:
+        """Adresin HL TWAP emirleri: canlı sokete `userTwapHistory` ile kısa abonelik,
+        snapshot gelince abonelikten çık. Bağlı değil / zaman aşımı → None (bildirim
+        tahminle DEĞİL emir verisiyle gider; veri yoksa gitmez). Aynı adres için
+        eşzamanlı istekler tek future'ı paylaşır."""
+        ws = self._ws
+        addr = (addr or "").lower()
+        if ws is None or ws.closed or not addr:
+            self.twap_lookups_err += 1
+            return None
+        fut = self._twap_waiters.get(addr)
+        fresh = fut is None or fut.done()
+        if fresh:
+            fut = asyncio.get_running_loop().create_future()
+            self._twap_waiters[addr] = fut
+            try:
+                await ws.send_json({"method": "subscribe",
+                                    "subscription": {"type": "userTwapHistory", "user": addr}})
+            except Exception as e:
+                self._twap_waiters.pop(addr, None)
+                self.twap_lookups_err += 1
+                log.debug("twap sorgusu gönderilemedi %s: %s", addr[:10], e)
+                return None
+        try:
+            hist = await asyncio.wait_for(asyncio.shield(fut), timeout)
+            if hist is None:
+                self.twap_lookups_err += 1
+            else:
+                self.twap_lookups_ok += 1
+            return hist
+        except asyncio.TimeoutError:
+            self.twap_lookups_timeout += 1
+            return None
+        finally:
+            if fresh:
+                if self._twap_waiters.get(addr) is fut:
+                    self._twap_waiters.pop(addr, None)
+                try:
+                    if not ws.closed:
+                        await ws.send_json({"method": "unsubscribe",
+                                            "subscription": {"type": "userTwapHistory", "user": addr}})
+                except Exception:
+                    pass
+
+    def _on_twap_history(self, data) -> None:
+        """userTwapHistory mesajı → bekleyen sorguya teslim. Şekil: {user, isSnapshot,
+        history:[{state, status, time}]}; user yoksa ve tek bekleyen varsa ona verilir."""
+        if self.twap_sample is None:
+            try:
+                self.twap_sample = json.dumps(data, ensure_ascii=False)[:600]
+            except Exception:
+                self.twap_sample = str(data)[:600]
+        hist = None
+        user = ""
+        if isinstance(data, dict):
+            user = str(data.get("user") or "").lower()
+            hist = data.get("history")
+            if hist is None and isinstance(data.get("twapHistory"), list):
+                hist = data.get("twapHistory")
+        elif isinstance(data, list):
+            hist = data
+        fut = self._twap_waiters.get(user) if user else None
+        if fut is None and len(self._twap_waiters) == 1:
+            fut = next(iter(self._twap_waiters.values()))
+        if fut is not None and not fut.done():
+            fut.set_result(hist if isinstance(hist, list) else [])
 
     async def _pinger(self, ws):
         n = 0
@@ -206,7 +286,11 @@ class Collector:
             msg = json.loads(raw)
         except json.JSONDecodeError:
             return
-        if msg.get("channel") != "trades":
+        ch = msg.get("channel")
+        if ch == "userTwapHistory":
+            self._on_twap_history(msg.get("data"))
+            return
+        if ch != "trades":
             return
         trades = msg.get("data") or []
         rows = []                                  # fills'e yazılacak satırlar

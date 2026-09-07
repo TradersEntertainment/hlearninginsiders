@@ -17,11 +17,13 @@
   market maker/vault etiketli adresler elenir ama hepsi elenemez.
   Yatırım tavsiyesi değildir.</span></p>
   <p class="sub">📡 <b>Canlı radar{% if not live_on %} (kapalı){% endif %}:</b> WS akışındaki her işlem — yakalama tabanının
-  <b>altındakiler dahil</b> — adres bazında bellekte sayılır, ekstra istek yok. HL'nin yerel
-  TWAP'ı 30 sn'de bir ~$2K'lık dilim atar; arşiv onu göremez, canlı sayaç görür. Telegram:
-  toplam ≥ <b>{{ alert_min|usd }}</b> ve dilim hızı güne yayılınca coinin 24s hacminin
-  ≥ <b>%{{ '%g'|format(rate_pct) }}</b>'si, ya da toplam ≥ {{ big_usd|usd }} (hacimden bağımsız).
-  Kripto → kripto kanalı, hisse → ana sohbet; ilerleme ve 🏁 bitiş notları gelir.
+  <b>altındakiler dahil</b> — adres bazında bellekte sayılır (kanca ekstra istek yapmaz). HL'nin yerel
+  TWAP'ı 30 sn'de bir ~$2K'lık dilim atar; arşiv onu göremez, canlı sayaç görür. Düzenli dizi
+  görülünce adresin <b>HL TWAP emri</b> sokete kısa abonelikle sorgulanır (hypurrscan'in Orders
+  sekmesindeki veri: plan, dolan, kalan süre) — <b>tahmin yok</b>. Telegram: emir ≥ <b>{{ alert_min|usd }}</b>,
+  kalan ≥ <b>{{ min_left|usd }}</b> ve emir 24s hacmin ≥ <b>%{{ '%g'|format(vol_pct) }}</b>'si ise
+  {%- if big_usd %} (ya da emir ≥ {{ big_usd|usd }}, hacimden bağımsız){% endif %}; emir yoksa/bitmişse bildirim yok.
+  Kripto → kripto kanalı, hisse → ana sohbet; yarısı dolunca ilerleme, bitince 🏁 / iptalde ⛔ notu.
   Kapsam: dinlenen <b>{{ ws.crypto|length if ws.crypto else 0 }}</b> kripto + <b>{{ ws.equity_n or 0 }}</b> hisse
   (Ayarlar → TWAP radarı).</p>
 
@@ -35,7 +37,9 @@
     <tr><th class="l">Coin</th><th class="l">Adres</th><th>Yön</th>
         <th title="Turun toplam büyüklüğü — dilimlerin $ toplamı">Toplam</th>
         <th title="Coinin 24 saatlik hacmi (bildirim anındaki)">24s hacim</th>
-        <th title="Dilim hızı güne yayılınca 24s hacmin yüzde kaçı">Hız/gün</th>
+        <th title="HL TWAP emrinin planlanan toplamı (adet × fiyat) ve 24s hacme oranı">Emir</th>
+        <th title="Emrin dolan kısmı">Doldu</th>
+        <th title="Emrin dolmamış kısmı ve kalan süre">Kalan</th>
         <th title="Kaç dilime bölünmüş">Dilim</th>
         <th title="Ortalama dilim büyüklüğü">Dilim $</th>
         <th title="Dilimler arası ortalama süre">Aralık</th>
@@ -58,8 +62,11 @@
         <b>{{ 'ALIM' if r.side == 'buy' else 'SATIM' }}</b></td>
       <td><b>{{ r.total|usd }}</b></td>
       <td class="dim">{% if r.day_volume %}{{ r.day_volume|usd }}{% else %}—{% endif %}</td>
-      <td class="{{ 'short' if r.rate_pct is not none and r.rate_pct >= rate_pct else 'dim' }}">
-        {% if r.rate_pct is not none %}%{{ '%.0f'|format(r.rate_pct) }}{% else %}—{% endif %}</td>
+      <td>{% if r.planned_usd %}<b>{{ r.planned_usd|usd }}</b>{% if r.order_pct is not none %}
+        <span class="{{ 'short' if r.order_pct >= vol_pct else 'dim' }}">%{{ '%.0f'|format(r.order_pct) }}</span>{% endif %}
+        {%- else %}<span class="dim">—</span>{% endif %}</td>
+      <td class="dim">{% if r.filled_pct is not none %}%{{ '%.0f'|format(r.filled_pct) }}{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.planned_usd %}{{ (r.remaining_usd or 0)|usd }}{% if r.left_sec is not none %} · {{ (r.left_sec // 60)|int }} dk{% endif %}{% else %}—{% endif %}</td>
       <td class="dim">{{ r.n_slices }}</td>
       <td class="dim">{{ r.avg_slice|usd }}</td>
       <td class="dim">{{ (r.avg_gap or 0)|int }}sn</td>
@@ -94,6 +101,9 @@
   <p class="kunye">📡 Canlı radar: {% if live.ts %}{{ live['keys'] or 0 }} dizi bellekte · {{ live.cands or 0 }} aday ·
     {{ live.regular or 0 }} düzenli · <b>{{ live.alerted or 0 }}</b> bildirim · {{ live.ended or 0 }} bitiş
     {%- if live.no_chat %} · <span class="bad">{{ live.no_chat }} kripto alarmı gönderilmedi (CRYPTO_CHAT_ID yok)</span>{% endif %}
+    {%- if live.lookups %} · {{ live.lookups }} emir sorgusu{% if live.lookup_fail %} (<span class="bad">{{ live.lookup_fail }} başarısız</span>){% endif %}{% endif %}
+    {%- if live.no_order %} · {{ live.no_order }} emir yok{% endif %}{% if live.order_done %} · {{ live.order_done }} bitmiş{% endif %}
+    {%- if live.order_small or live.order_left %} · {{ (live.order_small or 0) + (live.order_left or 0) }} eşik altı{% endif %}
     {%- if live.no_vol %} · {{ live.no_vol }} hacim bilinmiyor{% endif %}
     {%- if live.errors %} · <span class="bad">hata {{ live.errors }}</span>{% endif %}
     · {{ live.ts|dt }}{% else %}tur henüz çalışmadı{% endif %}.</p>

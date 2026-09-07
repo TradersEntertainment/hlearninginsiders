@@ -165,6 +165,15 @@ async def recent(limit: int = 80, hours: int = 48) -> list[dict]:
         r["src"] = r.get("src") or "fills"
         dv, rd = r.get("day_volume"), r.get("rate_day")
         r["rate_pct"] = (float(rd) / float(dv) * 100) if dv and rd else None
+        # HL TWAP emri (canlı radar sorguladıysa): plan, dolan %, kalan ($ · süre)
+        pu, eu = r.get("planned_usd"), r.get("executed_usd")
+        r["order_pct"] = (float(pu) / float(dv) * 100) if pu and dv else None
+        r["filled_pct"] = (float(eu or 0) / float(pu) * 100) if pu else None
+        left = None
+        if pu and r.get("order_ts") and r.get("order_min") and not r.get("ended_ts") \
+                and (r.get("order_status") or "activated") == "activated":
+            left = int(r["order_ts"]) + int(float(r["order_min"]) * 60) - ts
+        r["left_sec"] = max(0, left) if left is not None else None
     rows.sort(key=lambda r: (not r["active"], -(r["total"] or 0)))
     return rows
 

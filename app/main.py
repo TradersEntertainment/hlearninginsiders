@@ -374,7 +374,7 @@ async def lifespan(app: FastAPI):
     from .radar.twap import loop as twap_loop
     _spawn("twap", lambda: twap_loop(cfg), notifier)
     from .radar.twaplive import loop as twaplive_loop
-    _spawn("twaplive", lambda: twaplive_loop(cfg, client, notifier), notifier)
+    _spawn("twaplive", lambda: twaplive_loop(cfg, client, notifier, collector), notifier)
     from .radar.liqattack import loop as liqattack_loop
     _spawn("liqattack", lambda: liqattack_loop(cfg, client, notifier), notifier)
     from .radar.sim import loop as sim_loop
