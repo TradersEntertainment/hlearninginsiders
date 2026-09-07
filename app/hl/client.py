@@ -25,6 +25,9 @@ class HLClient:
         self._rpm_window = rpm_window
         self._req_times: deque[float] = deque()
         self._rl_lock = asyncio.Lock()
+        # HL'den gelen 429 sayısı (kümülatif). Sayım bunu okuyup kendi hızını
+        # yarıya indirir; /tani yazar. Retry içinde yutulan 429'lar da sayılır.
+        self.n_429 = 0
 
     async def _acquire_budget(self) -> None:
         while True:
@@ -66,6 +69,8 @@ class HLClient:
                             data = await r.json()
                             await asyncio.sleep(self._min_interval)
                             return data
+                        if r.status == 429:
+                            self.n_429 += 1
                         if r.status in (429, 500, 502, 503, 504) and attempt < retries:
                             await asyncio.sleep(delay + random.random())
                             delay = min(delay * 2, 30)
@@ -101,6 +106,17 @@ class HLClient:
         if dex:
             p["dex"] = dex
         return await self.info(p)
+
+    async def batch_clearinghouse(self, users: list[str], dex: str = ""):
+        """TOPLU defter: `batchClearinghouseStates` — sağlayıcı belgelerinde
+        (Dwellir/QuickNode/Chainstack) api.hyperliquid.xyz/info örneğiyle var,
+        resmi Python SDK'da yok. Bu yüzden canlıda SONDA ile doğrulanır
+        (radar/census.probe_mode): 200 + `users` sırasında state listesi →
+        toplu mod; 4xx/şekil hatası → tek tek mod. Dönüş ham yanıttır."""
+        p: dict = {"type": "batchClearinghouseStates", "users": list(users)}
+        if dex:
+            p["dex"] = dex
+        return await self.info(p, retries=2)
 
     async def clearinghouse_all(self, user: str, dexes: list[str]) -> dict:
         """Adresin BÜTÜN dex'lerdeki defteri — {dex: state} sözlüğü.

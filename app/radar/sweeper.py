@@ -371,7 +371,8 @@ async def _upsert_hl(addr: str, positions: dict[str, dict], ts: int,
 
 
 async def _upsert_addr_pos(addr: str, positions: dict[str, dict],
-                           ts: int, dexes: list[str] | None = None) -> None:
+                           ts: int, dexes: list[str] | None = None,
+                           touch_addresses: bool = True) -> None:
     """addr_positions'a yaz: SON BİLİNEN pozisyon, boyut gözetmeksizin.
 
     `hl_positions` kademe altını hiç yazmadığı için "ne oldu" raporunda
@@ -383,6 +384,9 @@ async def _upsert_addr_pos(addr: str, positions: dict[str, dict],
 
     Kapanan SİLİNMEZ, damgalanır: "pozisyonu kapattı" etiketi buna dayanıyor
     ve silinen satırdan geçmiş geri getirilemez.
+
+    `touch_addresses=False`: addresses'a satır açma / probed_ts damgalama (sayım
+    pozisyonsuz on binlerce hesabı gezer; onları havuza sokmanın anlamı yok).
     """
     rows = [(coin, addr, p["dex"], p["side"], p["szi"], p["entry_px"],
              p["leverage"], p["liq_px"], p["upnl"], p["notional"], ts)
@@ -415,6 +419,8 @@ async def _upsert_addr_pos(addr: str, positions: dict[str, dict],
             await conn.execute(
                 f"UPDATE addr_positions SET closed_ts=? WHERE address=?"
                 f" AND closed_ts IS NULL{scope}", (ts, addr, *sp))
+    if not touch_addresses:
+        return
     async with db() as conn:
         # Defteri GERÇEKTEN çektik. "hiç uğramadık" ile "uğradık, bu coinde
         # pozisyonu yok"u ayıran işaret bu.
@@ -434,8 +440,9 @@ async def prune_addr_positions(days: int) -> int:
 
 
 async def upsert_account_value(addr: str, value: float | None, ts: int,
-                               force: bool = True) -> bool:
+                               force: bool = True, create: bool = True) -> bool:
     """Bakiyeyi yaz. `force=False` ise YALNIZ mevcut ölçüm daha eskiyse yazar.
+    `create=False`: adres addresses'ta yoksa satır AÇMA (sayım; havuz şişmesin).
 
     Öncelik kuralı: clearinghouse ölçümü tüm dex'leri kapsadığı için otoriter
     (force=True); leaderboard değeri yalnız ana dex'i bildiği için ancak daha
@@ -450,6 +457,8 @@ async def upsert_account_value(addr: str, value: float | None, ts: int,
         cur = await conn.execute(q, tuple(args))
         if cur.rowcount:
             return True
+        if not create:
+            return False
         # Adres henüz addresses'ta yoksa (leaderboard'dan yeni geldi) oluştur.
         cur = await conn.execute(
             "INSERT OR IGNORE INTO addresses(address, first_seen, account_value,"

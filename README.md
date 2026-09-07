@@ -431,7 +431,10 @@ liq künyesi, `/sembol` mesajı, alarm PNG'sinin alt başlığı ve `/tani`'nin
 short toplamı = OI × mark), iki yüzde birbirinden bağımsızdır; **%100 üstü =
 bayat satır** (kapanmış pozisyon hâlâ tabloda), gizlenmez ⚠️ ile yazılır.
 HIP-3 coinlerinde kutu ayrıca son tam taramanın "N adres → M poz" sayımını
-gösterir (`scans.n_addrs/n_found`).
+gösterir (`scans.n_addrs/n_found`). Kutunun ve mesajın "sayım %X (toplu)" notu
+**sayımın** (aşağıda) o turda kaç hesabı bitirdiğini söyler: yüzde yükseldikçe
+havuz HL geneline yaklaşır; "sayım tam" ise havuz, tanıdığımız tüm hesapların
+defteridir — dış siteyle kalan fark, leaderboard'da olmayan hesaplardır.
 
 ### Grafikte likidasyon barları
 
@@ -1224,15 +1227,28 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   yeniden sondalanmaz; tavana sığmayanlar `/tani`'de "sıraya kaldı" diye görünür.
   Memecoin'in liq haritası böylece sayfa açılmasını beklemeden dolar.
 
-  **Kripto dex sayımı (census, varsayılan KAPALI — `CRYPTO_DEX_CENSUS_ENABLED`):**
-  zincir geneline yakın kapsama için günde bir, leaderboard'da bakiyesi
-  `CENSUS_MIN_ACCOUNT_VALUE` (vars. $1K) üstünde ve son hafta işlem yapmış HER
-  hesabın defteri her kripto dex'inde (para) sorgulanır — adres başına dex başına
-  1 istek, `CENSUS_RPM` (vars. 60/dk) hızında. Maliyet: N adres ≈ N/60 dakika
-  (20.000 adres ≈ 5,5 saat, küresel 350/dk bütçesinin %17'si; süpürücü o sırada
-  kendiliğinden yavaşlar). Yanıtın otoritesi yalnız o dex: para satırı yazılır/
-  silinir, xyz ve ana dex satırlarına dokunulmaz; bozuk yanıt kayıt silmez.
-  Kaldığı yerden devam eder (`census_state`), özet `/tani` "sayım" satırında.
+  **Sayım (census, varsayılan AÇIK — `CENSUS_ENABLED`):** kapsamayı zincir
+  geneline yaklaştıran tek yol. Evren = leaderboard'un TÜM satırları (bakiye ≥
+  `CENSUS_MIN_ACCOUNT_VALUE`, vars. $100; haftalık hacim şartı YOK — pozisyon
+  tutan hesap haftalarca işlem yapmayabilir) ∪ havuzdaki adresler ∪ fill'i
+  olanlar (`census_accounts` tablosu). Sıra bakiye büyükten küçüğe (OI'nin büyüğü
+  önce → kapsama $ olarak hızla yükselir); tur bitince leaderboard tazelenir (6
+  saatte bir), baştan. Her hesap ana dex'te sorgulanır; kripto dex'ler (para)
+  yalnız bakiyesi `CENSUS_HIP3_MIN_ACCOUNT_VALUE` (vars. $1K) üstündekilerde.
+  İki mod, açılışta SONDA ile seçilir: **toplu** — `batchClearinghouseStates`
+  (sağlayıcı belgelerinde var, resmi SDK'da yok; 2 adresle denenir, 200 + liste
+  → toplu) bir istekte `CENSUS_BATCH_SIZE` (vars. 50) hesap: 250 istek/dk × 50
+  = 12.500 hesap/dk, 50 bin hesap ≈ 4 dk; **tek tek** — `clearinghouseState`,
+  250 hesap/dk ≈ 3,5 saat. Toplu mod tur içinde üst üste 3 hata verirse tek moda
+  düşer, 6 saat sonra yeniden sondalanır. HL 429 dönerse sayım hızı yarıya iner
+  (en az 1/8), 10 dk sessizlikten sonra kademeli geri çıkar. Yazım süpürücüyle
+  aynı yazıcılar, otorite yalnız sorgulanan dex: ana dex → `addr_positions` (her
+  boyut) + `hl_positions` (kademe üstü) + bakiye; para → `positions_current`;
+  xyz satırına dokunulmaz, bozuk yanıt kayıt silmez, pozisyonsuz hesap havuza
+  (`addresses`) sokulmaz. Restart'ta tur kaldığı yerden sürer. `/tani` "sayım"
+  satırı modu, süren turun yüzdesini, son turun süresini ve 429 sayısını yazar;
+  coin sayfasının kapsama kutusu ve `/sembol` mesajı "sayım %X" notu taşır.
+  Eski `CRYPTO_DEX_CENSUS_ENABLED` (yalnız para, günde bir) kalktı.
 
 ## AI Analist (opsiyonel)
 

@@ -227,15 +227,21 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "sweep_batch_max": {"type": "int", "label": "Yetişme: parti tavanı (adres)",
                         "group": "Tarama & performans",
                         "desc": "Yetişme modunda bir partide en fazla kaç adres taransın. Tavan olmasa tek parti diğer görevleri aç bırakabilir"},
-    "crypto_dex_census_enabled": {"type": "bool", "label": "🗳 Kripto dex sayımı (census)",
-                                  "group": "Tarama & performans",
-                                  "desc": "Günde bir, leaderboard'da bakiyesi tabanın üstündeki ve son hafta işlem yapmış HER hesabın defteri her kripto dex'inde (para) sorgulanır — adres başına dex başına 1 istek. Maliyet: N adres ≈ N / istek-dk dakika (20.000 adres, 60/dk ≈ 5,5 saat, bütçenin %17'si; süpürücü o sırada yavaşlar). Kapalıyken hiç istek yok"},
+    "census_enabled": {"type": "bool", "label": "🗳 Sayım (census): tüm hesapların defteri",
+                       "group": "Tarama & performans",
+                       "desc": "HL'de 'coindeki tüm pozisyonlar' API'si yok; kapsama (havuz/HL OI) ancak tanıdığımız HER hesabı sorgulayınca yükselir. Leaderboard'da bakiyesi tabanın üstündeki hesaplar + havuzdaki adresler, bakiye büyükten küçüğe, ana dex'te ve kripto dex'lerde (para) tur tur sorgulanır. Toplu sorgu (batchClearinghouseStates) çalışıyorsa tur dakikalar, tek tek modda saatler sürer — hangisi olduğu /tani 'sayım' satırında. Kapalıyken hiç istek yok"},
     "census_min_account_value": {"type": "float", "label": "Sayım: asgari hesap bakiyesi ($)",
                                  "group": "Tarama & performans",
-                                 "desc": "Leaderboard accountValue bunun altındaki hesaplar sayıma girmez"},
+                                 "desc": "Leaderboard accountValue bunun altındaki hesaplar sayıma girmez (vars. $100). Haftalık hacim şartı YOK: pozisyon tutan hesap haftalarca işlem yapmayabilir"},
+    "census_hip3_min_account_value": {"type": "float", "label": "Sayım: kripto dex (para) için asgari bakiye ($)",
+                                      "group": "Tarama & performans",
+                                      "desc": "Kripto dex'ler (para) yalnız bakiyesi bunun üstündeki hesaplarda sorgulanır (vars. $1K) — tek tek modda adres başına ikinci isteği küçük hesaplara harcamamak için; ana dex her hesapta sorgulanır"},
     "census_rpm": {"type": "int", "label": "Sayım: istek/dk",
                    "group": "Tarama & performans",
-                   "desc": "Sayımın kendi hızı; küresel HL bütçesi (HL_MAX_RPM) ayrıca uygulanır"},
+                   "desc": "Sayımın kendi hızı (vars. 250); küresel HL bütçesi (HL_MAX_RPM) ayrıca uygulanır. HL 429 dönerse hız kendiliğinden yarıya iner (en az 1/8), 10 dk sessizlikten sonra kademeli geri çıkar"},
+    "census_batch_size": {"type": "int", "label": "Sayım: toplu sorguda hesap/istek",
+                          "group": "Tarama & performans",
+                          "desc": "batchClearinghouseStates bir istekte kaç hesap sorsun (vars. 50). Toplu sorgu çalışmıyorsa (tek tek mod) etkisiz"},
     "harvest_probe_max": {"type": "int", "label": "Hasat sondası: tur başına adres",
                           "group": "Tarama & performans",
                           "desc": "Her süpürme turunda, o turun hasat coinlerinde işlem yapmış ama pozisyonu bilinmeyen en fazla bu kadar adresin defteri coinin KENDİ dex'inde sorgulanır (adres başına 1 istek; 40/90 sn ≈ bütçenin %8'i). Kripto dex coinleri (para) her tur sırada. 0 = kapalı"},
@@ -517,7 +523,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "pro_query_per_min": {"type": "int", "label": "Pro: dakikada sorgu", "group": "Satış / Kullanıcılar",
                           "desc": "Adil kullanım: Pro kullanıcı dakikada en çok bu kadar sorgu (bellek içi kayan pencere)"},
     "query_global_per_min": {"type": "int", "label": "Toplam sorgu tavanı (dakika)", "group": "Satış / Kullanıcılar",
-                             "desc": "TÜM kullanıcıların HL'ye giden sorguları için ortak kova; dolunca 'yoğunluk var' cevabı (önbellekten dönenler sayılmaz). 40 sorgu ≈ 120 HL isteği/dk; radarlara pay kalsın (HL_MAX_RPM 350)"},
+                             "desc": "TÜM kullanıcıların HL'ye giden sorguları için ortak kova; dolunca 'yoğunluk var' cevabı (önbellekten dönenler sayılmaz). 40 sorgu ≈ 120 HL isteği/dk; radarlara pay kalsın (HL_MAX_RPM 550)"},
     "query_cache_sec": {"type": "int", "label": "Sorgu önbelleği (sn)", "group": "Satış / Kullanıcılar",
                         "desc": "Aynı coin bu süre içinde tekrar sorulursa HL'ye gidilmez, aynı grafik ve metin döner (100 kişi aynı anda HYPE sorsa tek hesap)"},
     "pro_price_usd_1m": {"type": "float", "label": "Pro fiyatı — 1 ay ($)", "group": "Satış / Kullanıcılar",
@@ -608,7 +614,10 @@ class Config:
         self.track_expire_days = int(os.getenv("TRACK_EXPIRE_DAYS", "14"))
         self.track_auto_stop = convert_value("bool", os.getenv("TRACK_AUTO_STOP", "0"))
         self.track_poll_sec = int(os.getenv("TRACK_POLL_SEC", "120"))
-        self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "350"))
+        # HL: 1200 ağırlık/dk/IP; clearinghouseState ağırlık 2 → ~600 istek/dk tavan.
+        # 550: sayım (250) + süpürücü yetişme modu artanı kullanır; 429 gelirse
+        # istemci geri çekilir, sayım hızını yarıya indirir (n_429 sayacı).
+        self.hl_max_rpm = int(os.getenv("HL_MAX_RPM", "550"))
         self.notify_cryptovol = True
         self.crypto_vol_enabled = True
         self.crypto_vol_poll_sec = int(os.getenv("CRYPTO_VOL_POLL_SEC", "300"))
@@ -765,10 +774,15 @@ class Config:
         self.sweep_batch_max = int(os.getenv("SWEEP_BATCH_MAX", "250"))
         # Hasat sondası: hasat edilen adresin defterine hemen bak (coinin dex'inde, 1 istek)
         self.harvest_probe_max = int(os.getenv("HARVEST_PROBE_MAX", "40"))
-        # Kripto dex sayımı (census): varsayılan KAPALI — bkz. radar/census.py maliyet notu
-        self.crypto_dex_census_enabled = os.getenv("CRYPTO_DEX_CENSUS_ENABLED", "0").strip().lower() in ("1", "true", "on")
-        self.census_min_account_value = float(os.getenv("CENSUS_MIN_ACCOUNT_VALUE", "1000"))
-        self.census_rpm = int(os.getenv("CENSUS_RPM", "60"))
+        # Sayım (census): varsayılan AÇIK — ana dex + kripto dex'ler, bakiye sırasıyla,
+        # sürekli tur; toplu sorgu sondalı (bkz. radar/census.py). Eski
+        # CRYPTO_DEX_CENSUS_ENABLED / crypto_dex_census_enabled anahtarı kalktı
+        # (o yalnız para dex'ini günde bir sayıyordu); eski override yok sayılır.
+        self.census_enabled = convert_value("bool", os.getenv("CENSUS_ENABLED", "1"))
+        self.census_min_account_value = float(os.getenv("CENSUS_MIN_ACCOUNT_VALUE", "100"))
+        self.census_hip3_min_account_value = float(os.getenv("CENSUS_HIP3_MIN_ACCOUNT_VALUE", "1000"))
+        self.census_rpm = int(os.getenv("CENSUS_RPM", "250"))
+        self.census_batch_size = int(os.getenv("CENSUS_BATCH_SIZE", "50"))
         self.sweep_rpm_headroom = float(os.getenv("SWEEP_RPM_HEADROOM", "0.85"))
         self.sweep_interval_sec = int(os.getenv("SWEEP_INTERVAL_SEC", "90"))
         self.notify_lowvol = True

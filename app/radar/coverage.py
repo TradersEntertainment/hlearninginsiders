@@ -88,9 +88,18 @@ async def coverage(coin: str, kind: str, cfg=None, summ: dict | None = None,
             cur = await conn.execute("SELECT ts, n_addrs, n_found FROM scans WHERE coin=?", (coin,))
             row = await cur.fetchone()
         scan = dict(row) if row else None
+    # Sayım (census) ilerlemesi: "havuz = OI'nin %33'ü" sayısının yanına "sayım %X"
+    # — kapsamanın neden/ne zaman yükseleceğini söyler. Kapalıysa/hiç koşmadıysa None.
+    census = None
+    if cfg is None or getattr(cfg, "census_enabled", False):
+        try:
+            from . import census as _census
+            census = await _census.progress()
+        except Exception:
+            census = None
     return {"long": sides["long"], "short": sides["short"], "oi_ntl": oi,
             "pct_long": pl, "pct_short": ps, "n": sides["n"], "latest_ts": sides["latest_ts"],
-            "over": bool((pl or 0) > 100 or (ps or 0) > 100), "scan": scan}
+            "over": bool((pl or 0) > 100 or (ps or 0) > 100), "scan": scan, "census": census}
 
 
 def txt(cov: dict | None) -> str:

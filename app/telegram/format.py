@@ -686,6 +686,9 @@ def coverage_ctx(cov: dict | None) -> str | None:
     s = f"kapsama long %{cov['pct_long']:.0f} · short %{cov['pct_short']:.0f} (havuz / HL OI)"
     if cov.get("over"):
         s += " ⚠️ %100 üstü = bayat satır"
+    c = cov.get("census")
+    if isinstance(c, dict) and c.get("text"):
+        s += f" · {c['text']}"
     return s
 
 

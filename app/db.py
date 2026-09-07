@@ -195,6 +195,23 @@ CREATE TABLE IF NOT EXISTS addr_positions(
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_addrpos_addr ON addr_positions(address);
 CREATE INDEX IF NOT EXISTS idx_addrpos_ts ON addr_positions(ts);
+-- Sayım evreni (census): HL'de "coindeki tüm pozisyonlar" API'si yok; kapsamayı
+-- zincir geneline yaklaştırmanın tek yolu tanıdığımız HER hesabı (leaderboard ∪
+-- addresses ∪ fills) ana dex + kripto dex'lerde tur tur sorgulamak. Sıra bakiye
+-- büyükten küçüğe (OI'nin büyüğü önce → kapsama $ olarak hızla yükselir).
+-- Worker'lar (ROLE=census-worker) satırı kiralar, sonucu /api/census/ingest ile yollar.
+CREATE TABLE IF NOT EXISTS census_accounts(
+  address TEXT PRIMARY KEY,
+  account_value REAL,                   -- leaderboard accountValue ya da son ölçüm (ana dex)
+  src TEXT,                             -- lb | addr | fills | ingest
+  seen_ts INTEGER,                      -- listeye girdiği / son tazelendiği an
+  scanned_ts INTEGER,                   -- son sayım (NULL = hiç)
+  positions INTEGER,                    -- son sayımda bulunan açık pozisyon (ana dex)
+  leased_ts INTEGER,                    -- worker kirası (NULL = kirada değil)
+  lease_worker TEXT
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_census_value ON census_accounts(account_value DESC);
+CREATE INDEX IF NOT EXISTS idx_census_scanned ON census_accounts(scanned_ts);
 -- Liq attack radarı: hafta sonu yakın liq kümesini itmenin maliyeti (defter)
 -- karşısında patlayacak $. Adaylar tur damgasıyla saklanır (karne için), gerçek
 -- saldırılar sonradan tespit edilip 'önceden işaretlemiş miydik' diye ölçülür.

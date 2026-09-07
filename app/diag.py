@@ -272,24 +272,10 @@ async def _subsystems(cfg) -> list[str]:
                    + (f"{_dur(now() - int(last_full))} önce" if last_full else "YOK (ilk tur sürüyor)")
                    + (f" · hl yazma hatası {sw['hl_err']}" if sw.get("hl_err") else "")
                    + (f"\n       ⚠️ HATA: {sw['err_msg']}" if sw.get("err_msg") else ""))
-    # Sayım (census): kapalıysa söyle, sürüyorsa nerede, bittiyse özet
+    # Sayım (census): mod (toplu/tek tek), süren turun yüzdesi, son tur özeti, 429
     try:
-        cs = await kv_get("census_state") or {}
-        cst = await kv_get("census_stats") or {}
-        if not getattr(cfg, "crypto_dex_census_enabled", False):
-            out.append("  sayım (census): kapalı (crypto_dex_census_enabled=0)")
-        elif cs and not cs.get("finished") and cs.get("dex"):
-            out.append(f"  sayım: sürüyor {cs['dex']} {_num(cs.get('done', 0))}/{_num(cs.get('total', 0))}"
-                       f" · {_dur(now() - int(cs.get('ts') or now()))} önce")
-        elif cst.get("dexes"):
-            parts = [f"{d} {_num(v.get('n', 0))} adres → {_num(v.get('found', 0))} poz ({v.get('err', 0)} hata)"
-                     for d, v in cst["dexes"].items()]
-            out.append(f"  sayım: {cst.get('day')} " + " · ".join(parts) + f" · {cst.get('min', 0)} dk"
-                       + (f" · {_dur(now() - int(cst['ts']))} önce" if cst.get("ts") else ""))
-        elif cst.get("skipped") or cs.get("err"):
-            out.append(f"  sayım: atlandı — {cst.get('skipped') or cs.get('err')}")
-        else:
-            out.append("  sayım: açık, henüz koşmadı (açılıştan 5 dk sonra başlar)")
+        from .radar import census as _census
+        out.append("  " + await _census.diag_line(cfg))
     except Exception as e:
         out.append(f"  sayım okunamadı ({type(e).__name__}: {e})")
     # Bakiye kapsaması: kolon boşsa sebebi "bozuk" mu "henüz uğramadık" mı,

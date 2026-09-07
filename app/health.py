@@ -82,7 +82,7 @@ def limits(cfg: Config) -> dict[str, int]:
         "billing": 3600 * 3 + 600,         # faturalama: saatlik
         "fanout": 600,                     # dağıtım: 60 sn'de bir nabız (olay güdümlü)
         "public_digest": 2400,
-        "census": 3600,                    # sayım: adres başına nabız; kapalıyken 10 dk'da bir
+        "census": 3600,                    # sayım: parti başına nabız (200 hesap); kapalıyken 10 dk'da bir
     }
     # telegram görevi YALNIZ bot token'ı varken spawn edilir (main.lifespan);
     # token'sız 'sadece dashboard' kurulumunda beklenirse kalp atışı hiç
