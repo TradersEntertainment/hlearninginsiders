@@ -402,12 +402,21 @@ class Collector:
             from ..recompute import winner_coins_map
             win_map = await winner_coins_map(list(watch))
 
-        # Alarm kararı PARTİ TOPLAMI üzerinden verilir (bölünmüş emirler kaçmasın)
+        # Alarm kararı PARTİ TOPLAMI üzerinden verilir (bölünmüş emirler kaçmasın).
+        # Eşik sınıfa göre (radar/alertgate.fill_floor): sicilsiz adres yalnız normal
+        # hissede ve ≥ $5M; sicilli adres her sınıfta ≥ $250K; NVDA/endeks sicilsiz → yok
+        from ..radar import alertgate
+        try:
+            from ..radar.autoscan import _big_coins
+            big_coins = await _big_coins(self.cfg)
+        except Exception:
+            big_coins = set()
         for (coin, addr, side), a in agg.items():
             if coin in self.crypto_coins:
                 continue        # kripto yalnız sonda tetikler, alarm üretmez
             is_watch = addr in watch and coin in win_map.get(addr, set())
-            if a["ntl"] < self.cfg.whale_alert_notional and not is_watch:
+            floor = alertgate.fill_floor(self.cfg, coin, big_coins, is_watch)
+            if floor is None or a["ntl"] < floor:
                 continue
             avg_px = a["pxsz"] / a["sz"] if a["sz"] else 0.0
             ratio = (a["tk"] / a["known"]) if a["known"] > 0 else None

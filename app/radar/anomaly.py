@@ -1,17 +1,21 @@
-"""OI / funding / hacim anomali dedektörü.
+"""OI birikimi / funding anomali dedektörü.
 
-Pozisyon sahibini bulamasak bile "birileri birikiyor" erken alarmı:
-- OI'de anormal artış (earnings yaklaşırken eşik düşer)
-- Hacmin katlanması (fiyat kıpırdamadan patlayan hacim = sessiz birikim)
-- Funding'in aşırıya kayması (yön beklentisinin bedeli ödeniyor demek)
+Pozisyon sahibini bulamasak bile "birileri BÜYÜK pozisyon açtı" erken alarmı:
+- OI'nin 24 saatte $ olarak büyümesi (kullanıcı kuralı ≥ $5M; earnings ≤72 sa
+  iken $2.5M ve son 4 saat de bakılır) — yüzde değil, $ artış kriterdir
+- Funding'in aşırıya kayması (earnings yakınsa tek başına, değilse OI'ye eşlik)
+
+Hacim tetiği KALDIRILDI: "24 saatlik hacim bir gün öncesinin N katı" pazartesi
+hafta sonu tabanına kıyaslanınca onlarca hissede birden patlıyordu; genel işlem
+hacminin artması sinyal değil (kullanıcı kuralı). Büyük hisse (NVDA…) ve
+endeks/emtia bu kapıdan bildirim almaz (radar/alertgate.py — tek kaynak).
 """
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import assets
 from ..config import Config
-from ..db import alert_log, alert_recent, db, now
+from ..db import alert_log, alert_recent, db, kv_set, now
 from ..earnings.calendar import event_ts_estimate
 from ..telegram import format as fmt
 from . import metrics
@@ -20,6 +24,8 @@ log = logging.getLogger("radar.anomaly")
 
 ET = ZoneInfo("America/New_York")
 COOLDOWN = 12 * 3600
+ANOMALY_MAX_PER_RUN = 5      # bir turda en çok bu kadar bildirim (kalanlar sonraki turda; bekleme kurulmaz)
+STATS_KV = "anomaly_stats"
 # earnings açıklandıktan sonra bu süre boyunca anomali arama — sonrası
 # haber akışıdır, "birileri biliyor olabilir" demek yanlış sinyal olur
 POST_EARNINGS_QUIET = 48 * 3600
@@ -69,11 +75,17 @@ async def check_anomalies(cfg: Config, notifier) -> None:
         return
     upcoming, quiet_until = await _events_within(72)
     ts = now()
+    from . import alertgate
+    from .autoscan import _big_coins
+    big_coins = await _big_coins(cfg)
+    stats = {"checked": 0, "alerted": 0, "capped": 0, "skipped_class": 0, "skipped_quiet": 0,
+             "cooldown": 0, "triggered": 0, "failed": 0}
 
     for coin, sym in coins:
         # earnings 48h içinde açıklandıysa coini komple atla — sonrası haber
         # akışı, OI patlaması normaldir (artık gerçekten 48h sürer).
         if coin in quiet_until:
+            stats["skipped_quiet"] += 1
             continue
         ev = upcoming.get(coin)  # yalnız GELECEK event bağlam/eşik sağlar
 
@@ -88,37 +100,33 @@ async def check_anomalies(cfg: Config, notifier) -> None:
             prev24 = None
         if prev4 and (prev4.get("ts") or 0) < ts - 4 * 3600 - METRIC_MAX_GAP:
             prev4 = None
-        oi_ntl = (cur_m["oi"] or 0) * cur_m["mark_px"]
+        mark = float(cur_m["mark_px"])
+        oi_now = float(cur_m["oi"] or 0)
+        oi_ntl = oi_now * mark
         has_event = ev is not None
         triggers: list[str] = []
         cats: list[str] = []  # cooldown anahtarı için tetik türleri
+        stats["checked"] += 1
 
-        # FX/endeks/emtia/kripto'da mikro OI'den %175 artış anlamsız — taban yüksek
-        floor = (cfg.oi_spike_big_floor_usd if assets.kind(sym) == "non_equity"
-                 else cfg.oi_spike_floor_usd)
+        # Sınıf kapısı: büyük hisse (NVDA…) ve endeks/emtia bu bildirimi almaz;
+        # normal hissede $ artış tabanı (earnings yakınsa düşük)
+        floor = alertgate.oi_delta_floor(cfg, coin, big_coins, has_event)
+        if floor is None:
+            stats["skipped_class"] += 1
+            continue
 
-        if prev24 and prev24["oi"] and oi_ntl >= floor:
-            chg24 = (cur_m["oi"] - prev24["oi"]) / prev24["oi"] * 100
-            thr = cfg.oi_spike_pct_event if has_event else cfg.oi_spike_pct_normal
-            if chg24 >= thr:
-                triggers.append(f"OI 24 saatte +%{chg24:.0f} ({fmt.usd(oi_ntl)})")
+        if prev24 and prev24.get("oi") is not None:
+            prev_oi = float(prev24["oi"] or 0)
+            delta24 = (oi_now - prev_oi) * mark
+            if delta24 >= floor:
+                pct = f" (+%{(oi_now - prev_oi) / prev_oi * 100:.0f}" if prev_oi > 0 else " ("
+                triggers.append(f"OI 24 saatte +{fmt.usd(delta24)}{pct} → {fmt.usd(oi_ntl)})")
                 cats.append("oi24")
-        if (has_event and prev4 and prev4["oi"] and oi_ntl >= floor):
-            chg4 = (cur_m["oi"] - prev4["oi"]) / prev4["oi"] * 100
-            if chg4 >= 30:
-                triggers.append(f"OI son 4 saatte +%{chg4:.0f} (hızlı birikim)")
+        if has_event and prev4 and prev4.get("oi") is not None:
+            delta4 = (oi_now - float(prev4["oi"] or 0)) * mark
+            if delta4 >= floor:
+                triggers.append(f"OI son 4 saatte +{fmt.usd(delta4)} (hızlı birikim)")
                 cats.append("oi4")
-
-        # Hacim patlaması: fiyat/OI kıpırdamadan hacmin katlanması sessiz birikimin
-        # (parça parça toplama, hedge'li kurulum) izidir. day_volume zaten her
-        # turda toplanıyordu ama hiçbir tetikte kullanılmıyordu.
-        vol_now = cur_m.get("day_volume") or 0
-        vol_prev = (prev24 or {}).get("day_volume") or 0
-        if vol_now >= cfg.vol_spike_min_usd and vol_prev > 0:
-            mult = vol_now / vol_prev
-            if mult >= cfg.vol_spike_mult:
-                triggers.append(f"hacim 24 saatte {mult:.1f}× ({fmt.usd(vol_now)})")
-                cats.append("vol")
 
         funding = cur_m.get("funding")
         if funding is not None and abs(funding) >= cfg.funding_extreme:
@@ -136,13 +144,24 @@ async def check_anomalies(cfg: Config, notifier) -> None:
         # Cooldown anahtarı tetik TÜRÜNÜ içerir: OI alarmı, farklı bir sinyali
         # (funding aşırı = yeni yön bilgisi) 12h sessizce yutmasın.
         key = f"{coin}:{'+'.join(sorted(set(cats)))}"
+        stats["triggered"] += 1
         if await alert_recent("anomaly", key, COOLDOWN):
+            stats["cooldown"] += 1
+            continue
+        if stats["alerted"] >= ANOMALY_MAX_PER_RUN:
+            stats["capped"] += 1            # bekleme kurulmaz: sonraki turda sırası gelir
             continue
         text = fmt.anomaly_alert(sym, coin, triggers, ev)
         try:
             prio = "high" if has_event else "normal"
             await notifier.send("anomaly", text, priority=prio, key=key, coin=coin)
         except Exception as e:
+            stats["failed"] += 1
             log.warning("anomali alerti gönderilemedi: %s", e)
         await alert_log("anomaly", key, text)
+        stats["alerted"] += 1
         log.info("anomali: %s → %s", sym, "; ".join(triggers))
+    try:
+        await kv_set(STATS_KV, {**stats, "ts": ts})
+    except Exception:
+        log.debug("anomaly_stats yazılamadı", exc_info=True)

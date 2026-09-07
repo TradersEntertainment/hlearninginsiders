@@ -21,8 +21,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                    "desc": "Dev pozisyonlar likidasyona yaklaşınca kademeli uyarı"},
     "notify_whale_fill": {"type": "bool", "label": "🐋 Büyük işlem / sicilli balina", "group": "Bildirimler",
                           "desc": "Canlı akışta eşik üstü işlem ya da watchlist adresi hareketi"},
-    "notify_anomaly": {"type": "bool", "label": "📡 OI / funding anomalisi", "group": "Bildirimler",
-                       "desc": "Pozisyon sahibi bilinmese de 'birileri birikiyor' alarmı"},
+    "notify_anomaly": {"type": "bool", "label": "📡 OI birikimi (≥ $5M) / funding", "group": "Bildirimler",
+                       "desc": "Pozisyon sahibi bilinmese de 'birileri büyük pozisyon açtı' alarmı: normal hissede OI 24 saatte en az $5M büyüdüyse (Anomali dedektörü ayarları). Hacim artışı bildirim üretmez; büyük hisse (NVDA…) ve endeks/emtia bu kapıdan bildirim almaz"},
     "notify_eval": {"type": "bool", "label": "🏁 Earnings sonuç raporu", "group": "Bildirimler",
                     "desc": "Bilanço sonrası kim doğru bildi raporu"},
     "notify_digest": {"type": "bool", "label": "🌅 Günlük sabah özeti", "group": "Bildirimler",
@@ -35,15 +35,15 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "1 = earnings/yeni büyük poz/likidasyon sessiz saatte de gelir"},
     "digest_hour": {"type": "int", "label": "Sabah özeti saati (TSİ)", "group": "Bildirimler",
                     "desc": "Günlük özetin gönderileceği saat"},
-    "big_alert_index_usd": {"type": "float", "label": "Endeks/emtia bildirim tabanı ($)",
+    "big_alert_index_usd": {"type": "float", "label": "Endeks/emtia bildirim tabanı ($, 0 = yok)",
                             "group": "Bildirimler",
-                            "desc": "XYZ100, SP500, GOLD, SILVER gibi endeks/emtia/FX/ETF'lerde 'yeni büyük pozisyon' bildirimi için gereken boyut. OI'leri devasa olduğu için hisse eşiği burada gürültü üretiyordu"},
-    "big_alert_major_usd": {"type": "float", "label": "Büyük hisse bildirim tabanı ($)",
+                            "desc": "XYZ100, SP500, GOLD, SOXL gibi endeks/emtia/FX/ETF'lerde 'yeni büyük pozisyon' bildirimi için gereken boyut. 0 = bu sınıftan bildirim yok (kullanıcı kuralı: endekslerden bildirim gelmesin)"},
+    "big_alert_major_usd": {"type": "float", "label": "Büyük hisse bildirim tabanı ($, 0 = yok)",
                             "group": "Bildirimler",
-                            "desc": "Hacimce ilk N hissede (NVDA, TSLA…) bildirim için gereken boyut — likit hisselerde küçük poz sinyal değildir. Liste dinamiktir (Emir defteri radarı → 'Büyük sınıf hisse sayısı')"},
+                            "desc": "Hacimce ilk N hissede (NVDA, TSLA…) bildirim için gereken boyut; liste dinamiktir (Emir defteri radarı → 'Büyük sınıf hisse sayısı'). 0 = bu sınıftan bildirim yok (kullanıcı kuralı: NVDA'dan bildirim gelmesin)"},
     "big_alert_min_usd": {"type": "float", "label": "Normal hisse bildirim tabanı ($)",
                           "group": "Bildirimler",
-                          "desc": "Küçük/orta hisselerde (SNDK, CBRS…) bildirim tabanı. Burada $1M bile piyasanın büyük kısmı olabilir — asıl insider sinyali burada, düşük tutulur"},
+                          "desc": "Küçük/orta hisselerde (SNDK, CBRS…) 'yeni büyük pozisyon' bildirimi için gereken boyut (kullanıcı kuralı $8M: insider gelip $5-10M açarsa kaçmasın, altı sessiz). Skor kapısı uygulanmaz — boyut kriterdir, skor yalnız önceliği belirler"},
     "alert_min_score": {"type": "int", "label": "Bildirim için min şüphe skoru", "group": "Bildirimler",
                         "desc": "Yeni büyük pozisyon bildirimi için gereken minimum skor (0 = hepsi)"},
     "notify_liqmap": {"type": "bool", "label": "🧲 Likidasyon duvarı (küme)", "group": "Bildirimler",
@@ -117,8 +117,10 @@ EDITABLE_FIELDS: dict[str, dict] = {
                     "desc": "OpenAI-uyumlu sohbet tamamlama adresi. Groq/Cerebras/OpenRouter/DeepSeek aynı biçimi konuşur — sağlayıcı değiştirmek için burayı ve model adını değiştir"},
     "min_fill_notional": {"type": "float", "label": "Min fill boyutu ($)",
                           "group": "Skorlama eşikleri", "desc": "Bu boyut üstü işlemler adres havuzuna yazılır"},
-    "whale_alert_notional": {"type": "float", "label": "Anlık balina alert eşiği ($)",
-                             "group": "Skorlama eşikleri", "desc": "Bu boyut üstü tek işlemde hemen Telegram alert"},
+    "whale_alert_notional": {"type": "float", "label": "Anlık büyük işlem eşiği ($)",
+                             "group": "Skorlama eşikleri", "desc": "Sicilsiz adresten bu boyut üstü tek işlemde (parti toplamı) hemen Telegram alert — yalnız normal hisselerde (kullanıcı kuralı $5M); büyük hisse ve endeks/emtia bu kapıdan bildirim almaz"},
+    "whale_alert_watch_notional": {"type": "float", "label": "Sicilli balina işlem eşiği ($)",
+                                   "group": "Skorlama eşikleri", "desc": "Watchlist'teki (sicilli) adres kazandığı hisseye dönünce bu boyuttan itibaren bildirim — her sınıfta (insider dönüşü kaçmasın)"},
     "min_position_notional": {"type": "float", "label": "Min pozisyon boyutu ($)",
                               "group": "Skorlama eşikleri", "desc": "Bundan küçük pozisyonlar listelenmez (toz filtresi)"},
     "crypto_dex_fill_min_notional": {"type": "float", "label": "Kripto dex: min fill boyutu ($)",
@@ -176,21 +178,13 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "metrics_poll_sec": {"type": "int", "label": "Metrik periyodu (sn)",
                          "group": "Tarama & performans", "desc": "OI/funding örnekleme sıklığı"},
     "anomaly_poll_sec": {"type": "int", "label": "Anomali kontrol periyodu (sn)",
-                         "group": "Anomali dedektörü", "desc": "OI/funding anomali taraması sıklığı"},
-    "oi_spike_pct_event": {"type": "float", "label": "OI spike eşiği - earnings yakın (%)",
-                           "group": "Anomali dedektörü", "desc": "Earnings <72h iken 24h OI artışı alarmı"},
-    "oi_spike_pct_normal": {"type": "float", "label": "OI spike eşiği - normal (%)",
-                            "group": "Anomali dedektörü", "desc": "Earnings yokken 24h OI artışı alarmı"},
-    "oi_spike_floor_usd": {"type": "float", "label": "OI spike tabanı ($)",
-                           "group": "Anomali dedektörü", "desc": "HİSSELERDE bu OI'nin altındaki mikro marketlerde alarm verme"},
-    "oi_spike_big_floor_usd": {"type": "float", "label": "OI spike tabanı — endeks/FX ($)",
-                               "group": "Anomali dedektörü", "desc": "GBP, GOLD, XYZ100 gibi FX/endeks/emtia/kripto'da OI bu boyutun altındaysa spike alarmı verme (mikro marketten %175 artış anlamsız)"},
-    "vol_spike_mult": {"type": "float", "label": "Hacim patlaması katsayısı (×)",
-                       "group": "Anomali dedektörü",
-                       "desc": "24 saatlik hacim bir gün öncesine göre bu KAT'a çıkarsa alarm (fiyat kıpırdamadan hacmin patlaması = sessiz birikim)"},
-    "vol_spike_min_usd": {"type": "float", "label": "Hacim alarmı tabanı ($)",
-                          "group": "Anomali dedektörü",
-                          "desc": "Bu günlük hacmin altındaki marketlerde hacim patlaması alarm üretmez (mikro hacimde 5x anlamsız)"},
+                         "group": "Anomali dedektörü", "desc": "OI birikimi / funding taraması sıklığı"},
+    "anomaly_oi_delta_min_usd": {"type": "float", "label": "OI birikimi bildirimi — 24 saatlik artış ($)",
+                                 "group": "Anomali dedektörü",
+                                 "desc": "Normal hissede açık pozisyon (OI) 24 saatte en az bu kadar $ büyüdüyse bildirim (kullanıcı kuralı $5M — biri büyük pozisyon açtı, adres bulunmadan da yakalar). Yüzde ve hacim oranı artık kriter değil; büyük hisse/endeks bu kapıdan bildirim almaz"},
+    "anomaly_oi_delta_event_usd": {"type": "float", "label": "OI birikimi — earnings ≤72 sa iken ($)",
+                                   "group": "Anomali dedektörü",
+                                   "desc": "Bilanço yaklaşırken eşik düşer: 24 saatte (ve son 4 saatte) OI bu kadar $ büyüdüyse bildirim"},
     "funding_extreme": {"type": "float", "label": "Aşırı funding eşiği (saatlik)",
                         "group": "Anomali dedektörü", "desc": "ör: 0.0005 = %0.05/saat"},
     "peers_override": {"type": "str", "label": "Korele hisse override",
@@ -821,9 +815,11 @@ class Config:
         self.crypto_dex_min_position_notional = float(os.getenv("CRYPTO_DEX_MIN_POSITION_NOTIONAL", "1000"))
         self.big_position_usd = float(os.getenv("BIG_POSITION_USD", "1000000"))
         # "Yeni büyük pozisyon" BİLDİRİMİ kademeli (sitede/skorlamada değişmez)
-        self.big_alert_index_usd = float(os.getenv("BIG_ALERT_INDEX_USD", "10000000"))
-        self.big_alert_major_usd = float(os.getenv("BIG_ALERT_MAJOR_USD", "5000000"))
-        self.big_alert_min_usd = float(os.getenv("BIG_ALERT_MIN_USD", "1000000"))
+        # Kullanıcı kuralı: normal hisse $8M; büyük hisse (NVDA…) ve endeks 0 = bildirim yok
+        # (bkz. radar/alertgate.py — sayfa/skorlama etkilenmez)
+        self.big_alert_index_usd = float(os.getenv("BIG_ALERT_INDEX_USD", "0"))
+        self.big_alert_major_usd = float(os.getenv("BIG_ALERT_MAJOR_USD", "0"))
+        self.big_alert_min_usd = float(os.getenv("BIG_ALERT_MIN_USD", "8000000"))
         self.huge_position_usd = float(os.getenv("HUGE_POSITION_USD", "5000000"))
         self.combo_window_hours = int(os.getenv("COMBO_WINDOW_HOURS", "72"))
         self.fresh_big_alert_hours = int(os.getenv("FRESH_BIG_ALERT_HOURS", "24"))
@@ -837,7 +833,9 @@ class Config:
         self.liq_cluster_alert_min_usd = float(
             os.getenv("LIQ_CLUSTER_ALERT_MIN_USD", "5000000"))
         self.max_liq_distance_pct = float(os.getenv("MAX_LIQ_DISTANCE_PCT", "50"))
-        self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "250000"))
+        # Tek işlem bildirimi: sicilsiz adres $5M (yalnız normal hisse), sicilli $250K (her sınıf)
+        self.whale_alert_notional = float(os.getenv("WHALE_ALERT_NOTIONAL", "5000000"))
+        self.whale_alert_watch_notional = float(os.getenv("WHALE_ALERT_WATCH_NOTIONAL", "250000"))
         self.fresh_wallet_days = int(os.getenv("FRESH_WALLET_DAYS", "7"))
         self.recent_deposit_hours = int(os.getenv("RECENT_DEPOSIT_HOURS", "72"))
         self.eval_move_threshold = float(os.getenv("EVAL_MOVE_THRESHOLD", "2.0"))  # %
@@ -852,13 +850,10 @@ class Config:
 
         # Anomali dedektörü
         self.anomaly_poll_sec = int(os.getenv("ANOMALY_POLL_SEC", "1800"))
-        self.oi_spike_pct_event = float(os.getenv("OI_SPIKE_PCT_EVENT", "50"))    # earnings <72h iken
-        self.oi_spike_pct_normal = float(os.getenv("OI_SPIKE_PCT_NORMAL", "150"))
-        self.oi_spike_floor_usd = float(os.getenv("OI_SPIKE_FLOOR_USD", "200000"))
-        self.oi_spike_big_floor_usd = float(os.getenv("OI_SPIKE_BIG_FLOOR_USD", "20000000"))
+        # OI birikimi: $ artış kriter (yüzde/hacim oranı kaldırıldı — pazartesi hacim seli)
+        self.anomaly_oi_delta_min_usd = float(os.getenv("ANOMALY_OI_DELTA_MIN_USD", "5000000"))
+        self.anomaly_oi_delta_event_usd = float(os.getenv("ANOMALY_OI_DELTA_EVENT_USD", "2500000"))
         self.funding_extreme = float(os.getenv("FUNDING_EXTREME", "0.0005"))      # saatlik oran (0.05%/h)
-        self.vol_spike_mult = float(os.getenv("VOL_SPIKE_MULT", "3.0"))
-        self.vol_spike_min_usd = float(os.getenv("VOL_SPIKE_MIN_USD", "500000"))
 
         # Korele hisseler: "SNDK:WDC|MU;TSLA:RIVN" formatıyla override edilebilir
         self.peers_override = os.getenv("PEERS", "")

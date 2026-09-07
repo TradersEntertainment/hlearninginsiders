@@ -544,6 +544,19 @@ async def _subsystems(cfg) -> list[str]:
             out.append(f"  kapsama (havuz/HL OI, OI ≥ {floor_txt}): OI verisi yok — metrik turu koşmadı")
     except Exception as e:
         out.append(f"  kapsama okunamadı ({type(e).__name__}: {e})")
+    # Anomali (OI birikimi): kaç coine bakıldı, kaçı sınıf dışı, kaçı tavana takıldı
+    try:
+        an = await kv_get("anomaly_stats") or {}
+        if an.get("ts"):
+            out.append(f"  anomali (OI birikimi): {an.get('checked', 0)} coin bakıldı · {an.get('triggered', 0)} tetik"
+                       f" · {an.get('alerted', 0)} bildirim · {an.get('skipped_class', 0)} sınıf dışı (büyük hisse/endeks)"
+                       f" · {an.get('cooldown', 0)} beklemede · {an.get('capped', 0)} tavana takıldı"
+                       + (f" · ⚠️ {an['failed']} gönderilemedi" if an.get("failed") else "")
+                       + f" · {_dur(now() - int(an['ts']))} önce")
+        else:
+            out.append("  anomali (OI birikimi): tur henüz çalışmadı")
+    except Exception as e:
+        out.append(f"  anomali okunamadı ({type(e).__name__}: {e})")
     # Kapalı seans alarmı: "neden gelmedi" sorusunun ilk durağı. Tur sonucu
     # eskiden main.py tarafından ATILIYORDU, hiçbir yerde görünmüyordu.
     oh = await kv_get("offhours_stats") or {}

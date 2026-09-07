@@ -76,6 +76,23 @@ bildirimler beklemeye alınıp sabah **günlük özet**te toplu gelir; "önemli"
 (earnings, yeni büyük pozisyon, likidasyon) istersen sessiz saatte de düşer, **kritik**
 olanlar (son likidasyon uyarısı, 70+ skorlu insider) her zaman geçer.
 
+**Hisse kuralı — "hacim arttı" sinyal değil, büyük pozisyon sinyal**
+(`app/radar/alertgate.py`, tek kaynak): hisselerden bildirim ancak biri BÜYÜK
+pozisyon açarsa gelir. Normal hissede (SNDK, CBRS…) **yeni pozisyon ≥ $8M**
+(`big_alert_min_usd`, skor kapısı yok — skor yalnız önceliği belirler), **tek işlem
+≥ $5M** (`whale_alert_notional`, parti toplamı), **OI birikimi: açık pozisyon 24
+saatte ≥ $5M büyüdüyse** (`anomaly_oi_delta_min_usd`; earnings ≤72 sa iken $2.5M ve
+son 4 saat de bakılır — adres bulunmadan da "biri büyük açtı"). **Büyük hisseler**
+(hacimce ilk N — NVDA, TSLA…, `wall_big_top_n`) ve **endeks/emtia/FX/ETF** bu üç
+kapıdan bildirim almaz (`big_alert_major_usd` / `big_alert_index_usd` = 0 → yok).
+Sicilli (watchlist) balina kazandığı hisseye dönünce her sınıfta ≥ $250K
+(`whale_alert_watch_notional`) bildirilir — insider dönüşü kaçmasın. Eski "hacim 24
+saatte N×" anomali tetiği kaldırıldı: pazartesi hafta sonu tabanına kıyaslanınca
+onlarca hissede birden patlıyordu. Anomali turu başına en çok 5 bildirim; `/tani`
+"anomali (OI birikimi)" satırı bakılan/tetiklenen/sınıf dışı/tavana takılan sayılarını
+yazar. Hisse hacim rekoru (ayrı kanal, `/hacim`) ve liq/duvar/TWAP radarları
+kendi kapılarıyla sürer.
+
 **Sayfa eşiği ≠ bildirim eşiği.** Site bilerek daha çoğunu gösterir, kanal daha
 seçicidir: sayfada bağlam olan şey Telegram'da gürültüdür. Likidasyon duvarları
 bunun en net örneği — `liq_cluster_min_usd` ($1M) yalnız **ana sayfadaki

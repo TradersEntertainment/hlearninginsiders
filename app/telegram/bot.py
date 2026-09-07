@@ -810,8 +810,13 @@ class TelegramBot:
                             else "\n   Hiçbir şey gelmiyor, sabah özetine yazılıyor"))
         lines.append(f"🌅 Sabah özeti: <b>{int(self.cfg.digest_hour):02d}:00</b> TSİ"
                      + ("" if self.cfg.notify_digest else " (kapalı)"))
-        if self.cfg.alert_min_score:
-            lines.append(f"🎯 Yeni poz bildirimi için min skor: <b>{self.cfg.alert_min_score}</b>")
+        from ..radar.alertgate import tiers
+        t = tiers(self.cfg)
+        lines.append("🎯 Yeni büyük poz bildirimi: normal hisse ≥ <b>" + fmt.usd(t["big_normal"] or 0) + "</b>"
+                     + " · büyük hisse " + (fmt.usd(t["big_major"]) if t["big_major"] else "yok")
+                     + " · endeks " + (fmt.usd(t["big_index"]) if t["big_index"] else "yok")
+                     + f" · tek işlem ≥ {fmt.usd(t['fill'] or 0)} (sicilli {fmt.usd(t['fill_watch'] or 0)})"
+                     + f" · OI birikimi ≥ {fmt.usd(t['oi_delta'] or 0)}")
         sent = await recent_sent(8)
         if sent:
             lines.append("\n📜 <b>Son bildirimler:</b>")

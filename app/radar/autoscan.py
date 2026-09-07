@@ -55,13 +55,12 @@ def alert_floor(cfg: Config, coin: str, big_coins: set[str]) -> float:
       diğer hisseler                                       → mevcut eşik ($1M)
 
     Bu YALNIZ bildirim kapısıdır: sitede ve skorlamada eşik değişmez, küçük
-    pozisyonlar görünmeye devam eder.
+    pozisyonlar görünmeye devam eder. Tek kaynak: radar/alertgate.big_floor —
+    None = bu sınıftan bildirim yok (kullanıcı kuralı: NVDA ve endekslerden gelmesin,
+    normal hissede $8M).
     """
-    if assets.kind(symbol_of(coin)) == "non_equity":
-        return float(getattr(cfg, "big_alert_index_usd", 10_000_000))
-    if coin in big_coins:
-        return float(getattr(cfg, "big_alert_major_usd", 5_000_000))
-    return float(getattr(cfg, "big_alert_min_usd", 0) or cfg.big_position_usd)
+    from .alertgate import big_floor
+    return big_floor(cfg, coin, big_coins)
 
 
 def is_scanning(coin: str) -> bool:
@@ -87,13 +86,15 @@ async def _alert_new_big(cfg: Config, notifier, coin: str, rows: list[dict]) -> 
         return
     ts = now()
     floor = alert_floor(cfg, coin, await _big_coins(cfg))
+    if floor is None:
+        return                              # büyük hisse / endeks: bu sınıftan bildirim yok
     for p in rows:
         if p.get("entity"):  # MM/vault — gürültü, alert yok
             continue
         if p["notional"] < floor:
             continue
-        if (p.get("score") or 0) < cfg.alert_min_score:
-            continue
+        # Skor kapısı YOK: boyut kriterdir ($8M+ yeni pozisyon insider olabilir, skor
+        # düşük diye kaçırılmaz); skor yalnız önceliği belirler (≥70 kritik)
         opened = p.get("opened_ts")
         if not opened or ts - opened > cfg.fresh_big_alert_hours * 3600:
             continue
