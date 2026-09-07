@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from ..config import EDITABLE_FIELDS, convert_value, display_value
+from .. import assets
 from ..db import db, kv_get, kv_set, now
 from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import (MAIN_CTX_KV, crypto_names, find_in_hip3, find_ticker, get_universe, hip3_known,

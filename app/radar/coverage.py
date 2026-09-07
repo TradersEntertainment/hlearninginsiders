@@ -124,7 +124,9 @@ async def overview(cfg=None, limit: int = 5) -> dict:
             continue
         s = sums.get(t["coin"], {})
         pl, ps = pct(s.get("long", 0), o), pct(s.get("short", 0), o)
-        rows.append({"coin": t["coin"], "symbol": t["symbol"], "dex": t["dex"] or "",
+        # dex etiketi: tickers.dex boşsa coin önekinden (xyz:MU → xyz), öneksiz → ana dex
+        dex = t["dex"] or (t["coin"].split(":")[0] if ":" in (t["coin"] or "") else "")
+        rows.append({"coin": t["coin"], "symbol": t["symbol"], "dex": dex,
                      "pct_long": pl or 0.0, "pct_short": ps or 0.0, "oi_ntl": o})
     rows.sort(key=lambda r: min(r["pct_long"], r["pct_short"]))
     med = median([min(r["pct_long"], r["pct_short"]) for r in rows]) if rows else None
