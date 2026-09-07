@@ -20,7 +20,7 @@ DEFAULT_PROPR: frozenset[str] = frozenset({
     "KAS", "ICP", "DYDX", "MET", "BERA", "SYRUP", "SAGA", "RUNE", "STABLE",
     "ENS", "BOME",
     # propr.xyz 07.09.2026 listesi: yeni kriptolar (PONS "NEW" rozetli)
-    "PONS", "DASH", "HEMI", "ZEN", "SKR", "ZK", "ACE", "2Z",
+    "PONS", "DASH", "HEMI", "ZEN", "SKR", "ZK", "ACE", "2Z", "ANSEM",
     # EQ / IDX
     "SNDK", "SKHX", "XYZ100", "SP500", "MU", "SPCX", "DRAM", "SKHY", "NVDA",
     "INTC", "SMSN", "GOOGL", "AMD", "CRCL", "EWY", "META", "MSFT", "ORCL",
