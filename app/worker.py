@@ -95,7 +95,7 @@ async def one_lease(cfg, session, client, state: dict, *, sleep=asyncio.sleep) -
         log.info("worker %s modu: %s%s", name, census.MODE_TR.get(mode, mode), f" ({why})" if why else "")
     pace = state.get("pace")
     if pace is None:
-        pace = state["pace"] = census.Pace(int(getattr(cfg, "census_rpm", 250) or 250), client)
+        pace = state["pace"] = census.Pace(int(getattr(cfg, "census_rpm", 250) or 250))
     fetcher = census.Fetcher(client, state["mode"], int(getattr(cfg, "census_batch_size", 50) or 50),
                              pace, sleep=sleep)
     hip3_floor = float(lease.get("hip3_floor") or 0)

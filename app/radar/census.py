@@ -57,7 +57,7 @@ PROBE_TTL = 6 * 3600       # tek moddayken toplu sorgu sondası bu sıklıkla ye
 LEASE_SEC = 600            # worker kirası
 STATE_EVERY = 200          # kaç hesapta bir ilerleme kaydı
 BATCH_FAIL_MAX = 3         # üst üste bu kadar toplu hata → bu tur tek mod
-SLOW_RECOVER_SEC = 600     # 429 sonrası hız bu süre sonra bir kademe geri çıkar
+SLOW_RECOVER_SEC = 300     # KENDİ 429'undan sonra hız bu süre sonra bir kademe geri çıkar
 CHUNK_SINGLE = 100         # tek modda bellekten bir seferde alınan adres
 LB_BATCH = 2000            # leaderboard satırları bu parçalarla tabloya
 WORKERS_KV = "census_workers"   # {ad: {ts, leased, ingested, err}} — worker'lar (P3)
@@ -216,7 +216,7 @@ async def probe_batch(client, addrs: list[str]) -> tuple[str, str]:
         return "single", "sonda için adres yok"
     sample = list(addrs[:2])
     try:
-        resp = await fn(sample)
+        resp = await fn(sample, priority="low")
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -243,16 +243,20 @@ async def probe_mode(cfg, client, addrs: list[str], *, force: bool = False) -> s
 # ────────────────────────────────────────────── hız
 
 class Pace:
-    """Sayımın kendi hızı: 60/rpm sn gecikme. HL 429 görülünce (client.n_429
-    artınca) çarpan yarıya (en az 1/8); SLOW_RECOVER_SEC sessizlikten sonra bir
-    kademe geri. Küresel istemci bütçesi ayrıca uygulanır."""
+    """Sayımın kendi hızı: 60/rpm sn gecikme. Sayımın KENDİ isteği 429 yiyince
+    (`stats["429"]` — istemci her 429'da artırır) çarpan yarıya (en az 1/8);
+    SLOW_RECOVER_SEC sessizlikten sonra bir kademe geri. Eskiden küresel
+    `client.n_429`'a bakıyordu: bars/bookwall'un 429'u sayımı 31/dk'ya
+    düşürüyordu. İstemcinin düşük şeridi (LOW_SHARE, 429 duraklaması) ayrıca
+    uygulanır."""
 
-    def __init__(self, rpm: int, client, clock=time.monotonic):
+    def __init__(self, rpm: int, client=None, clock=time.monotonic):
         self.rpm = max(1, int(rpm or 1))
         self.factor = 1.0
         self.client = client
         self.clock = clock
-        self.seen = int(getattr(client, "n_429", 0) or 0)
+        self.stats: dict = {"429": 0}
+        self.seen = 0
         self.n_429 = 0
         self.last = clock()
 
@@ -260,7 +264,7 @@ class Pace:
         return 60.0 / (self.rpm * self.factor)
 
     def observe(self) -> None:
-        cur = int(getattr(self.client, "n_429", 0) or 0)
+        cur = int(self.stats.get("429", 0) or 0)
         t = self.clock()
         if cur > self.seen:
             self.n_429 += cur - self.seen
@@ -303,7 +307,8 @@ class Fetcher:
             self.requests += 1
             states = None
             try:
-                states = _batch_states(await self.client.batch_clearinghouse(sub, dex), sub)
+                states = _batch_states(await self.client.batch_clearinghouse(
+                    sub, dex, priority="low", stats=self.pace.stats), sub)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -333,7 +338,7 @@ class Fetcher:
             self.requests += 1
             resp = None
             try:
-                resp = await self.client.clearinghouse(a, dex)
+                resp = await self.client.clearinghouse(a, dex, priority="low", stats=self.pace.stats)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -575,7 +580,7 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
     tick = await _tickers_by_dex(dexes)
     hip3_floor = float(getattr(cfg, "census_hip3_min_account_value", 1000) or 0)
     mode = await probe_mode(cfg, client, [a for a, _ in order[:2]])
-    pace = Pace(await effective_rpm(cfg), client)
+    pace = Pace(await effective_rpm(cfg))
     fetcher = Fetcher(client, mode, int(getattr(cfg, "census_batch_size", 50) or 50), pace,
                       sleep=sleep, should_stop=lambda: not enabled(cfg))
     total, done0 = await _progress_counts(pass_ts)

@@ -673,6 +673,10 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     hb, hcur, hot_done = _slice(hot, int(await kv_get("sweep_cursor_hot") or 0), n_hot)
     cb, ccur, _ = _slice(cold, int(await kv_get("sweep_cursor_cold") or 0), n_cold)
     batch = hb + cb
+    # Yetişme modunun taban (sweep_batch_size) ÜSTÜ kısmı fırsatçıdır: istemcinin
+    # düşük şeridinde gider (pencere %70'i aşınca bekler, 429'da 60 sn susar) —
+    # radarların ve kullanıcı sorgularının önünü kesmesin.
+    low_set = set(batch[max(1, int(cfg.sweep_batch_size)):])
     ts = now()
     n_pos = 0
     n_ok = 0
@@ -683,6 +687,9 @@ async def sweep_batch(cfg: Config, client: HLClient) -> dict:
     async def one(addr: str):
         nonlocal n_pos, n_ok, n_err, n_hlerr
         from ..health import beat
+        from ..hl.client import PRIORITY
+        if addr in low_set:
+            PRIORITY.set("low")            # gather her coroutine'e kendi bağlam kopyasını verir
         await beat("sweeper")  # ilerleme nabzı
         dx = base + cdex if addr in cset else base
         try:

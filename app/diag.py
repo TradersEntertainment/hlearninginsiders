@@ -256,8 +256,30 @@ async def _data() -> list[str]:
     return out
 
 
-async def _subsystems(cfg) -> list[str]:
+def _budget_line(state) -> str | None:
+    """HL istek bütçesi: istek/dk, tahmini ağırlık/dk, 429 sayısı, düşük şerit durumu."""
+    cl = getattr(state, "client", None) if state is not None else None
+    if cl is None or not hasattr(cl, "usage"):
+        return None
+    try:
+        from .hl.client import LOW_SHARE
+        u = cl.usage()
+    except Exception as e:
+        return f"  HL bütçesi okunamadı ({type(e).__name__}: {e})"
+    ago = u.get("last_429_ago")
+    paused = float(u.get("low_paused") or 0)
+    return (f"  HL bütçesi: {u.get('rpm', 0)}/{u.get('max', '?')} istek/dk"
+            f" · ~{_num(u.get('weight', 0))} ağırlık/dk (tahmini; HL sınırı {u.get('weight_max', 1200)})"
+            f" · 429 toplam {u.get('n_429', 0)}" + (f", son {_dur(ago)} önce" if ago is not None else ", hiç")
+            + " · düşük şerit (sayım/yetişme): "
+            + (f"DURAKLI {int(paused)} sn" if paused > 0 else f"açık (kullanım %{int(LOW_SHARE * 100)} üstünde bekler)"))
+
+
+async def _subsystems(cfg, state=None) -> list[str]:
     out = ["[ALT SİSTEMLER]"]
+    bl = _budget_line(state)
+    if bl:
+        out.append(bl)
     sw = await kv_get("sweep_stats") or {}
     if sw:
         last_full = await kv_get("sweep_last_full")
@@ -768,7 +790,7 @@ async def report(cfg, state=None, full: bool = False) -> str:
     parts: list[list[str]] = []
     sections = (("başlık", _head(cfg)), ("görevler", _tasks(cfg)),
                 ("kapsam", _coverage(cfg, state)), ("veri", _data()),
-                ("alt sistemler", _subsystems(cfg)))
+                ("alt sistemler", _subsystems(cfg, state)))
     for name, coro in sections:
         try:
             parts.append(await coro)

@@ -55,6 +55,7 @@ class Client:
     def __init__(self, data=DATA, batch=True, fail_batch=0):
         self.data, self.batch_ok, self.fail_batch = data, batch, fail_batch
         self.calls, self.batch_calls, self.lb_calls = [], [], 0
+        self.prios: list = []
         self.n_429 = 0
         self.trip_429: set[str] = set()
         self.main = {L1: [("PUMP", 5_200_000), ("BTC", 60_000_000)], L4: [("PUMP", 36_000)], X: [("HYPE", 1000)]}
@@ -72,14 +73,18 @@ class Client:
         return {"assetPositions": [pos(c, n) for c, n in rows],
                 "marginSummary": {"accountValue": str(self.av.get(addr, 1))}}
 
-    async def clearinghouse(self, addr, dex=""):
+    async def clearinghouse(self, addr, dex="", priority=None, stats=None):
         self.calls.append((addr, dex))
+        self.prios.append(priority)
         if addr in self.trip_429 and dex == "":
             self.n_429 += 1
+            if stats is not None:
+                stats["429"] = stats.get("429", 0) + 1
         return self._state(addr, dex)
 
-    async def batch_clearinghouse(self, users, dex=""):
+    async def batch_clearinghouse(self, users, dex="", priority=None, stats=None):
         self.batch_calls.append((tuple(users), dex))
+        self.prios.append(priority)
         if not self.batch_ok:
             raise RuntimeError("HL info batchClearinghouseStates HTTP 422: unknown type")
         if self.fail_batch > 0:
@@ -245,17 +250,23 @@ def test_single_pass_429_stop_resume():
         assert line.startswith("sayım (census): tek tek (RuntimeError: HL info batchClearinghouseStates HTTP 422") and "429: 1" in line, line
         # hız geri: sessizlikte bir kademe
         clock = [0.0]
-        pace = census.Pace(250, cli, clock=lambda: clock[0])
-        cli.n_429 += 1
+        pace = census.Pace(250, clock=lambda: clock[0])
+        pace.stats["429"] += 1
         pace.observe()
         assert pace.factor == 0.5 and abs(pace.delay() - 0.48) < 1e-9
         for _ in range(5):
-            cli.n_429 += 1
+            pace.stats["429"] += 1
             pace.observe()
         assert pace.factor == 0.125, "en az 1/8"
         clock[0] = census.SLOW_RECOVER_SEC + 1
         pace.observe()
         assert pace.factor == 0.25 and pace.n_429 == 6
+        # BAŞKASININ 429'u (client.n_429) sayımı yavaşlatmaz
+        pace2 = census.Pace(250, clock=lambda: clock[0])
+        cli.n_429 += 10
+        pace2.observe()
+        assert pace2.factor == 1.0 and pace2.n_429 == 0
+        assert all(p == "low" for p in cli.prios), "sayım istekleri düşük şeritten"
         # kapatınca durur; yeniden açınca AYNI tur kaldığı yerden (bozuk L2 yeniden denenir)
         cfg2, _ = await _fresh()
         cli2 = Client(batch=False)

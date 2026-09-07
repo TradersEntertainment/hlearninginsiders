@@ -1,5 +1,20 @@
-"""Hyperliquid info API istemcisi — pacing + retry + küresel istek bütçesi."""
+"""Hyperliquid info API istemcisi — pacing + retry + küresel istek bütçesi.
+
+İki öncelik şeridi: "normal" (radarlar, kullanıcı sorguları) bütçeyi bugünkü gibi
+kullanır; "low" (sayım, süpürücü yetişme modu) yalnız pencere kullanımı
+LOW_SHARE'in altındayken ilerler ve HL'den herhangi bir 429 gelince
+LOW_PAUSE_SEC susar — arka plan işi artan kapasiteyi kullanır, fırtınada çekilir.
+Öncelik ya çağrıda (`priority=`) ya da görev bağlamında (`PRIORITY` contextvar,
+süpürücü partisi) verilir.
+
+Ağırlık (HL belgesi: 1200 ağırlık/dk/IP; l2Book, allMids, clearinghouseState,
+orderStatus, spotClearinghouseState, exchangeStatus 2; userRole 60; diğerleri 20;
+batchClearinghouseStates belgesiz → 20 varsayılır) yalnız SAYAÇ içindir
+(`usage()["weight"]`, /tani): bütçe istek sayısıyla uygulanır — canlıdaki ölçüm
+bize gerçek sınırı öğretir, tahminle radarları yavaşlatmayız.
+"""
 import asyncio
+import contextvars
 import logging
 import random
 import time
@@ -8,6 +23,18 @@ from collections import deque
 import aiohttp
 
 log = logging.getLogger("hl.client")
+
+PRIORITY: contextvars.ContextVar[str] = contextvars.ContextVar("hl_priority", default="normal")
+WEIGHTS = {"l2Book": 2, "allMids": 2, "clearinghouseState": 2, "orderStatus": 2,
+           "spotClearinghouseState": 2, "exchangeStatus": 2, "userRole": 60}
+DEFAULT_WEIGHT = 20
+HL_WEIGHT_LIMIT = 1200      # HL: dakikada IP başına toplam ağırlık (belge)
+LOW_SHARE = 0.70            # düşük şerit: pencere kullanımı bunun üstündeyse bekler
+LOW_PAUSE_SEC = 60.0        # herhangi bir 429'dan sonra düşük şerit bu kadar susar
+
+
+def weight_of(payload: dict) -> int:
+    return WEIGHTS.get(str((payload or {}).get("type") or ""), DEFAULT_WEIGHT)
 
 
 class HLClient:
@@ -24,42 +51,76 @@ class HLClient:
         self._max_rpm = max_rpm
         self._rpm_window = rpm_window
         self._req_times: deque[float] = deque()
+        self._w_times: deque[tuple[float, int]] = deque()   # (damga, ağırlık) — yalnız sayaç
         self._rl_lock = asyncio.Lock()
-        # HL'den gelen 429 sayısı (kümülatif). Sayım bunu okuyup kendi hızını
-        # yarıya indirir; /tani yazar. Retry içinde yutulan 429'lar da sayılır.
+        # HL'den gelen 429 sayısı (kümülatif) ve sonuncusunun anı: /tani yazar,
+        # düşük şerit LOW_PAUSE_SEC susar. Retry içinde yutulan 429'lar da sayılır.
         self.n_429 = 0
+        self._last_429 = 0.0
 
-    async def _acquire_budget(self) -> None:
+    def _trim(self, t: float) -> None:
+        while self._req_times and t - self._req_times[0] >= self._rpm_window:
+            self._req_times.popleft()
+        while self._w_times and t - self._w_times[0][0] >= self._rpm_window:
+            self._w_times.popleft()
+
+    def low_paused(self, t: float | None = None) -> float:
+        """Düşük şeridin 429 sonrası kalan bekleme süresi (sn); 0 = açık."""
+        t = time.monotonic() if t is None else t
+        return max(0.0, self._last_429 + LOW_PAUSE_SEC - t) if self._last_429 else 0.0
+
+    async def _acquire_budget(self, priority: str = "normal", weight: int = DEFAULT_WEIGHT) -> None:
+        low = priority == "low"
         while True:
             async with self._rl_lock:
                 t = time.monotonic()
-                while self._req_times and t - self._req_times[0] >= self._rpm_window:
-                    self._req_times.popleft()
-                if len(self._req_times) < self._max_rpm:
+                self._trim(t)
+                used = len(self._req_times)
+                if low:
+                    pause = self.low_paused(t)
+                    if pause > 0:
+                        wait = pause
+                    elif used < self._max_rpm * LOW_SHARE:
+                        self._req_times.append(t)
+                        self._w_times.append((t, int(weight)))
+                        return
+                    else:
+                        wait = (self._req_times[0] + self._rpm_window - t) if self._req_times else 0.25
+                elif used < self._max_rpm:
                     self._req_times.append(t)
+                    self._w_times.append((t, int(weight)))
                     return
-                wait = self._req_times[0] + self._rpm_window - t
-            await asyncio.sleep(max(wait, 0.01))
+                else:
+                    wait = self._req_times[0] + self._rpm_window - t
+            await asyncio.sleep(min(max(wait, 0.01), 5.0))
 
     def usage(self) -> dict:
         """Son pencerede kaç istek yapıldı — süpürücü BOŞTAKİ bütçeyi kullansın.
 
         Sayaç zaten `_acquire_budget` için tutuluyor; burada yalnız okunuyor.
         Süresi dolmuş damgalar temizlenir (await yok — tek iş parçacıklı
-        döngüde bölünmez).
+        döngüde bölünmez). `weight`: son dakikanın TAHMİNİ HL ağırlığı (belge
+        tablosu), `low_paused`: düşük şeridin 429 sonrası kalan beklemesi.
         """
         t = time.monotonic()
-        while self._req_times and t - self._req_times[0] >= self._rpm_window:
-            self._req_times.popleft()
+        self._trim(t)
         used = len(self._req_times)
         return {"rpm": used, "max": self._max_rpm,
                 "free": max(0, self._max_rpm - used),
-                "window": self._rpm_window}
+                "window": self._rpm_window,
+                "weight": sum(w for _, w in self._w_times), "weight_max": HL_WEIGHT_LIMIT,
+                "low_share": LOW_SHARE, "low_paused": round(self.low_paused(t), 1),
+                "n_429": self.n_429,
+                "last_429_ago": (round(t - self._last_429) if self._last_429 else None)}
 
-    async def info(self, payload: dict, retries: int = 4):
+    async def info(self, payload: dict, retries: int = 4, priority: str | None = None,
+                   stats: dict | None = None):
+        """`priority`: "normal" | "low" (verilmezse görev bağlamındaki PRIORITY).
+        `stats`: çağıranın sözlüğü — her 429'da stats["429"] += 1 (kendi 429'unu
+        bilsin; küresel sayaç başkalarının fırtınasını ona yüklüyordu)."""
         url = f"{self.base}/info"
         delay = 1.0
-        await self._acquire_budget()
+        await self._acquire_budget(priority or PRIORITY.get(), weight_of(payload))
         async with self._sem:
             for attempt in range(retries + 1):
                 try:
@@ -71,6 +132,9 @@ class HLClient:
                             return data
                         if r.status == 429:
                             self.n_429 += 1
+                            self._last_429 = time.monotonic()
+                            if stats is not None:
+                                stats["429"] = int(stats.get("429", 0)) + 1
                         if r.status in (429, 500, 502, 503, 504) and attempt < retries:
                             await asyncio.sleep(delay + random.random())
                             delay = min(delay * 2, 30)
@@ -101,13 +165,15 @@ class HLClient:
             p["dex"] = dex
         return await self.info(p)
 
-    async def clearinghouse(self, user: str, dex: str = ""):
+    async def clearinghouse(self, user: str, dex: str = "", priority: str | None = None,
+                            stats: dict | None = None):
         p = {"type": "clearinghouseState", "user": user}
         if dex:
             p["dex"] = dex
-        return await self.info(p)
+        return await self.info(p, priority=priority, stats=stats)
 
-    async def batch_clearinghouse(self, users: list[str], dex: str = ""):
+    async def batch_clearinghouse(self, users: list[str], dex: str = "", priority: str | None = None,
+                                  stats: dict | None = None):
         """TOPLU defter: `batchClearinghouseStates` — sağlayıcı belgelerinde
         (Dwellir/QuickNode/Chainstack) api.hyperliquid.xyz/info örneğiyle var,
         resmi Python SDK'da yok. Bu yüzden canlıda SONDA ile doğrulanır
@@ -116,7 +182,7 @@ class HLClient:
         p: dict = {"type": "batchClearinghouseStates", "users": list(users)}
         if dex:
             p["dex"] = dex
-        return await self.info(p, retries=2)
+        return await self.info(p, retries=2, priority=priority, stats=stats)
 
     async def clearinghouse_all(self, user: str, dexes: list[str]) -> dict:
         """Adresin BÜTÜN dex'lerdeki defteri — {dex: state} sözlüğü.
