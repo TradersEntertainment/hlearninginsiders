@@ -602,12 +602,18 @@ async def _subsystems(cfg) -> list[str]:
             + (f" · {tl['skipped_mm']} mm/vault elendi" if tl.get("skipped_mm") else "")
             + (f" · ⚠️ {tl['failed']} gönderilemedi" if tl.get("failed") else "")
             + (f" · ⚠️ hata {tl['errors']}" if tl.get("errors") else "")
+        + (f" · {tl['irregular']} düzensiz" if tl.get("irregular") else "")
+        + (f" · sorgu ✓{tl.get('lookups_ok', 0)}/⏱{tl.get('lookups_timeout', 0)}/✗{tl.get('lookups_err', 0)}"
+           if "lookups_ok" in tl else "")
             + ((f" · en büyük emir {best.get('coin')} {best.get('side')} ${float(best.get('planned') or 0):,.0f}"
                 + (f" (hacmin %{float(best['vol_pct']):.0f}'i)" if best.get("vol_pct") is not None else "")
                 + (f", {best.get('status')}" if best.get("status") else ""))
                if best else "")
             + (f" · ⚠️ {tl['skipped']}" if tl.get("skipped") else "")))
             + f" · {_dur(now() - int(tl['ts']))} önce")
+    if tl.get("decisions"):
+        from .radar.twaplive import decision_line
+        out.append("       son elenenler: " + " · ".join(decision_line(d) for d in tl["decisions"][:5]))
         if tl.get("sample"):
             out.append(f"       ilk emir snapshot örneği: {str(tl['sample'])[:300]}")
     else:

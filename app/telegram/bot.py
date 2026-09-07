@@ -445,6 +445,8 @@ class TelegramBot:
             await self._cmd_scan(args, chat_id)
         elif cmd == "whale":
             await self._cmd_whale(args, chat_id)
+        elif cmd == "twap":
+            await self._cmd_twap(args, chat_id)
         elif cmd == "watch":
             await self._cmd_watch(args, chat_id, add=True)
         elif cmd == "unwatch":
@@ -690,6 +692,19 @@ class TelegramBot:
         except Exception as e:
             log.exception("scan hatası: %s", t["symbol"])
             await self.send(f"❌ <b>{t['symbol']}</b> taranamadı: {fmt.esc(e)}", chat_id)
+
+    async def _cmd_twap(self, args: list[str], chat_id: str) -> None:
+        """/twap 0xADRES → adresin dizileri + HL emirleri + kapı kararı; /twap COIN → dinleme,
+        hacim, gereken emir; /twap → özet + son kararlar. "Niye gelmedi" sorusunun cevabı."""
+        from ..radar import twaplive as tl
+        arg = (args[0] if args else "").strip()
+        if arg.lower().startswith("0x"):
+            txt = await tl.diag_address(self.cfg, getattr(self, "collector", None), arg)
+        elif arg:
+            txt = await tl.diag_coin(self.cfg, arg)
+        else:
+            txt = await tl.diag_summary(self.cfg)
+        await self.send(txt, chat_id)
 
     async def _cmd_whale(self, args: list[str], chat_id: str) -> None:
         if not args or not args[0].startswith("0x"):

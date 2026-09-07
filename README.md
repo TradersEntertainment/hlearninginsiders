@@ -264,11 +264,21 @@ planlanan adet × bugünkü fiyat, dolan tutar, kalan süre. "Bu hızla 24 saatt
 gibi ekstrapolasyon mesajlarda yer almaz; ADA vakasındaki gibi bitmiş bir emir
 bildirilmez.
 
-- **Bildirim kapısı (kullanıcı kuralı):** emir toplamı ≥ **$2M**, kalan ≥ **$1M**
-  ve emir coinin 24s hacminin ≥ **%20**'si. Emir yok / bitmiş / iptal / hacim
-  bilinmiyor → bildirim yok (sayaçlar `/tani`'da: emir yok, bitmiş, eşik altı,
-  hacme göre küçük). mm/vault etiketli adres elenir. `twap_alert_big_usd` 0 =
-  kapalı; açılırsa o tutarı geçen emirde hacme bakılmaz.
+- **Bildirim kapısı (kullanıcı kuralı):** emir toplamı ≥ **$1M**, kalan ≥ **$1M**
+  (ya da planın yarısı — $1M'lik emir yarısı dolana kadar bildirilebilir) ve emir
+  coinin 24s hacminin ≥ **%5**'i; **BTC/ETH'de %20** (`twap_alert_vol_pct_major` —
+  majörlerde $1-3M gürültüdür). PUMP vakası: 1.00B PUMP ≈ $3M emir, hacim ~$62M →
+  %4,8; eski %20 kuralı susturuyordu. Emir yok / bitmiş / iptal / hacim bilinmiyor →
+  bildirim yok (sayaçlar `/tani`'da: emir yok, bitmiş, eşik altı, hacme göre küçük,
+  düzensiz; emir sorgusu ✓/⏱/✗). mm/vault etiketli adres elenir. `twap_alert_big_usd`
+  0 = kapalı; açılırsa o tutarı geçen emirde hacme bakılmaz.
+- **"Niye gelmedi?"** → `/tani` "canlı twap" satırının altındaki **son elenenler**
+  (coin, adres, emir $, hacmin yüzdesi, neden) ve Telegram'da **`/twap 0xADRES`**:
+  adresin bellekteki dizileri, HL'deki TWAP emirleri (şimdi sorulur) ve her emrin
+  kapı kararı sayılarla ("hacim $62M, emir hacmin %4,8'i, gerek %5 ≥ $3.1M").
+  `/twap PUMP`: coin dinleniyor mu, 24s hacim, bildirim için gereken emir; `/twap`:
+  özet + son 50 karar (`twaplive_last` kv'si, tur tur ezilmez). Emir henüz 5 dk /
+  10 dilim olmadıysa aday bile değildir — tahmin yok, beklenir.
 - **Kanal:** kripto → `CRYPTO_CHAT_ID` (boşsa gönderilmez), hisse/endeks → ana
   sohbet. Mesaj: emir (adet ≈ $, süre, başlangıç, kalan), dolan / kalan,
   gördüğümüz dilimler, adresin pozisyonu (canlı sorgu), fiyat ilk→son, taker %.
@@ -279,8 +289,10 @@ bildirilmez.
 - **Kapsam:** yalnız WS'in dinlediği coinler — hisseler + hacme göre ilk
   `crypto_watch_top` kripto; sekme ve `/tani` sayıyı yazar.
 - **Şekil güvencesi:** snapshot mesaj şekli canlıda doğrulanır; ilk ham örnek
-  `/tani`'da görünür. Şekil tutmazsa emir "yok" sayılır ve bildirim gitmez —
-  uydurma yok.
+  `/tani`'da görünür. Şekil tutmazsa **sorgu başarısız** sayılır (emir "yok" değil)
+  ve bildirim gitmez — uydurma yok. Hacim kv'si 30 dk'dan bayatsa tek istekle
+  tazelenir (metrik turu dursa da radar kör kalmaz); gönderim düşerse 6 saatlik
+  bekleme yanmaz, sonraki tur yeniden dener.
 - **Restart:** bekleme (6 saat) `alerts_log`'da; bildirilmiş turlar açılışta
   geri yüklenir, bitiş notu kaybolmaz. Ayarlar → **TWAP radarı**.
 

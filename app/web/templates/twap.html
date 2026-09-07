@@ -21,7 +21,7 @@
   TWAP'ı 30 sn'de bir ~$2K'lık dilim atar; arşiv onu göremez, canlı sayaç görür. Düzenli dizi
   görülünce adresin <b>HL TWAP emri</b> sokete kısa abonelikle sorgulanır (hypurrscan'in Orders
   sekmesindeki veri: plan, dolan, kalan süre) — <b>tahmin yok</b>. Telegram: emir ≥ <b>{{ alert_min|usd }}</b>,
-  kalan ≥ <b>{{ min_left|usd }}</b> ve emir 24s hacmin ≥ <b>%{{ '%g'|format(vol_pct) }}</b>'si ise
+  kalan ≥ <b>{{ min_left|usd }}</b> (ya da planın yarısı) ve emir 24s hacmin ≥ <b>%{{ '%g'|format(vol_pct) }}</b>'si (BTC/ETH %{{ '%g'|format(vol_pct_major or 20) }}) ise
   {%- if big_usd %} (ya da emir ≥ {{ big_usd|usd }}, hacimden bağımsız){% endif %}; emir yoksa/bitmişse bildirim yok.
   Kripto → kripto kanalı, hisse → ana sohbet; yarısı dolunca ilerleme, bitince 🏁 / iptalde ⛔ notu.
   Kapsam: dinlenen <b>{{ ws.crypto|length if ws.crypto else 0 }}</b> kripto + <b>{{ ws.equity_n or 0 }}</b> hisse
@@ -107,6 +107,11 @@
     {%- if live.no_vol %} · {{ live.no_vol }} hacim bilinmiyor{% endif %}
     {%- if live.errors %} · <span class="bad">hata {{ live.errors }}</span>{% endif %}
     · {{ live.ts|dt }}{% else %}tur henüz çalışmadı{% endif %}.</p>
+  {% if live.decisions %}
+  <p class="kunye">🧾 Son tur kararları: {% for d in live.decisions[:8] %}{{ d.coin }} {{ d.addr[:6] }}… {{ d.side }}
+    {%- if d.planned %} {{ d.planned|usd }} emir{% if d.vol_pct is not none %} (hacmin %{{ '%.1f'|format(d.vol_pct) }}'i){% endif %}{% else %} {{ d.n }} dilim{% endif %}
+    → <b>{{ d.reason }}</b>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
 
   {# KÖR NOKTA: bu uyarı olmadan boş sayfa "TWAP yok" gibi okunur, oysa
      "göremediğimiz TWAP'lar olabilir" demek. #}

@@ -1375,6 +1375,7 @@ def help_text() -> str:
         "/refresh — takvimi ŞİMDİ tüm kaynaklardan yenile (eksik earnings görürsen bas)\n"
         "/settime SHAZ bmo — bilanço saatini elle düzelt (bmo/amc/16:30/09:30et)\n"
         "/whale 0x… — adres karnesi + açık pozisyonları\n"
+        "/twap 0x… | /twap PUMP — canlı TWAP radarı teşhisi: diziler, HL emirleri, kapı kararı (niye gelmedi?)\n"
         "/watch 0x… — adresi watchlist'e ekle\n"
         "/unwatch 0x… — watchlist'ten çıkar\n"
         "/ignore 0x… — adresi ele (MM/vault gibi davran, alert üretme)\n"

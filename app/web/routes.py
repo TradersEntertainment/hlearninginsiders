@@ -1156,7 +1156,8 @@ async def twap_page(request: Request):
         "ws": await kv_get("ws_universe") or {},
         "alert_min": getattr(cfg, "twap_alert_min_usd", 2_000_000),
         "min_left": getattr(cfg, "twap_alert_min_left_usd", 1_000_000),
-        "vol_pct": getattr(cfg, "twap_alert_vol_pct", 20),
+        "vol_pct": getattr(cfg, "twap_alert_vol_pct", 5),
+        "vol_pct_major": getattr(cfg, "twap_alert_vol_pct_major", 20),
         "big_usd": getattr(cfg, "twap_alert_big_usd", 0),
         "live_on": bool(getattr(cfg, "twap_live_enabled", True)),
     })

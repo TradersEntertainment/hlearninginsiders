@@ -250,7 +250,9 @@ class Collector:
         if fut is None and len(self._twap_waiters) == 1:
             fut = next(iter(self._twap_waiters.values()))
         if fut is not None and not fut.done():
-            fut.set_result(hist if isinstance(hist, list) else [])
+            # Liste değilse (alan adı değişti / abonelik reddi) → None = sorgu başarısız;
+            # eskiden [] = "emir yok" sayılıyor, şekil hatası sessizce 'no_order' oluyordu
+            fut.set_result(hist if isinstance(hist, list) else None)
 
     async def _pinger(self, ws):
         n = 0

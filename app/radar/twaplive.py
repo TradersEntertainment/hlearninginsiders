@@ -57,6 +57,15 @@ REFRESH_SEC = 600           # bildirilmiş tur: emir 10 dk'da bir yeniden sorgul
 HALF_PCT = 50               # ilerleme notu: emrin yarısı dolunca
 NATIVE_GAP = (25, 35)       # ortanca aralık bu banttaysa "HL TWAP düzenine uyuyor"
 STATS_KV = "twaplive_stats"
+LAST_KV = "twaplive_last"   # son 50 aday kararı (tur tur ezilmez): "niye gelmedi" sorusunun kaydı
+LAST_MAX = 50
+DECISIONS_MAX = 30
+REASON_TR = {"irregular": "düzensiz dizi", "mm": "mm/vault", "cooldown": "bekleme içinde",
+             "no_lookup": "collector yok", "lookup_fail": "emir sorgusu başarısız",
+             "no_order": "HL'de TWAP emri yok", "order_done": "emir bitmiş/iptal",
+             "order_small": "emir eşik altı", "order_left": "kalan az", "no_vol": "hacim bilinmiyor",
+             "vol_small": "hacme göre küçük", "no_chat": "kanal yok", "alerted": "bildirildi",
+             "failed": "gönderilemedi", "ok": "geçer", "big": "hacimden bağımsız büyük"}
 
 
 class Run:
@@ -242,28 +251,60 @@ def parse_twap_orders(history, coin: str, side: str, mark, now_ts: int) -> list[
     return out
 
 
-def order_gate(cfg, order: dict | None, day_vol, vol_ts, now_ts: int) -> str:
+def vol_pct_for(cfg, coin: str) -> float:
+    """Hacim kuralı sınıfa göre: BTC/ETH `twap_alert_vol_pct_major` (%20 — $1-3M gürültü),
+    diğerleri `twap_alert_vol_pct` (%5 — PUMP'ta $3M emir hacmin %4,8'iydi, %20 susturuyordu)."""
+    from .bigpos import MAJORS
+    sym = (coin or "").split(":")[-1].upper()
+    if sym in MAJORS:
+        return float(getattr(cfg, "twap_alert_vol_pct_major", 20) or 0)
+    return float(getattr(cfg, "twap_alert_vol_pct", 5) or 0)
+
+
+def left_floor(cfg, planned: float) -> float:
+    """Kalan kuralı: min(min_left, planın yarısı) — $1M'lik emir yarısı dolana kadar bildirilebilsin."""
+    min_left = float(getattr(cfg, "twap_alert_min_left_usd", 1_000_000) or 0)
+    return min(min_left, planned * 0.5) if planned > 0 else min_left
+
+
+def order_gate(cfg, order: dict | None, day_vol, vol_ts, now_ts: int, coin: str = "") -> str:
     """Emir verisiyle kapı: 'ok' | 'big' geçer; diğerleri nedenidir:
-    no_order · order_done · order_small · order_left · no_vol · vol_small."""
+    no_order · order_done · order_small · order_left · no_vol · vol_small.
+    `coin` hacim yüzdesinin sınıfını seçer (vol_pct_for)."""
     if not order:
         return "no_order"
     if order.get("status") != "activated":
         return "order_done"
     planned = float(order.get("planned_usd") or 0)
     left_usd = float(order.get("remaining_usd") or 0)
-    min_left = float(getattr(cfg, "twap_alert_min_left_usd", 1_000_000) or 0)
+    min_left = left_floor(cfg, planned)
     big = float(getattr(cfg, "twap_alert_big_usd", 0) or 0)
     if big > 0 and planned >= big and left_usd >= min_left:
         return "big"
-    if planned < float(getattr(cfg, "twap_alert_min_usd", 2_000_000) or 0):
+    if planned < float(getattr(cfg, "twap_alert_min_usd", 1_000_000) or 0):
         return "order_small"
     if left_usd < min_left:
         return "order_left"
     if not day_vol or float(day_vol) <= 0 or not vol_ts or now_ts - int(vol_ts) > VOL_MAX_AGE:
         return "no_vol"
-    if planned / float(day_vol) * 100 < float(getattr(cfg, "twap_alert_vol_pct", 20) or 0):
+    if planned / float(day_vol) * 100 < vol_pct_for(cfg, coin):
         return "vol_small"
     return "ok"
+
+
+def gate_detail(cfg, coin: str, order: dict | None, day_vol, vol_ts, now_ts: int) -> dict:
+    """Kapı kararı SAYILARLA (teşhis): {reason, planned, left, vol_pct, pct_needed, need_usd,
+    left_need, day_vol}. need_usd = bildirim için gereken emir = max(min_usd, yüzde × hacim)."""
+    reason = order_gate(cfg, order, day_vol, vol_ts, now_ts, coin)
+    planned = float((order or {}).get("planned_usd") or 0)
+    left = float((order or {}).get("remaining_usd") or 0)
+    pct = vol_pct_for(cfg, coin)
+    dv = float(day_vol or 0)
+    min_usd = float(getattr(cfg, "twap_alert_min_usd", 1_000_000) or 0)
+    return {"reason": reason, "planned": planned, "left": left, "day_vol": dv or None,
+            "vol_pct": (planned / dv * 100) if dv else None, "pct_needed": pct,
+            "need_usd": max(min_usd, dv * pct / 100) if dv else min_usd,
+            "left_need": left_floor(cfg, planned), "status": (order or {}).get("status")}
 
 
 _lookup_cache: dict[str, tuple[int, list]] = {}
@@ -326,12 +367,14 @@ def klass_of(coin: str) -> str:
 
 # ---------------- DB yardımcıları ----------------
 
-async def volumes() -> dict[str, tuple[float, int]]:
-    """{coin: (24s hacim $, ölçüm ts)} — kripto kv özetinden, hisse/endeks asset_metrics'ten."""
+async def volumes(client=None) -> dict[str, tuple[float, int]]:
+    """{coin: (24s hacim $, ölçüm ts)} — kripto kv özetinden, hisse/endeks asset_metrics'ten.
+    `client` verilirse kv bayatken (≥30 dk) tek istekle tazelenir: metrik turu dursa
+    bile kripto TWAP radarı topluca `no_vol`a düşmesin."""
     out: dict[str, tuple[float, int]] = {}
     try:
         from ..hl.universe import main_dex_ctx
-        ctx = await main_dex_ctx(None, fetch=False)
+        ctx = await main_dex_ctx(client, ttl=VOL_MAX_AGE // 2, fetch=client is not None)
         ts = int(ctx.get("ts") or 0)
         for c, v in (ctx.get("c") or {}).items():
             if v.get("v") is not None:
@@ -476,9 +519,20 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     ts = now()
     window = int(getattr(cfg, "twap_live_window_min", 240) or 240) * 60
     out = {"keys": len(REG.runs), "observed": REG.observed, "errors": REG.errors, "cands": 0,
-           "regular": 0, "lookups": 0, "lookup_fail": 0, "alerted": 0, "progress": 0, "ended": 0,
-           "skipped_mm": 0, "no_chat": 0, "no_order": 0, "order_done": 0, "order_small": 0,
-           "order_left": 0, "no_vol": 0, "vol_small": 0, "no_lookup": 0, "failed": 0, "best": None}
+           "regular": 0, "irregular": 0, "lookups": 0, "lookup_fail": 0, "alerted": 0, "progress": 0,
+           "ended": 0, "skipped_mm": 0, "no_chat": 0, "no_order": 0, "order_done": 0, "order_small": 0,
+           "order_left": 0, "no_vol": 0, "vol_small": 0, "no_lookup": 0, "failed": 0, "best": None,
+           "decisions": []}
+    decisions: list[dict] = out["decisions"]
+
+    def decide(run: "Run", reason: str, detail: dict | None = None) -> None:
+        """Bu turun aday kararı — /tani "son elenenler" ve /twap komutu bunu okur."""
+        d = {"coin": run.coin, "addr": run.address, "side": run.side, "n": run.n,
+             "dur": int(run.last_ts - run.first_ts), "total": round(run.total),
+             "reason": reason, "ts": ts}
+        if detail:
+            d.update({k: detail.get(k) for k in ("planned", "left", "vol_pct", "pct_needed", "need_usd", "status")})
+        decisions.append(d)
     if not getattr(cfg, "twap_live_enabled", True):
         out["skipped"] = "kapalı"
         await kv_set(STATS_KV, {**out, "ts": ts})
@@ -494,10 +548,13 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     sample = getattr(collector, "twap_sample", None) if collector is not None else None
     if sample:
         out["sample"] = str(sample)[:600]
+    if collector is not None:
+        for k in ("ok", "timeout", "err"):
+            out[f"lookups_{k}"] = int(getattr(collector, f"twap_lookups_{k}", 0) or 0)
     if not cands:
         await kv_set(STATS_KV, {**out, "ts": ts})
         return out
-    vols = await volumes()
+    vols = await volumes(client)
     ents = await entities(list({r.address for r in cands}))
     from ..telegram import format as fmt
     for run in cands:
@@ -549,60 +606,241 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 continue
             # --- ilk alarm: düzenli dizi → emir sorgusu → kapı ---
             if not m:
+                out["irregular"] += 1
+                decide(run, "irregular")
                 continue
             out["regular"] += 1
             if ents.get(run.address) in ("mm", "vault"):
                 out["skipped_mm"] += 1
+                decide(run, "mm")
                 continue
             if await alert_recent("twap", key, int(getattr(cfg, "twap_alert_cooldown", 21600) or 0)):
                 run.alerted_ts = run.alerted_ts or ts        # bekleme içinde: tekrar sayılmaz
                 run.alert_total = run.alert_total or run.total
+                decide(run, "cooldown")
                 continue
             if collector is None:
                 out["no_lookup"] += 1                     # emir doğrulanamaz → tahminle bildirim YOK
+                decide(run, "no_lookup")
                 continue
+            lf_before = out.get("lookup_fail", 0)
             order = await lookup_order(collector, run, ts, cfg, out)
             vol = vols.get(run.coin)
             day_vol, vol_ts = (vol if vol else (None, None))
-            g = order_gate(cfg, order, day_vol, vol_ts, ts)
-            planned = float((order or {}).get("planned_usd") or 0)
+            det = gate_detail(cfg, run.coin, order, day_vol, vol_ts, ts)
+            g = det["reason"]
+            planned = det["planned"]
             if order and ((not out["best"]) or planned > out["best"]["planned"]):
                 out["best"] = {"coin": run.coin, "side": run.side, "planned": planned,
                                "left": (order or {}).get("remaining_usd"), "status": order.get("status"),
-                               "vol_pct": (planned / day_vol * 100) if day_vol else None}
+                               "vol_pct": det["vol_pct"]}
             if g not in ("ok", "big"):
                 out[g] = out.get(g, 0) + 1
+                decide(run, "lookup_fail" if (g == "no_order" and out.get("lookup_fail", 0) > lf_before) else g, det)
                 continue
             chat, can = chat_for(cfg, run.coin)
             run.alerted_ts, run.alert_total, run.gate = ts, run.total, g
             run.day_volume = day_vol
             if not can:
                 out["no_chat"] += 1
+                decide(run, "no_chat", det)
                 await persist(run, m)
                 continue
-            await alert_log("twap", key, "")                  # işaret ÖNCE (sessiz saat/tekrar)
+            if not chat:
+                await alert_log("twap", key, "")          # hisse yolu: sessiz saat özeti için işaret ÖNCE
             pos = await position_ctx(client, run.coin, run.address)
-            ctx = {"order": order, "day_vol": day_vol,
-                   "vol_pct": (planned / day_vol * 100) if day_vol else None,
+            ctx = {"order": order, "day_vol": day_vol, "vol_pct": det["vol_pct"],
                    "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or ""}
             text = fmt.twap_alert(m, ctx)
             ok = await notifier.send("twap", text, priority="high", key=f"twap:{key}", chat_id=chat, coin=run.coin)
             if ok:
                 await alert_log("twap", key, text)
                 out["alerted"] += 1
+                decide(run, "alerted", det)
                 log.info("canlı twap: %s %s %s emir %.0f$ kalan %.0f$ (%s) bildirildi", run.coin, run.side,
                          run.address[:10], planned, float(order.get("remaining_usd") or 0), g)
             elif not chat and in_quiet_hours(cfg):
                 out["quiet"] = out.get("quiet", 0) + 1          # sabah özetine bırakıldı, hata değil
+                decide(run, "alerted", det)
             else:
+                # Kripto yolu: işaret yazılmadı → 6 saatlik bekleme yanmaz, sonraki tur yeniden dener
                 out["failed"] += 1
+                run.alerted_ts = None
+                decide(run, "failed", det)
                 await alert_log("fail:twap", key, text)
             await persist(run, m)
         except Exception:
             out["errors"] += 1
             log.exception("canlı twap değerlendirme hatası %s", getattr(run, "key", "?"))
+    decisions.sort(key=lambda d: -(d.get("planned") or d.get("total") or 0))
+    del decisions[DECISIONS_MAX:]
+    if decisions:
+        try:
+            await _remember(decisions)
+        except Exception:
+            log.debug("twaplive_last yazılamadı", exc_info=True)
     await kv_set(STATS_KV, {**out, "ts": ts})
     return out
+
+
+async def _remember(decisions: list[dict]) -> None:
+    """Son kararları biriktir (aynı coin+adres+yön için en yenisi kalır, en çok LAST_MAX)."""
+    last = await kv_get(LAST_KV) or []
+    seen = set()
+    merged = []
+    for d in list(decisions) + list(last):
+        k = (d.get("coin"), d.get("addr"), d.get("side"))
+        if k in seen:
+            continue
+        seen.add(k)
+        merged.append(d)
+    await kv_set(LAST_KV, merged[:LAST_MAX])
+
+
+def decision_line(d: dict) -> str:
+    """Tek karar, düz metin: 'PUMP 0x60b0…991e buy $3.0M emir, hacmin %4.8'i → hacme göre küçük (%5 gerekir)'."""
+    from ..telegram.format import short, usd
+    r = d.get("reason") or "?"
+    txt = f"{d.get('coin')} {short(d.get('addr') or '')} {d.get('side')}"
+    if d.get("planned"):
+        txt += f" {usd(d['planned'])} emir"
+        if d.get("vol_pct") is not None:
+            txt += f", hacmin %{float(d['vol_pct']):.1f}'i"
+    else:
+        txt += f" {d.get('n', 0)} dilim {usd(d.get('total') or 0)}"
+    txt += f" → {REASON_TR.get(r, r)}"
+    if r == "vol_small" and d.get("pct_needed") is not None:
+        txt += f" (%{float(d['pct_needed']):g} gerekir)"
+    elif r == "order_left" and d.get("left") is not None:
+        txt += f" (kalan {usd(d['left'])})"
+    return txt
+
+
+# ---------------- teşhis metinleri (/twap komutu — bot'tan bağımsız, test edilir)
+
+async def _marks() -> dict[str, float]:
+    out: dict[str, float] = {}
+    try:
+        from ..hl.universe import main_dex_ctx
+        ctx = await main_dex_ctx(None, fetch=False)
+        for c, v in (ctx.get("c") or {}).items():
+            if v.get("m"):
+                out[c] = float(v["m"])
+    except Exception:
+        pass
+    return out
+
+
+def _runs_for(pred) -> list["Run"]:
+    return sorted((r for r in REG.runs.values() if pred(r)), key=lambda r: -r.total)
+
+
+def _run_line(r: "Run") -> str:
+    from ..telegram.format import short, usd
+    m = measure(r) if r.slices else None
+    dur = int(r.last_ts - r.first_ts)
+    reg = f"düzenli ✓ (aralık ~{int((m or {}).get('median_gap') or 0)} sn)" if m else "düzensiz/az"
+    flag = " · bildirildi" if r.alerted_ts else ""
+    return f"{r.coin} {short(r.address)} {r.side} · {r.n} dilim · {dur // 60} dk · {usd(r.total)} · {reg}{flag}"
+
+
+async def diag_address(cfg, collector, addr: str) -> str:
+    """/twap 0xADRES: bellekteki diziler, HL'deki TWAP emirleri (şimdi sorulur) ve her emrin
+    kapı kararı sayılarla, son kararlar."""
+    from ..telegram.format import alink, esc, usd
+    addr = (addr or "").lower()
+    ts = now()
+    lines = [f"📡 <b>Canlı TWAP</b> · 👤 {alink(addr)}"]
+    runs = _runs_for(lambda r: r.address == addr)
+    lines.append("Bellekteki diziler: " + ("\n".join("• " + esc(_run_line(r)) for r in runs[:8]) if runs
+                                            else "yok (son 4 saatte bu adresten düzenli akış görmedik)"))
+    fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
+    if fn is None:
+        lines.append("HL TWAP emirleri: sorgulanamadı (collector/soket yok)")
+    else:
+        try:
+            hist = await fn(addr)
+        except Exception as e:
+            hist = None
+            lines.append(f"HL TWAP emirleri: sorgu hatası ({esc(e)})")
+        if hist is None:
+            lines.append("HL TWAP emirleri: sorgu başarısız (zaman aşımı / soket)")
+        elif not hist:
+            lines.append("HL TWAP emirleri: yok (userTwapHistory boş)")
+        else:
+            marks = await _marks()
+            vols = await volumes()
+            lines.append(f"HL TWAP emirleri ({len(hist)} kayıt, şimdi soruldu):")
+            shown = 0
+            for h in hist:
+                st = (h or {}).get("state") or {}
+                coin = str(st.get("coin") or "")
+                s = str(st.get("side") or "").upper()
+                side = "buy" if (s.startswith("B") or s.startswith("L")) else "sell"
+                o = next(iter(parse_twap_orders([h], coin, side, marks.get(coin), ts)), None)
+                if not o:
+                    continue
+                vol = vols.get(coin)
+                det = gate_detail(cfg, coin, o, vol[0] if vol else None, vol[1] if vol else None, ts)
+                fill = f"doldu {usd(o['executed_usd'])} (%{o['filled_pct']:.0f})" if o.get("filled_pct") is not None else ""
+                lines.append(f"• {esc(coin)} {side.upper()} {usd(o['planned_usd'])} · {fill} · kalan {usd(o['remaining_usd'])}"
+                             f" · {int(o['minutes'])} dk · {esc(o['status'])}")
+                kap = f"  kapı: {REASON_TR.get(det['reason'], det['reason'])}"
+                if det["day_vol"]:
+                    kap += f" — hacim {usd(det['day_vol'])}, emir hacmin %{det['vol_pct']:.1f}'i (gerek %{det['pct_needed']:g}, ≥ {usd(det['need_usd'])})"
+                if det["reason"] == "order_left":
+                    kap += f" — kalan {usd(det['left'])} < {usd(det['left_need'])}"
+                lines.append(esc(kap))
+                shown += 1
+                if shown >= 6:
+                    break
+    last = [d for d in (await kv_get(LAST_KV) or []) if d.get("addr") == addr]
+    if last:
+        lines.append("Radarın son kararları: " + " · ".join(esc(decision_line(d)) for d in last[:5]))
+    return "\n".join(lines)
+
+
+async def diag_coin(cfg, coin: str) -> str:
+    """/twap COIN: dinleniyor mu, 24s hacim, bildirim için gereken emir, coindeki diziler, son kararlar."""
+    from ..telegram.format import esc, usd
+    coin = (coin or "").upper()
+    ws = await kv_get("ws_universe") or {}
+    listened = coin in set(ws.get("crypto") or [])
+    top = int(getattr(cfg, "crypto_watch_top", 120) or 0)
+    lines = [f"📡 <b>{esc(coin)}</b> · " + (f"dinleniyor ✓ (ana dex, hacimce ilk {top})" if listened
+                                           else f"dinlenMİyor ✗ (ana dex ilk {top} listesinde değil ya da hisse dex'i)")]
+    vols = await volumes()
+    vol = vols.get(coin)
+    pct = vol_pct_for(cfg, coin)
+    min_usd = float(getattr(cfg, "twap_alert_min_usd", 1_000_000) or 0)
+    if vol:
+        lines.append(f"24s hacim {usd(vol[0])} · bildirim için emir ≥ {usd(max(min_usd, vol[0] * pct / 100))}"
+                     f" (max({usd(min_usd)}, %{pct:g} × hacim)) · kalan ≥ min({usd(getattr(cfg, 'twap_alert_min_left_usd', 1e6))}, planın yarısı)")
+    else:
+        lines.append(f"24s hacim bilinmiyor → kapı geçmez (no_vol); taban {usd(min_usd)}, yüzde %{pct:g}")
+    runs = _runs_for(lambda r: r.coin == coin)
+    lines.append(f"Bellekteki diziler ({len(runs)}):" + ("\n" + "\n".join("• " + esc(_run_line(r)) for r in runs[:6]) if runs else " yok"))
+    last = [d for d in (await kv_get(LAST_KV) or []) if d.get("coin") == coin]
+    if last:
+        lines.append("Radarın son kararları: " + " · ".join(esc(decision_line(d)) for d in last[:5]))
+    return "\n".join(lines)
+
+
+async def diag_summary(cfg) -> str:
+    """/twap: son tur özeti + son kararlar."""
+    from ..telegram.format import esc
+    st = await kv_get(STATS_KV) or {}
+    if not st.get("ts"):
+        return "📡 Canlı TWAP: tur henüz çalışmadı."
+    lines = [f"📡 <b>Canlı TWAP</b> · {st.get('keys', 0)} dizi bellekte · {st.get('cands', 0)} aday · "
+             f"{st.get('regular', 0)} düzenli · {st.get('irregular', 0)} düzensiz · {st.get('alerted', 0)} bildirim"
+             + (f" · sorgu ✓{st.get('lookups_ok', 0)}/⏱{st.get('lookups_timeout', 0)}/✗{st.get('lookups_err', 0)}"
+                if "lookups_ok" in st else "")]
+    last = await kv_get(LAST_KV) or []
+    if last:
+        lines.append("Son kararlar:\n" + "\n".join("• " + esc(decision_line(d)) for d in last[:10]))
+    lines.append("Kullanım: /twap 0xADRES · /twap COIN")
+    return "\n".join(lines)
 
 
 def _scalar_measure(run: Run) -> dict:

@@ -407,11 +407,13 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "twap_live_enabled": {"type": "bool", "label": "📡 Canlı TWAP radarı", "group": "TWAP radarı",
                           "desc": "WS akışındaki HER işlemi (yakalama tabanının altındakiler dahil) adres bazında bellekte sayar; ekstra HL isteği yok. Kapatılırsa bildirim ve sayaç durur, arşiv taraması sürer"},
     "twap_alert_min_usd": {"type": "float", "label": "Bildirim tabanı — emir toplamı ($)", "group": "TWAP radarı",
-                           "desc": "Adresin HL TWAP EMRİNİN planlanan toplamı (adet × bugünkü fiyat) bu tutarın altındaysa bildirilmez (kullanıcı kuralı $2M). Tahmin yok: emir WS'ten sorgulanır, emir yoksa bildirim yok"},
+                           "desc": "Adresin HL TWAP EMRİNİN planlanan toplamı (adet × bugünkü fiyat) bu tutarın altındaysa bildirilmez (kullanıcı kuralı $1M; PUMP vakası: 608M PUMP ≈ $1.8M $2M'de eleniyordu). Tahmin yok: emir WS'ten sorgulanır, emir yoksa bildirim yok"},
     "twap_alert_min_left_usd": {"type": "float", "label": "Bildirim tabanı — kalan ($)", "group": "TWAP radarı",
-                                "desc": "Emrin henüz dolmamış kısmı bundan azsa bildirilmez — bitmek üzere olan TWAP'ın haberi işe yaramaz (kullanıcı kuralı $1M)"},
-    "twap_alert_vol_pct": {"type": "float", "label": "Bildirim kapısı — emir / 24s hacim (%)", "group": "TWAP radarı",
-                           "desc": "Emir toplamı coinin 24 saatlik hacminin en az bu yüzdesi olmalı (kullanıcı kuralı %20). INJ: $4.1M emir, hacim $9.9M → %41; BTC'de aynı emir %0,2 → sessiz"},
+                                "desc": "Emrin henüz dolmamış kısmı bundan VE planın yarısından azsa bildirilmez — bitmek üzere olan TWAP'ın haberi işe yaramaz; küçük emir yarısı dolana kadar bildirilebilir (kullanıcı kuralı $1M)"},
+    "twap_alert_vol_pct": {"type": "float", "label": "Bildirim kapısı — emir / 24s hacim (%) — BTC/ETH hariç", "group": "TWAP radarı",
+                           "desc": "Emir toplamı coinin 24 saatlik hacminin en az bu yüzdesi olmalı (kullanıcı kuralı %5). PUMP: $3M emir, hacim $62M → %4,8 eskiden %20 kuralında sessizdi. BTC/ETH için ayrı yüzde aşağıda"},
+    "twap_alert_vol_pct_major": {"type": "float", "label": "Bildirim kapısı — BTC/ETH emir / 24s hacim (%)", "group": "TWAP radarı",
+                                 "desc": "Majörlerde $1-3M'lik TWAP gürültüdür; emir 24s hacmin bu yüzdesini geçmezse sessiz (kullanıcı kuralı %20)"},
     "twap_alert_big_usd": {"type": "float", "label": "Hacimden bağımsız bildirim ($)", "group": "TWAP radarı",
                            "desc": "0 = kapalı. Açılırsa emir toplamı bunu geçince hacim oranına bakılmaz (kalan eşiği yine geçerli)"},
     "twap_alert_min_slices": {"type": "int", "label": "Sorgu için asgari dilim", "group": "TWAP radarı",
@@ -684,9 +686,11 @@ class Config:
         self.twap_scan_sec = int(os.getenv("TWAP_SCAN_SEC", "600"))
         # Canlı TWAP radarı (bkz. app/radar/twaplive.py) — "INJ'e $2M TWAP" alarmı
         self.twap_live_enabled = True
-        self.twap_alert_min_usd = float(os.getenv("TWAP_ALERT_MIN_USD", "2000000"))
+        self.twap_alert_min_usd = float(os.getenv("TWAP_ALERT_MIN_USD", "1000000"))
         self.twap_alert_min_left_usd = float(os.getenv("TWAP_ALERT_MIN_LEFT_USD", "1000000"))
-        self.twap_alert_vol_pct = float(os.getenv("TWAP_ALERT_VOL_PCT", "20"))
+        # Hacim kuralı sınıfa göre: BTC/ETH %20 (gürültü), diğerleri %5 (PUMP vakası)
+        self.twap_alert_vol_pct = float(os.getenv("TWAP_ALERT_VOL_PCT", "5"))
+        self.twap_alert_vol_pct_major = float(os.getenv("TWAP_ALERT_VOL_PCT_MAJOR", "20"))
         self.twap_alert_big_usd = float(os.getenv("TWAP_ALERT_BIG_USD", "0"))
         self.twap_alert_min_slices = int(os.getenv("TWAP_ALERT_MIN_SLICES", "10"))
         self.twap_lookup_min_usd = float(os.getenv("TWAP_LOOKUP_MIN_USD", "50000"))

@@ -286,7 +286,7 @@ def test_collector_hook_and_lookup():
         fut2 = loop_.create_future()
         col._twap_waiters["0x" + "9" * 40] = fut2
         col._on_twap_history({"isSnapshot": True, "history": "??"})
-        assert fut2.done() and fut2.result() == []
+        assert fut2.done() and fut2.result() is None, "şekil uyumsuz → sorgu başarısız (emir yok DEĞİL)"
         col._twap_waiters.clear()
         # bağlı değil → None + hata sayacı (bildirim tahminle DEĞİL, gitmez)
         col._ws = None
@@ -345,7 +345,7 @@ def test_evaluate_alert_crypto():
         assert f"doldu <b>{fmt.usd(130_000 * MARK)}</b> (%38) · kalan ≈ {fmt.usd((SZ - 130_000) * MARK)}" in txt, txt
         assert f"gördüğümüz 50 dilim × ~{fmt.usd(2200)}, her 30 sn" in txt and "pozisyon: bilinmiyor" in txt, txt
         assert "24s hacim $9.9M" in txt and "%100 taker" in txt and _no_projection(txt), txt
-        assert await _alerts("twap") == 2 and await _alerts("sent:twap") == 1, "işaret + metin"
+        assert await _alerts("twap") == 1 and await _alerts("sent:twap") == 1, "metin (kripto yolunda işaret gönderimden SONRA)"
         rows = await _runs()
         r = rows[0]
         assert len(rows) == 1 and r["src"] == "live" and r["alerted_ts"] and r["day_volume"] == 9.9e6 and r["n_slices"] == 50
@@ -686,6 +686,7 @@ def test_messages_and_wiring():
     from app.config import EDITABLE_FIELDS
     c = Config()
     for f in ("twap_live_enabled", "twap_alert_min_usd", "twap_alert_min_left_usd", "twap_alert_vol_pct",
+              "twap_alert_vol_pct_major",
               "twap_alert_big_usd", "twap_alert_min_slices", "twap_lookup_min_usd", "twap_lookup_cooldown",
               "twap_alert_cooldown", "twap_alert_progress", "twap_alert_end_note", "twap_live_window_min",
               "twap_live_eval_sec", "twap_min_usd", "twap_window_h", "twap_scan_sec"):
@@ -693,7 +694,9 @@ def test_messages_and_wiring():
         assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
     assert "twap_alert_rate_pct" not in EDITABLE_FIELDS and not hasattr(c, "twap_alert_rate_pct")
     assert EDITABLE_FIELDS["notify_twap"]["group"] == "Bildirimler" and c.notify_twap is True
-    assert c.twap_alert_min_usd == 2_000_000 and c.twap_alert_min_left_usd == 1_000_000 and c.twap_alert_vol_pct == 20
+    if not os.getenv("TWAP_ALERT_MIN_USD"):
+        assert c.twap_alert_min_usd == 1_000_000 and c.twap_alert_min_left_usd == 1_000_000
+        assert c.twap_alert_vol_pct == 5 and c.twap_alert_vol_pct_major == 20
     assert c.twap_alert_big_usd == 0 and c.twap_alert_min_slices == 10 and c.twap_lookup_min_usd == 50_000 and c.twap_lookup_cooldown == 600
     from app.notify import KINDS
     assert KINDS["twap"][0] == "notify_twap" and KINDS["twap"][2] == "high"
@@ -709,4 +712,135 @@ def test_messages_and_wiring():
     assert "Canlı TWAP alarmı" in rd("README.md") and "userTwapHistory" in rd("README.md") and fmt.TASK_TR.get("twaplive")
     for p in (("app", "telegram", "format.py"), ("app", "web", "templates", "twap.html")):
         assert "bu hızla" not in rd(*p), p
-    print("✅ mesaj/bağlantı) alarm/ilerleme/bitiş metinleri tahminsiz; 16 ayar TWAP radarı grubunda ($2M/$1M/%20); KINDS/health/spawn/kanca/migrasyon/README")
+    print("✅ mesaj/bağlantı) alarm/ilerleme/bitiş metinleri tahminsiz; 17 ayar TWAP radarı grubunda ($1M/$1M/%5, BTC/ETH %20); KINDS/health/spawn/kanca/migrasyon/README")
+
+
+# ------------------------------------------------ 10) PUMP vakası: sınıfa göre hacim kuralı, $1M taban, teşhis
+def test_pump_case_and_diag():
+    async def run():
+        now = dbm.now()
+        await _fresh()
+        cfg = _cfg()
+        cfg.twap_alert_min_usd, cfg.twap_alert_vol_pct, cfg.twap_alert_vol_pct_major = 1_000_000, 5, 20
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        await set_vol("PUMP", 62e6, mark=0.003)
+        col = FakeCol([order(coin="PUMP", sz=1_000_000_000, ex_sz=70_000_000, ex_ntl=210_000)])
+        slices("PUMP", A, "buy", 50, ntl=4200, px=0.003, t0=now - 49 * 30 - 5)
+        out = await tl.evaluate(cfg, notifier, collector=col)
+        assert out["vol_small"] == 1 and out["alerted"] == 0 and bot.sent == [], out       # %4,8 < %5
+        d = out["decisions"][0]
+        assert d["reason"] == "vol_small" and d["coin"] == "PUMP" and d["addr"] == A and abs(d["planned"] - 3e6) < 1
+        assert abs(d["vol_pct"] - 4.84) < 0.05 and d["pct_needed"] == 5 and d["need_usd"] == 3.1e6, d
+        last = await dbm.kv_get(tl.LAST_KV)
+        assert last and last[0]["reason"] == "vol_small" and last[0]["addr"] == A
+        line = tl.decision_line(d)
+        assert line == f"PUMP {fmt.short(A)} buy $3.0M emir, hacmin %4.8'i → hacme göre küçük (%5 gerekir)", line
+        from app import diag
+        txt = await diag.report(cfg, None)
+        assert "son elenenler: PUMP" in txt and "hacme göre küçük (%5 gerekir)" in txt and "1 hacme göre küçük" in txt, txt
+        # %4 → geçer, bildirilir (aynı emir); majör kuralı BTC'de %20 kalır
+        cfg.twap_alert_vol_pct = 4
+        tl._lookup_cache.clear()
+        out = await tl.evaluate(cfg, notifier, collector=col)
+        assert out["alerted"] == 1 and len(bot.sent) == 1 and "<b>PUMP</b>" in bot.sent[0][1], out
+        assert out["decisions"][0]["reason"] == "alerted"
+        await set_vol("BTC", 2e9, mark=100_000.0)
+        slices("BTC", B, "buy", 50, ntl=60_000, px=100_000.0, t0=now - 49 * 30 - 5)
+        col2 = FakeCol([order(coin="BTC", sz=30, ex_sz=1, ex_ntl=100_000)])       # $3M, hacmin %0,15'i
+        bot.sent.clear()
+        out = await tl.evaluate(cfg, notifier, collector=col2)
+        assert out["vol_small"] == 1 and bot.sent == [] and tl.vol_pct_for(cfg, "BTC") == 20 and tl.vol_pct_for(cfg, "PUMP") == 4
+        # $1M taban + kalan yarı kuralı: $1.2M emir, kalan $700K → geçer; kalan $400K → kalan az
+        for ex, reason in ((40_650, "ok"), (65_041, "order_left")):
+            o = tl.parse_twap_orders([order(sz=97_561, ex_sz=ex)], "INJ", "buy", MARK, now)[0]
+            g = tl.order_gate(cfg, o, 9.9e6, now, now, coin="INJ")
+            assert g == reason, (ex, g, o["remaining_usd"])
+        assert tl.left_floor(cfg, 1.2e6) == 600_000 and tl.left_floor(cfg, 4e6) == 1_000_000
+        # gönderim düşerse bekleme yanmaz: ikinci tur yeniden dener
+        await _fresh()
+        await set_vol("INJ", 9.9e6)
+        bad, notifier_bad = Bot(ok=False), None
+        notifier_bad = Notifier(cfg, bad)
+        col3 = FakeCol([order()])
+        slices("INJ", A, "buy", 50, t0=now - 49 * 30 - 5)
+        out = await tl.evaluate(cfg, notifier_bad, collector=col3)
+        assert out["failed"] == 1 and await _alerts("twap") == 0 and await _alerts("fail:twap") == 1
+        assert tl.REG.runs[("INJ", A, "buy")].alerted_ts is None and out["decisions"][0]["reason"] == "failed"
+        good = Bot()
+        out = await tl.evaluate(cfg, Notifier(cfg, good), collector=col3)
+        assert out["alerted"] == 1 and len(good.sent) == 1 and out["lookups"] == 0, "önbellekten, yeniden sorgu yok"
+        print("✅ PUMP) %5 kuralı ($3M, hacmin %4,8'i → küçük; %4 → bildirim), BTC %20; $1M + kalan yarı; son kararlar; gönderim düşünce bekleme yanmaz")
+    asyncio.run(run())
+
+
+def test_volumes_fetch_and_twap_command():
+    async def run():
+        now = dbm.now()
+        await _fresh()
+        cfg = _cfg()
+        cfg.twap_alert_min_usd, cfg.twap_alert_vol_pct = 1_000_000, 5
+        # kv bayat (>30 dk) → client verilirse tek istekle tazelenir; verilmezse eski davranış
+        await set_vol("INJ", 9.9e6, ts=now - 3700)
+
+        class Cli:
+            def __init__(self):
+                self.calls = 0
+
+            async def meta_and_ctxs(self, dex=""):
+                self.calls += 1
+                return [{"universe": [{"name": "INJ"}]},
+                        [{"markPx": str(MARK), "openInterest": "1", "funding": "0", "dayNtlVlm": "12000000"}]]
+        assert (await tl.volumes())["INJ"][1] == now - 3700
+        cli = Cli()
+        v = await tl.volumes(cli)
+        assert v["INJ"][0] == 12e6 and v["INJ"][1] >= now - 5 and cli.calls == 1, v
+        await tl.volumes(cli)
+        assert cli.calls == 1, "taze kv → istek yok"
+        # /twap komutu: adres / coin / özet
+        await set_vol("PUMP", 62e6, mark=0.003)
+        await dbm.kv_set("ws_universe", {"crypto": ["PUMP", "INJ"], "equity_n": 3, "ts": now})
+        slices("PUMP", A, "buy", 50, ntl=4200, px=0.003, t0=now - 49 * 30 - 5)
+        col = FakeCol([order(coin="PUMP", sz=1_000_000_000, ex_sz=70_000_000, ex_ntl=210_000),
+                       order(coin="PUMP", sz=608_760_000, ex_sz=608_760_000, ex_ntl=1_826_000, status="finished")])
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), collector=col)
+        from app.telegram.bot import TelegramBot
+        tb = TelegramBot(cfg, None, None, {})
+        tb.collector = col
+        sent = []
+
+        async def fake_send(text, chat_id=None, reply_markup=None):
+            sent.append(text)
+            return True
+        tb.send = fake_send
+        await tb._cmd_twap([A], "111")
+        t = sent[-1]
+        assert "Bellekteki diziler" in t and "PUMP" in t and "50 dilim" in t and "düzenli ✓" in t, t
+        assert "HL TWAP emirleri (2 kayıt" in t and "PUMP BUY $3.0M" in t and "kalan $2.8M" in t and "activated" in t, t
+        assert "kapı: hacme göre küçük — hacim $62.0M, emir hacmin %4.8'i (gerek %5, ≥ $3.1M)" in t, t
+        assert "$1.8M" in t and "finished" in t and "kapı: emir bitmiş/iptal" in t and "Radarın son kararları" in t, t
+        await tb._cmd_twap(["pump"], "111")
+        t = sent[-1]
+        assert "dinleniyor ✓" in t and "24s hacim $62.0M" in t and "bildirim için emir ≥ $3.1M" in t and "Bellekteki diziler (1)" in t, t
+        await tb._cmd_twap(["ZZZ"], "111")
+        assert "dinlenMİyor" in sent[-1] and "hacim bilinmiyor" in sent[-1]
+        await tb._cmd_twap([], "111")
+        assert "Son kararlar" in sent[-1] and "1 aday" in sent[-1] and "/twap 0xADRES" in sent[-1], sent[-1]
+        # sorgu başarısız / collector yok / emir yok
+        tb.collector = FakeCol(None)
+        await tb._cmd_twap([B], "111")
+        assert "sorgu başarısız" in sent[-1] and "yok (son 4 saatte" in sent[-1]
+        tb.collector = None
+        await tb._cmd_twap([B], "111")
+        assert "collector/soket yok" in sent[-1]
+        tb.collector = FakeCol([])
+        await tb._cmd_twap([B], "111")
+        assert "userTwapHistory boş" in sent[-1]
+        # bağlantı
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rd = lambda *p: open(os.path.join(root, *p), encoding="utf-8").read()  # noqa: E731
+        assert 'elif cmd == "twap":' in rd("app", "telegram", "bot.py") and "/twap 0x" in fmt.help_text()
+        assert "CRYPTO_WATCH_TOP=120" in rd(".env.example") and "vol_pct_major" in rd("app", "web", "templates", "twap.html")
+        assert "/twap" in rd("README.md") and "BTC/ETH" in rd("README.md")
+        print("✅ hacim/komut) bayat kv → tek istek; /twap adres (emirler + kapı sayılarla) / coin (dinleme, gereken emir) / özet")
+    asyncio.run(run())
