@@ -461,6 +461,25 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
 - Fiyat `main_dex_ctx` kv'sinden: metrik döngüsü zaten çektiği ana dex
   yanıtından yazar (ek istek yok); bayatsa tur kendisi tek istekle tazeler.
 
+## Satılabilir bot: herkese açık DM akışı (S1)
+
+`PUBLIC_BOT_ENABLED=1` (ya da Ayarlar → *Satış / Kullanıcılar*) açıkken bota
+**özelden** yazan herkes `users` tablosuna kaydolur ve coin adı yazınca
+(`HYPE`, `TSLA`) sahibin `/hype` komutuyla aynı hattan (`cryptoliq.snapshot` +
+`liqchart`) liq'e en yakın büyük pozisyonlar, zincir hedefi ve grafik alır.
+Ücretsiz katman günde `free_daily_queries` (3) sorgu (TSİ 00:00 yenilenir),
+Pro (`pro_until`) sınırsız + dakikada `pro_query_per_min`. Aynı coin
+`query_cache_sec` içinde tekrar sorulursa HL'ye gidilmez; tüm kullanıcıların
+HL'ye giden sorguları `query_global_per_min` kovasıyla sınırlı (dolunca
+"yoğunluk var"). 403/"chat not found" → `users.blocked_ts` (fan-out ve
+hatırlatmalardan düşer, `/start` ile kalkar); sahip dışı sohbetlere küresel
+20 msg/sn + sohbet başına 1 msg/sn hız. **Bayrak kapalıyken** eski davranış:
+yabancı sohbete yalnız chat id. Yetki modeli sıkılaştı: `TELEGRAM_CHAT_ID`
+boşsa kimse sahip değildir (eskiden boş id herkese tam komut zincirini açıyordu).
+Ödeme (`/pro`: Stars, USDC-HL, kripto), bildirim aboneliği (`/bildirimler`)
+ve sahip komutları sonraki fazlarda. Testler: `tests/test_users.py`,
+`tests/test_public_bot.py`.
+
 ## Simülasyon: `/sim`
 
 Kâğıt üstü, **gerçek emir yok**. Kullanıcı kuralı: kripto liq radarı sondayla

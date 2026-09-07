@@ -318,6 +318,40 @@ CREATE INDEX IF NOT EXISTS idx_twap_last ON twap_runs(last_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_volev_ts ON vol_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logev_ts ON log_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logev_dedupe ON log_events(logger, level, ts DESC);
+-- Satılabilir bot (DM): Telegram kullanıcıları, katman/kota, abonelik, ödemeler, fan-out kaydı.
+-- Sahibin sohbeti/kanalları buraya girmez (env chat id'leri ayrı dünyadır).
+CREATE TABLE IF NOT EXISTS users(
+  id INTEGER PRIMARY KEY,                -- Telegram user id
+  chat_id TEXT, username TEXT, first_name TEXT, lang TEXT DEFAULT 'tr',
+  created_ts INTEGER, last_seen_ts INTEGER,
+  pro_until INTEGER,                     -- Pro bitişi (NULL/geçmiş = ücretsiz)
+  hl_address TEXT,                       -- USDC ödemesinin geldiği HL adresi
+  blocked_ts INTEGER,                    -- 403: botu engelledi / hesap silindi
+  q_day TEXT, q_used INTEGER DEFAULT 0, q_total INTEGER DEFAULT 0,
+  quiet_start INTEGER, quiet_end INTEGER, note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_users_pro ON users(pro_until);
+CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(blocked_ts);
+CREATE TABLE IF NOT EXISTS user_kinds(user_id INTEGER, kind TEXT, PRIMARY KEY(user_id, kind));
+CREATE TABLE IF NOT EXISTS user_coins(user_id INTEGER, coin TEXT, PRIMARY KEY(user_id, coin));
+CREATE TABLE IF NOT EXISTS payments(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER, method TEXT,          -- hl | stars | nowpay
+  plan TEXT, months INTEGER,             -- 1m | 3m | 12m
+  amount_usd REAL, amount_raw REAL, currency TEXT,
+  ext_id TEXT,                           -- HL tx hash / Telegram charge id / NOWPayments id
+  from_addr TEXT, status TEXT,           -- pending | paid | expired | refunded
+  created_ts INTEGER, paid_ts INTEGER, raw TEXT,
+  UNIQUE(method, ext_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pay_status ON payments(status);
+CREATE INDEX IF NOT EXISTS idx_pay_user ON payments(user_id);
+CREATE TABLE IF NOT EXISTS fanout_log(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER, kind TEXT, coin TEXT, key TEXT,
+  n_targets INTEGER, n_sent INTEGER, n_fail INTEGER, n_blocked INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_fanout_ts ON fanout_log(ts DESC);
 """
 
 

@@ -1,7 +1,10 @@
 """Telegram bot — long polling + komutlar + mesaj gönderimi."""
 import asyncio
+import json
 import logging
 import re
+import time
+from collections import deque
 
 import aiohttp
 
@@ -18,6 +21,11 @@ from .format import tr_time
 log = logging.getLogger("telegram.bot")
 
 MAX_LEN = 4000
+SEND_PER_SEC = 20                  # Telegram küresel sınırı 30 msg/sn; pay bırak
+# Herkese açık DM akışı açıkken menü düğmesinde görünen komutlar (BotFather listesi)
+PUBLIC_COMMANDS = [("start", "Başla / menü"), ("pro", "Pro abonelik ve ödeme"),
+                   ("bildirimler", "Bildirim türlerini seç"), ("hesap", "Hesabım: katman, kota, adres"),
+                   ("adres", "HL adresini kaydet (USDC ödemesi eşleşir)"), ("yardim", "Yardım")]
 
 
 def _cmd_lower(s: str) -> str:
@@ -56,22 +64,30 @@ class TelegramBot:
         self.client = client
         self.state = state
         self.api = f"https://api.telegram.org/bot{cfg.telegram_bot_token}"
+        self._sent_ts: deque = deque()             # son 1 sn'deki gönderimler (küresel hız)
+        self._chat_last: dict[str, float] = {}     # sohbet başına son gönderim (1 msg/sn)
+        self.blocked_chats: set[str] = set()       # 403 / silinmiş hesap görülen sohbetler
+        self.on_blocked = self._default_on_blocked
 
     # ---------- gönderim ----------
 
-    async def send(self, text: str, chat_id: str | None = None) -> bool:
+    async def send(self, text: str, chat_id: str | None = None,
+                   reply_markup: dict | None = None) -> bool:
+        """HTML metin; `reply_markup` (inline klavye) son parçaya takılır."""
         chat = chat_id or self.cfg.telegram_chat_id
         if not chat:
             log.info("TELEGRAM_CHAT_ID yok, mesaj atlandı:\n%s", text[:200])
             return False
         ok = True
-        for chunk in self._split(text):
-            if not await self._send_chunk(chat, chunk):
+        chunks = self._split(text)
+        for i, chunk in enumerate(chunks):
+            await self._pace(chat)
+            if not await self._send_chunk(chat, chunk, reply_markup if i == len(chunks) - 1 else None):
                 ok = False
         return ok
 
     async def send_photo(self, png: bytes, caption: str = "",
-                         chat_id: str | None = None) -> bool:
+                         chat_id: str | None = None, reply_markup: dict | None = None) -> bool:
         """Resim (PNG bayt) + HTML altyazı — Telegram sendPhoto, TEK mesaj.
 
         Altyazı sınırı 1024 görünür karakter (etiketler sayılmaz); `_caption_fit`
@@ -81,16 +97,19 @@ class TelegramBot:
         if not chat or not png:
             return False
         cap, is_html = _caption_fit(caption)
-        return await self._send_photo_once(chat, png, cap, is_html)
+        await self._pace(chat)
+        return await self._send_photo_once(chat, png, cap, is_html, reply_markup=reply_markup)
 
     async def _send_photo_once(self, chat: str, png: bytes, cap: str, is_html: bool,
-                               _retry: bool = True) -> bool:
+                               _retry: bool = True, reply_markup: dict | None = None) -> bool:
         form = aiohttp.FormData()              # her denemede yeni: FormData tek kullanımlık
         form.add_field("chat_id", str(chat))
         if cap:
             form.add_field("caption", cap)
             if is_html:
                 form.add_field("parse_mode", "HTML")
+        if reply_markup:
+            form.add_field("reply_markup", json.dumps(reply_markup))
         form.add_field("photo", png, filename="chart.png", content_type="image/png")
         try:
             async with self.session.post(
@@ -101,6 +120,7 @@ class TelegramBot:
                     return True
                 body = (await r.text())[:300]
                 log.warning("sendPhoto %s: %s", r.status, body)
+                await self._note_error(chat, r.status, body)
                 if r.status == 429 and _retry:
                     try:
                         wait = int(((await r.json()).get("parameters") or {})
@@ -108,28 +128,34 @@ class TelegramBot:
                     except Exception:
                         wait = 1
                     await asyncio.sleep(min(wait, 30))
-                    return await self._send_photo_once(chat, png, cap, is_html, _retry=False)
-                if r.status == 400 and is_html and _retry:
+                    return await self._send_photo_once(chat, png, cap, is_html, _retry=False,
+                                                       reply_markup=reply_markup)
+                if r.status == 400 and is_html and _retry and not self.blocked_reason(400, body):
                     # HTML reddedildi: etiketsiz düz altyazıyla bir kez daha
                     plain, _ = _caption_fit(re.sub(r"<[^>]+>", "", cap), force_plain=True)
-                    return await self._send_photo_once(chat, png, plain, False, _retry=False)
+                    return await self._send_photo_once(chat, png, plain, False, _retry=False,
+                                                       reply_markup=reply_markup)
                 return False
         except Exception as e:
             log.warning("sendPhoto hatası: %s", e)
             return False
 
-    async def _send_chunk(self, chat: str, chunk: str, _retry: bool = True) -> bool:
+    async def _send_chunk(self, chat: str, chunk: str, reply_markup: dict | None = None,
+                          _retry: bool = True) -> bool:
+        payload = {"chat_id": chat, "text": chunk, "parse_mode": "HTML",
+                   "disable_web_page_preview": True}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         try:
             async with self.session.post(
-                f"{self.api}/sendMessage",
-                json={"chat_id": chat, "text": chunk, "parse_mode": "HTML",
-                      "disable_web_page_preview": True},
+                f"{self.api}/sendMessage", json=payload,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as r:
                 if r.status == 200:
                     return True
                 body = (await r.text())[:300]
                 log.warning("sendMessage %s: %s", r.status, body)
+                await self._note_error(chat, r.status, body)
                 # 429: Telegram retry_after kadar bekleyip bir kez daha dene
                 if r.status == 429 and _retry:
                     try:
@@ -138,23 +164,24 @@ class TelegramBot:
                     except Exception:
                         wait = 1
                     await asyncio.sleep(min(wait, 30))
-                    return await self._send_chunk(chat, chunk, _retry=False)
+                    return await self._send_chunk(chat, chunk, reply_markup, _retry=False)
                 # 400 "can't parse entities": HTML bozuksa parse_mode'suz düz metin
                 # gönder — bildirim tamamen kaybolmasın (escape kaçağı son çare)
-                if r.status == 400 and _retry:
-                    return await self._send_plain(chat, chunk)
+                if r.status == 400 and _retry and not self.blocked_reason(400, body):
+                    return await self._send_plain(chat, chunk, reply_markup)
                 return False
         except Exception as e:
             log.warning("sendMessage hatası: %s", e)
             return False
 
-    async def _send_plain(self, chat: str, chunk: str) -> bool:
+    async def _send_plain(self, chat: str, chunk: str, reply_markup: dict | None = None) -> bool:
         plain = re.sub(r"<[^>]+>", "", chunk)  # tag'leri sıyır
+        payload = {"chat_id": chat, "text": plain, "disable_web_page_preview": True}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         try:
             async with self.session.post(
-                f"{self.api}/sendMessage",
-                json={"chat_id": chat, "text": plain,
-                      "disable_web_page_preview": True},
+                f"{self.api}/sendMessage", json=payload,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as r:
                 if r.status == 200:
@@ -181,12 +208,120 @@ class TelegramBot:
             parts.append(cur)
         return parts
 
+    # ---------- hız + engel + genel Bot API ----------
+
+    async def _pace(self, chat: str) -> None:
+        """Küresel SEND_PER_SEC msg/sn + sahip dışı sohbetlerde sohbet başına 1 msg/sn
+        (Telegram sınırları). Sahibin tek tük alarmında hissedilmez; fan-out ve
+        duyuru kuyruğunu düzenler. 429 gelirse ayrıca retry_after beklenir."""
+        own = chat == (self.cfg.telegram_chat_id or "") or chat in self._own_chats()
+        while True:
+            ts = time.monotonic()
+            while self._sent_ts and self._sent_ts[0] <= ts - 1.0:
+                self._sent_ts.popleft()
+            wait = 0.0
+            if not own:
+                wait = max(0.0, self._chat_last.get(str(chat), 0.0) + 1.0 - ts)
+            if len(self._sent_ts) >= SEND_PER_SEC:
+                wait = max(wait, self._sent_ts[0] + 1.0 - ts)
+            if wait <= 0:
+                break
+            await asyncio.sleep(min(wait, 1.0))
+        t = time.monotonic()
+        self._sent_ts.append(t)
+        self._chat_last[str(chat)] = t
+
+    @staticmethod
+    def blocked_reason(status: int, body: str) -> str:
+        """Telegram hata gövdesinden 'bu sohbete bir daha yazma' kararı:
+        403 (bot engellendi / kullanıcı hesabı silindi) → 'blocked';
+        400 'chat not found' / 'user is deactivated' / 'bot was kicked' → 'gone'."""
+        b = (body or "").lower()
+        if status == 403:
+            return "blocked"
+        if status == 400 and any(k in b for k in ("chat not found", "user is deactivated", "bot was kicked",
+                                                  "bot was blocked")):
+            return "gone"
+        return ""
+
+    async def _note_error(self, chat: str, status: int, body: str) -> None:
+        why = self.blocked_reason(status, body)
+        if not why:
+            return
+        self.blocked_chats.add(str(chat))
+        if self.on_blocked:
+            try:
+                await self.on_blocked(str(chat), why)
+            except Exception:
+                log.debug("engel kancası", exc_info=True)
+
+    async def _default_on_blocked(self, chat: str, why: str) -> None:
+        """Herkese açık kullanıcı botu engelledi / hesabı silindi → users.blocked_ts
+        (fan-out, hatırlatma ve duyurudan düşer). Sahibin sohbetleri dokunulmaz."""
+        if chat in self._own_chats():
+            return
+        from .. import users
+        n = await users.mark_blocked(chat)
+        if n:
+            log.info("kullanıcı erişilemez (%s): %s", why, chat)
+
+    async def call(self, method: str, payload: dict, timeout: int = 30) -> tuple[int, dict]:
+        """Genel Bot API çağrısı (JSON). Dönüş (HTTP durumu, gövde); ağ hatası → (0, {...})."""
+        if self.session is None:
+            return 0, {"ok": False, "description": "oturum yok"}
+        try:
+            async with self.session.post(f"{self.api}/{method}", json=payload,
+                                         timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                try:
+                    data = await r.json()
+                except Exception:
+                    data = {"ok": False, "description": (await r.text())[:300]}
+                if r.status != 200:
+                    log.warning("%s %s: %s", method, r.status, str(data.get("description"))[:200])
+                return r.status, data
+        except Exception as e:
+            log.warning("%s hatası: %s", method, e)
+            return 0, {"ok": False, "description": str(e)}
+
+    async def answer_callback(self, cq_id, text: str = "", alert: bool = False) -> bool:
+        payload = {"callback_query_id": cq_id}
+        if text:
+            payload.update({"text": text[:200], "show_alert": bool(alert)})
+        st, data = await self.call("answerCallbackQuery", payload, timeout=10)
+        return st == 200 and bool(data.get("ok"))
+
+    async def edit_reply_markup(self, chat: str, message_id, reply_markup: dict | None) -> bool:
+        st, data = await self.call("editMessageReplyMarkup",
+                                   {"chat_id": chat, "message_id": message_id,
+                                    "reply_markup": reply_markup or {"inline_keyboard": []}}, timeout=10)
+        return st == 200 and bool(data.get("ok"))
+
+    async def set_my_commands(self, commands: list[tuple[str, str]], scope: dict | None = None) -> bool:
+        payload = {"commands": [{"command": c, "description": d[:256]} for c, d in commands]}
+        if scope:
+            payload["scope"] = scope
+        st, data = await self.call("setMyCommands", payload, timeout=10)
+        return st == 200 and bool(data.get("ok"))
+
+    def _public_on(self) -> bool:
+        return bool(getattr(self.cfg, "public_bot_enabled", False))
+
+    async def _setup_commands(self) -> None:
+        """Açık DM akışı açıksa herkese görünen komut listesi (menü düğmesi)."""
+        if not self._public_on() or self.session is None:
+            return
+        try:
+            await self.set_my_commands(PUBLIC_COMMANDS, {"type": "all_private_chats"})
+        except Exception:
+            log.debug("setMyCommands", exc_info=True)
+
     # ---------- polling ----------
 
     async def run_polling(self) -> None:
         offset = None
         log.info("Telegram polling başladı")
         err_wait = 5
+        await self._setup_commands()
         while True:
             try:
                 params = {"timeout": 50}
@@ -224,29 +359,49 @@ class TelegramBot:
                 err_wait = min(err_wait * 2, 120)
 
     async def _handle_update(self, upd: dict) -> None:
+        # Düğme (callback) ve ödeme olayları yalnız herkese açık DM akışında anlamlı
+        if "callback_query" in upd or "pre_checkout_query" in upd:
+            if self._public_on():
+                from . import public
+                await public.handle(self, upd)
+            return
         msg = upd.get("message") or upd.get("channel_post") or {}
         text = (msg.get("text") or "").strip()
-        chat_id = str((msg.get("chat") or {}).get("id") or "")
-        if not text.startswith("/") or not chat_id:
+        chat = msg.get("chat") or {}
+        chat_id = str(chat.get("id") or "")
+        if not chat_id:
+            return
+        # Yetki: sahip = TELEGRAM_CHAT_ID (BOŞSA KİMSE sahip değil — eskiden boş id
+        # herkese tam komut zincirini açıyordu); kendi kanalları sınırlı komut;
+        # diğer herkes → herkese açık DM akışı (bayrak açıksa) ya da yalnız chat id.
+        is_owner = bool(self.cfg.telegram_chat_id) and chat_id == self.cfg.telegram_chat_id
+        if not is_owner and chat_id not in self._own_chats():
+            if self._public_on() and chat.get("type") == "private":
+                from . import public
+                await public.handle(self, upd)
+                return
+            if text.startswith("/"):
+                cmd = _cmd_lower(text.split()[0][1:].split("@")[0])
+                if cmd in ("start", "id"):
+                    await self.send(f"Bu sohbetin chat id'si: <code>{chat_id}</code>", chat_id)
+            return
+        if not text.startswith("/"):
             return
         parts = text.split()
         cmd = _cmd_lower(parts[0][1:].split("@")[0])
         args = parts[1:]
 
-        # Yapılandırılmış chat dışından sadece /id ve /start'a cevap ver.
-        # İSTİSNA: botun kendi kanalları (kripto, hisse hacim, liq attack, örüntü,
-        # yayın) — oraya /hype yazan, o coinin liq görüntüsünü orada ister.
-        if self.cfg.telegram_chat_id and chat_id != self.cfg.telegram_chat_id:
-            if cmd in ("start", "id"):
+        # Botun kendi kanalları (kripto, hisse hacim, liq attack, örüntü, yayın, SİM):
+        # takip komutları, /sim ve /hype gibi coin görüntüsü — sahip zinciri DEĞİL.
+        if not is_owner:
+            if await self._dispatch_track(cmd, args, chat_id):
+                return                     # kanaldan /takip_N, /birak_N, /takipler
+            if cmd in ("sim", "sım"):
+                await self._cmd_sim(chat_id)   # coin çözümlemesine düşmesin
+            elif cmd in ("start", "id"):
                 await self.send(f"Bu sohbetin chat id'si: <code>{chat_id}</code>", chat_id)
-            elif chat_id in self._own_chats():
-                if await self._dispatch_track(cmd, args, chat_id):
-                    return                     # kanaldan /takip_N, /birak_N, /takipler
-                if cmd in ("sim", "sım"):
-                    await self._cmd_sim(chat_id)   # coin çözümlemesine düşmesin
-                    return
-                if not args:
-                    await self._cmd_coin_liq(cmd, chat_id)
+            elif not args:
+                await self._cmd_coin_liq(cmd, chat_id)
             return
 
         if cmd in ("start", "help"):

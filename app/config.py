@@ -495,6 +495,31 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "group": "Tarama & performans", "desc": "Her turda bu kadar adresin tüm pozisyonları sorgulanır"},
     "sweep_interval_sec": {"type": "int", "label": "Derin keşif: tur aralığı (sn)",
                            "group": "Tarama & performans", "desc": "Süpürme turları arası bekleme — sıcak havuz (~1500 adres) varsayılanla ~75-80 dakikada bir tam tur döner"},
+    # ---- Satılabilir bot: herkese açık DM akışı, katmanlar, fiyat, kota
+    "public_bot_enabled": {"type": "bool", "label": "🛒 Herkese açık bot (DM)", "group": "Satış / Kullanıcılar",
+                           "desc": "AÇIKKEN bota özelden yazan herkes kaydolur: coin adı yazıp liq grafiği alır (ücretsizde günlük limit), Pro olabilir. KAPALIYKEN yabancı sohbetlere yalnız chat id cevabı gider (eski davranış). Sahibin sohbeti ve kanalları her iki durumda aynı"},
+    "free_daily_queries": {"type": "int", "label": "Ücretsiz günlük sorgu", "group": "Satış / Kullanıcılar",
+                           "desc": "Ücretsiz kullanıcı günde bu kadar coin sorgusu yapar (TSİ 00:00'da yenilenir). Her sorgu HL'ye ~3 istek; önbellekten dönenler de sayılır"},
+    "pro_query_per_min": {"type": "int", "label": "Pro: dakikada sorgu", "group": "Satış / Kullanıcılar",
+                          "desc": "Adil kullanım: Pro kullanıcı dakikada en çok bu kadar sorgu (bellek içi kayan pencere)"},
+    "query_global_per_min": {"type": "int", "label": "Toplam sorgu tavanı (dakika)", "group": "Satış / Kullanıcılar",
+                             "desc": "TÜM kullanıcıların HL'ye giden sorguları için ortak kova; dolunca 'yoğunluk var' cevabı (önbellekten dönenler sayılmaz). 40 sorgu ≈ 120 HL isteği/dk; radarlara pay kalsın (HL_MAX_RPM 350)"},
+    "query_cache_sec": {"type": "int", "label": "Sorgu önbelleği (sn)", "group": "Satış / Kullanıcılar",
+                        "desc": "Aynı coin bu süre içinde tekrar sorulursa HL'ye gidilmez, aynı grafik ve metin döner (100 kişi aynı anda HYPE sorsa tek hesap)"},
+    "pro_price_usd_1m": {"type": "float", "label": "Pro fiyatı — 1 ay ($)", "group": "Satış / Kullanıcılar",
+                         "desc": "Kullanıcı kuralı: çok ucuz (2.99). Stars fiyatı bu tutar × Stars kuru; komisyon kullanıcıya yansır"},
+    "pro_price_usd_3m": {"type": "float", "label": "Pro fiyatı — 3 ay ($)", "group": "Satış / Kullanıcılar",
+                         "desc": "0 = bu paket satılmaz"},
+    "pro_price_usd_12m": {"type": "float", "label": "Pro fiyatı — 12 ay ($)", "group": "Satış / Kullanıcılar",
+                          "desc": "0 = bu paket satılmaz"},
+    "stars_per_usd": {"type": "float", "label": "Telegram Stars kuru (Star / $)", "group": "Satış / Kullanıcılar",
+                      "desc": "Geliştiriciye Star başına ~$0.013 ödenir → 77 Star ≈ $1 net; kullanıcı Star'ı ~$0.02'ye alır, fark Telegram/mağaza komisyonu. $2.99 → 230 Stars"},
+    "public_kinds": {"type": "csv", "label": "Satılan bildirim türleri", "group": "Satış / Kullanıcılar",
+                     "desc": "Pro kullanıcılara fan-out edilebilen türler (virgülle; notify.PUBLIC_KINDS içinden). Boş = fan-out yok. Sahibin kanalları etkilenmez"},
+    "pro_default_kinds": {"type": "csv", "label": "Pro açılınca varsayılan türler", "group": "Satış / Kullanıcılar",
+                          "desc": "Yeni Pro kullanıcı /bildirimler'e dokunmadan bu türleri alır; sonradan değiştirir"},
+    "support_contact": {"type": "str", "label": "Destek iletişimi", "group": "Satış / Kullanıcılar",
+                        "desc": "Mesajlarda gösterilen destek adresi, ör. @kullanici. Boş = satır yok"},
 }
 
 
@@ -815,6 +840,29 @@ class Config:
         self.calendar_refresh_sec = int(os.getenv("CALENDAR_REFRESH_SEC", str(12 * 3600)))
         self.metrics_poll_sec = int(os.getenv("METRICS_POLL_SEC", "300"))
         self.due_check_sec = int(os.getenv("DUE_CHECK_SEC", "60"))
+
+        # Satılabilir bot (herkese açık DM): varsayılan KAPALI — dal Railway'e
+        # otomatik gider, yarım fazlar hiçbir şeyi dışarı açmasın.
+        self.public_bot_enabled = os.getenv("PUBLIC_BOT_ENABLED", "0").strip().lower() in ("1", "true", "on")
+        self.free_daily_queries = int(os.getenv("FREE_DAILY_QUERIES", "3"))
+        self.pro_query_per_min = int(os.getenv("PRO_QUERY_PER_MIN", "6"))
+        self.query_global_per_min = int(os.getenv("QUERY_GLOBAL_PER_MIN", "40"))
+        self.query_cache_sec = int(os.getenv("QUERY_CACHE_SEC", "60"))
+        self.pro_price_usd_1m = float(os.getenv("PRO_PRICE_USD_1M", "2.99"))
+        self.pro_price_usd_3m = float(os.getenv("PRO_PRICE_USD_3M", "7.99"))
+        self.pro_price_usd_12m = float(os.getenv("PRO_PRICE_USD_12M", "24.99"))
+        self.stars_per_usd = float(os.getenv("STARS_PER_USD", "77"))
+        self.public_kinds = _csv(os.getenv(
+            "PUBLIC_KINDS", "cryptoliq,liqmap,liqattack,twap,cryptovol,equityvol,new_big,whale_fill,"
+                            "wall,offhours,lowvol,anomaly,pattern,earnings,liq"))
+        self.pro_default_kinds = _csv(os.getenv(
+            "PRO_DEFAULT_KINDS", "cryptoliq,liqmap,liqattack,twap,cryptovol,new_big,whale_fill"))
+        self.support_contact = os.getenv("SUPPORT_CONTACT", "")
+        # Ödeme (env-only, chat id kuralı gibi): botun HL adresi (USDC 'Send' hedefi),
+        # NOWPayments anahtarları — boşsa o ödeme yolu menüde görünmez
+        self.pay_hl_address = os.getenv("PAY_HL_ADDRESS", "").strip().lower()
+        self.nowpayments_api_key = os.getenv("NOWPAYMENTS_API_KEY", "").strip()
+        self.nowpayments_ipn_secret = os.getenv("NOWPAYMENTS_IPN_SECRET", "").strip()
 
         # Dashboard
         self.dashboard_token = os.getenv("DASHBOARD_TOKEN", "")
