@@ -476,9 +476,33 @@ hatırlatmalardan düşer, `/start` ile kalkar); sahip dışı sohbetlere küres
 20 msg/sn + sohbet başına 1 msg/sn hız. **Bayrak kapalıyken** eski davranış:
 yabancı sohbete yalnız chat id. Yetki modeli sıkılaştı: `TELEGRAM_CHAT_ID`
 boşsa kimse sahip değildir (eskiden boş id herkese tam komut zincirini açıyordu).
-Ödeme (`/pro`: Stars, USDC-HL, kripto), bildirim aboneliği (`/bildirimler`)
-ve sahip komutları sonraki fazlarda. Testler: `tests/test_users.py`,
-`tests/test_public_bot.py`.
+Testler: `tests/test_users.py`, `tests/test_public_bot.py`.
+
+**Ödeme (S2) — `/pro`.** Paketler `pro_price_usd_1m/3m/12m` (2.99 / 7.99 / 24.99,
+0 = satılmaz); süre mevcut bitişin üstüne eklenir. Üç yol, hepsi `payments`
+tablosunda ve `(method, ext_id)` UNIQUE ile **idempotent** (aynı işlem ikinci kez
+kredi vermez):
+
+- ⭐ **Telegram Stars** (`app/pay/stars.py`): `sendInvoice(currency=XTR)` →
+  `pre_checkout_query` (bekleyen kayıt + tutar doğrulanır) → `successful_payment`
+  → tahsilat. Fiyat = $ × `stars_per_usd` (77 → $2.99 = 230 Stars; komisyon
+  kullanıcıya yansır — kullanıcı kuralı). İade: sahip `/iade <charge id>` →
+  `refundStarPayment`, Pro hemen kapanır.
+- 💵 **USDC, Hyperliquid içi Send** (`app/pay/hl.py`): kullanıcı `/adres 0x…`
+  ile HL adresini kaydeder, `/pro` → USDC düğmesi tam tutar + `PAY_HL_ADDRESS`
+  talimatını verir; `paywatch` döngüsü botun adresinin `userNonFundingLedgerUpdates`
+  defterini (bekleyen varken 60 sn, yokken 600 sn) okur, GELEN USDC'yi
+  **gönderen adres + tutarla** en eski bekleyen kayda eşler, Pro'yu açar ve DM
+  atar. Eşleşmeyenler kv `paywatch_state.unmatched`'da (sahip `/pro_ver <id> <gün>`
+  ile elle açar). Ledger şekli canlıda doğrulanmadı: ayrıştırma savunmacı, ilk ham
+  kayıt örneği kv'de. Bot adresi önce bir kez yatırımla aktive edilmeli.
+- 🪙 **NOWPayments** düğmesi yalnız `NOWPAYMENTS_API_KEY` varsa görünür (akış S4).
+
+`billing` döngüsü (saatlik): bitişe 3 gün kala ve bitince tek DM (`alerts_log`
+ile tekil), 24 saatlik bekleyen kayıtları bayatlatır, `sales_stats` kv'sini yazar.
+Sahip komutları: `/kullanicilar` (kullanıcı/Pro/MRR/ödeme), `/odemeler`,
+`/pro_ver <id> <gün>`, `/duyuru <metin>` (engelsiz herkese, 20 msg/sn), `/iade`.
+Testler: `tests/test_payments.py`. Bildirim aboneliği (`/bildirimler`) S3'te.
 
 ## Simülasyon: `/sim`
 

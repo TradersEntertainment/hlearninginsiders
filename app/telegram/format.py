@@ -374,7 +374,7 @@ TASK_TR = {
     "hourstats": "saat istatistiği",
     "digest": "günlük özet", "collector": "canlı işlem akışı (WS)",
     "telegram": "telegram botu", "watchdog": "bekçi", "ai": "AI analist",
-    "channel": "kanal yayını", "twap": "TWAP radarı (arşiv)", "twaplive": "canlı TWAP radarı",
+    "channel": "kanal yayını", "twap": "TWAP radarı (arşiv)", "twaplive": "canlı TWAP radarı", "paywatch": "ödeme izleyici", "billing": "faturalama",
     "sim": "liq simülasyonu",
 }
 

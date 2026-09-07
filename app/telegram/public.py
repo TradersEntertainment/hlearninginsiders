@@ -122,25 +122,81 @@ def plans(cfg) -> list[dict]:
     return out
 
 
+def pay_methods(cfg) -> list[str]:
+    """Açık ödeme yolları: Stars her zaman; USDC PAY_HL_ADDRESS varsa; kripto NOWPayments anahtarı varsa."""
+    out = ["stars"]
+    if getattr(cfg, "pay_hl_address", ""):
+        out.append("hl")
+    if getattr(cfg, "nowpayments_api_key", ""):
+        out.append("np")
+    return out
+
+
 def pro_text(cfg) -> str:
     lines = ["⭐ <b>Pro</b> — sınırsız sorgu + anlık bildirimler (tür ve coin filtresiyle)"]
     for p in plans(cfg):
         per = p["usd"] / p["months"]
-        lines.append(f"• {p['months']} ay: <b>${p['usd']:.2f}</b>" + (f" (aylık ${per:.2f})" if p["months"] > 1 else ""))
-    lines.append("Ödeme: ⭐ Telegram Stars · 💵 USDC (Hyperliquid'den Send) · 🪙 kripto")
+        lines.append(f"• {p['months']} ay: <b>${p['usd']:.2f}</b>" + (f" (aylık ${per:.2f})" if p["months"] > 1 else "")
+                     + f" · {p['stars']} Stars")
+    m = pay_methods(cfg)
+    names = {"stars": "⭐ Telegram Stars (komisyon dahil)", "hl": "💵 USDC (Hyperliquid'de Send, ücretsiz)",
+             "np": "🪙 kripto (NOWPayments)"}
+    lines.append("Ödeme: " + " · ".join(names[x] for x in m))
+    lines.append("Aşağıdan paket + ödeme yolunu seç. Uzatma mevcut bitişin üstüne eklenir.")
     sup = getattr(cfg, "support_contact", "") or ""
     if sup:
         lines.append(f"Destek: {fmt.esc(sup)}")
     return "\n".join(lines)
 
 
+def pay_keyboard(cfg) -> dict:
+    rows = []
+    m = pay_methods(cfg)
+    for p in plans(cfg):
+        row = [(f"⭐ {p['months']} ay · {p['stars']} Stars", f"pay:stars:{p['code']}")]
+        if "hl" in m:
+            row.append((f"💵 {p['months']} ay · ${p['usd']:.2f} USDC", f"pay:hl:{p['code']}"))
+        if "np" in m:
+            row.append((f"🪙 {p['months']} ay · kripto", f"pay:np:{p['code']}"))
+        rows.append(row)
+    return kb(rows)
+
+
+def hl_instructions(cfg, u: dict, pay: dict) -> str:
+    return (f"💵 <b>USDC ile ödeme</b> — Pro {int(pay['months'])} ay · ödeme no <b>#{pay['id']}</b>\n"
+            f"1️⃣ Hyperliquid'de <b>Send</b> (Transfer) ile <b>tam ${float(pay['amount_usd']):.2f} USDC</b> gönder:\n"
+            f"   alıcı: <code>{fmt.esc(getattr(cfg, 'pay_hl_address', ''))}</code>\n"
+            f"2️⃣ Gönderen adres kayıtlı adresin olmalı: <code>{fmt.esc(u.get('hl_address') or '')}</code>"
+            " (farklıysa önce /adres ile güncelle)\n"
+            "3️⃣ 24 saat içinde gelince Pro otomatik açılır (≈1–2 dk); mesajla haber verilir.\n"
+            "<i>HL içi USDC gönderimi ücretsizdir; başka ağdan ya da borsadan gönderme — eşleşmez.</i>")
+
+
+def pending_lines(rows: list[dict]) -> list[str]:
+    out = []
+    for p in rows:
+        if p.get("method") == "hl":
+            out.append(f"⏳ bekleyen ödeme #{p['id']}: ${float(p['amount_usd']):.2f} USDC, "
+                       f"<code>{fmt.esc(p.get('from_addr') or '')}</code> adresinden (24 s)")
+        elif p.get("method") == "stars":
+            out.append(f"⏳ bekleyen Stars faturası #{p['id']}: {int(p['amount_raw'] or 0)} Stars")
+        else:
+            out.append(f"⏳ bekleyen ödeme #{p['id']} ({p.get('method')})")
+    return out
+
+
 # ---------------- akış ----------------
 
 async def handle(bot, upd: dict) -> bool:
-    """message / callback_query → cevap. Dönüş: bu akış işledi mi."""
+    """message / callback_query / ödeme olayları → cevap. Dönüş: bu akış işledi mi."""
     cq = upd.get("callback_query")
     if cq:
         return await _callback(bot, cq)
+    pcq = upd.get("pre_checkout_query")
+    if pcq:
+        from ..pay import stars
+        await stars.on_pre_checkout(bot, pcq)
+        return True
     msg = upd.get("message") or {}
     chat = msg.get("chat") or {}
     if chat.get("type") != "private":
@@ -148,6 +204,11 @@ async def handle(bot, upd: dict) -> bool:
     frm = msg.get("from") or {}
     if not frm.get("id") or frm.get("is_bot"):
         return False
+    if msg.get("successful_payment"):
+        from ..pay import stars
+        await users.upsert_from_update(frm, str(chat.get("id")))
+        await stars.on_successful_payment(bot, bot.cfg, msg)
+        return True
     text = (msg.get("text") or "").strip()
     if not text:
         return False
@@ -180,7 +241,19 @@ async def _callback(bot, cq: dict) -> bool:
         return await run_query(bot, u, data[2:])
     if data.startswith("m:"):
         return await command(bot, u, {"help": "yardim", "pro": "pro", "notif": "bildirimler"}.get(data[2:], "yardim"), [])
+    if data.startswith("pay:"):
+        parts = data.split(":")
+        if len(parts) == 3:
+            await pay_start(bot, u, parts[1], parts[2])
+            return True
     return await command(bot, u, "yardim", [])
+
+
+async def account_message(u: dict, cfg) -> str:
+    from ..pay import core as paycore
+    lines = [account_text(u, cfg)]
+    lines += pending_lines(await paycore.pending_for_user(int(u["id"])))
+    return "\n".join(lines)
 
 
 async def command(bot, u: dict, cmd: str, args: list[str]) -> bool:
@@ -191,7 +264,7 @@ async def command(bot, u: dict, cmd: str, args: list[str]) -> bool:
     elif cmd in ("help", "yardim", "yardım"):
         await bot.send(help_text(cfg), chat, reply_markup=menu())
     elif cmd in ("hesap", "account"):
-        await bot.send(account_text(u, cfg), chat)
+        await bot.send(await account_message(u, cfg), chat)
     elif cmd == "id":
         await bot.send(f"Chat id: <code>{chat}</code>", chat)
     elif cmd == "adres":
@@ -223,8 +296,43 @@ async def _cmd_address(bot, u: dict, args: list[str]) -> None:
 
 
 async def pro_menu(bot, u: dict) -> None:
-    """Paketler + ödeme yolları (ödeme akışı S2'de bu fonksiyonu genişletir)."""
-    await bot.send(pro_text(bot.cfg), u["chat_id"])
+    """Paketler + ödeme yolu düğmeleri; bekleyen ödemesi varsa hatırlatır."""
+    from ..pay import core as paycore
+    text = pro_text(bot.cfg)
+    if users.is_pro(u):
+        text = f"Şu an ⭐ Pro'sun (bitiş {users.tr_dt(u['pro_until'])}); uzatma bitişin üstüne eklenir.\n\n" + text
+    pend = pending_lines(await paycore.pending_for_user(int(u["id"])))
+    if pend:
+        text += "\n\n" + "\n".join(pend)
+    await bot.send(text, u["chat_id"], reply_markup=pay_keyboard(bot.cfg))
+
+
+async def pay_start(bot, u: dict, method: str, code: str) -> None:
+    """Düğme: pay:<yöntem>:<paket>. Stars → fatura; hl → adres + talimat; np → S4."""
+    from ..pay import core as paycore
+    cfg = bot.cfg
+    chat = u["chat_id"]
+    p = paycore.plan_of(cfg, code)
+    if not p or method not in pay_methods(cfg):
+        await bot.send("Bu paket ya da ödeme yolu şu an açık değil. /pro", chat)
+        return
+    if method == "stars":
+        from ..pay import stars
+        await paycore.cancel_pending(int(u["id"]), "stars")
+        pay = await stars.send_invoice(bot, cfg, u, code)
+        if not pay:
+            await bot.send("❌ Fatura oluşturulamadı, birazdan tekrar dene ya da 💵 USDC ile öde.", chat)
+        return
+    if method == "hl":
+        if not u.get("hl_address"):
+            await bot.send("Önce Hyperliquid adresini kaydet: <code>/adres 0x…</code> — USDC bu adresten gelince "
+                           "otomatik eşleşir. Sonra tekrar /pro.", chat)
+            return
+        await paycore.cancel_pending(int(u["id"]), "hl")
+        pay = await paycore.create_pending(int(u["id"]), "hl", code, cfg, from_addr=u["hl_address"])
+        await bot.send(hl_instructions(cfg, u, pay), chat)
+        return
+    await bot.send("🪙 Kripto ağ geçidi bir sonraki sürümde; şimdilik ⭐ Stars ya da 💵 USDC.", chat)
 
 
 async def notif_menu(bot, u: dict, cmd: str = "bildirimler", args: list[str] | None = None) -> None:

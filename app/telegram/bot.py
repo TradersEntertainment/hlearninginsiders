@@ -371,6 +371,10 @@ class TelegramBot:
         chat_id = str(chat.get("id") or "")
         if not chat_id:
             return
+        if msg.get("successful_payment") and self._public_on():
+            from . import public                   # Stars tahsilatı (sahip kendi hesabıyla da deneyebilir)
+            await public.handle(self, upd)
+            return
         # Yetki: sahip = TELEGRAM_CHAT_ID (BOŞSA KİMSE sahip değil — eskiden boş id
         # herkese tam komut zincirini açıyordu); kendi kanalları sınırlı komut;
         # diğer herkes → herkese açık DM akışı (bayrak açıksa) ya da yalnız chat id.
@@ -494,6 +498,8 @@ class TelegramBot:
                 fmt.big_positions(await bigpos.live_big(15),
                                   await bigpos.stats(self.cfg),
                                   bigpos.tiers(self.cfg)), chat_id)
+        elif await self._admin(cmd, args, chat_id):
+            pass                                  # /kullanicilar, /odemeler, /pro_ver, /duyuru, /iade
         elif not args and await self._cmd_coin_liq(cmd, chat_id):
             pass                                  # /hype, /pump, /sndk → liq görüntüsü
         else:
@@ -502,6 +508,11 @@ class TelegramBot:
             await self.send(
                 f"❓ <code>/{fmt.esc(cmd)}</code> diye bir komut yok.\n\n"
                 + fmt.help_text(), chat_id)
+
+    async def _admin(self, cmd: str, args: list[str], chat_id: str) -> bool:
+        """Satış tarafı sahip komutları (app/telegram/admin.py)."""
+        from . import admin
+        return await admin.handle(self, cmd, args, chat_id)
 
     async def _dispatch_track(self, cmd: str, args: list[str], chat_id: str) -> bool:
         """Takip komutları (kanaldan da çalışır; haber komutun geldiği sohbete gider)."""

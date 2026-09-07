@@ -398,6 +398,11 @@ async def lifespan(app: FastAPI):
         log.info("Telegram bot aktif")
     else:
         log.warning("TELEGRAM_BOT_TOKEN yok — alert'ler kapalı, sadece dashboard")
+    # Satılabilir bot: USDC ödeme izleyici (HL ledger) + faturalama (hatırlatma/bitiş)
+    from .pay.billing import loop as billing_loop
+    from .pay.hl import loop as paywatch_loop
+    _spawn("paywatch", lambda: paywatch_loop(cfg, client, bot), notifier)
+    _spawn("billing", lambda: billing_loop(cfg, bot), notifier)
 
     yield
 
