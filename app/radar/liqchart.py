@@ -119,15 +119,16 @@ def plan_levels(cs: list[dict], mark: float, lv: list[dict], target: tuple | Non
 def _pinned_text(items: list[dict], top: bool) -> str:
     """Kenar etiketi: tek seviye tam, birden çok toplu (adet · toplam $ · mesafe aralığı)."""
     arrow, sign = ("▲", "+") if top else ("▼", "−")
+    # Sağ oluk ~25 karakter alır; `tag` sondan kısaltır → mesafe önde, liq fiyatı sonda
     if len(items) == 1:
         x = items[0]
         side = "SHORT" if x.get("side") == "short" else "LONG"
-        return f"{arrow} {side} {_usd(x.get('notional'))} · liq {_px(x['px'])} ({sign}%{x['_d']:.0f})"
+        return f"{arrow} {side} {_usd(x.get('notional'))} · {sign}%{x['_d']:.0f} · liq {_px(x['px'])}"
     sides = {x.get("side") for x in items}
     word = "short" if sides == {"short"} else ("long" if sides == {"long"} else "seviye")
     total = sum(float(x.get("notional") or 0) for x in items)
     ds = [x["_d"] for x in items]
-    return f"{arrow} {len(items)} {word} · {_usd(total)} · {sign}%{min(ds):.0f}…%{max(ds):.0f}"
+    return f"{arrow} {len(items)} {word} {_usd(total)} {sign}%{min(ds):.0f}…{max(ds):.0f}"
 
 
 def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict],

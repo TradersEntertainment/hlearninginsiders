@@ -69,9 +69,9 @@ def test_plan_levels():
     assert [x["px"] for x in p5["pinned"]["bottom"]] == [MARK * 0.70]
     # metinler
     t1 = liqchart._pinned_text(p2["pinned"]["top"], top=True)
-    assert t1 == "▲ SHORT $678K · liq 9.100 (+%61)", t1
+    assert t1 == "▲ SHORT $678K · +%61 · liq 9.100", t1
     two = liqchart.plan_levels(cs, MARK, [MAIN, MID, lvl(12.4, "short", 500_000)], None, far_pct=150)["pinned"]["top"]
-    assert liqchart._pinned_text(two, top=True) == "▲ 2 short · $1.2M · +%61…%119"
+    assert liqchart._pinned_text(two, top=True) == "▲ 2 short $1.2M +%61…119"
     assert liqchart._pinned_text(p5["pinned"]["bottom"], top=False).startswith("▼ LONG $90K")
     print("✅ pencere) 2×ana/%10/far_pct; kenar toplu; >far_pct görünmez; hedef; ana uzaksa None; metinler")
 

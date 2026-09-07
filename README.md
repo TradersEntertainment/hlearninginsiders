@@ -499,7 +499,7 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
 **Uzak seviyeler ekseni bozmaz:** grafiğin penceresi mumlar + fiyat + ana seviye
 (+ ana mesafenin 2 katı, en az %10) — daha uzak ama `max_liq_distance_pct` (%50)
 içindeki seviyeler ölçeği değiştirmeden üst/alt kenarda toplu etiket olur
-(`▲ 2 short · $1.2M · +%61…%119`), %50'den uzak olanlar grafikte hiç görünmez
+(`▲ 2 short $1.2M +%61…119`), %50'den uzak olanlar grafikte hiç görünmez
 (mesaj satırı yine yazar); zincir hedefi de pencere dışındaysa yalnız kenar etiketi.
 Anlık sorguda "en yakın büyük" listesi de önce %50 içindekileri alır; hiç yoksa
 "en yakın uzaklar" der ve grafik çizilmez.
