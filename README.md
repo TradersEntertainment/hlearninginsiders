@@ -67,6 +67,17 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/settime SHAZ bmo` | Bilanço saatini elle düzelt |
 | `/refresh` | Takvimi tüm kaynaklardan yenile |
 
+**Sahiplik ve kanallar:** sahip = `TELEGRAM_CHAT_ID` sohbeti YA DA sahibin kullanıcı
+id'siyle yazan kişi (`TELEGRAM_CHAT_ID` pozitifse o; gruplu kurulum için env-only
+`TELEGRAM_OWNER_ID`). Botun kendi kanallarında (kripto, hisse hacim, liq attack…)
+sahip `/tani` gibi tam zincir komutlarını da kullanabilir; sahip olmayanlar yalnız
+`/takip_N`, `/sim`, `/id` ve `/sembol` coin görüntüsünü alır, bilinmeyen komut sessiz
+kalır (başka botların komutları). `/tani` parça parça, her parça kendi `<pre>`'si
+ile gelir. `/sembol` cevabı TEK mesajdır: foto + 1024'e sığdırılmış altyazı (⭐ ana
+band, fiyata en yakın 2 band, en çok 2 büyük tek, zorunlu satış/alış, kısa zincir,
+bağlam) — sığmayan parça düşer (önce zincir, en son bantlar), tam metin ve ayrıntı
+coin sayfasında; altyazı hiç sığmazsa tam metin + ⭐ band altyazılı foto.
+
 ## Bildirimler
 
 Her bildirim tipi (earnings raporu, yeni büyük pozisyon, likidasyon radarı, büyük işlem,
@@ -1226,6 +1237,19 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   yoğunken kendiliğinden tabana iner. Sıcak tur ~2.5 saatten ~35-60 dakikaya,
   soğuk kuyruk ~37 saatten ~6-10 saate düşer. `SWEEP_CATCHUP=0` ile kapatılır;
   `SWEEP_RPM_HEADROOM` bütçenin ne kadarının doldurulacağını belirler.
+  **Soğuk kuyruk sırası:** en uzun süredir uğranmayan adres önce (hiç uğranmayan
+  en başta, aralarında son işlem yapan önce); uğranan `probed_ts` alıp arkaya düşer —
+  imleç yok, yeni trader tur sarmasını beklemez. İsteği patlayan adres 1 saat
+  yeniden denenmez (başta takılı kalmasın).
+- **HL istek bütçesi, iki şerit** (`app/hl/client.py`): "normal" (radarlar, kullanıcı
+  sorguları) `HL_MAX_RPM` tavanına kadar geçer; "düşük" (sayım, yetişme modunun taban
+  üstü partisi) yalnız pencere kullanımı %70'in altındayken ilerler ve HL'den
+  herhangi bir 429 gelince 60 sn susar — arka plan işi artan kapasiteyi kullanır,
+  fırtınada çekilir. Sayım kendi hızını yalnız KENDİ isteği 429 yiyince yarıya
+  indirir (başkasının fırtınası onu boğmaz). Ağırlık (HL belgesi: 1200/dk/IP;
+  clearinghouse/l2Book 2, mum/meta/recentTrades 20) yalnız sayaç: `/tani`
+  "HL bütçesi: N/550 istek/dk · ~M ağırlık/dk (tahmini) · 429 · düşük şerit" satırı
+  gerçek sınırı canlıda öğretir; bütçe tahminle radarları yavaşlatmaz.
 - "HL'nin en büyükleri" panelindeki eşikler **kademelidir** (HIP-3 $1M · kripto $20M ·
   BTC/ETH $50M): altında kalan pozisyon hiç kaydedilmez, eşik yükseltilirse eski
   kayıtlar günlük bakımda budanır. Kapsam yine adres havuzu kadardır — "kesin en
@@ -1276,6 +1300,12 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   satırı modu, süren turun yüzdesini, son turun süresini ve 429 sayısını yazar;
   coin sayfasının kapsama kutusu ve `/sembol` mesajı "sayım %X" notu taşır.
   Eski `CRYPTO_DEX_CENSUS_ENABLED` (yalnız para, günde bir) kalktı.
+  **Sıcak şerit:** ana dex kripto coininde (PUMP…) işlem yapan adres (WS fill,
+  ≥ $5K) `hot_ts` ile işaretlenir ve sayımın sıradaki adımında toplu parçadan
+  ÖNCE sorgulanır (en yeni önce, en çok 50/adım; tur arası bekleme sıcak belirince
+  erken biter; worker kirası da sıcakları önce verir). Küçük long'lar hiçbir
+  sondayı tetiklemiyor, hasat yalnız HIP-3'e bakıyor, soğuk kuyruk/bakiye sırası
+  onları en sona atıyordu — 0.0042 bandı vakası. `/tani`: "sıcak şerit: N bekliyor".
 
   **Worker'lar (isteğe bağlı, `ROLE=census-worker`):** tek tek moddayken turu
   kısaltmak için aynı repodan Railway'de N ek servis. Worker DB'siz çalışır
