@@ -436,6 +436,33 @@ gösterir (`scans.n_addrs/n_found`). Kutunun ve mesajın "sayım %X (toplu)" not
 havuz HL geneline yaklaşır; "sayım tam" ise havuz, tanıdığımız tüm hesapların
 defteridir — dış siteyle kalan fark, leaderboard'da olmayan hesaplardır.
 
+### Kapsama: nasıl görüyoruz, neden eksik olabilir
+
+HL'de "coindeki tüm pozisyonlar" API'si yok; dış siteler ya tam düğüm
+çalıştırıp durum dosyalarını açar (16 vCPU / 128 GB — Railway'de olmaz) ya da
+tüm hesapları tek tek/toplu sorgular. Bizim havuz dört yoldan dolar, hepsi
+aynı yazıcılardan geçer ve yanıtın otoritesi yalnız sorgulanan dex'tir:
+
+1. **WS collector** — canlı akışta eşik üstü işlem yapan adresin defteri hemen
+   çekilir (anlık sonda).
+2. **Süpürücü** — havuzu (watchlist + pozisyon sahipleri + leaderboard tepesi +
+   son işlem yapanlar) tur tur gezer; yetişme modunda artan bütçeyi kullanır.
+3. **Hasat sondası** — `recentTrades`'ten toplanan adreslerin defterine coinin
+   dex'inde bakar (memecoin haritası sayfa açılmadan dolar).
+4. **Sayım (census)** — leaderboard'daki HER hesap (bakiye ≥ $100) + havuz,
+   bakiye sırasıyla, ana dex + kripto dex'lerde, sürekli tur. Toplu sorgu
+   (`batchClearinghouseStates`) çalışıyorsa tur dakikalar sürer; tek tek modda
+   saatler — o zaman `ROLE=census-worker` servisleri eklenebilir. Ayrıntı:
+   "Sınırlar / Bilinmesi Gerekenler".
+
+Kapsama yüzdesi (havuz $ / HL OI) bu dördünün toplam sonucudur; **tahmin yok**:
+yüzde düşükse eksik olduğumuz yazılır, çarpanla şişirilmez. Sayım "tam"
+dediğinde kalan fark, leaderboard'da olmayan (hiç işlem yapmamış ya da bakiyesi
+tabanın altındaki) hesaplardır. Anlık `/sembol` görünümü artık **band bazlı**:
+kovalı liq bantlarının %10 içindeki en büyüğü başlık olur, ≥ $500K tekler altta
+listelenir — dış sitenin "0.0042'de $2.87M band" dediğini biz de aynı dille
+(bizdeki payıyla, kapsama yüzdesiyle birlikte) söyleriz.
+
 ### Grafikte likidasyon barları
 
 Mum grafiğinin sağında, fiyat eksenine hizalı yatay bloklar: **likidasyon
