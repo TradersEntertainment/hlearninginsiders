@@ -40,6 +40,7 @@ class Collector:
         self.subscribed: set[str] = set()
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
         self.crypto_coins: set[str] = set()  # yalnız sonda tetikleyicisi (ana dex)
+        self.spot_coins: set[str] = set()    # spot çiftleri (@107…): yalnız TWAP dilimleri
         self.hot_marked = 0                  # sayım sıcak şeridine yazılan adres (kümülatif)
         self.db_err = 0                      # WS sıcak yolunda DB hatası (kilit) — soket ölmez
         # Coin başına canlı akış penceresi: (ts, notional) — hacim tarayıcılarının
@@ -85,6 +86,9 @@ class Collector:
         self.crypto_dex_coins = {c for c in equity if assets.is_crypto_dex(c, self.cfg)}
         crypto = [c for c in await self._crypto_coins() if c not in eq]
         self.crypto_coins = set(crypto)
+        spot, spot_names = await self._spot_coins()
+        spot = [c for c in spot if c not in eq and c not in self.crypto_coins]
+        self.spot_coins = set(spot)
         # Neyi DİNLEDİĞİMİZİ dışarı yaz. Alarm zenginleştirmesi bunu okuyup
         # "bu coinde işlem olmadı" ile "bu coini dinlemiyoruz"u ayırıyor —
         # ikisini karıştırmak boş bir tabloyu "kimse almadı" diye okutur.
@@ -92,10 +96,25 @@ class Collector:
             from ..db import kv_set
             await kv_set("ws_universe", {"crypto": crypto,
                                          "equity_n": len(equity),
+                                         "spot": spot, "spot_names": spot_names,
                                          "ts": now()})
         except Exception as e:
             log.debug("ws_universe yazılamadı: %s", e)
-        return equity + crypto
+        return equity + crypto + spot
+
+    async def _spot_coins(self) -> tuple[list[str], dict]:
+        """Spot çiftleri (hacimce ilk N). Perp'ten ayrı ayar: spot'ta pozisyon,
+        liq ve funding yok — bu coinler YALNIZ TWAP dilimleri için dinlenir."""
+        top = int(getattr(self.cfg, "spot_watch_top", 0) or 0)
+        if top <= 0 or not getattr(self.cfg, "spot_enabled", True) or not self.client:
+            return [], {}
+        try:
+            from .universe import top_spot_coins
+            coins, names, _vols = await top_spot_coins(self.client, top)
+            return coins, names
+        except Exception as e:
+            log.warning("spot evreni alınamadı: %s", e)
+            return [], {}
 
     def fill_floor(self, coin: str) -> float:
         """Bu coin'de kaç dolardan büyük işlemler KAYDEDİLSİN.
@@ -114,6 +133,9 @@ class Collector:
         if coin in self.crypto_coins:
             v = float(getattr(self.cfg, "crypto_fill_min_notional", 0) or 0)
             return v if v > 0 else float("inf")   # 0 = kripto kaydı kapalı
+        if coin in self.spot_coins:
+            v = float(getattr(self.cfg, "spot_fill_min_notional", 0) or 0)
+            return v if v > 0 else float("inf")   # 0 = spot kaydı kapalı
         return float(self.cfg.min_fill_notional)
 
     async def _crypto_coins(self) -> list[str]:
@@ -411,8 +433,8 @@ class Collector:
         except Exception:
             big_coins = set()
         for (coin, addr, side), a in agg.items():
-            if coin in self.crypto_coins:
-                continue        # kripto yalnız sonda tetikler, alarm üretmez
+            if coin in self.crypto_coins or coin in self.spot_coins:
+                continue        # kripto/spot yalnız sonda tetikler, alarm üretmez
             is_watch = addr in watch and coin in win_map.get(addr, set())
             floor = alertgate.fill_floor(self.cfg, coin, big_coins, is_watch)
             if floor is None or a["ntl"] < floor:
@@ -517,7 +539,7 @@ class Collector:
         by_addr: dict[str, list[float]] = {}      # adres -> [hisse, kripto]
         for (coin, addr, side), a in agg.items():
             v = by_addr.setdefault(addr, [0.0, 0.0])
-            v[1 if coin in self.crypto_coins else 0] += a["ntl"]
+            v[1 if (coin in self.crypto_coins or coin in self.spot_coins) else 0] += a["ntl"]
         cand = [(eq + cr, addr, "kripto" if cr > eq else "hisse")
                 for addr, (eq, cr) in by_addr.items()
                 if (thr_eq > 0 and eq >= thr_eq) or (thr_cr > 0 and cr >= thr_cr)]

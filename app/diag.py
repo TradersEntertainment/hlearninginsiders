@@ -514,10 +514,11 @@ async def _subsystems(cfg, state=None) -> list[str]:
                 " '%:%'", (now() - 3600,))
             cr_h = (await cur.fetchone())["n"]
         u = await kv_get("ws_universe") or {}
-        n_cr = len(u.get("crypto") or [])
+        n_cr, n_sp = len(u.get("crypto") or []), len(u.get("spot") or [])
         out.append(f"  fill akışı: son 1 saatte {_num(per_h)} satır"
                    f" ({_num(cr_h)} kripto)"
                    + (f" · dinlenen {n_cr} kripto + {u.get('equity_n', 0)} hisse"
+                      f" + {n_sp} spot çifti"
                       f", {_dur(now() - int(u['ts']))} önce yazıldı"
                       if u.get("ts") else
                       " · dinleme evreni HENÜZ YAZILMADI — alarmlarda 'kim ne"

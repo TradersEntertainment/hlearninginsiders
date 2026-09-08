@@ -348,6 +348,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "desc": "Bu tutarın altındaki pozisyon KANALA düşmez (kullanıcı kuralı $500K); ⭐ ana band ve zincir tetiği de bu tabana bakar ki alarm ile /sembol aynı pozisyonu anlatsın. Sorulduğunda gösterilen liste için ayrı (daha düşük) SAYFA eşiği var"},
     "crypto_liq_show_usd": {"type": "float", "label": "Asgari pozisyon — SAYFA ($)", "group": "Kripto liq",
                             "desc": "/sembol cevabında ve grafikte TEK TEK yazılan pozisyonun alt sınırı (kullanıcı kuralı $200K). Bildirim eşiğinden düşük tutulur: kanalda gürültü olan pozisyon, sorulduğunda bağlamdır. Bildirim eşiğinin üstüne çıkamaz"},
+    "spot_enabled": {"type": "bool", "label": "Spot piyasaları dinle", "group": "Spot",
+                     "desc": "HL spot çiftlerini (@107 = PURR/USDC…) WS'te dinler. Spot'ta pozisyon, likidasyon ve funding YOKTUR: bu coinler yalnız TWAP dilimleri ve 'ne oldu' kaydı için dinlenir, ana kanala alarm üretmezler"},
+    "spot_watch_top": {"type": "int", "label": "Spot: dinlenen çift sayısı", "group": "Spot",
+                       "desc": "24 saatlik hacimce ilk N spot çifti. Her çift bir WS aboneliği; yükseltmek trafiği ve fills kayıt hacmini artırır"},
+    "spot_fill_min_notional": {"type": "float", "label": "Spot: asgari işlem ($)", "group": "Spot",
+                               "desc": "Bu tutarın altındaki spot işlemi fills'e yazılmaz (0 = spot kaydı kapalı). TWAP dilimleri küçüktür — taban düşük tutulur, yoksa dilimler görünmez"},
     "crypto_liq_list_dist_pct": {"type": "float", "label": "Liste mesafesi — SAYFA (%)", "group": "Kripto liq",
                                  "desc": "/sembol METNİ bu mesafeden uzak pozisyonu ve bandı yazmaz (kullanıcı kuralı %20). Telegram altyazısı 1024 karakter: uzakları eleyip mesaj TEK parça kalsın diye. Grafik yine azami liq mesafesine kadar hepsini çizer, kaç tanesinin metne girmediği bağlam satırında yazılır"},
     "crypto_liq_chart_fit_all": {"type": "bool", "label": "Grafik tüm liq'leri kapsasın", "group": "Kripto liq",
@@ -669,6 +675,10 @@ class Config:
         # gitti. Uzakları metinden eleyip mesajı tek parça tutuyoruz; grafik hepsini
         # çizmeye devam eder.
         self.crypto_liq_list_dist_pct = float(os.getenv("CRYPTO_LIQ_LIST_DIST_PCT", "20"))
+        # Spot: yalnız TWAP dilimleri için dinlenir (pozisyon/liq/funding yok).
+        self.spot_enabled = True
+        self.spot_watch_top = int(os.getenv("SPOT_WATCH_TOP", "40"))
+        self.spot_fill_min_notional = float(os.getenv("SPOT_FILL_MIN_NOTIONAL", "5000"))
         self.crypto_liq_chart_fit_all = True
         self.crypto_liq_dist_pct = float(os.getenv("CRYPTO_LIQ_DIST_PCT", "2.5"))
         self.crypto_liq_dist2_pct = float(os.getenv("CRYPTO_LIQ_DIST2_PCT", "1.0"))

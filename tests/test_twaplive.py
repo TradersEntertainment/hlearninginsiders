@@ -385,20 +385,23 @@ def test_evaluate_alert_crypto():
 def test_gate_reasons():
     async def run():
         now = dbm.now()
+        # son alan: HL'de gerçek emir bulundu mu — bulunduysa kapı reddetse bile
+        # satır YAZILIR (/twaplar sekmesi "tüm TWAP emirleri"ni gösteriyor),
+        # bildirim yine yok ve alerted_ts boş kalır.
         cases = [
-            ("bitmiş (ADA vakası)", FakeCol([order(status="finished", ex_sz=SZ)]), 9.9e6, "order_done"),
-            ("iptal", FakeCol([order(status="terminated", ex_sz=20_000)]), 9.9e6, "order_done"),
-            ("emir yok", FakeCol([]), 9.9e6, "no_order"),
-            ("başka coinin emri", FakeCol([order(coin="SOL")]), 9.9e6, "no_order"),
-            ("sorgu başarısız", FakeCol(None), 9.9e6, "lookup_fail"),
-            ("sorgu istisna", FakeCol(None, raise_=True), 9.9e6, "lookup_fail"),
-            ("emir $1.5M", FakeCol([order(sz=120_000, ex_sz=10_000)]), 9.9e6, "order_small"),
-            ("kalan $587K", FakeCol([order(ex_sz=290_000)]), 9.9e6, "order_left"),
-            ("hacim yok", FakeCol([order()]), None, "no_vol"),
-            ("hacim bayat", FakeCol([order()]), -1, "no_vol"),
-            ("BTC hacminde %0,2", FakeCol([order()]), 2e9, "vol_small"),
+            ("bitmiş (ADA vakası)", FakeCol([order(status="finished", ex_sz=SZ)]), 9.9e6, "order_done", True),
+            ("iptal", FakeCol([order(status="terminated", ex_sz=20_000)]), 9.9e6, "order_done", True),
+            ("emir yok", FakeCol([]), 9.9e6, "no_order", False),
+            ("başka coinin emri", FakeCol([order(coin="SOL")]), 9.9e6, "no_order", False),
+            ("sorgu başarısız", FakeCol(None), 9.9e6, "lookup_fail", False),
+            ("sorgu istisna", FakeCol(None, raise_=True), 9.9e6, "lookup_fail", False),
+            ("emir $1.5M", FakeCol([order(sz=120_000, ex_sz=10_000)]), 9.9e6, "order_small", True),
+            ("kalan $587K", FakeCol([order(ex_sz=290_000)]), 9.9e6, "order_left", True),
+            ("hacim yok", FakeCol([order()]), None, "no_vol", True),
+            ("hacim bayat", FakeCol([order()]), -1, "no_vol", True),
+            ("BTC hacminde %0,2", FakeCol([order()]), 2e9, "vol_small", True),
         ]
-        for label, col, vol, reason in cases:
+        for label, col, vol, reason, kept in cases:
             await _fresh()
             cfg = _cfg()
             bot = Bot()
@@ -410,7 +413,10 @@ def test_gate_reasons():
             slices("INJ", A, "buy", 50, t0=now - 49 * 30 - 5)
             out = await tl.evaluate(cfg, notifier, collector=col)
             assert out["alerted"] == 0 and out[reason] == 1 and bot.sent == [] and col.calls == [A], (label, out)
-            assert await _alerts("twap") == 0 and not await _runs(), label
+            assert await _alerts("twap") == 0, label
+            runs = await _runs()
+            assert bool(runs) is kept, (label, runs)          # emir varsa kayıt, yoksa yok
+            assert not runs or not runs[0]["alerted_ts"], "kayıt var ama BİLDİRİLMEDİ"
             assert not tl.REG.runs[("INJ", A, "buy")].alerted_ts, label
         # collector yok → sorgu yok → bildirim yok (tahmin yok)
         await _fresh()

@@ -392,6 +392,19 @@ async def volumes(client=None) -> dict[str, tuple[float, int]]:
                 out[r["coin"]] = (float(r["day_volume"]), int(r["ts"]))
     except Exception:
         log.debug("hisse hacmi okunamadı", exc_info=True)
+    try:
+        # Spot çiftleri (@107…): hacim spot evreni kv'sinde. Olmazsa kapı
+        # `no_vol` der ve spot TWAP'ı hiç değerlendirilmez.
+        from ..db import kv_get as _kv
+        sp = await _kv("spot_top_coins") or {}
+        sts = int(sp.get("ts") or 0)
+        for c, v in (sp.get("vols") or {}).items():
+            try:
+                out[str(c)] = (float(v), sts)
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        log.debug("spot hacmi okunamadı", exc_info=True)
     return out
 
 
@@ -637,6 +650,14 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             if g not in ("ok", "big"):
                 out[g] = out.get(g, 0) + 1
                 decide(run, "lookup_fail" if (g == "no_order" and out.get("lookup_fail", 0) > lf_before) else g, det)
+                # HL'de GERÇEK bir TWAP emri bulunduysa kapıdan geçmese de kaydet:
+                # /twaplar sekmesi "tüm TWAP emirleri"ni gösteriyor, yalnız kanala
+                # düşenleri değil. Bildirim alanları (alerted_ts) boş kalır — sayfa
+                # bildirilmiş ile yalnız görülmüşü böyle ayırır.
+                if order:
+                    run.day_volume = day_vol
+                    await persist(run, m)
+                    out["seen"] = out.get("seen", 0) + 1
                 continue
             chat, can = chat_for(cfg, run.coin)
             run.alerted_ts, run.alert_total, run.gate = ts, run.total, g

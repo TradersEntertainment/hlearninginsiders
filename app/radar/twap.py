@@ -178,6 +178,96 @@ async def recent(limit: int = 80, hours: int = 48) -> list[dict]:
     return rows
 
 
+# /twaplar sekmesi: pencere seçenekleri (etiket, saat) — 0 = sınırsız
+WINDOWS = ((24, "24 saat"), (72, "3 gün"), (168, "7 gün"), (720, "30 gün"), (0, "hepsi"))
+ORDERS_MAX = 500           # sayfa tavanı: tablo tarayıcıda da sıralanabilir olsun
+
+
+def order_size(r: dict) -> float:
+    """Sıralama ölçüsü: HL emrinin PLANLANAN toplamı. Emir sorgulanamadıysa
+    ölçülen dilim toplamına düşer — uydurma yok, elimizdeki en iyi rakam."""
+    try:
+        pu = float(r.get("planned_usd") or 0)
+    except (TypeError, ValueError):
+        pu = 0.0
+    if pu > 0:
+        return pu
+    try:
+        return float(r.get("total") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def all_orders(hours: int = 168, status: str = "hepsi", market: str = "hepsi",
+                     limit: int = ORDERS_MAX) -> list[dict]:
+    """/twaplar: görülen TÜM TWAP turları, emrin PLANLANAN boyutuna göre büyükten
+    küçüğe. `recent()`ten farkı: pencere/durum/piyasa süzgeçleri, süren-önce
+    sıralaması YOK (soru "en büyük emir hangisi") ve spot çiftleri de listede.
+
+    status: hepsi | suren | bitmis      market: hepsi | perp | spot | hisse
+    hours = 0 → pencere yok (tüm arşiv, `prune` neyi tuttuysa).
+    """
+    where, args = [], []
+    if hours:
+        where.append("t.last_ts >= ?")
+        args.append(now() - int(hours) * 3600)
+    if market == "spot":
+        where.append("t.coin LIKE '@%'")
+    elif market == "perp":
+        where.append("t.coin NOT LIKE '@%' AND instr(t.coin, ':') = 0")
+    elif market == "hisse":
+        where.append("instr(t.coin, ':') > 0")
+    q = ("SELECT t.*, a.account_value, a.account_ts, a.watchlist, a.entity"
+         " FROM twap_runs t LEFT JOIN addresses a ON a.address = t.address")
+    if where:
+        q += " WHERE " + " AND ".join(where)
+    async with db() as conn:
+        cur = await conn.execute(q, tuple(args))
+        rows = [dict(r) for r in await cur.fetchall()]
+    ts = now()
+    # Aynı emir canlı + arşiv olarak iki satır olabilir (farklı first_ts):
+    # (coin, adres, yön) başına en çok dilimli olan kalır — `recent()` ile aynı kural.
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        k = (r["coin"], r["address"], r["side"])
+        if k not in best or int(r.get("n_slices") or 0) > int(best[k].get("n_slices") or 0):
+            best[k] = r
+    out = []
+    names = await _spot_names()
+    for r in best.values():
+        coin = r["coin"] or ""
+        r["spot"] = coin.startswith("@")
+        r["symbol"] = names.get(coin, coin) if r["spot"] else coin.split(":")[-1]
+        r["src"] = r.get("src") or "fills"
+        r["size_usd"] = order_size(r)
+        r["planned_known"] = bool(r.get("planned_usd"))
+        st = (r.get("order_status") or "").lower()
+        done = bool(r.get("ended_ts")) or st in ("finished", "terminated", "error")
+        r["running"] = (not done) and is_active(r, ts)
+        r["cancelled"] = st in ("terminated", "error")
+        pu, eu = r.get("planned_usd"), r.get("executed_usd")
+        r["filled_pct"] = (float(eu or 0) / float(pu) * 100) if pu else None
+        left = None
+        if pu and r.get("order_ts") and r.get("order_min") and r["running"]:
+            left = int(r["order_ts"]) + int(float(r["order_min"]) * 60) - ts
+        r["left_sec"] = max(0, left) if left is not None else None
+        if status == "suren" and not r["running"]:
+            continue
+        if status == "bitmis" and r["running"]:
+            continue
+        out.append(r)
+    out.sort(key=lambda r: -r["size_usd"])
+    return out[:limit]
+
+
+async def _spot_names() -> dict:
+    try:
+        from ..hl.universe import spot_names
+        return await spot_names()
+    except Exception:
+        return {}
+
+
 async def coverage() -> dict:
     """Fill arşivinin kapsamı — "neden boş" sorusunun cevabı burada."""
     async with db() as conn:

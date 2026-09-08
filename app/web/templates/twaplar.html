@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}📋 TWAP emirleri · HL Radar{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>📋 TWAP emirleri <span class="st">· spot dahil · emrin planlanan boyutuna göre büyükten küçüğe</span></h2>
+  <p class="sub">HL'nin <b>gerçek TWAP emri</b> kaydı: düzenli dilim dizisi görülünce adresin
+  emir geçmişi sorgulanır ve <b>planlanan toplam</b>, <b>dolan</b>, <b>kalan</b> buraya yazılır.
+  Sıralama planlanan boyuta göre — "en büyük emir hangisi" sorusunun cevabı. Emir sorgulanamadıysa
+  satır ölçülen dilim toplamıyla sıralanır ve <span class="dim">ölçülen</span> diye işaretlenir;
+  <b>tahmin yok</b>. Kanala düşmemiş emirler de burada: bu sekme bildirim listesi değil, emir defteridir.</p>
+
+  <form method="get" action="/twaplar" class="btnrow">
+    {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
+    <label>Pencere
+      <select name="pencere" onchange="this.form.submit()">
+        {% for h, lbl in windows %}<option value="{{ h }}"{% if h == pencere %} selected{% endif %}>{{ lbl }}</option>{% endfor %}
+      </select></label>
+    <label>Durum
+      <select name="durum" onchange="this.form.submit()">
+        <option value="hepsi"{% if durum == 'hepsi' %} selected{% endif %}>hepsi</option>
+        <option value="suren"{% if durum == 'suren' %} selected{% endif %}>yalnız sürenler</option>
+        <option value="bitmis"{% if durum == 'bitmis' %} selected{% endif %}>yalnız bitmişler</option>
+      </select></label>
+    <label>Piyasa
+      <select name="piyasa" onchange="this.form.submit()">
+        <option value="hepsi"{% if piyasa == 'hepsi' %} selected{% endif %}>hepsi</option>
+        <option value="perp"{% if piyasa == 'perp' %} selected{% endif %}>perp</option>
+        <option value="spot"{% if piyasa == 'spot' %} selected{% endif %}>spot</option>
+        <option value="hisse"{% if piyasa == 'hisse' %} selected{% endif %}>hisse (HIP-3)</option>
+      </select></label>
+    <button type="submit" class="btn sm">Uygula</button>
+  </form>
+
+  {% if rows %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Piyasa</th><th class="l">Adres</th><th>Yön</th>
+        <th title="HL TWAP emrinin planlanan toplamı. Emir sorgulanamadıysa ölçülen dilim toplamı (o zaman 'ölçülen' yazar)">Emir boyutu</th>
+        <th title="Emrin dolan kısmı">Doldu</th>
+        <th title="Emrin dolmamış kısmı">Kalan</th>
+        <th title="Emrin bitmesine kalan süre (HL emir süresi)">Süre</th>
+        <th title="Bizim ölçtüğümüz: dilimlerin $ toplamı">Görülen</th>
+        <th title="Kaç dilime bölünmüş">Dilim</th>
+        <th title="Dilimler arası ortalama süre">Aralık</th>
+        <th title="Coinin 24 saatlik hacmi (ölçüm anındaki) ve emrin ona oranı">24s hacim</th>
+        <th title="HL perp teminatı — net worth değil">HL bakiye</th>
+        <th title="Son dilim ne zaman görüldü">Son dilim</th>
+        <th title="📡 canlı sayaç · 🗄 fills arşivi">Kaynak</th>
+        <th>Durum</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td class="l">{% if r.spot %}<span title="Spot çifti — pozisyon/likidasyon yok">🪙</span> {% endif %}<b>{{ r.symbol }}</b></td>
+      <td class="l">{{ m.addr(r.address, k, 6) }}
+        {%- if r.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}
+        {%- if r.entity %}<span class="dim" title="Etiketli hesap"> {{ r.entity }}</span>{% endif %}</td>
+      <td class="{{ 'long' if r.side == 'buy' else 'short' }}">{{ 'ALIM' if r.side == 'buy' else 'SATIM' }}</td>
+      <td data-v="{{ r.size_usd|int }}"><b>{{ r.size_usd|usd }}</b>
+        {%- if not r.planned_known %} <span class="dim" title="HL emri sorgulanamadı — bu, ölçülen dilim toplamıdır">ölçülen</span>{% endif %}</td>
+      <td class="dim">{% if r.filled_pct is not none %}%{{ '%.0f'|format(r.filled_pct) }}{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.planned_known %}{{ (r.remaining_usd or 0)|usd }}{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.left_sec is not none %}{{ (r.left_sec // 60)|int }}dk{% else %}—{% endif %}</td>
+      <td class="dim">{{ r.total|usd }}</td>
+      <td class="dim">{{ r.n_slices }}</td>
+      <td class="dim">{{ (r.avg_gap or 0)|int }}sn</td>
+      <td class="dim">{% if r.day_volume %}{{ r.day_volume|usd }}{% else %}—{% endif %}</td>
+      <td>{{ m.equity_cell(r.account_value, r.account_ts) }}</td>
+      <td class="dim">{{ r.last_ts|age }}</td>
+      <td class="dim">{{ '📡' if r.src == 'live' else '🗄' }}</td>
+      <td>{% if r.running %}<span class="long" title="Son dilim yakın zamanda geldi ve emir kapanmadı">▶ sürüyor</span>
+        {%- elif r.cancelled %}<span class="dim" title="HL emri iptal/hata ile bitti">⛔ iptal</span>
+        {%- else %}<span class="dim">🏁 bitti</span>{% endif %}
+        {%- if r.alerted_ts %} <span title="Telegram'a düştü">✅</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">{{ rows|length }} emir listelendi{% if rows|length >= cap %} (sayfa tavanı {{ cap }} — pencereyi daralt){% endif %}.
+  Sütun başlığına tıklayarak başka bir ölçüye göre sıralayabilirsin.</p>
+  {% else %}
+  {{ m.empty(['Bu süzgeçle TWAP emri yok.',
+              'Pencereyi genişlet ya da durum/piyasa süzgecini gevşet.',
+              'Kayıtlar ' ~ keep_d ~ ' gün saklanır; öncesi budanır.']) }}
+  {% endif %}
+
+  <p class="kunye">Dinlenen piyasalar: {{ crypto_n }} perp
+  {%- if spot_on %} · {{ spot_n }} spot çifti{% if not spot_n %} <b>(liste henüz gelmedi)</b>{% endif %}
+  {%- else %} · <b>spot kapalı</b> (ayarlar → Spot){% endif %}
+  {%- if ws_ts %} · evren {{ ws_ts|age }} önce yazıldı{% endif %}.
+  Emir geçmişi yalnız dilim toplamı {{ lookup_min|usd }} üstüne çıkan adresler için sorgulanır —
+  altındaki emirler burada görünmez ve <b>görünmediklerini de bilemeyiz</b>.</p>
+
+  <details class="panel note"><summary>Bu sekme neyi gösterir, neyi göstermez</summary>
+  <div class="prose">
+  <p><b>Gösterir:</b> WS akışında düzenli dilim dizisi yakalanan ve ardından HL emir
+  geçmişinden <b>doğrulanan</b> TWAP emirleri. Perp, HIP-3 hisse perp'i ve spot çiftleri
+  aynı tabloda; 🪙 işareti spot demektir (spot'ta pozisyon, likidasyon ve funding yoktur).</p>
+  <p><b>Göstermez:</b> dinlemediğimiz coinlerdeki emirleri, dilim toplamı sorgu tabanının
+  altında kalan küçük emirleri ve dilimleri işlem kayıt tabanının altında kalan çok sabırlı
+  emirleri. Bu kör noktalar kapanmaz; sayfa onları saymaz, var gibi de yapmaz.</p>
+  <p><b>Sıralama</b> planlanan emir boyutuna göredir. "Görülen" sütunu bizim ölçtüğümüz
+  dilim toplamıdır: emir yeni başladıysa küçüktür, emirden büyük olamaz.</p>
+  </div></details>
+</div>
+{% endblock %}

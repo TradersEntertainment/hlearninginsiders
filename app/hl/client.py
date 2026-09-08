@@ -193,6 +193,11 @@ class HLClient:
             p["dex"] = dex
         return await self.info(p)
 
+    async def spot_meta_and_ctxs(self):
+        """Spot piyasaları: [meta, ctxs]. meta.universe[i].name borsa adıdır
+        ('@107'), meta.tokens çiftin okunur adını verir ('PURR/USDC')."""
+        return await self.info({"type": "spotMetaAndAssetCtxs"})
+
     async def clearinghouse(self, user: str, dex: str = "", priority: str | None = None,
                             stats: dict | None = None):
         p = {"type": "clearinghouseState", "user": user}

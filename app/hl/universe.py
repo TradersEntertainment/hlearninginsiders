@@ -100,6 +100,8 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str],
     return coins
 
 
+SPOT_KV = "spot_top_coins"
+SPOT_TTL = 3600            # spot hacim sıralaması da saatte bir
 CRYPTO_KV = "crypto_top_coins"
 CRYPTO_TTL = 3600          # ana dex hacim sıralaması saatte bir tazelensin
 CRYPTO_CACHE_MIN = 50      # eşik ayardan yükseltilirse yeniden istek atmayalım
@@ -267,6 +269,66 @@ async def top_crypto_coins(client: HLClient, top_n: int,
     log.info("kripto dinleme listesi: %d coin (%s)", min(top_n, len(out)),
              ", ".join(out[:6]) + ("…" if len(out) > 6 else ""))
     return out[:top_n]
+
+
+async def top_spot_coins(client: HLClient, top_n: int,
+                         ttl: int = SPOT_TTL) -> tuple[list[str], dict, dict]:
+    """Spot piyasalarının hacimce ilk N'i: (borsa adları, ad haritası, 24s hacim).
+
+    HL'de spot çiftinin borsa adı `@107` gibidir; okunur adı (`PURR/USDC`)
+    `meta.tokens` üzerinden kurulur. WS aboneliği ve `fills.coin` borsa adını
+    kullanır — tek kimlik odur; okunur ad yalnız gösterim içindir.
+
+    Perp evreninden AYRI tutuluyor: spot'ta pozisyon/liq yok, funding yok; bu
+    coinler yalnız TWAP dilimleri için dinlenir. İstek düşerse önceki liste
+    (bayat da olsa) döner — dinlemeyi kesmek listeyi eski kullanmaktan kötüdür.
+    """
+    top_n = int(top_n or 0)
+    if top_n <= 0:
+        return [], {}, {}
+    cached = await kv_get(SPOT_KV) or {}
+    coins = [c for c in (cached.get("coins") or []) if isinstance(c, str)]
+    names = dict(cached.get("names") or {})
+    vols = {k: float(v) for k, v in (cached.get("vols") or {}).items()}
+    if coins and now() - int(cached.get("ts") or 0) < ttl and int(cached.get("want") or 0) >= top_n:
+        return coins[:top_n], names, vols
+    try:
+        data = await client.spot_meta_and_ctxs()
+        meta, ctxs = data[0], data[1]
+    except Exception as e:
+        log.warning("spot evreni alınamadı: %s", e)
+        return coins[:top_n], names, vols
+    toks = [(t or {}).get("name") or "?" for t in (meta or {}).get("tokens") or []]
+    ranked: list[tuple[float, str, str]] = []
+    for pair, ctx in zip((meta or {}).get("universe") or [], ctxs or []):
+        name = (pair or {}).get("name") or ""
+        if not name or (pair or {}).get("isDelisted"):
+            continue
+        idx = (pair or {}).get("tokens") or []
+        label = "/".join(toks[i] for i in idx if 0 <= i < len(toks)) if idx else name
+        try:
+            vol = float((ctx or {}).get("dayNtlVlm") or 0)
+        except (TypeError, ValueError):
+            continue
+        ranked.append((vol, name, label or name))
+    if not ranked:
+        return coins[:top_n], names, vols
+    ranked.sort(key=lambda r: (-r[0], r[1]))
+    want = max(top_n, CRYPTO_CACHE_MIN)
+    top = ranked[:want]
+    out = [n for _, n, _ in top]
+    names = {n: lb for _, n, lb in top}
+    vols = {n: v for v, n, _ in top}
+    await kv_set(SPOT_KV, {"coins": out, "names": names, "vols": vols,
+                           "want": want, "ts": now()})
+    log.info("spot dinleme listesi: %d çift (%s)", min(top_n, len(out)),
+             ", ".join(names[c] for c in out[:6]) + ("…" if len(out) > 6 else ""))
+    return out[:top_n], names, vols
+
+
+async def spot_names() -> dict:
+    """Borsa adı → okunur ad ('@107' → 'PURR/USDC'); istek atmaz."""
+    return dict(((await kv_get(SPOT_KV)) or {}).get("names") or {})
 
 
 async def get_universe() -> list[dict]:

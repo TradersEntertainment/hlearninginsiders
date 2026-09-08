@@ -325,6 +325,35 @@ bildirilmez.
 - **Restart:** bekleme (6 saat) `alerts_log`'da; bildirilmiş turlar açılışta
   geri yüklenir, bitiş notu kaybolmaz. Ayarlar → **TWAP radarı**.
 
+### TWAP emir defteri: `/twaplar` (spot dahil)
+
+`/twap` sekmesi "birileri sessizce topluyor" hikâyesini anlatır: kanala düşmeye
+değer, süren turlar öne. `/twaplar` ise **emir defteridir** — görülen TÜM TWAP
+emirleri, **emrin planlanan boyutuna** göre büyükten küçüğe, süzgeçli.
+
+- **Sıralama** `planned_usd` (HL emrinin planlanan toplamı). Emir sorgulanamadıysa
+  satır ölçülen dilim toplamıyla sıralanır ve **"ölçülen"** diye işaretlenir —
+  tahmin yok.
+- **Süzgeçler:** pencere (24s / 3g / 7g / 30g / hepsi), durum (hepsi / yalnız
+  sürenler / yalnız bitmişler), piyasa (hepsi / perp / spot / hisse). Sütun
+  başlığına tıklayarak başka bir ölçüye göre de sıralanır.
+- **Kanala düşmemiş emirler de burada.** Eskiden `twap_runs` satırı yalnız
+  bildirilen (ya da kanalı olmayan) emirler için yazılıyordu; artık HL emir
+  geçmişinde **gerçek bir emir doğrulanan** her tur kaydedilir, bildirim alanları
+  boş kalır. Sayfa ✅ ile bildirilmiş olanı ayırır.
+
+**Spot (yeni).** HL spot çiftleri (`@107` = `PURR/USDC`) artık `spotMetaAndAssetCtxs`
+ile hacimce ilk `SPOT_WATCH_TOP` (40) çift olarak WS'e abone ediliyor; tabloda 🪙
+ile işaretli. Spot'ta **pozisyon, likidasyon ve funding yoktur** — bu coinler yalnız
+TWAP dilimleri ve "ne oldu" kaydı için dinlenir, ana kanala **alarm üretmezler**
+(kripto perp'lerle aynı kural). Ayrı bir kayıt tabanı var (`SPOT_FILL_MIN_NOTIONAL`,
+$5K; 0 = spot kaydı kapalı) çünkü TWAP dilimleri küçüktür. Ayarlar → **Spot**.
+
+**Kör nokta, açıkça:** dinlemediğimiz coinlerdeki emirler, dilim toplamı sorgu
+tabanının (`twap_lookup_min_usd`, $50K) altında kalan küçük emirler ve dilimleri
+kayıt tabanının altında kalan çok sabırlı emirler burada **görünmez — ve
+görünmediklerini de bilemeyiz**. Sayfa bunu yazar, kapalı olduğunu ima etmez.
+
 ## Liq attack radarı: `/saldiri`
 
 **Mekanizma.** Hafta sonu hissenin gerçek fiyatı sabittir (borsa kapalı). Perp

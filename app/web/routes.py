@@ -1139,6 +1139,28 @@ def _parse_window(request: Request) -> tuple[int, int, str]:
     return start, end, "son 15 dakika (varsayılan)"
 
 
+@router.get("/twaplar")
+async def twap_orders_page(request: Request, pencere: int = 168, durum: str = "hepsi",
+                           piyasa: str = "hepsi"):
+    """Görülen TÜM TWAP emirleri — spot dahil, emrin planlanan boyutuna göre."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    durum = durum if durum in ("hepsi", "suren", "bitmis") else "hepsi"
+    piyasa = piyasa if piyasa in ("hepsi", "perp", "spot", "hisse") else "hepsi"
+    hours = pencere if any(pencere == h for h, _ in twap.WINDOWS) else 168
+    rows = await twap.all_orders(hours=hours, status=durum, market=piyasa)
+    ws = await kv_get("ws_universe") or {}
+    return _render(request, "twaplar.html", {
+        "rows": rows, "pencere": hours, "durum": durum, "piyasa": piyasa,
+        "windows": twap.WINDOWS, "cap": twap.ORDERS_MAX,
+        "spot_n": len(ws.get("spot") or []), "crypto_n": len(ws.get("crypto") or []),
+        "spot_on": bool(getattr(cfg, "spot_enabled", True)) and int(getattr(cfg, "spot_watch_top", 0) or 0) > 0,
+        "ws_ts": int(ws.get("ts") or 0),
+        "lookup_min": getattr(cfg, "twap_lookup_min_usd", 50_000),
+        "keep_d": twap.RETENTION_D,
+    })
+
+
 @router.get("/twap")
 async def twap_page(request: Request):
     """Büyük TWAP / düzenli birikim turları — birileri sessizce topluyor."""
