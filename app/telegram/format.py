@@ -846,8 +846,11 @@ def _liq_ctx(s: dict, rows: list[dict]) -> tuple[list[str], list[str]]:
     if s.get("n_list_far"):
         extra.append(f"{s['n_list_far']} pozisyon ≥ {usd(s.get('min_usd'))} ama %{float(s.get('list_dist') or 0):.0f}'den"
                      f" uzak — metinde yok, grafikte var")
-    if s.get("n_chart") and s.get("chart_usd") and float(s["chart_usd"]) < float(s.get("min_usd") or 0):
-        extra.append(f"grafikte ≥ {usd(s['chart_usd'])} {s['n_chart']} pozisyon çizili (metin eşiği daha yüksek)")
+    # Grafik metnin üst kümesi: yalnız DAHA FAZLASINI gösterdiğinde söylenir.
+    # "metin eşiği daha yüksek" demek, eşik çöküp metin aşağı indiğinde yalan olurdu.
+    if s.get("n_chart") and s["n_chart"] > len(rows):
+        extra.append(f"grafikte ≥ {usd(s.get('chart_usd'))} {s['n_chart']} pozisyon çizili"
+                     f" (listede {len(rows)})")
     cc = coverage_ctx(s.get("coverage"))
     core.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     return core, extra

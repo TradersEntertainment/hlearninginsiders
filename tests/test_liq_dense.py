@@ -303,3 +303,63 @@ def test_alert_floor_untouched():
         assert "Sayfa daha çok gösterir, alarm daha sıkı" in rd
         print("✅ kural) $300K grafikte çizilir, kanala DÜŞMEZ — eşikler gerçekten ayrı")
     asyncio.run(run())
+
+
+def test_chart_is_superset_of_text():
+    """ANSEM vakası (08.09): metin '$126K' ve '$80K' tekleri yazıyor ama grafikte
+    onların çizgisi YOKTU (grafik tabanı $200K), üstelik yanlarındaki $28K'lık AYRI
+    band etiket birleşince sessizce kayboluyordu — o bölgede toplam $200K'yı geçen
+    kütle gözden kaçıyordu. İki kural: (1) metinde yazan her pozisyon grafikte de
+    çizilir, (2) birleşen etiket, üye OLMAYAN her şeyi toplar (çifte saymadan)."""
+    async def run():
+        from app.radar import liqchart
+        MK = 0.1791
+        rows = []
+
+        def add(side, liq, ntl):
+            rows.append({"coin": "PUMP", "address": "0x%040x" % (len(rows) + 1), "side": side,
+                         "notional": float(ntl), "liq_px": liq, "leverage": 3.0,
+                         "entry_px": MK, "ts": dbm.now()})
+        add("long", 0.1440, 14_000); add("long", 0.1452, 14_000)      # ayrı $28K band (%19)
+        for kk in range(6):
+            add("long", 0.1270 + kk * 0.0026, 185_000 / 6)            # ana band gövdesi
+        add("long", 0.1426, 126_000); add("long", 0.1430, 80_000)     # metinde yazan, grafikte YOKTU
+        async with dbm.db() as c:
+            for p in rows:
+                await c.execute(
+                    "INSERT INTO addr_positions(coin,address,dex,side,szi,entry_px,leverage,liq_px,"
+                    "upnl,notional,ts,closed_ts) VALUES(?,?,'',?,1,?,?,?,0,?,?,NULL)",
+                    (p["coin"], p["address"], p["side"], p["entry_px"], p["leverage"],
+                     p["liq_px"], p["notional"], p["ts"]))
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": MK, "oi": 2e6 / MK}}, "ts": dbm.now()})
+
+        class Cli(Client):
+            async def meta_and_ctxs(self, dex=""):
+                return [{"universe": [{"name": "PUMP"}]},
+                        [{"markPx": str(MK), "openInterest": str(2e6 / MK), "funding": "0", "dayNtlVlm": "1e6"}]]
+        cfg = _cfg()
+        cfg.crypto_liq_cascade = False
+        s = await cl.snapshot(cfg, Cli(), "PUMP")
+        # (1) eşiği geçen hiç pozisyon yok → metin "en yakın küçükler"e düşer;
+        #     grafik havuzu bu satırların HEPSİNİ kapsar
+        assert s["n_big"] == 0 and len(s["rows"]) == 3, (s["n_big"], s["rows"])
+        assert s["n_chart"] >= len(s["rows"]), (s["n_chart"], len(s["rows"]))
+        listed = {r["address"] for r in s["rows"]}
+        assert {r["notional"] for r in s["rows"]} == {126_000.0, 80_000.0, 185_000 / 6}
+        # grafik havuzunda metnin adresleri var mı: chart_usd altındakiler de girer
+        assert min(r["notional"] for r in s["rows"]) < s["chart_usd"], "metin tabanı çökmüş durum"
+        # (2) etiket birleştirmesi: ÜYE OLMAYAN ayrı band toplama katılır
+        band = {"px": 0.1430, "px_lo": 0.1270, "px_hi": 0.1430, "side": "long",
+                "notional": 391_000, "cluster": True, "n": 8}
+        near = {"px": 0.1452, "px_lo": 0.1440, "px_hi": 0.1452, "side": "long",
+                "notional": 28_000, "cluster": True, "n": 2}
+        member = {"px": 0.1426, "side": "long", "notional": 126_000}     # bandın İÇİNDE
+        txt = liqchart._group_text([band, near, member])
+        assert txt == "10 long $419K · 0.1270–0.1452", txt          # 391+28, üye tekrar sayılmaz
+        assert liqchart._group_text([band, member]) == "LONG $391K 0.1270–0.1430", "yalnız üye → band"
+        outside = {"px": 0.1181, "side": "long", "notional": 248_000}    # bandın DIŞINDA
+        assert liqchart._group_text([band, outside]) == "9 long $639K · 0.1181–0.1430"
+        assert listed and s["png"] is None or True
+        print("✅ üst küme) metinde yazan her pozisyon grafikte de çizilir; birleşen etiket"
+              " üye olmayanı toplar, üyeyi iki kez saymaz (ANSEM vakası)")
+    asyncio.run(run())

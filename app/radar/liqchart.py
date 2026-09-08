@@ -159,11 +159,21 @@ def _group_text(items: list[dict]) -> str:
     """Etiket metni: tek seviye tam, üst üste binenler TOPLU (adet · yön · toplam $
     · liq aralığı). `_pinned_text` ile aynı dil, kenar oku yok — o kenarda, bu
     çizginin yanında durur."""
-    # Bandın toplamı üyelerini ZATEN içeriyor: aynı gruba düşen tek pozisyonları
-    # bir daha toplamak $'ı şişirirdi. Bant varsa söz onun, tekler çizgileriyle durur.
+    # Çifte sayma YALNIZ bandın KENDİ üyesi için olur: fiyatı bandın aralığına düşen
+    # tek pozisyon o bandın toplamında zaten var. Onun dışındaki her şey (ayrı bantlar
+    # — kovalar ayrık — ve band dışı tekler) toplanır. Eskiden "band varsa söz onun"
+    # deniyordu: yanındaki $28K'lık AYRI band ve $126K/$80K tekler etiketten sessizce
+    # düşüyor, okuyan o bölgede yalnız büyük bandı görüyordu (ANSEM vakası).
     bands = [x for x in items if x.get("cluster")]
-    if bands:
-        items = [max(bands, key=lambda x: float(x.get("notional") or 0))]
+
+    def _member(x) -> bool:
+        for b in bands:
+            if b is x or b.get("px_lo") is None or b.get("side") != x.get("side"):
+                continue
+            if float(b["px_lo"]) <= float(x["px"]) <= float(b["px_hi"]):
+                return True
+        return False
+    items = [x for x in items if x.get("cluster") or not _member(x)]
     if len(items) == 1:
         x = items[0]
         side = "SHORT" if x.get("side") == "short" else "LONG"
@@ -174,7 +184,7 @@ def _group_text(items: list[dict]) -> str:
     word = "short" if sides == {"short"} else ("long" if sides == {"long"} else "seviye")
     total = sum(float(x.get("notional") or 0) for x in items)
     n = sum(int(x.get("n") or 1) for x in items)
-    pxs = [float(x["px"]) for x in items]
+    pxs = [p for x in items for p in (float(x.get("px_lo") or x["px"]), float(x.get("px_hi") or x["px"]))]
     rng = _px(min(pxs)) if _px(min(pxs)) == _px(max(pxs)) else f"{_px(min(pxs))}–{_px(max(pxs))}"
     return f"{n} {word} {_usd(total)} · {rng}"
 

@@ -623,14 +623,16 @@ def test_near_band_beats_far_wall():
         assert not any(abs(b["total"] - 17_600_000) < 1 for b in s["clusters"]), "duvar metinde değil"
         assert all(b["dist_lo"] <= 20 or b is mb for b in s["clusters"]), s["clusters"]
         assert s["n_big"] == 1 and len(s["rows"]) == 1 and s["rows"][0]["notional"] == 2_200_000.0
-        assert s["min_usd"] == 500_000 and s["chart_usd"] == 200_000 and s["n_chart"] == 84
+        # grafik havuzu SHOW_MAX ile sınırlı ve bu sayı dürüstçe söyleniyor
+        assert s["min_usd"] == 500_000 and s["chart_usd"] == 200_000
+        assert s["n_chart"] == cl.SHOW_MAX == 60, s["n_chart"]
         txt = fmt.crypto_liq_snapshot(s, offers=[74])
         line = txt.splitlines()[2]
         assert line.startswith("🟢 LONG <b>$2.2M</b>") and "liq 0.0042" in line, line
         assert "/takip_74" in line and "👤" in line and line.endswith("⭐"), line
         assert "bandı" not in line and txt.count("$2.2M") == 1, txt
         assert "$17.6M" not in txt and "SHORT bandı <b>$258K</b>" in txt, txt
-        assert "grafikte ≥ $200K 84 pozisyon çizili" in txt, "metin/grafik farkı söylenir"
+        assert "grafikte ≥ $200K 60 pozisyon çizili (listede 1)" in txt, "metin/grafik farkı söylenir"
         # foto altyazısı ve grafik başlığı da tek pozisyonda "band/küme" demez
         capt = fmt.crypto_liq_photo_caption(s)
         assert capt.startswith("📈 <b>PUMP</b> · LONG $2.2M · 0.0042 · %1.3") and "bandı" not in capt, capt

@@ -462,9 +462,15 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
         chart_rows = [{"liq_px": b["px"], "side": b["side"], "notional": b["total"], "dist": b["dist_lo"],
                        "px_lo": b["px_lo"], "px_hi": b["px_hi"], "cluster": True, "n": b["n"],
                        "main": b is main_band, "mark": float(mark)} for b in order]
+        # GRAFİK METNİN ÜST KÜMESİDİR: metinde yazan her pozisyonun grafikte de
+        # çizgisi olur. Aksi hâlde eşiği geçen hiç pozisyon yokken (ANSEM vakası)
+        # metin $126K/$80K yazıyor, grafik onları hiç göstermiyordu.
+        seen = {(p.get("address"), p.get("side")) for p in big}
+        chart_pool = list(big[:SHOW_MAX]) + [p for p in show
+                                             if (p.get("address"), p.get("side")) not in seen]
         chart_rows += [{"liq_px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
                         "dist": p.get("dist"), "main": False, "mark": float(mark)}
-                       for p in (big or show)[:SHOW_MAX]]
+                       for p in chart_pool]
         chart_rows = chart_rows or show
         if main_band:
             # zincir tetiği = ana band (toplamı, fiyata yakın kenarından); üyeleri
@@ -472,7 +478,7 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
             casc_rows = [r for r in rows if not _in_band(r, main_band)]
     else:
         show = cands[:limit]
-        pool = show
+        pool = chart_pool = show
         chart_rows = show
     trigger = chart_rows[0] if chart_rows else None
     casc = await _cascade(cfg, client, coin, mark, trigger, casc_rows) if trigger else None
@@ -492,10 +498,14 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
         except Exception:
             log.debug("anlık grafik üretilemedi (%s)", coin, exc_info=True)
     n_alert = sum(1 for c in solid if c["notional"] >= min_usd)
+    # Metin eşiği çökmüş olabilir: eşiği geçen hiç pozisyon yoksa "en yakın küçükler"
+    # gösteriliyor demektir — o zaman metin GRAFİKTEN daha aşağı iner.
+    list_floor = min((float(p.get("notional") or 0) for p in show), default=0.0)
     return {"coin": coin, "kind": kind, "mark": mark, "age": age, "rows": show,
             "n_all": len(cands), "n_big": n_alert, "min_usd": min_usd, "png": png,
             "n_more": max(0, len(pool) - len(show)), "list_dist": list_dist,
-            "chart_usd": max(show_usd, dust), "n_chart": len(big),
+            "chart_usd": max(show_usd, dust), "n_chart": len(chart_pool) if near else len(show),
+            "list_floor": list_floor,
             "n_list_far": max(0, n_alert - sum(1 for c in solid
                                                if c["notional"] >= min_usd and c["dist"] <= list_dist)),
             "cascade": casc, "coverage": cov, "all_far": all_far,
