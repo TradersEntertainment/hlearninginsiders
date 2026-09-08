@@ -313,6 +313,7 @@ def test_chart_is_superset_of_text():
     çizilir, (2) birleşen etiket, üye OLMAYAN her şeyi toplar (çifte saymadan)."""
     async def run():
         from app.radar import liqchart
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "sup.db"))
         MK = 0.1791
         rows = []
 
@@ -362,4 +363,104 @@ def test_chart_is_superset_of_text():
         assert listed and s["png"] is None or True
         print("✅ üst küme) metinde yazan her pozisyon grafikte de çizilir; birleşen etiket"
               " üye olmayanı toplar, üyeyi iki kez saymaz (ANSEM vakası)")
+    asyncio.run(run())
+
+
+def test_band_merge_and_named_labels():
+    """ANSEM (08.09, üçüncü tur): kullanıcı 0.1420–0.1430'daki ~$206K'yı üç kez sordu.
+    Kök neden kova sınırıydı — liq 0.1430 %19,98 ([15,20) kovası), 0.1426 %20,20
+    ([20,30) kovası): fiyatta %0,22 arayken %20 sınırı ikisini AYRI bantlara atıyordu.
+    Kovalar şimdiye UZAKLIĞA göre sabittir; sınırın nereye denk geldiği likiditenin
+    nerede toplandığıyla ilgisizdir. İki kural: (1) fiyatta bitişik bantlar birleşir,
+    (2) mesajda ADI GEÇEN tek pozisyon grafikte kendi etiketini alır."""
+    MK = 0.1787
+    pos = [("long", 0.1440, 14_000), ("long", 0.1452, 14_000),
+           ("long", 0.1426, 126_000), ("long", 0.1430, 80_000)]
+    pos += [("long", 0.1270 + kk * 0.0026, 185_000 / 6) for kk in range(6)]
+    pos += [("long", 0.1181, 248_000)]
+    cands = [{"side": s, "notional": n, "liq_px": p, "dist": abs(p - MK) / MK * 100}
+             for s, p, n in pos]
+    from app.radar import liqmap
+    # (1) kapalıyken bugünkü kova çıktısı: %20 sınırı ikiye bölüyor
+    off = sorted(liqmap.clusters(cands, MK, 50.0, per_side=3, merge_share=0),
+                 key=lambda b: b["dist_lo"])
+    assert [round(b["total"]) for b in off] == [108_000, 311_000, 248_000], off
+    assert off[0]["dist_hi"] < 20 <= off[1]["dist_lo"], "sınır tam aralarından geçiyor"
+    # açıkken tek band: 0.1426 ile 0.1430 artık ayrılmıyor
+    on = sorted(liqmap.clusters(cands, MK, 50.0, per_side=3, merge_share=0.05),
+                key=lambda b: b["dist_lo"])
+    assert [round(b["total"]) for b in on] == [419_000, 248_000], on
+    assert on[0]["n"] == 10 and abs(on[0]["px_lo"] - 0.1270) < 1e-9 and abs(on[0]["px_hi"] - 0.1452) < 1e-9
+    assert on[0]["px"] == on[0]["px_hi"], "long bandın 'px'i fiyata yakın kenar"
+    assert len(on[0]["top"]) == 3 and on[0]["top"][0]["notional"] == 126_000, "top birleşti"
+    assert on[1]["total"] == 248_000, "%33,9'daki tek (boşluk %4,98) ayrı kalır"
+    # (2) eşik MESAFEYLE ölçeklenir: fiyatın dibinde çözünürlük korunur
+    near = [{"side": "long", "notional": 50_000, "liq_px": MK * (1 - 0.009), "dist": 0.9},
+            {"side": "long", "notional": 50_000, "liq_px": MK * (1 - 0.011), "dist": 1.1}]
+    assert len(liqmap.clusters(near, MK, 50.0, per_side=3, merge_share=0.05)) == 2, \
+        "%1 uzakta %0,2 boşluk 'aynı bölge' DEĞİL"
+    print("✅ birleştirme) %20 kova sınırı aynı fiyattaki liq'i bölmüyor; eşik mesafeyle"
+          " ölçekleniyor, fiyatın dibi bölünmeye devam ediyor")
+
+
+def test_named_singles_get_own_label():
+    async def run():
+        from app.radar import liqchart
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "named.db"))
+        MK = 0.1787
+        rows = []
+
+        def add(side, liq, ntl):
+            rows.append({"coin": "PUMP", "address": "0x%040x" % (len(rows) + 1), "side": side,
+                         "notional": float(ntl), "liq_px": liq, "leverage": 3.0,
+                         "entry_px": MK, "ts": dbm.now()})
+        add("long", 0.1440, 14_000); add("long", 0.1452, 14_000)
+        add("long", 0.1426, 126_000); add("long", 0.1430, 80_000)
+        for kk in range(6):
+            add("long", 0.1270 + kk * 0.0026, 185_000 / 6)
+        add("long", 0.1181, 248_000)
+        async with dbm.db() as c:
+            for p in rows:
+                await c.execute(
+                    "INSERT INTO addr_positions(coin,address,dex,side,szi,entry_px,leverage,liq_px,"
+                    "upnl,notional,ts,closed_ts) VALUES(?,?,'',?,1,?,?,?,0,?,?,NULL)",
+                    (p["coin"], p["address"], p["side"], p["entry_px"], p["leverage"],
+                     p["liq_px"], p["notional"], p["ts"]))
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": MK, "oi": 2e6 / MK}}, "ts": dbm.now()})
+
+        class Cli(Client):
+            async def meta_and_ctxs(self, dex=""):
+                return [{"universe": [{"name": "PUMP"}]},
+                        [{"markPx": str(MK), "openInterest": str(2e6 / MK), "funding": "0", "dayNtlVlm": "1e6"}]]
+        cfg = _cfg()
+        cfg.crypto_liq_cascade = False
+        labels = []
+        orig = liqchart.render
+
+        def spy(coin, cands, mark, levels, **kw):
+            plan = liqchart.plan_levels(cands, mark, [dict(x) for x in levels if x.get("px")],
+                                        kw.get("target"), kw.get("far_pct", 50.0),
+                                        fit_all=kw.get("fit_all", False))
+            lo, hi = plan["lo"], plan["hi"]
+            dr = sorted(plan["draw"], key=lambda x: (0 if x.get("main") else 1, abs(x["px"] - mark)))
+            gs, _rest = liqchart.label_groups(dr, lambda p: 92 + (hi - p) / (hi - lo) * 525)
+            labels.extend(liqchart._group_text(g) for g in gs)
+            return orig(coin, cands, mark, levels, **kw)
+        liqchart.render = spy
+        try:
+            s = await cl.snapshot(cfg, Cli(), "PUMP")
+        finally:
+            liqchart.render = orig
+        # metin: kova sınırı bölmediği için TEK band
+        assert len(s["clusters"]) == 1 and round(s["clusters"][0]["total"]) == 419_000, s["clusters"]
+        assert [round(r["notional"]) for r in s["rows"]] == [248_000, 126_000, 80_000], s["rows"]
+        # grafik: metinde adı geçen HER pozisyon kendi etiketini almış, tekrar yok
+        for want in ("LONG $126K · liq 0.1426", "LONG $80K · liq 0.1430", "LONG $248K · liq 0.1181"):
+            assert labels.count(want) == 1, (want, labels)
+        assert sum(1 for x in labels if x.startswith("LONG $419K")) == 1, labels
+        # kaynak: "named" _chart kopya demetinde — unutulursa bayrak SESSİZCE düşer
+        src = open(os.path.join(ROOT, "app", "radar", "cryptoliq.py"), encoding="utf-8").read()
+        assert '"cluster", "n", "named"' in src, "_chart demetinde named yok"
+        print("✅ etiket) mesajda adı geçen her tek grafikte kendi rakamıyla duruyor;"
+              " tek üyeli band + adı geçen tek iki kez çizilmiyor")
     asyncio.run(run())

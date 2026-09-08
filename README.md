@@ -542,6 +542,23 @@ kayboluyordu.) Üst üste binen seviyelerin etiketi tek satırda toplanır ("6 l
 toplanır — hiçbir seviye sessizce kaybolmaz. Mumların sıkışması bilinçli bir dengedir:
 burada asıl konu liq haritasıdır, ayar kapatılırsa eski dar pencereye dönülür.
 
+**Kova sınırı aynı fiyattaki liq'i bölmesin (08.09 ANSEM vakası).** Kovalar
+(`SLOT_EDGES`) şimdiye **uzaklığa** göre sabittir; sınırın nereye denk geldiği
+likiditenin nerede toplandığıyla ilgisizdir. ANSEM'de `liq 0.1430` (%19,98) ile
+`liq 0.1426` (%20,20) fiyatta **%0,22** arayken %20 sınırı tam aralarından geçip
+ikisini ayrı bantlara atıyor, oradaki ~$206K okuyana görünmüyordu. Artık **fiyatta
+bitişik bantlar birleştirilir** (`crypto_liq_band_merge`, varsayılan %5): eşik
+bandın kendi mesafesiyle ölçeklenir — fiyata %20 uzaktaki iki band %1 boşlukla
+birleşir, %1 uzaktakiler birleşmez, yani fiyatın dibindeki çözünürlük korunur.
+0 = birleştirme kapalı.
+
+**Mesajda adı geçen her tek pozisyon grafikte kendi etiketini alır.** "Büyük
+tekler" listesindeki satırlar bandın toplamına karışıp kaybolmaz: grafikte
+`LONG $126K · liq 0.1426` diye ayrı ayrı yazılır (çubukları da soluk değil, net).
+Band toplamı onları zaten içerir — ayrı etiket "bandın **içinde nerede**" sorusunu
+cevaplar. Tek üyeli bir band ile o üyenin adı geçen satırı aynı şey olduğu için
+ikisi birden çizilmez.
+
 **⭐ = en yakın ANLAMLI band (08.09 PUMP vakası).** Eskiden bantlar yalnız
 toplama göre seçilip yön başına en şişman 3'ü alınıyordu: PUMP'ta fiyatın %1,3
 altındaki $2.2M band, %20-30'daki $17.6M duvarın ve iki şişman bandın arkasında

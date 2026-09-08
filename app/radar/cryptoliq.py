@@ -348,7 +348,9 @@ async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | Non
     has_main = any(q.get("main") for q in ordered)      # işaretli varsa konuma göre EZME
     levels = [{"px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
                "dist": p.get("dist"), "main": bool(p.get("main")) if has_main else i == 0,
-               **{k: p[k] for k in ("px_lo", "px_hi", "cluster", "n") if k in p}}   # küme bandı
+               # "named" DEMETE DAHİL: unutulursa bayrak sessizce düşer, grafik
+               # eskisi gibi görünür ve hiçbir şey hata vermez (bu yolun tuzağı).
+               **{k: p[k] for k in ("px_lo", "px_hi", "cluster", "n", "named") if k in p}}
               for i, p in enumerate(ordered)]
     return liqchart.render(coin, cands, mark, levels, interval=CHART_LABEL[0],
                            span_txt=CHART_LABEL[1], target=target, coverage_txt=coverage_txt,
@@ -441,7 +443,8 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
         # anlattığı pozisyon olmalı (README "alarm ile /sembol aynı sırada anlatır").
         # SAYFA eşiği yalnız LİSTEYİ genişletir, başlığı değiştirmez.
         bands = liqmap.clusters(near, mark, far_pct, per_side=3,
-                                near_share=NEAR_BAND_SIG_SHARE, near_min=min_usd)
+                                near_share=NEAR_BAND_SIG_SHARE, near_min=min_usd,
+                                merge_share=float(getattr(cfg, "crypto_liq_band_merge", 5) or 0) / 100)
         if bands:
             sig_floor = max(min_usd, bands[0]["total"] * NEAR_BAND_SIG_SHARE)
             sig = [b for b in bands if b["total"] >= sig_floor]
@@ -459,6 +462,17 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
         # Grafik: bantların ŞERİDİ + SAYFA eşiği üstündeki her pozisyonun ÇİZGİSİ.
         # Aynı kovaya düşen pozisyonların etiketi renderer'da tek satırda toplanır.
         order = sorted(bands, key=lambda b: (0 if b is main_band else 1, b["dist_lo"]))
+        # Tek üyeli band + o üyenin "adı geçen tek" satırı AYNI ŞEY: ikisini de
+        # çizersek grafikte aynı fiyatta iki etiket olur. ⭐ hariç bandı düşürüyoruz,
+        # adı geçen tek zaten daha iyi etiketleniyor ("LONG $248K · liq 0.1181").
+        _named = {(p.get("address"), p.get("side")) for p in show}
+
+        def _solo_named(b) -> bool:
+            if b is main_band or (b.get("n") or 0) != 1:
+                return False
+            t = ((b.get("top") or [{}])[0] or {})
+            return (t.get("address"), b.get("side")) in _named
+        order = [b for b in order if not _solo_named(b)]
         chart_rows = [{"liq_px": b["px"], "side": b["side"], "notional": b["total"], "dist": b["dist_lo"],
                        "px_lo": b["px_lo"], "px_hi": b["px_hi"], "cluster": True, "n": b["n"],
                        "main": b is main_band, "mark": float(mark)} for b in order]
@@ -468,8 +482,13 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
         seen = {(p.get("address"), p.get("side")) for p in big}
         chart_pool = list(big[:SHOW_MAX]) + [p for p in show
                                              if (p.get("address"), p.get("side")) not in seen]
+        # `named` = metinde "Büyük tekler" olarak ADI GEÇEN pozisyon. Grafikte kendi
+        # etiketini alır (banda karışıp toplamda kaybolmaz): kullanıcı üç kez
+        # "0.1420-0.1430'daki $206K nerede" diye sordu — cevabı bu bayrak.
+        named = {(p.get("address"), p.get("side")) for p in show}
         chart_rows += [{"liq_px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
-                        "dist": p.get("dist"), "main": False, "mark": float(mark)}
+                        "dist": p.get("dist"), "main": False, "mark": float(mark),
+                        "named": (p.get("address"), p.get("side")) in named}
                        for p in chart_pool]
         chart_rows = chart_rows or show
         if main_band:

@@ -28,6 +28,13 @@ COLLAPSE_RUN = 3
 MIN_WPCT = 2.0
 # Kademeli okuma eşikleri ("fiyat %2 giderse toplam kaç $ patlar").
 CASCADE_PCTS = (2.0, 5.0, 10.0)
+# Fiyatta BİTİŞİK bantlar birleşir: kovalar şimdiye UZAKLIĞA göre sabittir, kova
+# sınırının nereye denk geldiği likiditenin nerede toplandığıyla ilgisizdir. ANSEM
+# vakası: liq 0.1430 (%19,98) ile 0.1426 (%20,20) fiyatta %0,22 arayken %20 sınırı
+# tam aralarından geçip ikisini ayrı bantlara atıyordu. Eşik MESAFEYLE ÖLÇEKLENİR —
+# fiyata %20 uzaktaki iki band %0,2 arayla aynı bölgedir, %1 uzaktakiler değildir;
+# böylece fiyatın dibindeki çözünürlük korunur.
+MERGE_MIN_PCT = 0.1
 # "Sıradaki" listesinde yön başına kaç pozisyon.
 NEXT_N = 4
 
@@ -193,9 +200,41 @@ def build(rows: list[dict], mark: float | None, max_dist_pct: float = 50.0) -> d
     }
 
 
+def _merge_adjacent(bands: list[dict], mark: float, share: float, top: int) -> list[dict]:
+    """Aynı yönde, fiyatta bitişik bantları tek banda indirger (bkz. MERGE_MIN_PCT).
+    `share` = 0 → dokunmaz. Bantlar fiyata göre sıralı taranır; boşluk eşiği iki
+    bandın fiyata YAKIN olanının mesafesiyle ölçeklenir."""
+    if share <= 0 or not bands:
+        return bands
+    out: list[dict] = []
+    for side in ("long", "short"):
+        ps = sorted((b for b in bands if b.get("side") == side), key=lambda b: b["px_lo"])
+        cur = None
+        for b in ps:
+            if cur is None:
+                cur = dict(b)
+                continue
+            gap = (float(b["px_lo"]) - float(cur["px_hi"])) / mark * 100
+            if gap <= max(MERGE_MIN_PCT, min(cur["dist_lo"], b["dist_lo"]) * share):
+                cur = {**cur,
+                       "px_lo": min(cur["px_lo"], b["px_lo"]), "px_hi": max(cur["px_hi"], b["px_hi"]),
+                       "dist_lo": min(cur["dist_lo"], b["dist_lo"]),
+                       "dist_hi": max(cur["dist_hi"], b["dist_hi"]),
+                       "total": cur["total"] + b["total"], "n": cur["n"] + b["n"],
+                       "top": sorted((cur.get("top") or []) + (b.get("top") or []),
+                                     key=lambda c: -float(c.get("notional") or 0))[:top]}
+                cur["px"] = cur["px_hi"] if side == "long" else cur["px_lo"]
+            else:
+                out.append(cur)
+                cur = dict(b)
+        if cur is not None:
+            out.append(cur)
+    return out
+
+
 def clusters(cands: list[dict], mark: float | None, max_dist_pct: float = 50.0,
              per_side: int = 2, top: int = 3, near_share: float = 0.0,
-             near_min: float = 0.0) -> list[dict]:
+             near_min: float = 0.0, merge_share: float = 0.0) -> list[dict]:
     """Anlık görüntü için KÜME seçimi (HEMI vakası): pozisyon tavanı $80K olan bir
     coinde ≥ $500K tek pozisyon olamaz; "en yakın"lar toz ($136) çıkar, asıl kütle
     %18 aşağıdaki onlarca küçük pozisyonun toplamıdır. Aynı kovalar (SLOT_EDGES)
@@ -227,6 +266,7 @@ def clusters(cands: list[dict], mark: float | None, max_dist_pct: float = 50.0,
                         "dist_hi": max(float(c["dist"]) for c in grp),
                         "total": sum(float(c.get("notional") or 0) for c in grp), "n": len(grp),
                         "top": sorted(grp, key=lambda c: -float(c.get("notional") or 0))[:top]})
+    out = _merge_adjacent(out, float(mark), float(merge_share or 0), top)
     out.sort(key=lambda c: -c["total"])
     if not out:
         return []

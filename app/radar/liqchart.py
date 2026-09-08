@@ -167,6 +167,8 @@ def _group_text(items: list[dict]) -> str:
     bands = [x for x in items if x.get("cluster")]
 
     def _member(x) -> bool:
+        if x.get("named"):
+            return False              # adı geçen tek: kendi rakamıyla durur
         for b in bands:
             if b is x or b.get("px_lo") is None or b.get("side") != x.get("side"):
                 continue
@@ -197,12 +199,22 @@ def label_groups(levels: list[dict], y_of, pitch: float = LABEL_PITCH,
     y'si açık bir grubun çapasına `pitch` kadar yakın olan seviye o gruba katılır
     ("3 long $840K · 0.0036–0.0038"), değilse yeni grup açar. Sıra: ana ⭐ önce,
     sonra fiyata yakınlık — en çok `cap` grup etiketlenir, artanı çağıran tek bir
-    kenar etiketine toplar. Böylece hiçbir seviye sessizce kaybolmaz."""
+    kenar etiketine toplar. Böylece hiçbir seviye sessizce kaybolmaz.
+
+    `named` (mesajda adı geçen tek pozisyon) İSTİSNADIR: hiçbir gruba katılmaz,
+    kendi etiketini alır ve `cap` tavanında elenmemek için öne sıralanır. Aksi
+    hâlde bandın toplamına karışıp "orada ne var" sorusu cevapsız kalıyordu."""
+    order = sorted(levels, key=lambda x: (0 if x.get("main") else (1 if x.get("named") else 2)))
     groups: list[list[dict]] = []
     anchors: list[float] = []
-    for x in levels:
+    for x in order:
         y = y_of(float(x["px"]))
-        hit = next((i for i, a in enumerate(anchors) if abs(a - y) < pitch), None)
+        if x.get("named"):
+            groups.append([x])
+            anchors.append(y)
+            continue
+        hit = next((i for i, a in enumerate(anchors)
+                    if abs(a - y) < pitch and not groups[i][0].get("named")), None)
         if hit is None:
             groups.append([x])
             anchors.append(y)
@@ -373,13 +385,15 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
             dashed(yy, col, dash=12, width=3 if x.get("main") else 2)
             seen_y.add(int(round(yy)))
             continue
-        if int(round(yy)) in seen_y:
+        if int(round(yy)) in seen_y and not x.get("named"):
             continue                                 # aynı piksel satırı: aynı çizgi
         seen_y.add(int(round(yy)))
-        # tek pozisyon: sağa yaslı çubuk, boyu $ ile orantılı (derinlik merdiveni)
+        # tek pozisyon: sağa yaslı çubuk, boyu $ ile orantılı (derinlik merdiveni).
+        # Mesajda ADI GEÇEN pozisyon soluk değil — etiketi varken çubuğu kaybolmasın.
         ntl = float(x.get("notional") or 0)
         ln = STUB_MIN + (STUB_MAX - STUB_MIN) * (ntl / big if big > 0 else 0)
-        d.line([(plot_r - ln, yy), (plot_r, yy)], fill=_mix(col, BG, FAINT), width=3)
+        d.line([(plot_r - ln, yy), (plot_r, yy)],
+               fill=col if x.get("named") else _mix(col, BG, FAINT), width=3)
     groups, rest = label_groups(draw, y_of)
     for g in groups:
         col = LIQ.get(g[0].get("side"), LIQ["long"])

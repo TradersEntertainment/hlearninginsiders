@@ -354,6 +354,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "desc": "24 saatlik hacimce ilk N spot çifti. Her çift bir WS aboneliği; yükseltmek trafiği ve fills kayıt hacmini artırır"},
     "spot_fill_min_notional": {"type": "float", "label": "Spot: asgari işlem ($)", "group": "Spot",
                                "desc": "Bu tutarın altındaki spot işlemi fills'e yazılmaz (0 = spot kaydı kapalı). TWAP dilimleri küçüktür — taban düşük tutulur, yoksa dilimler görünmez"},
+    "crypto_liq_band_merge": {"type": "float", "label": "Band birleştirme (mesafenin %'si)", "group": "Kripto liq",
+                              "desc": "Fiyatta bitişik liq bantları tek banda indirgenir. Kovalar şimdiye UZAKLIĞA göre sabittir; kova sınırının nereye denk geldiği likiditenin nerede toplandığıyla ilgisizdir (ANSEM: 0.1430 ve 0.1426 fiyatta %0,22 arayken %20 sınırı ikisini ayırıyordu). Eşik mesafeyle ölçeklenir: %20 uzaktaki iki band bu değerin %20'si kadar boşlukla birleşir, fiyatın dibindeki çözünürlük korunur. 0 = birleştirme kapalı",},
     "crypto_liq_list_dist_pct": {"type": "float", "label": "Liste mesafesi — SAYFA (%)", "group": "Kripto liq",
                                  "desc": "/sembol METNİ bu mesafeden uzak pozisyonu ve bandı yazmaz (kullanıcı kuralı %20). Telegram altyazısı 1024 karakter: uzakları eleyip mesaj TEK parça kalsın diye. Grafik yine azami liq mesafesine kadar hepsini çizer, kaç tanesinin metne girmediği bağlam satırında yazılır"},
     "crypto_liq_chart_fit_all": {"type": "bool", "label": "Grafik tüm liq'leri kapsasın", "group": "Kripto liq",
@@ -675,6 +677,7 @@ class Config:
         # gitti. Uzakları metinden eleyip mesajı tek parça tutuyoruz; grafik hepsini
         # çizmeye devam eder.
         self.crypto_liq_list_dist_pct = float(os.getenv("CRYPTO_LIQ_LIST_DIST_PCT", "20"))
+        self.crypto_liq_band_merge = float(os.getenv("CRYPTO_LIQ_BAND_MERGE", "5"))
         # Spot: yalnız TWAP dilimleri için dinlenir (pozisyon/liq/funding yok).
         self.spot_enabled = True
         self.spot_watch_top = int(os.getenv("SPOT_WATCH_TOP", "40"))
