@@ -349,6 +349,24 @@ TWAP dilimleri ve "ne oldu" kaydı için dinlenir, ana kanala **alarm üretmezle
 (kripto perp'lerle aynı kural). Ayrı bir kayıt tabanı var (`SPOT_FILL_MIN_NOTIONAL`,
 $5K; 0 = spot kaydı kapalı) çünkü TWAP dilimleri küçüktür. Ayarlar → **Spot**.
 
+Spot çiftleri **her yerde okunur adıyla** görünür (`@107` → `PURR/USDC`): Telegram
+alarmı, `/twap`, `/twaplar` ve `/tani` teşhis satırları tek merkezden okur
+(`assets.SPOT_NAMES` + senkron `assets.label()`; `CRYPTO_DEX_SYMBOLS` ile aynı
+desen — kv'den açılışta yüklenir, evren yenilemesinde tazelenir). İlk canlı spot
+alarmı `⏳ TWAP · @272` diye düşmüştü: `@272` HL'nin borsa kimliği, insana hiçbir
+şey anlatmıyor. `/twap PURR/USDC` yazınca borsa kimliği ters aramayla bulunur.
+Spot alarmında `📍 spot çifti — pozisyon, likidasyon ve funding yok` yazar; perp
+mesajındaki "açık pozisyon yok → kapatıyor ya da hedge olabilir" çıkarımı spot'ta
+**yanlış** olurdu.
+
+**İnce spot çiftleri kanalı doldurmasın** diye `SPOT_TWAP_MIN_DAY_VOL` ($1M;
+0 = kapalı) var: 24 saatlik hacmi bu tabanın altındaki çift TWAP alarmı üretmez.
+Hacim *yüzdesi* kuralı (`TWAP_ALERT_VOL_PCT`, %5) spot'ta işe yaramıyor — ince
+çiftte oran küçülmez, **patlar**: $238K hacimli bir çiftteki $1,9M emir hacmin
+%799'uydu, yani yüzde kapısı hiçbir şey elemiyordu. Susturulan emir gizlenmez:
+`/tani` onu **`spot çifti ince`** nedeniyle sayar ve `/twaplar` emir defterinde
+yine görünür.
+
 **Kör nokta, açıkça:** dinlemediğimiz coinlerdeki emirler, dilim toplamı sorgu
 tabanının (`twap_lookup_min_usd`, $50K) altında kalan küçük emirler ve dilimleri
 kayıt tabanının altında kalan çok sabırlı emirler burada **görünmez — ve
@@ -558,6 +576,23 @@ tekler" listesindeki satırlar bandın toplamına karışıp kaybolmaz: grafikte
 Band toplamı onları zaten içerir — ayrı etiket "bandın **içinde nerede**" sorusunu
 cevaplar. Tek üyeli bir band ile o üyenin adı geçen satırı aynı şey olduğu için
 ikisi birden çizilmez.
+
+**Sağ oluktaki etiketler fiyat sırasını korur ve çizgisine bağlanır.** Kullanıcı
+sordu: "1420-1430 liqleri neden 1200'nin altında grafikte?" — haklıydı. Etiketler
+*mesafe* sırasında yerleştiriliyor ve çakışma yalnız **aşağı** itilerek çözülüyordu:
+sonra gelen ama fiyatı daha yüksek olan etiket öncekinin altına düşebiliyor, kayma
+da 45px'e kadar birikip etiketle çizgisi arasında hiçbir bağ kalmıyordu — `liq
+0.1426` yazan etiket `0.1319` hizasında duruyordu. Artık `liqchart.stack_labels`
+(saf, piksel okumadan test edilir) iki kural uyguluyor:
+
+- **Fiyat çizgisi yakaları ayırır.** Fiyatın altındaki bir liq'in etiketi
+  "fiyat X" yazısının üstüne asla geçmez.
+- **Yığın ⭐ ana banddan dışarı büyür.** Manşet rakam kendi çizgisinde kalır;
+  yalnız iki yanına etiketler fiziksel olarak sığmıyorsa ⭐ de kayar — çünkü
+  **sıra kuraldır, ⭐'yi sabitlemek istektir**.
+
+Kayan her etiket olukta ince bir **dirsekle** kendi çizgisine bağlanır, böylece
+"bu etiket hangi çizginin?" sorusu tahmine kalmaz.
 
 **⭐ = en yakın ANLAMLI band (08.09 PUMP vakası).** Eskiden bantlar yalnız
 toplama göre seçilip yön başına en şişman 3'ü alınıyordu: PUMP'ta fiyatın %1,3

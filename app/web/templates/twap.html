@@ -54,7 +54,7 @@
         <th>Durum</th></tr>
     {% for r in rows %}
     <tr>
-      <td class="l"><b>{{ r.symbol }}</b></td>
+      <td class="l">{% if r.spot %}<span title="Spot çifti — pozisyon/likidasyon yok">🪙</span> {% endif %}<b>{{ r.symbol }}</b></td>
       <td class="l">{{ m.addr(r.address, k, 6) }}
         {%- if r.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}
         {%- if r.entity %}<span class="warn" title="{{ r.entity }} etiketli">🤖</span>{% endif %}</td>
@@ -108,7 +108,7 @@
     {%- if live.errors %} · <span class="bad">hata {{ live.errors }}</span>{% endif %}
     · {{ live.ts|dt }}{% else %}tur henüz çalışmadı{% endif %}.</p>
   {% if live.decisions %}
-  <p class="kunye">🧾 Son tur kararları: {% for d in live.decisions[:8] %}{{ d.coin }} {{ d.addr[:6] }}… {{ d.side }}
+  <p class="kunye">🧾 Son tur kararları: {% for d in live.decisions[:8] %}{{ coin_label(d.coin) }} {{ d.addr[:6] }}… {{ d.side }}
     {%- if d.planned %} {{ d.planned|usd }} emir{% if d.vol_pct is not none %} (hacmin %{{ '%.1f'|format(d.vol_pct) }}'i){% endif %}{% else %} {{ d.n }} dilim{% endif %}
     → <b>{{ d.reason }}</b>{% if not loop.last %} · {% endif %}{% endfor %}</p>
   {% endif %}

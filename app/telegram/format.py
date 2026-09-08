@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from .. import assets
 from ..db import now
 from ..propr import PROPR_NOTE, is_listed
 
@@ -1786,17 +1787,23 @@ def _fill_line(o: dict) -> str:
 
 def twap_alert(m: dict, ctx: dict) -> str:
     """İlk bildirim — EMİR VERİSİYLE: plan, dolan, kalan süre; hacme oranı. Tahmin yok."""
-    sym = esc((m.get("coin") or "").split(":")[-1])
+    coin = m.get("coin") or ""
+    spot = assets.is_spot(coin)
+    sym = esc(assets.label(coin))
     klass = ctx.get("klass") or "kripto"
     o = ctx.get("order") or {}
     badge = (f"🐘 emir 24s hacmin <b>%{ctx['vol_pct']:.0f}</b>'i" if ctx.get("vol_pct") is not None
              else "💰 hacimden bağımsız büyük")
-    lines = [f"⏳ <b>TWAP</b> · <b>{sym}</b> · {_twap_side(m.get('side'))} · {badge}",
+    lines = [f"⏳ <b>TWAP</b> · {'🪙 ' if spot else ''}<b>{sym}</b> · {_twap_side(m.get('side'))} · {badge}",
              f"👤 {alink(m['address'])} · {_order_line(o, sym)}",
              f"{_fill_line(o)} · gördüğümüz {int(m.get('n') or 0)} dilim × ~{usd(m.get('avg_slice'))},"
              f" her {_gap_txt(m.get('median_gap'))}"]
     pos = ctx.get("pos")
-    if pos and not pos.get("none"):
+    if spot:
+        # Spot'ta pozisyon diye bir şey yok: "açık perp pozisyonu yok → kapatıyor
+        # ya da hedge olabilir" demek okuyanı yanıltırdı.
+        lines.append("📍 spot çifti — pozisyon, likidasyon ve funding yok")
+    elif pos and not pos.get("none"):
         src = pos.get("src") or ""
         when = f" {age_str(pos['ts'])} önce" if src != "canlı" and pos.get("ts") else ""
         lines.append(f"📍 pozisyon: {_side_badge(pos.get('side') or '')} <b>{usd(pos.get('notional'))}</b> · {src}{when}")
@@ -1820,7 +1827,7 @@ def twap_alert(m: dict, ctx: dict) -> str:
 
 def twap_progress(m: dict, ctx: dict) -> str:
     """Emrin yarısı doldu — tek not."""
-    sym = esc((m.get("coin") or "").split(":")[-1])
+    sym = esc(assets.label(m.get("coin") or ""))
     o = ctx.get("order") or {}
     fp = o.get("filled_pct")
     line = (f"⏳ <b>TWAP yarılandı</b> · <b>{sym}</b> · {_twap_side(m.get('side'))}"
@@ -1835,7 +1842,7 @@ def twap_progress(m: dict, ctx: dict) -> str:
 
 def twap_end(m: dict, ctx: dict) -> str:
     """Bitiş (🏁) / iptal (⛔): gerçek dolan tutar, plan, süre, fiyat, hacme oran."""
-    sym = esc((m.get("coin") or "").split(":")[-1])
+    sym = esc(assets.label(m.get("coin") or ""))
     o = ctx.get("order") or {}
     head = "⛔ <b>TWAP iptal edildi</b>" if ctx.get("cancelled") else "🏁 <b>TWAP bitti</b>"
     lines = [f"{head} · <b>{sym}</b> · {_twap_side(m.get('side'))} · 👤 {alink(m['address'])}"]

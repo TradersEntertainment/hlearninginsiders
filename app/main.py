@@ -342,6 +342,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.debug("kripto dex sembolleri yüklenemedi", exc_info=True)
 
+    # Spot çiftlerinin okunur adları (@107 → PURR/USDC): spot evreni yenilenene
+    # kadar kv'deki son liste geçerli — mesajlar ham '@272' yazmasın
+    try:
+        n_sp = await _assets.load_spot_names()
+        if n_sp:
+            log.info("spot çift adları yüklendi: %d", n_sp)
+    except Exception:
+        log.debug("spot çift adları yüklenemedi", exc_info=True)
+
     # Sicil eşiği değiştiyse eski kayıtları yeni kurala göre yeniden hesapla (bir kez)
     from .recompute import recompute_records
     try:

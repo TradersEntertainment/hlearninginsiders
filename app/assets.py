@@ -107,6 +107,64 @@ async def load_crypto_dex_symbols() -> int:
     return len(CRYPTO_DEX_SYMBOLS)
 
 
+# Spot çiftlerinin borsa kimliği okunur değildir: HL onlara '@272' der, insan
+# 'PURR/USDC' okur. Okunur ad `hl.universe.top_spot_coins` ile kv'ye yazılır;
+# burada modül düzeyinde tutulur ki `label()` SENKRON olsun — Telegram
+# biçimleyicileri, şablon macro'ları ve teşhis satırları await edemez.
+# (İlk canlı spot TWAP alarmı "⏳ TWAP · @272" diye düşmüştü.)
+SPOT_NAMES: dict[str, str] = {}
+SPOT_NAMES_KV = "spot_top_coins"          # kaynak: hl.universe.SPOT_KV
+
+
+def is_spot(coin_or_symbol: str) -> bool:
+    """Spot çifti mi — HL spot kimliği '@N' biçimindedir (perp'te '@' yok)."""
+    return (coin_or_symbol or "").startswith("@")
+
+
+def label(coin: str) -> str:
+    """GÖSTERİM adı — kimlik DEĞİL. Spot '@107' → 'PURR/USDC', HIP-3
+    'para:UANSEM' → 'UANSEM', ana dex 'INJ' → 'INJ'. Ad henüz gelmediyse ham
+    kimlik döner (eski davranış; mesaj yine gider). Büyük harfe ÇEVİRMEZ:
+    HL'den gelen adlar zaten doğru biçimde."""
+    c = coin or ""
+    if is_spot(c):
+        return SPOT_NAMES.get(c) or c
+    return c.split(":")[-1]
+
+
+def spot_coin_of(name: str) -> str:
+    """Ters arama: 'PURR/USDC' → '@107'. Bulunamazsa boş — çağıran ham girdiyle
+    devam eder ('/twap PURR/USDC' yazan kullanıcı için)."""
+    s = (name or "").strip().upper()
+    if not s:
+        return ""
+    if is_spot(s):
+        return s
+    for coin, lbl in SPOT_NAMES.items():
+        if str(lbl).upper() == s:
+            return coin
+    return ""
+
+
+def set_spot_names(names) -> None:
+    SPOT_NAMES.clear()
+    SPOT_NAMES.update({str(k): str(v) for k, v in (names or {}).items()
+                       if str(k).strip() and str(v).strip()})
+
+
+async def save_spot_names(names) -> None:
+    """Evren tarafı kv'yi kendi yazıyor; burada yalnız bellek tazelenir."""
+    set_spot_names(names)
+
+
+async def load_spot_names() -> int:
+    """Açılış: spot evreni yenilenene kadar kv'deki son ad listesi geçerli."""
+    from .db import kv_get
+    rec = await kv_get(SPOT_NAMES_KV) or {}
+    set_spot_names(rec.get("names") or {})
+    return len(SPOT_NAMES)
+
+
 def excluded_set() -> set[str]:
     """Tamamen takip dışı semboller (evren + tarama + takvim yok)."""
     return _extra("exclude_symbols")
@@ -118,9 +176,10 @@ def is_excluded(symbol_or_coin: str) -> bool:
 
 
 def kind(symbol_or_coin: str) -> str:
-    """'equity' | 'non_equity' | 'no_calendar' | 'crypto' (HIP-3 kripto dex'i, ör. para:ANSEM)"""
-    if is_crypto_dex(symbol_or_coin or ""):
-        return "crypto"
+    """'equity' | 'non_equity' | 'no_calendar' | 'crypto' (HIP-3 kripto dex'i ör.
+    para:ANSEM, ya da spot çifti ör. @107 — ikisinin de bilanço takvimi yok)"""
+    if is_crypto_dex(symbol_or_coin or "") or is_spot(symbol_or_coin or ""):
+        return "crypto"          # spot çifti de kripto: bilanço takvimi yok
     sym = (symbol_or_coin or "").split(":")[-1].upper()
     if sym in NON_EQUITY or sym in _extra("non_equity_extra"):
         return "non_equity"

@@ -354,6 +354,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "desc": "24 saatlik hacimce ilk N spot çifti. Her çift bir WS aboneliği; yükseltmek trafiği ve fills kayıt hacmini artırır"},
     "spot_fill_min_notional": {"type": "float", "label": "Spot: asgari işlem ($)", "group": "Spot",
                                "desc": "Bu tutarın altındaki spot işlemi fills'e yazılmaz (0 = spot kaydı kapalı). TWAP dilimleri küçüktür — taban düşük tutulur, yoksa dilimler görünmez"},
+    "spot_twap_min_day_vol": {"type": "float", "label": "Spot TWAP: asgari 24s hacim ($)", "group": "Spot",
+                              "desc": "24 saatlik hacmi bu tutarın altındaki spot çifti TWAP alarmı ÜRETMEZ (0 = taban kapalı). Yüzde kuralı (Emrin hacme oranı) ince spot çiftlerinde işe yaramaz: oran küçülmez, patlar — $238K hacimli bir çiftteki $1,9M emir hacmin %799'uydu. Kaçan emir gizlenmez, /tani 'spot çifti ince' sayacında görünür"},
     "crypto_liq_band_merge": {"type": "float", "label": "Band birleştirme (mesafenin %'si)", "group": "Kripto liq",
                               "desc": "Fiyatta bitişik liq bantları tek banda indirgenir. Kovalar şimdiye UZAKLIĞA göre sabittir; kova sınırının nereye denk geldiği likiditenin nerede toplandığıyla ilgisizdir (ANSEM: 0.1430 ve 0.1426 fiyatta %0,22 arayken %20 sınırı ikisini ayırıyordu). Eşik mesafeyle ölçeklenir: %20 uzaktaki iki band bu değerin %20'si kadar boşlukla birleşir, fiyatın dibindeki çözünürlük korunur. 0 = birleştirme kapalı",},
     "crypto_liq_list_dist_pct": {"type": "float", "label": "Liste mesafesi — SAYFA (%)", "group": "Kripto liq",
@@ -682,6 +684,7 @@ class Config:
         self.spot_enabled = True
         self.spot_watch_top = int(os.getenv("SPOT_WATCH_TOP", "40"))
         self.spot_fill_min_notional = float(os.getenv("SPOT_FILL_MIN_NOTIONAL", "5000"))
+        self.spot_twap_min_day_vol = float(os.getenv("SPOT_TWAP_MIN_DAY_VOL", "1000000"))
         self.crypto_liq_chart_fit_all = True
         self.crypto_liq_dist_pct = float(os.getenv("CRYPTO_LIQ_DIST_PCT", "2.5"))
         self.crypto_liq_dist2_pct = float(os.getenv("CRYPTO_LIQ_DIST2_PCT", "1.0"))

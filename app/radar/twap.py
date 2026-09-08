@@ -18,6 +18,7 @@ import asyncio
 import logging
 import statistics
 
+from .. import assets
 from ..db import db, kv_set, now
 
 log = logging.getLogger("radar.twap")
@@ -161,7 +162,8 @@ async def recent(limit: int = 80, hours: int = 48) -> list[dict]:
     rows = list(best.values())
     for r in rows:
         r["active"] = is_active(r, ts) and not r.get("ended_ts")
-        r["symbol"] = (r["coin"] or "").split(":")[-1]
+        r["spot"] = assets.is_spot(r["coin"] or "")
+        r["symbol"] = assets.label(r["coin"] or "")
         r["src"] = r.get("src") or "fills"
         dv, rd = r.get("day_volume"), r.get("rate_day")
         r["rate_pct"] = (float(rd) / float(dv) * 100) if dv and rd else None
@@ -236,8 +238,8 @@ async def all_orders(hours: int = 168, status: str = "hepsi", market: str = "hep
     names = await _spot_names()
     for r in best.values():
         coin = r["coin"] or ""
-        r["spot"] = coin.startswith("@")
-        r["symbol"] = names.get(coin, coin) if r["spot"] else coin.split(":")[-1]
+        r["spot"] = assets.is_spot(coin)
+        r["symbol"] = names.get(coin) or assets.label(coin)
         r["src"] = r.get("src") or "fills"
         r["size_usd"] = order_size(r)
         r["planned_known"] = bool(r.get("planned_usd"))

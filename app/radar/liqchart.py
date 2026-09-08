@@ -78,6 +78,7 @@ NEAR_MIN_PCT = 10.0
 # kesiyoruz; artan seviyeler tek bir "kalanlar" etiketine toplanır.
 LABEL_PITCH = 28
 MAX_LABELS = 14
+TAG_GAP = 13          # etiket kutusu ile plot kenarı arası — dirsek bu boşlukta çizilir
 # Tek pozisyon çizgisi: mumları ezmesin diye SAĞ KENARA yaslı kısa bir çubuk
 # (dış liq haritalarının derinlik merdiveni). Boy $ ile orantılı; 34 tam genişlik
 # çizgi denendi, grafik okunmaz bir duvara dönüyordu.
@@ -223,6 +224,76 @@ def label_groups(levels: list[dict], y_of, pitch: float = LABEL_PITCH,
     return groups[:cap], [x for g in groups[cap:] for x in g]
 
 
+def stack_labels(anchors: list[float], mark_y: float, top: float, bottom: float,
+                 pitch: float = LABEL_PITCH, pivot: int | None = None) -> list[float]:
+    """Çizgi y'leri → etiket y'leri. FİYAT SIRASI KORUNUR. SAF: piksel okumadan test edilir.
+
+    `place()` etiketleri geldikleri sırada (mesafeye göre) ve YALNIZ aşağı itiyordu.
+    İki sonucu vardı: (1) sonra gelen ama fiyatı daha YÜKSEK olan etiket, önce
+    konmuş düşük fiyatlının ALTINA düşebiliyordu — grafiğin fiyat ekseniyle sağ
+    oluk çelişiyordu; (2) kayma tek yöne birikip 45px'e çıkıyor, etiketle çizgisi
+    arasında bağ kalmıyordu ("1420-1430 liqleri neden 1200'nin altında?").
+
+    İki kademe:
+      1. FİYAT ÇİZGİSİ yakaları ayırır — fiyatın altındaki bir liq'in etiketi
+         "fiyat X" yazısının ASLA üstüne geçmez.
+      2. Her yaka kendi içinde `pivot`tan (⭐ ana band — manşet rakam) dışarı
+         büyür; ⭐ kendi çizgisinden hiç ayrılmaz. Pivot yoksa eksen fiyat bandıdır.
+
+    Monoton ileri tarama (`t = önceki + pitch`) sırayı matematiksel olarak garanti
+    eder; kenara dayanınca ters tarama yükü eksene doğru geri dağıtır ama ekseni
+    aşmaz. Dönüş girdiyle AYNI sıradadır.
+    """
+    src = [float(a) for a in anchors]
+    out = list(src)
+    mark_y, pitch = float(mark_y), float(pitch)
+
+    def sweep(order: list[int], step: float, limit: float, axis: float):
+        """`order`: eksenden UZAKLAŞAN sırada indeksler; `step` yönü verir."""
+        if not order:
+            return
+        prev = axis
+        for i in order:
+            out[i] = max(out[i], prev + step) if step > 0 else min(out[i], prev + step)
+            prev = out[i]
+
+        def bound(want: float, p: int) -> float:
+            near = axis + step * (p + 1)      # p'inci etiket eksene en fazla bu kadar yaklaşır
+            return max(want, near) if step > 0 else min(want, near)
+
+        n = len(order)
+        last = order[-1]
+        out[last] = bound(min(out[last], limit) if step > 0 else max(out[last], limit), n - 1)
+        for p in range(n - 2, -1, -1):
+            a, b = order[p], order[p + 1]
+            want = min(out[a], out[b] - step) if step > 0 else max(out[a], out[b] - step)
+            out[a] = bound(want, p)
+
+    for step, edge, limit in ((pitch, mark_y + pitch, bottom), (-pitch, mark_y - pitch, top)):
+        half = [i for i in range(len(src)) if (src[i] >= mark_y) == (step > 0)]
+        if not half:
+            continue
+        far_of = (lambda i: src[i]) if step > 0 else (lambda i: -src[i])   # eksenden uzaklık
+        p = pivot if (pivot is not None and pivot in half) else None
+        near = sorted((i for i in half if i != p and far_of(i) <= far_of(p)),
+                      key=lambda i: -far_of(i)) if p is not None else []
+        far = sorted((i for i in half if i != p and far_of(i) > far_of(p)),
+                     key=far_of) if p is not None else []
+        # ⭐'yi sabitlemek İSTEĞE bağlıdır, fiyat sırası DEĞİL. ⭐'nin iki yanına da
+        # etiketler SIĞMALI: sığmazsa ⭐ de kayar (fiyat bandından yayılan yedek
+        # yerleşim). Yoksa yığın ya fiyat çizgisini aşar ya da şeridin dışına taşıp
+        # etiketler üst üste binerdi — ANSEM'de $248K böyle görünmez olmuştu.
+        fits = (p is not None
+                and len(near) * pitch <= abs(src[p] - edge) + 1e-9
+                and len(far) * pitch <= abs(limit - src[p]) + 1e-9)
+        if fits:
+            sweep(far, step, limit, src[p])                 # ⭐'den dışarı
+            sweep(near, -step, edge, src[p])                # ⭐ ile fiyat bandı arası
+        else:
+            sweep(sorted(half, key=far_of), step, limit, edge - step)   # eksen: fiyat bandı
+    return [max(top, min(bottom, v)) for v in out]
+
+
 def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict],
            *, interval: str = "15dk", span_txt: str = "son 48 saat",
            target: tuple | None = None, coverage_txt: str | None = None,
@@ -341,13 +412,23 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
             x += dash * 2
 
     def tag(y: float, text: str, col, fg=BG):
-        while len(text) > 4 and d.textlength(text, font=f_lab) > PAD_R - 24:
+        while len(text) > 4 and d.textlength(text, font=f_lab) > PAD_R - 33:
             text = text[:-2] + "…"          # sığmıyorsa kısalt, taşırma
         tw = d.textlength(text, font=f_lab)
-        x0 = plot_r + 4
+        x0 = plot_r + TAG_GAP
         d.rectangle([x0, y - 13, x0 + tw + 14, y + 13], fill=col)
         d.text((x0 + 7, y - 11), text, fill=fg, font=f_lab)
         return y + 13
+
+    def leader(y_line: float, y_tag: float, col):
+        """Etiket çizgisinden kaydıysa olukta ince dirsek. Etiket 45px aşağı
+        itilip hiçbir şeye bağlanmayınca okuyan onu BULUNDUĞU yükseklikteki
+        fiyata eşliyordu ("1420-1430 liqleri neden 1200'nin altında?")."""
+        c = _mix(col, BG, 0.5)
+        x = plot_r + 7
+        d.line([(plot_r, y_line), (x, y_line)], fill=c, width=1)
+        d.line([(x, y_line), (x, y_tag)], fill=c, width=1)
+        d.line([(x, y_tag), (plot_r + TAG_GAP, y_tag)], fill=c, width=1)
 
     def place(y: float, down: bool = True) -> float:
         """Etiket çakışmasın: önceki etiketlerle 28px içindeyse aşağı (ya da kenar
@@ -366,11 +447,14 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
 
     # üst kenar: pencere dışı ama ≤ far_pct seviyeler — ölçek değişmez, toplu etiket
     top_pin = plan["pinned"]["top"]
+    lo_lim = plot_t + 13
     if top_pin:
         col = LIQ.get(top_pin[0].get("side"), LIQ["short"])
         tag(place(plot_t + 13, down=True), _pinned_text(top_pin, top=True), col)
+        lo_lim += LABEL_PITCH
     if plan["target_pinned"] and tpx and tpx > mark:
         tag(place(plot_t + 13, down=True), f"▲ {target[1] or f'zincir hedefi {_px(tpx)}'}", AMBER)
+        lo_lim += LABEL_PITCH
 
     # liq seviyeleri: ÇİZGİ her seviyeye, ETİKET gruba. En yakın önce işlenir ki
     # etiketi üstte kalsın. Eskiden `draw[:4]` vardı — dış liq haritası onlarca
@@ -394,28 +478,42 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
         ln = STUB_MIN + (STUB_MAX - STUB_MIN) * (ntl / big if big > 0 else 0)
         d.line([(plot_r - ln, yy), (plot_r, yy)],
                fill=col if x.get("named") else _mix(col, BG, FAINT), width=3)
+    # ── SAĞ OLUK ──────────────────────────────────────────────────────────────
+    # Önce kenara çakılı etiketler (uçları onlar tutar), sonra seviye etiketleri
+    # FİYAT SIRASINI koruyarak. Eskiden hepsi `place()` ile mesafe sırasında
+    # konuyordu: sonra gelen ama fiyatı daha yüksek olan etiket öncekinin altına
+    # düşebiliyor, kayma da tek yöne birikiyordu.
     groups, rest = label_groups(draw, y_of)
-    for g in groups:
-        col = LIQ.get(g[0].get("side"), LIQ["long"])
-        tag(place(y_of(g[0]["px"])), _group_text(g), col)
+    hi_lim = plot_b - 13
     if rest:                                          # sığmayanlar tek satırda, kayıp yok
         col = LIQ.get(rest[0].get("side"), LIQ["long"])
         tag(place(plot_b - 13, down=False), f"+ {_group_text(rest)}", col)
-
-    # zincir hedefi: pencere içindeyse noktalı amber çizgi + etiket; dışındaysa
-    # yalnız kenar etiketi (aralığa girmez — grafiği bozmaz)
-    if tpx and not plan["target_pinned"]:
-        yt = y_of(tpx)
-        dashed(yt, AMBER, dash=4, width=2)
-        tag(place(yt), str(target[1] or f"zincir hedefi {_px(tpx)}"), AMBER)
-    elif plan["target_pinned"] and tpx and tpx <= mark:
+        hi_lim -= LABEL_PITCH
+    if plan["target_pinned"] and tpx and tpx <= mark:
         tag(place(plot_b - 13, down=False), f"▼ {target[1] or f'zincir hedefi {_px(tpx)}'}", AMBER)
-
-    # alt kenar: pencere dışı ≤ far_pct seviyeler (toplu)
-    bot_pin = plan["pinned"]["bottom"]
+        hi_lim -= LABEL_PITCH
+    bot_pin = plan["pinned"]["bottom"]                # pencere dışı ≤ far_pct seviyeler (toplu)
     if bot_pin:
         col = LIQ.get(bot_pin[0].get("side"), LIQ["long"])
         tag(place(plot_b - 13, down=False), _pinned_text(bot_pin, top=False), col)
+        hi_lim -= LABEL_PITCH
+
+    gutter = [(y_of(g[0]["px"]), _group_text(g), LIQ.get(g[0].get("side"), LIQ["long"]))
+              for g in groups]
+    # zincir hedefi: pencere içindeyse noktalı amber çizgi + etiket (oluk sırasına
+    # o da girer); dışındaysa yukarıda kenar etiketi olarak yazıldı
+    if tpx and not plan["target_pinned"]:
+        yt = y_of(tpx)
+        dashed(yt, AMBER, dash=4, width=2)
+        gutter.append((yt, str(target[1] or f"zincir hedefi {_px(tpx)}"), AMBER))
+    # ⭐ ana band manşet rakamdır: yığın ONDAN dışarı büyür, kendisi kıpırdamaz
+    pivot = next((i for i, g in enumerate(groups) if g[0].get("main")), None)
+    for (ay, txt, col), ty in zip(gutter, stack_labels([a for a, _, _ in gutter], y_m,
+                                                       lo_lim, hi_lim, pivot=pivot)):
+        if abs(ty - ay) >= 6:
+            leader(ay, ty, col)                       # etiket çizgisinden kaydı: bağla
+        tag(ty, txt, col)
+        used.append(ty)
 
     # kalan mesafe köprüsü: fiyat ile ana liq arasında dikey çizgi + etiket
     xb = plot_l + 18

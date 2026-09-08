@@ -8,10 +8,13 @@
 {# Coin hücresi: evrendeki (tickers) coin sembolüyle, ana dex kripto (öneksiz ad)
    ham adıyla /t/'ye bağlanır — kripto coin sayfası artık var. Evrende olmayan
    HIP-3 coini (':' içerir, ör. hariç tutulmuş) düz metin kalır: oraya gitmek
-   "evrende yok" ölü sayfasına düşer. #}
+   "evrende yok" ölü sayfasına düşer.
+   SPOT ÇİFTİ ('@107') okunur adıyla 🪙 işaretli DÜZ METİN kalır: spot'un coin
+   sayfası yok (pozisyon/liq/funding yok) ve '@' adı resolve_coin'de karşılıksız —
+   eskiden ölü bir /t/@272 linki üretiliyordu. #}
 {% macro coin(c, sym_map, k) -%}
 {% set s = sym_map.get(c) -%}
-{% if s %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% elif c and ':' not in c %}<a href="/t/{{ c }}{{ k }}">{{ c }}</a>{% else %}{{ c }}{% endif %}
+{% if is_spot(c) %}<span title="Spot çifti — pozisyon/likidasyon yok">🪙 {{ coin_label(c) }}</span>{% elif s %}<a href="/t/{{ s }}{{ k }}">{{ s }}</a>{% elif c and ':' not in c %}<a href="/t/{{ c }}{{ k }}">{{ c }}</a>{% else %}{{ c }}{% endif %}
 {%- endmacro %}
 
 {# ── Cüzdan bakiyesi + pozisyon/bakiye oranı ─────────────────────────────────

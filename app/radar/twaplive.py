@@ -32,6 +32,7 @@ import logging
 import statistics
 from collections import deque
 
+from .. import assets
 from ..db import alert_log, alert_recent, db, kv_get, kv_set, now
 from ..notify import in_quiet_hours
 from . import twap as twapmod
@@ -64,6 +65,7 @@ REASON_TR = {"irregular": "düzensiz dizi", "mm": "mm/vault", "cooldown": "bekle
              "no_lookup": "collector yok", "lookup_fail": "emir sorgusu başarısız",
              "no_order": "HL'de TWAP emri yok", "order_done": "emir bitmiş/iptal",
              "order_small": "emir eşik altı", "order_left": "kalan az", "no_vol": "hacim bilinmiyor",
+             "spot_thin": "spot çifti ince (24s hacim taban altı)",
              "vol_small": "hacme göre küçük", "no_chat": "kanal yok", "alerted": "bildirildi",
              "failed": "gönderilemedi", "ok": "geçer", "big": "hacimden bağımsız büyük"}
 
@@ -269,8 +271,8 @@ def left_floor(cfg, planned: float) -> float:
 
 def order_gate(cfg, order: dict | None, day_vol, vol_ts, now_ts: int, coin: str = "") -> str:
     """Emir verisiyle kapı: 'ok' | 'big' geçer; diğerleri nedenidir:
-    no_order · order_done · order_small · order_left · no_vol · vol_small.
-    `coin` hacim yüzdesinin sınıfını seçer (vol_pct_for)."""
+    no_order · order_done · order_small · order_left · no_vol · spot_thin · vol_small.
+    `coin` hacim yüzdesinin sınıfını seçer (vol_pct_for) ve spot tabanını uygular."""
     if not order:
         return "no_order"
     if order.get("status") != "activated":
@@ -287,6 +289,11 @@ def order_gate(cfg, order: dict | None, day_vol, vol_ts, now_ts: int, coin: str 
         return "order_left"
     if not day_vol or float(day_vol) <= 0 or not vol_ts or now_ts - int(vol_ts) > VOL_MAX_AGE:
         return "no_vol"
+    # Spot'ta yüzde kuralı ölü: ince çiftte oran küçülmez, PATLAR ($238K hacimli
+    # çiftte $1,9M emir = %799). Tek anlamlı fren çiftin kendi hacmidir.
+    spot_min_vol = float(getattr(cfg, "spot_twap_min_day_vol", 0) or 0)
+    if spot_min_vol > 0 and assets.is_spot(coin) and float(day_vol) < spot_min_vol:
+        return "spot_thin"
     if planned / float(day_vol) * 100 < vol_pct_for(cfg, coin):
         return "vol_small"
     return "ok"
@@ -301,9 +308,11 @@ def gate_detail(cfg, coin: str, order: dict | None, day_vol, vol_ts, now_ts: int
     pct = vol_pct_for(cfg, coin)
     dv = float(day_vol or 0)
     min_usd = float(getattr(cfg, "twap_alert_min_usd", 1_000_000) or 0)
+    spot_min_vol = float(getattr(cfg, "spot_twap_min_day_vol", 0) or 0) if assets.is_spot(coin) else 0.0
     return {"reason": reason, "planned": planned, "left": left, "day_vol": dv or None,
             "vol_pct": (planned / dv * 100) if dv else None, "pct_needed": pct,
             "need_usd": max(min_usd, dv * pct / 100) if dv else min_usd,
+            "vol_need": spot_min_vol or None,
             "left_need": left_floor(cfg, planned), "status": (order or {}).get("status")}
 
 
@@ -534,7 +543,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     out = {"keys": len(REG.runs), "observed": REG.observed, "errors": REG.errors, "cands": 0,
            "regular": 0, "irregular": 0, "lookups": 0, "lookup_fail": 0, "alerted": 0, "progress": 0,
            "ended": 0, "skipped_mm": 0, "no_chat": 0, "no_order": 0, "order_done": 0, "order_small": 0,
-           "order_left": 0, "no_vol": 0, "vol_small": 0, "no_lookup": 0, "failed": 0, "best": None,
+           "order_left": 0, "no_vol": 0, "spot_thin": 0, "vol_small": 0, "no_lookup": 0, "failed": 0, "best": None,
            "decisions": []}
     decisions: list[dict] = out["decisions"]
 
@@ -722,7 +731,7 @@ def decision_line(d: dict) -> str:
     """Tek karar, düz metin: 'PUMP 0x60b0…991e buy $3.0M emir, hacmin %4.8'i → hacme göre küçük (%5 gerekir)'."""
     from ..telegram.format import short, usd
     r = d.get("reason") or "?"
-    txt = f"{d.get('coin')} {short(d.get('addr') or '')} {d.get('side')}"
+    txt = f"{assets.label(d.get('coin') or '')} {short(d.get('addr') or '')} {d.get('side')}"
     if d.get("planned"):
         txt += f" {usd(d['planned'])} emir"
         if d.get("vol_pct") is not None:
@@ -762,7 +771,7 @@ def _run_line(r: "Run") -> str:
     dur = int(r.last_ts - r.first_ts)
     reg = f"düzenli ✓ (aralık ~{int((m or {}).get('median_gap') or 0)} sn)" if m else "düzensiz/az"
     flag = " · bildirildi" if r.alerted_ts else ""
-    return f"{r.coin} {short(r.address)} {r.side} · {r.n} dilim · {dur // 60} dk · {usd(r.total)} · {reg}{flag}"
+    return f"{assets.label(r.coin)} {short(r.address)} {r.side} · {r.n} dilim · {dur // 60} dk · {usd(r.total)} · {reg}{flag}"
 
 
 async def diag_address(cfg, collector, addr: str) -> str:
@@ -804,13 +813,15 @@ async def diag_address(cfg, collector, addr: str) -> str:
                 vol = vols.get(coin)
                 det = gate_detail(cfg, coin, o, vol[0] if vol else None, vol[1] if vol else None, ts)
                 fill = f"doldu {usd(o['executed_usd'])} (%{o['filled_pct']:.0f})" if o.get("filled_pct") is not None else ""
-                lines.append(f"• {esc(coin)} {side.upper()} {usd(o['planned_usd'])} · {fill} · kalan {usd(o['remaining_usd'])}"
+                lines.append(f"• {esc(assets.label(coin))} {side.upper()} {usd(o['planned_usd'])} · {fill} · kalan {usd(o['remaining_usd'])}"
                              f" · {int(o['minutes'])} dk · {esc(o['status'])}")
                 kap = f"  kapı: {REASON_TR.get(det['reason'], det['reason'])}"
                 if det["day_vol"]:
                     kap += f" — hacim {usd(det['day_vol'])}, emir hacmin %{det['vol_pct']:.1f}'i (gerek %{det['pct_needed']:g}, ≥ {usd(det['need_usd'])})"
                 if det["reason"] == "order_left":
                     kap += f" — kalan {usd(det['left'])} < {usd(det['left_need'])}"
+                if det["reason"] == "spot_thin":
+                    kap += f" — spot çiftinin 24s hacmi {usd(det['day_vol'])} < {usd(det['vol_need'])}"
                 lines.append(esc(kap))
                 shown += 1
                 if shown >= 6:
@@ -825,15 +836,24 @@ async def diag_coin(cfg, coin: str) -> str:
     """/twap COIN: dinleniyor mu, 24s hacim, bildirim için gereken emir, coindeki diziler, son kararlar."""
     from ..telegram.format import esc, usd
     coin = (coin or "").upper()
+    # '/twap PURR/USDC' → '@107': kullanıcı borsa kimliğini bilmek zorunda değil
+    coin = assets.spot_coin_of(coin) or coin
     ws = await kv_get("ws_universe") or {}
-    listened = coin in set(ws.get("crypto") or [])
-    top = int(getattr(cfg, "crypto_watch_top", 120) or 0)
-    lines = [f"📡 <b>{esc(coin)}</b> · " + (f"dinleniyor ✓ (ana dex, hacimce ilk {top})" if listened
+    spot = assets.is_spot(coin)
+    listened = coin in set(ws.get("spot" if spot else "crypto") or [])
+    top = int(getattr(cfg, "spot_watch_top" if spot else "crypto_watch_top", 120) or 0)
+    where = "spot, hacimce ilk" if spot else "ana dex, hacimce ilk"
+    lines = [f"📡 <b>{esc(assets.label(coin))}</b> · " + (f"dinleniyor ✓ ({where} {top})" if listened
                                            else f"dinlenMİyor ✗ (ana dex ilk {top} listesinde değil ya da hisse dex'i)")]
     vols = await volumes()
     vol = vols.get(coin)
     pct = vol_pct_for(cfg, coin)
     min_usd = float(getattr(cfg, "twap_alert_min_usd", 1_000_000) or 0)
+    spot_min_vol = float(getattr(cfg, "spot_twap_min_day_vol", 0) or 0)
+    if spot and spot_min_vol > 0:
+        thin = bool(vol) and vol[0] < spot_min_vol
+        lines.append(f"🪙 spot çifti · çiftin 24s hacmi ≥ {usd(spot_min_vol)} olmalı"
+                     + (f" — şu an {usd(vol[0])}, <b>taban altı: alarm yok</b>" if thin else " ✓"))
     if vol:
         lines.append(f"24s hacim {usd(vol[0])} · bildirim için emir ≥ {usd(max(min_usd, vol[0] * pct / 100))}"
                      f" (max({usd(min_usd)}, %{pct:g} × hacim)) · kalan ≥ min({usd(getattr(cfg, 'twap_alert_min_left_usd', 1e6))}, planın yarısı)")

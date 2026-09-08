@@ -15,6 +15,12 @@ def norm_coin(name: str, dex: str) -> str:
 
 
 def symbol_of(coin: str) -> str:
+    """Eşleme/gösterim sembolü. Spot çiftleri okunur adla döner ('@107' →
+    'PURR/USDC'): ham borsa kimliği kullanıcıya hiçbir şey anlatmıyor ve
+    abonelik anahtarı olarak da elle yazılamıyordu (fanout)."""
+    from .. import assets
+    if assets.is_spot(coin):
+        return assets.label(coin).upper()
     return coin.split(":")[-1].upper()
 
 
@@ -321,6 +327,8 @@ async def top_spot_coins(client: HLClient, top_n: int,
     vols = {n: v for v, n, _ in top}
     await kv_set(SPOT_KV, {"coins": out, "names": names, "vols": vols,
                            "want": want, "ts": now()})
+    from .. import assets
+    assets.set_spot_names(names)      # senkron gösterim önbelleği (label())
     log.info("spot dinleme listesi: %d çift (%s)", min(top_n, len(out)),
              ", ".join(names[c] for c in out[:6]) + ("…" if len(out) > 6 else ""))
     return out[:top_n], names, vols
