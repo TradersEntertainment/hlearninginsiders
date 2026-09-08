@@ -1,22 +1,26 @@
-"""🗺 /sembol ≥$200K TÜM pozisyonları listeler, hepsi grafikte çizgi olur.
+"""🗺 /sembol: metin KISA ve TEK mesaj, grafik ≥$200K her pozisyonu çizer.
 
-Kullanıcı isteği (08.09): "200k+ tüm pozları görelim, liq olacak grafikte". Eskiden
-dört ayrı sınır vardı: liste `[:3]`, taban $500K (alarm tabanı) ve grafikte üst üste
-üç `[:4]`; üstüne bot compact altyazılı TEK fotoyu tercih ediyordu ve o altyazı
-tekleri 2'yle sınırladığı için liste 30 satır olsa bile kullanıcı 3 satır görüyordu.
+İki adımın hikâyesi. Önce (Plan V) "hiçbir pozisyon gizlenmesin" dendi ve 33 satır
+yazıldı; canlıda metin **3033 görünür karakter** olunca Telegram'ın 1024'lük altyazı
+sınırı aşıldı ve foto ile metin AYRI mesaj olarak gitti. Kullanıcı: *"foto ve mesaj
+ayrı geldi yine, mesajda sadece 500k+ pozlar yazsın, grafikte [hepsi kalsın] …
+mesajın kısalması lazım, çok uzakları da almayabiliriz."*
+
+Artık ÜÇ eşik var ve hangisi neyi beslediği burada sabitlenir:
+  • `crypto_liq_min_usd` ($500K) — kanala düşme, ⭐/zincir seçimi VE metin listesi
+  • `crypto_liq_list_dist_pct` (%20) — metin bu mesafeden uzağı yazmaz (band dahil);
+    ⭐ ne kadar uzakta olursa olsun kalır
+  • `crypto_liq_show_usd` ($200K) — yalnız GRAFİK: merdivendeki her çizgi
+Metin ile grafik farklı eşikte olduğu için bağlam satırı bunu AÇIKÇA söyler;
+söylemezse kullanıcı "grafikte var, listede yok" diye haklı olarak sorar.
 
 Pinlenenler:
-  • İKİ EŞİK: `crypto_liq_show_usd` (SAYFA, $200K) listeyi ve grafiği besler;
-    `crypto_liq_min_usd` (BİLDİRİM, $500K) alarmı VE ⭐/zincir seçimini besler —
-    "sayfa daha çok gösterir, alarm daha sıkı". SAYFA eşiği bildirim eşiğinin
-    üstüne çıkamaz (kırpılır); toz tabanı daha yüksekse mesajda o yazılır
-  • liste yakından uzağa, SHOW_MAX'te kesilir ve kesilen sayı SÖYLENİR
-  • tam metin her pozisyonu tek satır yazar; `_split` parçalar, hiçbir adres kaybolmaz
-  • bot: tam metin altyazıya sığmıyorsa metin (parçalı) + foto ⭐ altyazısıyla
-  • /takip teklifi en çok OFFER_MAX satıra yazılır (DB yazımı sınırlı), sonrası teklifsiz
-  • plan_levels(fit_all=True): far_pct içindeki her seviye `draw`'a girer (pencere açılır);
-    fit_all=False bugünkü dar pencere — alarm grafiği ve INJ koruması değişmez
-  • label_groups: her seviyenin çizgisi var ama etiketler y'de birleşir, ≤ MAX_LABELS
+  • rows = ≥$500K ve ≤%20, yakından uzağa; %20 ötesi metinde yok ama grafikte var
+  • clusters (metin) mesafe sınırına tabi, ⭐ hariç; chart_rows tüm bantları alır
+  • tek mesaj garantisi: tam metin sığmazsa compact altyazı devreye girer
+  • /takip teklifi en çok OFFER_MAX satıra yazılır (DB yazımı sınırlı)
+  • plan_levels(fit_all=True) + label_groups: grafik tarafı Plan V'den değişmedi
+  • "sayfa gösterir / alarm göstermez" kuralı yürütülebilir hâlde
 """
 import asyncio
 import os
@@ -37,20 +41,23 @@ from app.telegram import format as fmt  # noqa: E402
 from app.telegram.bot import MAX_LEN, TelegramBot  # noqa: E402
 
 M = 0.00424
-N_BIG = 34                                   # ≥$200K pozisyon sayısı
+N_CHART = 37                                 # grafik havuzu: ≥$200K pozisyon
+N_LIST = 3                                   # metin listesi: ≥$500K ve ≤%20
+N_FAR = 2                                    # ≥$500K ama %20'den uzak (metinde yok)
 
 
 def _cfg():
     cfg = Config()
     cfg.crypto_liq_min_usd = 500_000
     cfg.crypto_liq_show_usd = 200_000
+    cfg.crypto_liq_list_dist_pct = 20.0
     cfg.max_liq_distance_pct = 50.0
     cfg.crypto_liq_cascade = False           # bu dosyanın konusu defter değil
     return cfg
 
 
 def _rows():
-    """34 × ≥$200K (0,4%…28%, birkaçı aynı kovada) + 6 küçük + 2 toz."""
+    """5 × ≥$500K (üçü ≤%20) + 32 × ≥$200K + 6 küçük + 2 toz."""
     out = []
 
     def add(side, dist, ntl):
@@ -58,16 +65,20 @@ def _rows():
         out.append({"coin": "PUMP", "address": "0x%040x" % (len(out) + 1), "side": side,
                     "notional": float(ntl), "liq_px": liq, "leverage": 10.0,
                     "entry_px": M, "ts": dbm.now()})
-    add("long", 0.4, 900_000)                        # ⭐ adayı: alarm tabanını da geçer
+    add("long", 0.4, 900_000)                        # ⭐ adayı, metinde
+    add("long", 5.0, 600_000)                        # metinde
+    add("long", 12.0, 1_200_000)                     # metinde
+    add("long", 24.0, 2_500_000)                     # ≥$500K ama %20 ötesi → yalnız grafikte
+    add("long", 31.0, 800_000)                       # aynı
     for k in range(11):
         add("long", 1.2 + k * 0.35, 260_000 + k * 1_000)
     for k in range(8):                               # aynı kovaya düşenler (%10-15)
         add("long", 10.4 + k * 0.5, 240_000)
-    for k in range(9):
+    for k in range(8):
         add("long", 20.5 + k * 0.8, 310_000)
     for k in range(5):
         add("short", 6.0 + k * 1.5, 220_000)
-    for k in range(6):                               # SAYFA eşiği altı → listede yok
+    for k in range(6):                               # grafik eşiği altı → hiçbir yerde yok
         add("long", 2.0 + k * 0.4, 150_000)
     for k in range(2):                               # toz (OI'nin binde biri altı)
         add("short", 3.0 + k, 900)
@@ -109,70 +120,33 @@ class Client:
         return _candles()
 
 
-def test_lists_every_position():
+def test_text_is_short_chart_is_full():
     async def run():
         rows = _rows()
         await _seed(rows)
         s = await cl.snapshot(_cfg(), Client(), "PUMP")
-        assert len(s["rows"]) == N_BIG and s["n_big"] == N_BIG, (len(s["rows"]), s["n_big"])
-        assert all(r["notional"] >= 200_000 for r in s["rows"]), "SAYFA eşiği altı listeye girmez"
-        d = [r["dist"] for r in s["rows"]]
-        assert d == sorted(d), "yakından uzağa"
-        assert s["min_usd"] == 200_000 and s["alert_usd"] == 500_000 and s["n_more"] == 0
-        assert s["n_all"] == len(rows) and s["n_dust"] == 2
-        # ⭐ ALARM tabanına bakar: $900K band başlıkta, $260K'lık yakın komşusu değil
-        assert s["main_band"] and s["main_band"]["total"] >= 500_000, s["main_band"]
-        # metin: her adres TAM BİR KEZ (band satırıyla yazılan tek de tekrar etmez)
+        # METİN: yalnız ≥$500K ve ≤%20, yakından uzağa
+        assert [r["notional"] for r in s["rows"]] == [900_000.0, 600_000.0, 1_200_000.0], s["rows"]
+        assert len(s["rows"]) == N_LIST and s["min_usd"] == 500_000 and s["list_dist"] == 20.0
+        # GRAFİK: ≥$200K her şey (Plan V'den değişmedi)
+        assert s["chart_usd"] == 200_000 and s["n_chart"] == N_CHART, (s["chart_usd"], s["n_chart"])
+        assert s["n_big"] == N_LIST + N_FAR and s["n_list_far"] == N_FAR
+        # metin bantları da sınıra tabi; ⭐ her hâlükârda kalır
+        mb = s["main_band"]
+        assert mb and all(b["dist_lo"] <= 20 or b is mb for b in s["clusters"]), s["clusters"]
         txt = fmt.crypto_liq_snapshot(s)
-        for r in s["rows"]:
-            assert txt.count(fmt.short(r["address"])) == 1, r["address"]
-        assert "havuzda 42 açık pozisyon, 34'ü ≥ $200K" in txt, txt
-        assert "kanala düşme eşiği $500K" in txt, "iki eşik farkı dürüstçe yazılı"
-        print("✅ liste) ≥$200K 34 pozisyonun hepsi tek tek, yakından uzağa; ⭐ hâlâ alarm tabanında")
+        assert "$2.5M" not in txt and "$800K" not in txt, "%20 ötesi ≥$500K metinde YOK"
+        assert f"{N_FAR} pozisyon ≥ $500K ama %20'den uzak — metinde yok, grafikte var" in txt, txt
+        assert f"grafikte ≥ $200K {N_CHART} pozisyon çizili" in txt, "metin/grafik farkı söylenir"
+        assert "havuzda 45 açık pozisyon, 5'ü ≥ $500K" in txt, txt
+        print(f"✅ eşikler) metin {N_LIST} satır (≥$500K, ≤%20) · grafik {N_CHART} pozisyon (≥$200K);"
+              " fark bağlam satırında açıkça yazılı")
     asyncio.run(run())
 
 
-def test_show_floor_clamped_by_alert_floor():
-    async def run():
-        await _seed(_rows())
-        cfg = _cfg()
-        cfg.crypto_liq_show_usd = 1_000_000          # yanlış ayar: bildirim eşiğinin üstü
-        s = await cl.snapshot(cfg, Client(), "PUMP")
-        assert s["min_usd"] == 500_000, "SAYFA eşiği BİLDİRİM eşiğine kenetlenir"
-        assert all(r["notional"] >= 500_000 for r in s["rows"]) and s["rows"], s["rows"]
-        cfg.crypto_liq_show_usd = 0                  # boş → bildirim eşiğine düşer
-        assert (await cl.snapshot(cfg, Client(), "PUMP"))["min_usd"] == 500_000
-        # toz tabanı (OI'nin binde biri) SAYFA eşiğinden yüksekse mesajdaki "≥ $X"
-        # ONU söyler — yoksa "≥ $200K" derken $200K'lık pozisyon listede olmazdı
-        await _seed(_rows(), oi_ntl=900e6)           # OI $900M → toz $900K
-        cfg.crypto_liq_show_usd = 200_000
-        s3 = await cl.snapshot(cfg, Client(), "PUMP")
-        assert s3["dust"] == 900_000 and s3["min_usd"] == 900_000, (s3["min_usd"], s3["dust"])
-        assert all(r["notional"] >= 900_000 for r in s3["rows"]) or not s3["rows"]
-        print("✅ eşik) SAYFA eşiği alarm eşiğini AŞAMAZ; 0 ise ona düşer; toz tabanı yüksekse o yazılır")
-    asyncio.run(run())
-
-
-def test_message_splits_and_offer_cap():
-    async def run():
-        await _seed(_rows())
-        s = await cl.snapshot(_cfg(), Client(), "PUMP")
-        offers = list(range(1, tracker.OFFER_MAX + 1))
-        txt = fmt.crypto_liq_snapshot(s, offers=offers)
-        parts = TelegramBot._split(txt, MAX_LEN)
-        assert len(parts) >= 2 and all(len(p) <= MAX_LEN for p in parts), [len(p) for p in parts]
-        joined = "".join(parts)
-        for r in s["rows"]:                          # parçalanınca da hiçbir adres kaybolmaz
-            assert joined.count(fmt.short(r["address"])) == 1, r["address"]
-        assert txt.count("/takip_") == tracker.OFFER_MAX, txt.count("/takip_")
-        assert tracker.OFFER_MAX == 12 and "OFFER_MAX" in open(
-            os.path.join(ROOT, "app", "telegram", "bot.py"), encoding="utf-8").read()
-        print(f"✅ mesaj) tam liste {len(parts)} parçaya bölünür, adresler eksiksiz;"
-              f" /takip yalnız ilk {tracker.OFFER_MAX} satırda (DB yazımı sınırlı)")
-    asyncio.run(run())
-
-
-def test_bot_sends_photo_plus_full_list():
+def test_single_message():
+    """Asıl şikâyet: foto ve metin ayrı geliyordu. Artık compact altyazı devreye
+    girip mesajı TEK parça tutuyor."""
     async def run():
         from app.hl import universe
         from app.radar import cryptoliq
@@ -184,7 +158,7 @@ def test_bot_sends_photo_plus_full_list():
         sent, photos = [], []
 
         async def fake_send(text, chat_id=None, reply_markup=None):
-            sent.extend(TelegramBot._split(text, MAX_LEN))
+            sent.append(text)
             return True
 
         async def fake_photo(png, caption="", chat_id=None, reply_markup=None):
@@ -203,11 +177,48 @@ def test_bot_sends_photo_plus_full_list():
             assert await bot._cmd_coin_liq("pump", "111") is True
         finally:
             cryptoliq.snapshot, universe.resolve_coin = orig
-        assert len(sent) >= 2, "uzun liste parçalı gider"
-        assert len(photos) == 1 and photos[0].startswith("📈 <b>PUMP</b>"), photos
-        for r in s["rows"]:
-            assert "".join(sent).count(fmt.short(r["address"])) == 1, r["address"]
-        print("✅ bot) uzun listede foto + parçalı TAM liste; compact altyazı yolu devrede değil")
+        assert sent == [] and len(photos) == 1, (sent, photos)     # TEK mesaj
+        cap = photos[0]
+        assert fmt.visible_len(cap) <= fmt.CAPTION_VISIBLE, fmt.visible_len(cap)
+        assert "⭐" in cap and "👤" in cap and "yatırım tavsiyesi" in cap, cap
+        for r in s["rows"]:                                        # üç pozisyon da altyazıda
+            assert fmt.short(r["address"]) in cap, r["address"]
+        print(f"✅ tek mesaj) {fmt.visible_len(cap)} karakterlik altyazı + foto = 1 mesaj;"
+              " metin ayrı gitmiyor")
+    asyncio.run(run())
+
+
+def test_offer_cap_and_split_fallback():
+    async def run():
+        await _seed(_rows())
+        s = await cl.snapshot(_cfg(), Client(), "PUMP")
+        assert tracker.OFFER_MAX == 12
+        assert "OFFER_MAX" in open(os.path.join(ROOT, "app", "telegram", "bot.py"), encoding="utf-8").read()
+        txt = fmt.crypto_liq_snapshot(s, offers=list(range(1, tracker.OFFER_MAX + 1)))
+        assert txt.count("/takip_") == len(s["rows"]), "liste kısa: hepsine teklif yetti"
+        # son çare yolu (foto yoksa) hâlâ çalışıyor: uzun metin satır sınırından parçalanır
+        long_txt = txt + "\n" + "\n".join(f"satır {i} " + "x" * 120 for i in range(40))
+        parts = TelegramBot._split(long_txt, MAX_LEN)
+        assert len(parts) >= 2 and all(len(p) <= MAX_LEN for p in parts)
+        print("✅ teklif/yedek) /takip yalnız ilk 12 satıra yazılır; foto yoksa metin parçalı gider")
+    asyncio.run(run())
+
+
+def test_show_floor_clamped_by_alert_floor():
+    async def run():
+        await _seed(_rows())
+        cfg = _cfg()
+        cfg.crypto_liq_show_usd = 1_000_000          # yanlış ayar: bildirim eşiğinin üstü
+        s = await cl.snapshot(cfg, Client(), "PUMP")
+        assert s["chart_usd"] == 500_000, "GRAFİK eşiği BİLDİRİM eşiğine kenetlenir"
+        cfg.crypto_liq_show_usd = 0                  # boş → bildirim eşiğine düşer
+        assert (await cl.snapshot(cfg, Client(), "PUMP"))["chart_usd"] == 500_000
+        # toz tabanı (OI'nin binde biri) grafik eşiğinden yüksekse o bağlayıcı olur
+        await _seed(_rows(), oi_ntl=900e6)           # OI $900M → toz $900K
+        cfg.crypto_liq_show_usd = 200_000
+        s3 = await cl.snapshot(cfg, Client(), "PUMP")
+        assert s3["dust"] == 900_000 and s3["chart_usd"] == 900_000, (s3["chart_usd"], s3["dust"])
+        print("✅ eşik) GRAFİK eşiği alarm eşiğini AŞAMAZ; 0 ise ona düşer; toz tabanı yüksekse o bağlar")
     asyncio.run(run())
 
 
@@ -229,7 +240,6 @@ def test_plan_fit_all_and_label_groups():
     far = liqchart.plan_levels(cs, M, lv + [_lv(M * 0.4, "long", 1e6)], None, 50.0, fit_all=True)
     assert [round(x["_d"]) for x in far["omitted"]] == [60], far["omitted"]
 
-    # etiketler: her seviyenin çizgisi var ama etiket sayısı sınırlı, yakınlar birleşir
     def y_of(px):                                   # 525px'lik plot kutusunu taklit et
         return 92 + (M * 1.01 - px) / (M * 0.62) * 525
     groups, rest = liqchart.label_groups(p_on["draw"], y_of)
@@ -257,8 +267,7 @@ def test_dense_render():
         cfg.crypto_liq_chart_fit_all = False
         s2 = await cl.snapshot(cfg, Client(), "PUMP")
         assert s2["png"] and s2["png"] != s["png"], "ayar grafiği gerçekten değiştiriyor"
-        # tek pozisyonlar sağa yaslı çubuk (derinlik merdiveni), tam genişlik çizgi DEĞİL —
-        # 34 tam genişlik çizgi grafiği okunmaz bir duvara çeviriyordu
+        # tek pozisyonlar sağa yaslı çubuk (derinlik merdiveni), tam genişlik çizgi DEĞİL
         src = open(os.path.join(ROOT, "app", "radar", "liqchart.py"), encoding="utf-8").read()
         assert "STUB_MIN, STUB_MAX" in src and "plot_r - ln" in src, "derinlik merdiveni"
         assert liqchart.STUB_MAX > liqchart.STUB_MIN > 0
@@ -266,12 +275,12 @@ def test_dense_render():
         if sp:
             open(os.path.join(sp, "dense_34.png"), "wb").write(s["png"])
             open(os.path.join(sp, "dense_off.png"), "wb").write(s2["png"])
-        print("✅ grafik) 34 pozisyonlu PNG üretiliyor; crypto_liq_chart_fit_all ayarı uçtan uca bağlı")
+        print("✅ grafik) metin kısaldı ama PNG hâlâ ≥$200K havuzunu çiziyor; fit_all ayarı bağlı")
     asyncio.run(run())
 
 
 def test_alert_floor_untouched():
-    """Ev kuralının yürütülebilir hâli: $300K sayfada var, kanalda yok."""
+    """Ev kuralının yürütülebilir hâli: $300K sayfada/grafikte var, kanalda yok."""
     async def run():
         from app.notify import Notifier
         await _seed([{"coin": "PUMP", "address": "0x" + "7" * 40, "side": "long",
@@ -289,8 +298,8 @@ def test_alert_floor_untouched():
         out = await cl.scan(cfg, Client(), Notifier(cfg, Bot()))
         assert out.get("events", 0) == 0 and Bot.sent == [], (out, Bot.sent)
         s = await cl.snapshot(cfg, Client(), "PUMP")
-        assert len(s["rows"]) == 1 and s["rows"][0]["notional"] == 300_000.0
+        assert s["n_chart"] == 1 and s["n_big"] == 0, (s["n_chart"], s["n_big"])
         rd = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
         assert "Sayfa daha çok gösterir, alarm daha sıkı" in rd
-        print("✅ kural) $300K sayfada listelenir, kanala DÜŞMEZ — iki eşik gerçekten ayrı")
+        print("✅ kural) $300K grafikte çizilir, kanala DÜŞMEZ — eşikler gerçekten ayrı")
     asyncio.run(run())

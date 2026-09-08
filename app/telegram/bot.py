@@ -637,14 +637,16 @@ class TelegramBot:
             except Exception:
                 log.debug("takip teklifi yazılamadı (%s)", t["coin"], exc_info=True)
         png = s.get("png")
-        # Altyazı = TAM metin. Sığıyorsa tek mesaj (kısa liste, eski davranış); sığmıyorsa
-        # `send` satır sınırlarından parçalar ve foto ⭐ altyazısıyla ekte gelir. Eskiden
-        # compact altyazı tercih ediliyordu; o altyazı tekleri 2'yle sınırladığı için
-        # ≥$200K'lık 30 satırlık liste kullanıcıya HİÇ görünmezdi.
-        full = fmt.crypto_liq_snapshot(s, offers=offers)
-        if png and _caption_fit(full)[1] and await self.send_photo(png, full, chat_id):
-            return True
-        await self.send(full, chat_id)
+        # TEK MESAJ garantisi, üç kademe: (1) tam metin altyazıya sığıyorsa o gider;
+        # (2) sığmıyorsa compact sürüm — öncelik merdiveni zincir/bağlam eklerini ve
+        # en uzak satırları düşürerek 1024'e indirir, düşen sayı satır sonunda yazılır;
+        # (3) foto yoksa ya da compact bile sığmadıysa metin ayrı + foto. Kullanıcı
+        # "foto ve mesaj ayrı geldi yine" dedi: (2) tam olarak bunun için var.
+        for cap in ([fmt.crypto_liq_snapshot(s, offers=offers, compact=c) for c in (False, True)]
+                    if png else []):
+            if _caption_fit(cap)[1] and await self.send_photo(png, cap, chat_id):
+                return True
+        await self.send(fmt.crypto_liq_snapshot(s, offers=offers), chat_id)
         if png:
             await self.send_photo(png, fmt.crypto_liq_photo_caption(s), chat_id)
         return True

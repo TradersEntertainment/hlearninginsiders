@@ -21,7 +21,12 @@ def esc(s) -> str:
 DISCLAIMER = "\n<i>ℹ️ Gözlem aracıdır, yatırım tavsiyesi değildir.</i>"
 # Yalnız GERÇEK etiketler ("</?harf…>"): metindeki kaçışsız '<' yutulmaz.
 TAG_RE = re.compile(r"</?[A-Za-z][^<>]*>")
-CAPTION_VISIBLE = 1024      # Telegram altyazı sınırı: GÖRÜNÜR metin, UTF-16 birim
+CAPTION_VISIBLE = 1024
+# Compact altyazı düşme merdiveni (büyük sayı ÖNCE düşer, 0 asla düşmez). Sıra:
+# zincir → bağlam ekleri → uzak bantlar → son tekler → duvar bandı → ilk tek/etki.
+# Bağlam ekleri (~256 karakter) bilerek tekleri GEÇTİ: eskiden öncelik 3'teydi ve
+# pozisyonlar feda edilip "sayım/ölçüm/toz" sohbeti tutuluyordu.
+P_KEEP, P_SINGLE1, P_WALL, P_SINGLE, P_BAND, P_CTX, P_CASCADE = 0, 1, 2, 3, 4, 5, 6      # Telegram altyazı sınırı: GÖRÜNÜR metin, UTF-16 birim
 
 
 def strip_tags(s: str) -> str:
@@ -837,9 +842,12 @@ def _liq_ctx(s: dict, rows: list[dict]) -> tuple[list[str], list[str]]:
         extra.append(f"{s['n_more']} pozisyon daha ≥ {usd(s.get('min_usd'))} (liste sınırı — tamamı coin sayfasında)")
     if s.get("n_dust"):
         extra.append(f"{s['n_dust']} toz pozisyon (&lt; {usd(s.get('dust'))}) bantlarda var, tek listesinde yok")
-    alert = s.get("alert_usd")
-    if alert and float(alert) > float(s.get("min_usd") or 0):
-        extra.append(f"kanala düşme eşiği {usd(alert)} (liste eşiği daha düşük — sayfa daha çok gösterir)")
+    # Metin ile grafik AYRI eşikte: bunu söylemezsek "grafikte var, listede yok" olur.
+    if s.get("n_list_far"):
+        extra.append(f"{s['n_list_far']} pozisyon ≥ {usd(s.get('min_usd'))} ama %{float(s.get('list_dist') or 0):.0f}'den"
+                     f" uzak — metinde yok, grafikte var")
+    if s.get("n_chart") and s.get("chart_usd") and float(s["chart_usd"]) < float(s.get("min_usd") or 0):
+        extra.append(f"grafikte ≥ {usd(s['chart_usd'])} {s['n_chart']} pozisyon çizili (metin eşiği daha yüksek)")
     cc = coverage_ctx(s.get("coverage"))
     core.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     return core, extra
@@ -917,35 +925,33 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None, compact: bool 
                               offers[j] if j is not None and j < len(offers) else None)
     if cl:
         main = mb if mb in cl else cl[0]
-        rest = [c for c in cl if c is not main]
-        # ⭐ (en yakın anlamlı) + DUVAR (en büyük) + kalanların en yakını: altyazıda hem
-        # "hemen önümüzdeki" hem "asıl kütle" olsun. Gösterim yine mesafe sıralı.
+        # ⭐ asla düşmez; kalan bantlar mesafe sıralı, DUVAR (en büyük) öncelikli —
+        # altyazıda hem "hemen önümüzdeki" hem "asıl kütle" olsun.
+        rest = sorted((c for c in cl if c is not main), key=lambda c: c["dist_lo"])
         wall = max(rest, key=lambda c: c["total"]) if rest else None
-        nearest = next((c for c in sorted(rest, key=lambda c: c["dist_lo"]) if c is not wall), None)
-        prio = {id(main): 0, id(wall): 2, id(nearest): 5}
-        for c in sorted((x for x in (main, wall, nearest) if x is not None),
-                        key=lambda c: c["dist_lo"]):          # gösterim mesafe sıralı
-            blocks.append((prio[id(c)], band_block(c)))
+        prio = {id(main): P_KEEP, id(wall): P_WALL}
+        for c in sorted(cl, key=lambda c: c["dist_lo"]):      # gösterim mesafe sıralı
+            blocks.append((prio.get(id(c), P_BAND), band_block(c)))
     elif not s.get("n_big"):
         blocks.append((0, f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>"))
     n_single = 0
     for i, p in enumerate(rows):
-        if i in shown or n_single >= 2:
-            continue
+        if i in shown:
+            continue                                   # bandıyla birlikte yazıldı
         line = _liq_single_line(p, offers[i] if i < len(offers) else None)
         if n_single == 0 and cl:
             line = ("<i>Büyük tekler:</i> " if s.get("n_big") else "<i>En büyük tekler:</i> ") + line
-        blocks.append((1 if n_single == 0 else 4, line))
+        blocks.append((P_SINGLE1 if n_single == 0 else P_SINGLE, line))
         n_single += 1
     imp = _liq_impact_line(cl if cl else rows)
     if imp:
-        blocks.append((1, imp))
+        blocks.append((P_SINGLE1, imp))
     if s.get("cascade"):
         from ..radar.cascade import describe_short
-        blocks.append((6, describe_short(s["cascade"])))
+        blocks.append((P_CASCADE, describe_short(s["cascade"])))
     blocks.append((0, "<i>" + " · ".join(core_ctx) + "</i>"))
     if extra_ctx:
-        blocks.append((3, "<i>" + " · ".join(extra_ctx) + "</i>"))
+        blocks.append((P_CTX, "<i>" + " · ".join(extra_ctx) + "</i>"))
     blocks.append((0, DISCLAIMER))
     if extra:
         blocks.append((0, extra))
@@ -958,6 +964,16 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None, compact: bool 
             break
         idx = max(i for i, (p, _) in enumerate(blocks) if p == drop)
         del blocks[idx]
+    # Dürüstlük kuyruğu: sığmadığı için düşen tek satırlar sessizce kaybolmasın.
+    # POZİSYON FEDA ETMEZ: yalnız yer varsa eklenir, ya da geriye 2+ satır kaldıysa
+    # sonuncusunun yerini alır (net kazanç: 1 satır gider, düşenlerin TAMAMI sayılır).
+    idx_single = [i for i, (p, t) in enumerate(blocks) if p in (P_SINGLE1, P_SINGLE) and "👤" in t]
+    if len(idx_single) < n_single:
+        tail = f"<i>… ve {n_single - len(idx_single)} pozisyon daha ≥ {usd(s.get('min_usd'))} (coin sayfasında)</i>"
+        if visible_len(text_of(blocks)) + visible_len(tail) + 1 <= limit:
+            blocks.insert(len(blocks) - 1, (0, tail))
+        elif len(idx_single) >= 2 and visible_len(tail) <= visible_len(blocks[idx_single[-1]][1]):
+            blocks[idx_single[-1]] = (0, tail)
     return text_of(blocks)
 
 

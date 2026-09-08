@@ -369,6 +369,10 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     # gösterir. Alarm eşiğinin ÜSTÜNE çıkamaz (aksi hâlde kanala düşen pozisyon
     # sorulduğunda listede olmazdı); boş/0 ise alarm eşiğine düşer.
     show_usd = min(float(getattr(cfg, "crypto_liq_show_usd", 200_000) or 0) or min_usd, min_usd)
+    # METİN mesafe sınırı: Telegram altyazısı 1024 karakter, 33 satırlık liste 3033
+    # oluyor ve foto ile metin ayrı gidiyordu. Metin yalnız ≥ alarm tabanı VE bu
+    # mesafenin içindekileri yazar; grafik far_pct'e kadar hepsini çizmeye devam eder.
+    list_dist = float(getattr(cfg, "crypto_liq_list_dist_pct", 20) or 0) or 1e9
     age = None
     ctx, summ = None, None
     if kind == "crypto":
@@ -419,7 +423,7 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     dust = max(1_000.0, oi_ntl * 0.001)
     solid = [c for c in near if c["notional"] >= dust]
     n_dust = len(near) - len(solid)
-    big = [c for c in solid if c["notional"] >= show_usd]
+    big = [c for c in solid if c["notional"] >= show_usd]              # GRAFİK merdiveni
     all_far = bool(cands) and not near
     # HER ZAMAN band bazlı (PUMP vakası): kovalı liq haritasının bantları başlık olur —
     # tek büyük pozisyon %19'da diye 0.0042'deki onlarca küçük pozisyonun toplamı
@@ -442,12 +446,15 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
             sig_floor = max(min_usd, bands[0]["total"] * NEAR_BAND_SIG_SHARE)
             sig = [b for b in bands if b["total"] >= sig_floor]
             main_band = min(sig, key=lambda b: b["dist_lo"]) if sig else bands[0]
-            clusters = sorted(bands, key=lambda b: b["dist_lo"])
-        # SAYFA eşiğini geçen HER pozisyon listelenir (yakından uzağa — `cands`
-        # mesafeye göre sıralı). Eskiden 3 ile kesiliyordu: dış liq haritası onlarca
-        # seviye gösterirken biz "en büyük 3" diyorduk. Eşiği geçen HİÇ yoksa
-        # (HEMI gibi pozisyon tavanlı coinler) eski davranış: en büyük 3 küçük.
-        pool = big or sorted(solid or near, key=lambda c: -c["notional"])[:min(limit, 3)]
+            # METİN: yalnız mesafe sınırı içindeki bantlar; ⭐ ne kadar uzakta olursa
+            # olsun kalır (mesajın başlığı o). Grafik `bands`'in tamamını çizer.
+            clusters = sorted([b for b in bands if b["dist_lo"] <= list_dist or b is main_band],
+                              key=lambda b: b["dist_lo"])
+        # METİN listesi: ≥ alarm tabanı VE mesafe sınırı içinde (yakından uzağa —
+        # `cands` mesafeye göre sıralı). Eşiği geçen HİÇ yoksa (HEMI gibi pozisyon
+        # tavanlı coinler) eski davranış: en büyük 3 küçük.
+        big_list = [c for c in big if c["notional"] >= min_usd and c["dist"] <= list_dist]
+        pool = big_list or sorted(solid or near, key=lambda c: -c["notional"])[:min(limit, 3)]
         show = pool[:SHOW_MAX]
         # Grafik: bantların ŞERİDİ + SAYFA eşiği üstündeki her pozisyonun ÇİZGİSİ.
         # Aynı kovaya düşen pozisyonların etiketi renderer'da tek satırda toplanır.
@@ -456,7 +463,8 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
                        "px_lo": b["px_lo"], "px_hi": b["px_hi"], "cluster": True, "n": b["n"],
                        "main": b is main_band, "mark": float(mark)} for b in order]
         chart_rows += [{"liq_px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
-                        "dist": p.get("dist"), "main": False, "mark": float(mark)} for p in show]
+                        "dist": p.get("dist"), "main": False, "mark": float(mark)}
+                       for p in (big or show)[:SHOW_MAX]]
         chart_rows = chart_rows or show
         if main_band:
             # zincir tetiği = ana band (toplamı, fiyata yakın kenarından); üyeleri
@@ -483,9 +491,13 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
                                fit_all=bool(getattr(cfg, "crypto_liq_chart_fit_all", True)))
         except Exception:
             log.debug("anlık grafik üretilemedi (%s)", coin, exc_info=True)
+    n_alert = sum(1 for c in solid if c["notional"] >= min_usd)
     return {"coin": coin, "kind": kind, "mark": mark, "age": age, "rows": show,
-            "n_all": len(cands), "n_big": len(big), "min_usd": max(show_usd, dust), "png": png,
-            "alert_usd": min_usd, "n_more": max(0, len(pool) - len(show)),
+            "n_all": len(cands), "n_big": n_alert, "min_usd": min_usd, "png": png,
+            "n_more": max(0, len(pool) - len(show)), "list_dist": list_dist,
+            "chart_usd": max(show_usd, dust), "n_chart": len(big),
+            "n_list_far": max(0, n_alert - sum(1 for c in solid
+                                               if c["notional"] >= min_usd and c["dist"] <= list_dist)),
             "cascade": casc, "coverage": cov, "all_far": all_far,
             "n_far": len(cands) - len(near), "far_pct": far_pct,
             "clusters": clusters, "main_band": main_band, "n_dust": n_dust, "dust": dust}

@@ -261,13 +261,17 @@ def test_pump_near_band_beats_far_single():
         s = await cryptoliq.snapshot(cfg, Cli(), "PUMP")
         mb = s["main_band"]
         assert mb and mb["n"] == 30 and abs(mb["total"] - 1_080_000) < 1 and mb["dist_lo"] < 6, mb
-        assert [r["notional"] for r in s["rows"]] == [986_000.0, 5_200_000.0] and s["n_big"] == 2, "büyük tekler yakından uzağa"
-        assert [c["side"] for c in s["clusters"]] == ["long", "long", "long"] and s["clusters"][0] is mb
-        txt = fmt.crypto_liq_snapshot(s, offers=[74, 75])
-        assert "LONG bandı <b>$1.1M</b>" in txt and "30 pozisyon ⭐" in txt and "$5.2M" in txt, txt
-        # uzak büyük tekler kendi bantları olarak, sahipleriyle birlikte (tekrar yok, /takip band satırında)
-        assert txt.count("$986K") == 1 and txt.count("$5.2M") == 1, txt
-        assert "/takip_74" in txt and "/takip_75" in txt and "Büyük tekler" not in txt, txt
+        # METİN mesafe sınırı %20: %19,19'daki $986K girer, %24,15'teki $5.2M girmez
+        # (grafikte durur — bağlam satırı söyler); ⭐ yine %5,4'teki $1.1M band
+        assert [r["notional"] for r in s["rows"]] == [986_000.0] and s["n_big"] == 2, "≥$500K ve ≤%20"
+        assert s["n_list_far"] == 1 and s["n_chart"] == 2, (s["n_list_far"], s["n_chart"])
+        assert [c["side"] for c in s["clusters"]] == ["long", "long"] and s["clusters"][0] is mb
+        txt = fmt.crypto_liq_snapshot(s, offers=[74])
+        assert "LONG bandı <b>$1.1M</b>" in txt and "30 pozisyon ⭐" in txt, txt
+        # yakın büyük tek kendi bandı olarak, sahibiyle birlikte (tekrar yok, /takip band satırında)
+        assert txt.count("$986K") == 1 and "$5.2M" not in txt, txt
+        assert "/takip_74" in txt and "Büyük tekler" not in txt, txt
+        assert "1 pozisyon ≥ $500K ama %20'den uzak" in txt, txt
         assert s["cascade"] is None or s["cascade"].get("direction") == "down"
         if s["png"]:
             assert s["png"][:8] == b"\x89PNG\r\n\x1a\n"

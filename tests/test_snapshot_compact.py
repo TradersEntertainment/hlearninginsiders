@@ -55,30 +55,47 @@ def test_compact_fit_and_drop_order():
     cap = fmt.crypto_liq_snapshot(s, offers=[74, 75, 76], compact=True)
     assert visible_len(cap) <= 1024, visible_len(cap)
     lines = cap.split("\n")
-    # ⭐ (en yakın anlamlı $3.5M) + duvar (en büyük $19.0M) + kalanların en yakını ($265K),
-    # gösterim mesafe sıralı; tekler en çok 2; zincir tek satır; bağlam; disclaimer
+    # compact artık TÜM bantları ve TÜM tekleri taşıyabilir (sığdığı sürece); yer
+    # kalmayınca öncelik merdiveni budar. Gösterim mesafe sıralı, ⭐ yerinde.
     assert lines[0].startswith("🎯 <b>PUMP</b>"), lines[0]
     assert "SHORT bandı <b>$265K</b>" in lines[1] and "⭐" not in lines[1], lines[1]
     assert "LONG bandı <b>$3.5M</b>" in lines[2] and "⭐" in lines[2], lines[2]
-    assert "LONG bandı <b>$19.0M</b>" in lines[3] and "⭐" not in lines[3], lines[3]
-    assert cap.count("bandı") == 3 and "/takip_74" in cap and "/takip_75" in cap and "/takip_76" not in cap
-    assert "💣 <b>Zincir</b>: $19.0M long 0.0030'te patlarsa → <b>0.0023</b> · toplam <b>$19.0M</b> · -46.2% · kaba defter · defter bitti" in cap, cap
+    assert cap.count("bandı") == 6 and all(x in cap for x in ("/takip_74", "/takip_75", "/takip_76"))
+    # 6 band + 3 tek bütçeyi doldurdu → zincir (en düşük öncelik) düştü; yer olsaydı yazardı
+    assert "💣" not in cap, cap
+    roomy = fmt.crypto_liq_snapshot(s, offers=[74, 75, 76], compact=True, limit=1600)
+    assert "💣 <b>Zincir</b>: $19.0M long 0.0030'te patlarsa → <b>0.0023</b> · toplam <b>$19.0M</b> · -46.2% · kaba defter · defter bitti" in roomy, roomy
     assert "havuzda 635 açık pozisyon, 12'ü ≥ $500K · HL'nin tamamı değil · kapsama long %37 · short %46 (havuz / HL OI) · sayım %63 (toplu)" in cap
-    assert "2g önce" in cap and "288 toz" in cap and cap.rstrip().endswith("yatırım tavsiyesi değildir.</i>")
+    # bağlam ekleri de zincirle birlikte düştü (öncelik 5); yer olunca geri gelir
+    assert "288 toz" not in cap and "288 toz" in roomy
+    assert cap.rstrip().endswith("yatırım tavsiyesi değildir.</i>")
     assert "görünen defter" not in cap and "<" not in fmt.strip_tags(cap)
-    # düşme sırası: limit küçüldükçe zincir → 3. band → 2. tek → bağlam ekleri → 2. band
-    seen = []
-    prev = None
-    for lim in range(visible_len(cap), 250, -5):
+    # DÜŞME SIRASI (merdiven format.py'de tek yerde: P_* sabitleri):
+    #   zincir → bağlam ekleri → uzak bantlar → son tekler → duvar bandı → ilk tek/etki
+    # Bağlam ekleri bilerek TEKLERDEN ÖNCE düşer: ~256 karakterlik "sayım/ölçüm/toz"
+    # metni uğruna pozisyon feda etmek yanlıştı.
+    KIND = (("zincir", lambda c: "💣" in c),
+            ("bağlam ekleri", lambda c: "288 toz" in c),
+            ("uzak band", lambda c: "SHORT bandı <b>$1.2M</b>" in c),
+            ("son tek", lambda c: "/takip_76" in c),
+            ("duvar bandı", lambda c: "LONG bandı <b>$19.0M</b>" in c),
+            ("ilk tek", lambda c: "/takip_74" in c))
+    seen, prev = [], None
+    for lim in range(1600, 250, -5):          # zincir/bağlam ekleri 1024'te zaten düşmüş
         c = fmt.crypto_liq_snapshot(s, offers=[74, 75, 76], compact=True, limit=lim)
-        assert visible_len(c) <= lim or "bandı" not in c.split("\n")[2:], (lim, c)
-        key = (("💣" in c), ("$265K" in c), ("/takip_75" in c), ("288 toz" in c), ("LONG bandı <b>$19.0M</b>" in c),
-               ("/takip_74" in c), ("SATIŞ" in c))
+        key = tuple(f(c) for _, f in KIND)
         if key != prev:
             seen.append(key)
             prev = key
-    order = [next(i for i, (a, b) in enumerate(zip(seen[k], seen[k + 1])) if a != b) for k in range(len(seen) - 1)]
-    assert order == [0, 1, 2, 3, 4, 6, 5], (order, seen)     # eşit öncelikte (tek #1, etki) sonraki önce düşer
+    order = [KIND[next(i for i, (a, b) in enumerate(zip(seen[k], seen[k + 1])) if a != b)][0]
+             for k in range(len(seen) - 1)]
+    assert order == ["zincir", "bağlam ekleri", "uzak band", "son tek", "duvar bandı", "ilk tek"], order
+    # asla düşmeyenler + düşen tekler sessizce kaybolmuyor
+    tight = fmt.crypto_liq_snapshot(s, offers=[74, 75, 76], compact=True, limit=700)
+    assert visible_len(tight) <= 700 and "⭐" in tight, tight
+    assert "havuzda 635" in tight and "yatırım tavsiyesi" in tight, "asla düşmeyenler"
+    assert "… ve 1 pozisyon daha ≥ $500K (coin sayfasında)" in tight, "düşen tek sessizce kaybolmaz"
+    assert tight.count("👤") == 2, "kuyruk POZİSYON FEDA ETMEZ: kalanlar duruyor"
     last = fmt.crypto_liq_snapshot(s, offers=[74, 75, 76], compact=True, limit=250)
     assert "⭐" in last and "havuzda 635" in last and "yatırım tavsiyesi" in last and lines[0] in last, "asla düşmeyenler"
     # altbilgi (herkese açık bot) hesaba katılır ve düşmez
@@ -130,13 +147,13 @@ def test_bot_single_message():
         cryptoliq.snapshot, universe.resolve_coin = fake_snapshot, fake_resolve
         orig_fit = botmod._caption_fit
         try:
-            # UZUN liste (PUMP fikstürü, tam metin > 1024): metin ayrı + foto ⭐ altyazısıyla.
-            # Hiçbir pozisyon gizlenmez — eskiden compact altyazılı TEK foto gidiyordu ve
-            # o altyazı tekleri 2'yle sınırlıyordu.
+            # UZUN liste (PUMP fikstürü, tam metin > 1024): compact altyazı devreye girer
+            # ve mesaj TEK parça kalır — kullanıcının "foto ve mesaj ayrı geldi" şikâyeti.
             assert await bot._cmd_coin_liq("pump", "111") is True
-            assert len(sent) == 1 and len(photos) == 1 and sent[0][0] == "111", (sent, photos)
-            assert visible_len(sent[0][1]) > 1024 and "/takip_3" in sent[0][1], sent[0][1]
-            assert photos[0][1] == "📈 <b>PUMP</b> · LONG bandı $3.5M · 0.0034–0.0036 · %15.2 altta"
+            assert sent == [] and len(photos) == 1 and photos[0][0] == "111", (sent, photos)
+            cap = photos[0][1]
+            assert visible_len(cap) <= 1024 and "⭐" in cap and "/takip_1" in cap, cap
+            assert "yatırım tavsiyesi" in cap and cap.count("bandı") == 6, cap
             # KISA liste: tam metin altyazıya sığar → tek mesaj (eski davranış korunur)
             short = dict(s, rows=s["rows"][:1], clusters=s["clusters"][:1], cascade=None,
                          n_all=3, n_big=1, n_dust=0, n_more=0)

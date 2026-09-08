@@ -475,19 +475,35 @@ kovalı liq bantlarının **en yakın anlamlısı** ⭐ başlık olur, ≥ $500K
 listelenir — dış sitenin "0.0042'de $2.87M band" dediğini biz de aynı dille
 (bizdeki payıyla, kapsama yüzdesiyle birlikte) söyleriz.
 
-**Sayfa daha çok gösterir, alarm daha sıkı — iki ayrı eşik.** `/sembol` cevabı
-`crypto_liq_show_usd` (**SAYFA**, varsayılan **$200K**) üstündeki **her** pozisyonu
-tek tek listeler ve her birinin liq fiyatını grafikte kendi çizgisi yapar; kanala
-düşme eşiği `crypto_liq_min_usd` (**BİLDİRİM**, $500K) ayrı ve daha yüksektir.
-Kanalda gürültü olan pozisyon, sorulduğunda bağlamdır. SAYFA eşiği bildirim
-eşiğinin üstüne çıkamaz (kırpılır) ve OI'nin binde birinden düşük olamaz (toz
-tabanı) — mesajdaki "≥ $X" hangisi bağlayıcıysa onu yazar, uydurmaz. ⭐ ana band,
-zincir tetiği ve grafik başlığı **BİLDİRİM** tabanına bakmayı sürdürür: alarm ile
-`/sembol` aynı pozisyonu aynı sırada anlatsın diye. Liste `SHOW_MAX` (60) satırda
-kesilir ve kesilen sayı bağlam satırında söylenir; `/takip_N` teklifi yalnız ilk
-`OFFER_MAX` (12) satıra yazılır (her teklif bir DB yazımı). Liste altyazıya
-sığmıyorsa mesaj **foto + parçalı tam liste** olarak gider — hiçbir pozisyon
-gizlenmez. Grafikte pencere (`crypto_liq_chart_fit_all`, varsayılan açık) tüm bu
+**Sayfa daha çok gösterir, alarm daha sıkı — ÜÇ ayrı eşik.** Telegram altyazısı
+**1024 görünür karakter**; "her ≥$200K pozisyonu yaz" denince PUMP'ta metin **3033
+karakter** oldu ve foto ile metin ayrı mesaj olarak gitti. Bu yüzden metin ve
+grafik ayrı eşiklerden beslenir:
+
+| Eşik | Ayar | Varsayılan | Neyi besler |
+|---|---|---|---|
+| BİLDİRİM | `crypto_liq_min_usd` | $500K | kanala düşme · ⭐ ana band · zincir tetiği · **`/sembol` metin listesi** |
+| Metin mesafesi | `crypto_liq_list_dist_pct` | %20 | metin bu mesafeden uzak pozisyonu/bandı yazmaz (⭐ hariç: o hep kalır) |
+| GRAFİK | `crypto_liq_show_usd` | $200K | PNG'deki derinlik merdiveni — azami liq mesafesine (%50) kadar her pozisyon |
+
+Kanalda gürültü olan pozisyon, sorulduğunda bağlamdır; ama 1024 karakterin içinde
+**okunur** olmak zorunda. Grafik eşiği bildirim eşiğinin üstüne çıkamaz (kırpılır)
+ve OI'nin binde birinden düşük olamaz (toz tabanı). Metin ile grafik farklı
+eşikte olduğu için bağlam satırı bunu **açıkça** söyler: *"N pozisyon ≥ $500K ama
+%20'den uzak — metinde yok, grafikte var"* ve *"grafikte ≥ $200K M pozisyon
+çizili"*. ⭐ ana band, zincir tetiği ve grafik başlığı **BİLDİRİM** tabanına
+bakmayı sürdürür: alarm ile `/sembol` aynı pozisyonu aynı sırada anlatsın diye.
+Liste `SHOW_MAX` (60) satırda kesilir ve kesilen sayı söylenir; `/takip_N` teklifi
+yalnız ilk `OFFER_MAX` (12) satıra yazılır (her teklif bir DB yazımı).
+
+**TEK mesaj garantisi.** `/sembol` üç kademe dener: (1) tam metin altyazıya
+sığıyorsa foto + tam metin; (2) sığmıyorsa **compact** sürüm — öncelik merdiveni
+`zincir → bağlam ekleri → uzak bantlar → son tekler → duvar bandı → ilk tek/etki`
+sırasıyla budayıp 1024'ün altına iner (⭐, çekirdek bağlam ve uyarı asla düşmez),
+düşen tek sayısı *"… ve N pozisyon daha ≥ $500K (coin sayfasında)"* diye yazılır ve
+bu kuyruk **pozisyon feda etmez**; (3) foto yoksa metin ayrı gider. Bağlam ekleri
+bilerek tekleri geçti: ~256 karakterlik "sayım/ölçüm/toz" metni uğruna pozisyon
+düşürmek yanlıştı. Grafikte pencere (`crypto_liq_chart_fit_all`, varsayılan açık) tüm bu
 seviyeleri kapsayacak kadar açılır (tavan: azami liq mesafesi %50). ⭐ ana seviye ve
 band şeritleri tam genişlik çizilir; **tek pozisyonlar sağ kenara yaslı, boyu $ ile
 orantılı kısa çubuklardır** — dış liq haritalarının derinlik merdiveni. (34 pozisyon

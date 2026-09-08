@@ -540,10 +540,13 @@ async def run_query(bot, u: dict, raw: str) -> bool:
         _cache[coin] = (ts, s)
     left = await users.consume_query(u, cfg, ts)
     foot = footer(u, cfg, left)
-    # Altyazı = TAM metin: sığarsa tek foto, sığmazsa `send_snapshot` metni parçalı
-    # gönderip fotoyu ⭐ altyazısıyla ekler (bkz. bot._cmd_coin_liq — aynı kural).
+    # TEK MESAJ: önce tam metin altyazı, sığmazsa compact sürüm (bkz.
+    # bot._cmd_coin_liq — aynı kademe). Kota altbilgisi `extra` olarak öncelik 0'da,
+    # ikisinde de düşmez.
+    from .bot import _caption_fit
     full = fmt.crypto_liq_snapshot(s, extra=foot)
-    await send_snapshot(bot, chat, full, s.get("png"), sym, caption=full,
+    cap = full if _caption_fit(full)[1] else fmt.crypto_liq_snapshot(s, compact=True, extra=foot)
+    await send_snapshot(bot, chat, full, s.get("png"), sym, caption=cap,
                         fallback=fmt.crypto_liq_photo_caption(s))
     return True
 

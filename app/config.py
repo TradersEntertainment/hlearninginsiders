@@ -348,6 +348,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "desc": "Bu tutarın altındaki pozisyon KANALA düşmez (kullanıcı kuralı $500K); ⭐ ana band ve zincir tetiği de bu tabana bakar ki alarm ile /sembol aynı pozisyonu anlatsın. Sorulduğunda gösterilen liste için ayrı (daha düşük) SAYFA eşiği var"},
     "crypto_liq_show_usd": {"type": "float", "label": "Asgari pozisyon — SAYFA ($)", "group": "Kripto liq",
                             "desc": "/sembol cevabında ve grafikte TEK TEK yazılan pozisyonun alt sınırı (kullanıcı kuralı $200K). Bildirim eşiğinden düşük tutulur: kanalda gürültü olan pozisyon, sorulduğunda bağlamdır. Bildirim eşiğinin üstüne çıkamaz"},
+    "crypto_liq_list_dist_pct": {"type": "float", "label": "Liste mesafesi — SAYFA (%)", "group": "Kripto liq",
+                                 "desc": "/sembol METNİ bu mesafeden uzak pozisyonu ve bandı yazmaz (kullanıcı kuralı %20). Telegram altyazısı 1024 karakter: uzakları eleyip mesaj TEK parça kalsın diye. Grafik yine azami liq mesafesine kadar hepsini çizer, kaç tanesinin metne girmediği bağlam satırında yazılır"},
     "crypto_liq_chart_fit_all": {"type": "bool", "label": "Grafik tüm liq'leri kapsasın", "group": "Kripto liq",
                                  "desc": "Açıkken /sembol grafiğinin fiyat ekseni SAYFA eşiği üstündeki TÜM likidasyonları kapsayacak kadar genişler (en fazla azami liq mesafesi) — dış likidasyon haritası siteleri gibi. Kapatılırsa eski dar pencere: mumlar rahat okunur, uzak liq'ler kenarda toplu etiket olur"},
     "crypto_liq_dist_pct": {"type": "float", "label": "Liq mesafesi (%)", "group": "Kripto liq",
@@ -662,6 +664,11 @@ class Config:
         # sıkı): /sembol dış likidasyon haritaları gibi her anlamlı pozisyonu tek tek
         # yazsın. snapshot bunu bildirim eşiğiyle kırpar — üstüne çıkamaz.
         self.crypto_liq_show_usd = float(os.getenv("CRYPTO_LIQ_SHOW_USD", "200000"))
+        # Metin listesi mesafe sınırı: 33 pozisyonluk liste canlıda 3033 karakter
+        # oldu ve Telegram'ın 1024'lük altyazı sınırını aşınca foto ile metin AYRI
+        # gitti. Uzakları metinden eleyip mesajı tek parça tutuyoruz; grafik hepsini
+        # çizmeye devam eder.
+        self.crypto_liq_list_dist_pct = float(os.getenv("CRYPTO_LIQ_LIST_DIST_PCT", "20"))
         self.crypto_liq_chart_fit_all = True
         self.crypto_liq_dist_pct = float(os.getenv("CRYPTO_LIQ_DIST_PCT", "2.5"))
         self.crypto_liq_dist2_pct = float(os.getenv("CRYPTO_LIQ_DIST2_PCT", "1.0"))
