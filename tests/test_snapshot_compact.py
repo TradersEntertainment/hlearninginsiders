@@ -3,8 +3,9 @@
 Pinlenenler:
   • PUMP fikstürü (6 band + 3 tek + zincir + bağlam): tam metin 1024'ü aşar, compact sığar;
     başlık, ⭐ ana band, zorunlu bağlam (havuz/kapsama), DISCLAIMER ve altbilgi asla düşmez
-  • düşme sırası: zincir → 3. band → 2. tek → bağlam ekleri → 2. band → tekler/etki (limit küçüldükçe)
-  • compact bantlar: ⭐ önce, sonra fiyata en yakın 2 band; tekler en çok 2 (/takip ile)
+  • düşme sırası: zincir → en yakın band → 2. tek → bağlam ekleri → duvar bandı → tekler/etki
+  • compact bantlar: ⭐ (en yakın anlamlı) + DUVAR (en büyük) + kalanların en yakını = 3 band;
+    gösterim MESAFE sıralı (⭐ ille de ilk satır değil); tekler en çok 2 (/takip ile)
   • foto altyazısı (metin ayrı giderse): ⭐ band; band yoksa en yakın tek
   • bot._cmd_coin_liq: sığıyorsa tek sendPhoto (compact); sığmazsa metin + foto (band altyazısı)
   • public.send_snapshot: caption/fallback parametreleri
@@ -44,7 +45,7 @@ def pump_snapshot():
     return {"coin": "PUMP", "kind": "crypto", "mark": 0.00428, "age": 3, "rows": rows, "n_all": 635, "n_big": 12,
             "min_usd": 500_000, "png": b"\x89PNG\r\n\x1a\n" + b"0" * 6000, "cascade": casc,
             "coverage": {"pct_long": 37.0, "pct_short": 46.0, "over": False, "census": {"text": "sayım %63 (toplu)"}},
-            "all_far": False, "n_far": 328, "far_pct": 50.0, "clusters": cl, "main_band": cl[4], "n_dust": 288, "dust": 1950.0}
+            "all_far": False, "n_far": 328, "far_pct": 50.0, "clusters": cl, "main_band": cl[1], "n_dust": 288, "dust": 1950.0}
 
 
 def test_compact_fit_and_drop_order():
@@ -54,9 +55,12 @@ def test_compact_fit_and_drop_order():
     cap = fmt.crypto_liq_snapshot(s, offers=[74, 75, 76], compact=True)
     assert visible_len(cap) <= 1024, visible_len(cap)
     lines = cap.split("\n")
-    assert lines[0].startswith("🎯 <b>PUMP</b>") and "⭐" in lines[1] and "$19.0M" in lines[1], lines[:2]
-    # ⭐ sonra fiyata en yakın iki band; tekler en çok 2; zincir tek satır; bağlam; disclaimer
-    assert "SHORT bandı <b>$265K</b>" in lines[2] and "LONG bandı <b>$3.5M</b>" in lines[3], lines[2:4]
+    # ⭐ (en yakın anlamlı $3.5M) + duvar (en büyük $19.0M) + kalanların en yakını ($265K),
+    # gösterim mesafe sıralı; tekler en çok 2; zincir tek satır; bağlam; disclaimer
+    assert lines[0].startswith("🎯 <b>PUMP</b>"), lines[0]
+    assert "SHORT bandı <b>$265K</b>" in lines[1] and "⭐" not in lines[1], lines[1]
+    assert "LONG bandı <b>$3.5M</b>" in lines[2] and "⭐" in lines[2], lines[2]
+    assert "LONG bandı <b>$19.0M</b>" in lines[3] and "⭐" not in lines[3], lines[3]
     assert cap.count("bandı") == 3 and "/takip_74" in cap and "/takip_75" in cap and "/takip_76" not in cap
     assert "💣 <b>Zincir</b>: $19.0M long 0.0030'te patlarsa → <b>0.0023</b> · toplam <b>$19.0M</b> · -46.2% · kaba defter · defter bitti" in cap, cap
     assert "havuzda 635 açık pozisyon, 12'ü ≥ $500K · HL'nin tamamı değil · kapsama long %37 · short %46 (havuz / HL OI) · sayım %63 (toplu)" in cap
@@ -68,7 +72,8 @@ def test_compact_fit_and_drop_order():
     for lim in range(visible_len(cap), 250, -5):
         c = fmt.crypto_liq_snapshot(s, offers=[74, 75, 76], compact=True, limit=lim)
         assert visible_len(c) <= lim or "bandı" not in c.split("\n")[2:], (lim, c)
-        key = (("💣" in c), ("$3.5M" in c), ("/takip_75" in c), ("288 toz" in c), ("$265K" in c), ("/takip_74" in c), ("SATIŞ" in c))
+        key = (("💣" in c), ("$265K" in c), ("/takip_75" in c), ("288 toz" in c), ("LONG bandı <b>$19.0M</b>" in c),
+               ("/takip_74" in c), ("SATIŞ" in c))
         if key != prev:
             seen.append(key)
             prev = key
@@ -80,14 +85,14 @@ def test_compact_fit_and_drop_order():
     capf = fmt.crypto_liq_snapshot(s, compact=True, extra="<i>bugün <b>2/3</b> sorgu kaldı · /pro</i>")
     assert visible_len(capf) <= 1024 and capf.endswith("/pro</i>")
     # foto altyazısı: ⭐ band; band yoksa tek; hiçbir şey yoksa genel
-    assert fmt.crypto_liq_photo_caption(s) == "📈 <b>PUMP</b> · LONG bandı $19.0M · 0.0022–0.0030 · %30.3 altta"
+    assert fmt.crypto_liq_photo_caption(s) == "📈 <b>PUMP</b> · LONG bandı $3.5M · 0.0034–0.0036 · %15.2 altta"
     s2 = dict(s, clusters=[], main_band=None)
     assert fmt.crypto_liq_photo_caption(s2) == "📈 <b>PUMP</b> · liq 0.0036 · %16.37 kaldı"
     assert fmt.crypto_liq_photo_caption({"coin": "X", "rows": []}) == "📈 <b>X</b> · likidasyon grafiği"
     # boş/fiyatsız durumlar compact'ta da dürüst
     assert "fiyat alınamadı" in fmt.crypto_liq_snapshot({"coin": "PUMP", "mark": None}, compact=True)
     assert "açık pozisyon yok" in fmt.crypto_liq_snapshot({"coin": "PUMP", "mark": 1.0, "rows": []}, compact=True, extra="x")
-    print("✅ compact) PUMP: tam metin > 1024, altyazı ≤ 1024; ⭐ + 2 yakın band + 2 tek + kısa zincir + bağlam; düşme sırası; altbilgi; foto altyazısı ⭐ band")
+    print("✅ compact) PUMP: tam metin > 1024, altyazı ≤ 1024; ⭐ + duvar + en yakın band (mesafe sıralı) + 2 tek + kısa zincir; düşme sırası; foto altyazısı ⭐ band")
 
 
 def test_bot_single_message():
@@ -132,7 +137,7 @@ def test_bot_single_message():
             finally:
                 botmod._caption_fit = orig_fit
             assert len(sent) == 1 and visible_len(sent[0][1]) > 1024 and len(photos) == 2
-            assert photos[1][1] == "📈 <b>PUMP</b> · LONG bandı $19.0M · 0.0022–0.0030 · %30.3 altta"
+            assert photos[1][1] == "📈 <b>PUMP</b> · LONG bandı $3.5M · 0.0034–0.0036 · %15.2 altta"
             assert await bot._cmd_coin_liq("tani", "111") is False
         finally:
             cryptoliq.snapshot, universe.resolve_coin = orig_snap, orig_res

@@ -766,15 +766,39 @@ def crypto_liq_alert(coin: str, mark: float | None, fresh: list[dict],
     return "\n".join(lines)
 
 
-def _liq_band_line(c: dict, star: bool) -> str:
+def _liq_band_line(c: dict, star: bool, pos: dict | None = None, offer: int | None = None) -> str:
+    """Band satırı. Band TEK pozisyonsa ve sahibi elimizdeyse (`pos`) satır doğrudan O
+    POZİSYONdur — "band" soyutlaması yalnız birden çok pozisyon varken görünür, aynı
+    pozisyon bir de 'Büyük tekler'de tekrar etmez, adres ve /takip kaybolmaz."""
+    if pos is not None:
+        return _liq_single_line(pos, offer) + (" ⭐" if star else "")
     is_long = c.get("side") == "long"
     if c.get("n", 0) > 1 and px(c["px_lo"]) != px(c["px_hi"]):
         where = (f"{px(c['px_lo'])}–{px(c['px_hi'])} (%{c['dist_lo']:.1f}–%{c['dist_hi']:.1f}"
                  f" {'altta' if is_long else 'üstte'})")
     else:
         where = f"liq {px(c['px'])} (%{c['dist_lo']:.1f} {'altta' if is_long else 'üstte'})"
+    who = ""
+    if pos:
+        lev = f" · {float(pos['leverage']):g}x" if pos.get("leverage") else ""
+        ent = {"mm": " 🤖MM", "vault": " 🏦VAULT"}.get(pos.get("entity") or "", "")
+        who = f"{lev} · 👤 {alink(pos['address'])}{ent}" + (f" → /takip_{offer}" if offer else "")
     return (f"{'🟢 LONG' if is_long else '🔴 SHORT'} bandı <b>{usd(c['total'])}</b>"
-            f" · {where} · {c['n']} pozisyon{' ⭐' if star else ''}")
+            f" · {where} · {c['n']} pozisyon{' ⭐' if star else ''}{who}")
+
+
+def _solo_index(c: dict, rows: list[dict]) -> int | None:
+    """Band tek pozisyonluysa o pozisyonun `rows` içindeki indeksi (yoksa None)."""
+    if c.get("n") != 1:
+        return None
+    top = c.get("top") or []
+    addr = (top[0] or {}).get("address") if top else None
+    if not addr:
+        return None
+    for i, p in enumerate(rows):
+        if p.get("address") == addr and p.get("side") == c.get("side"):
+            return i
+    return None
 
 
 def _liq_single_line(p: dict, offer: int | None) -> str:
@@ -842,6 +866,7 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None, compact: bool 
     cl = s.get("clusters") or []
     mb = s.get("main_band")
     offers = offers or []
+    shown: set[int] = set()                    # bandıyla birlikte yazılan tek pozisyonlar
     core_ctx, extra_ctx = _liq_ctx(s, rows)
     if not compact:
         lines = [head]
@@ -850,12 +875,19 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None, compact: bool 
         elif cl:
             lines.append(f"<i>liq bantları (kovalı, toz hariç; ≥ {usd(s.get('min_usd'))} tek pozisyon:"
                          f" {s.get('n_big', 0)}):</i>")
-            lines += [_liq_band_line(c, bool(mb) and c is mb) for c in cl]
-            if rows:
+            for c in cl:
+                j = _solo_index(c, rows)
+                if j is not None:
+                    shown.add(j)
+                lines.append(_liq_band_line(c, bool(mb) and c is mb, rows[j] if j is not None else None,
+                                            offers[j] if j is not None and j < len(offers) else None))
+            if [i for i in range(len(rows)) if i not in shown]:
                 lines.append("<i>Büyük tekler:</i>" if s.get("n_big") else "<i>En büyük tekler:</i>")
         elif not s.get("n_big"):
             lines.append(f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>")
         for i, p in enumerate(rows):
+            if i in shown:
+                continue                       # bandı zaten sahibiyle yazdık
             lines.append(_liq_single_line(p, offers[i] if i < len(offers) else None))
         imp = _liq_impact_line(cl if cl else rows)
         if imp:
@@ -872,19 +904,34 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None, compact: bool 
     blocks: list[tuple[int, str]] = [(0, head)]
     if s.get("all_far"):
         blocks.append((0, f"<i>%{far:.0f} içinde pozisyon yok — en yakın uzaklar:</i>"))
+    def band_block(c: dict) -> str:
+        j = _solo_index(c, rows)
+        if j is not None:
+            shown.add(j)
+        return _liq_band_line(c, bool(mb) and c is mb, rows[j] if j is not None else None,
+                              offers[j] if j is not None and j < len(offers) else None)
     if cl:
         main = mb if mb in cl else cl[0]
-        blocks.append((0, _liq_band_line(main, main is mb)))
-        others = sorted((c for c in cl if c is not main), key=lambda c: c["dist_lo"])[:2]
-        for j, c in enumerate(others):
-            blocks.append((2 if j == 0 else 5, _liq_band_line(c, False)))
+        rest = [c for c in cl if c is not main]
+        # ⭐ (en yakın anlamlı) + DUVAR (en büyük) + kalanların en yakını: altyazıda hem
+        # "hemen önümüzdeki" hem "asıl kütle" olsun. Gösterim yine mesafe sıralı.
+        wall = max(rest, key=lambda c: c["total"]) if rest else None
+        nearest = next((c for c in sorted(rest, key=lambda c: c["dist_lo"]) if c is not wall), None)
+        prio = {id(main): 0, id(wall): 2, id(nearest): 5}
+        for c in sorted((x for x in (main, wall, nearest) if x is not None),
+                        key=lambda c: c["dist_lo"]):          # gösterim mesafe sıralı
+            blocks.append((prio[id(c)], band_block(c)))
     elif not s.get("n_big"):
         blocks.append((0, f"<i>≥ {usd(s.get('min_usd'))} pozisyon yok — en yakın küçükler:</i>"))
-    for i, p in enumerate(rows[:2]):
+    n_single = 0
+    for i, p in enumerate(rows):
+        if i in shown or n_single >= 2:
+            continue
         line = _liq_single_line(p, offers[i] if i < len(offers) else None)
-        if i == 0 and cl:
+        if n_single == 0 and cl:
             line = ("<i>Büyük tekler:</i> " if s.get("n_big") else "<i>En büyük tekler:</i> ") + line
-        blocks.append((1 if i == 0 else 4, line))
+        blocks.append((1 if n_single == 0 else 4, line))
+        n_single += 1
     imp = _liq_impact_line(cl if cl else rows)
     if imp:
         blocks.append((1, imp))
@@ -910,14 +957,16 @@ def crypto_liq_snapshot(s: dict, offers: list[int] | None = None, compact: bool 
 
 
 def crypto_liq_photo_caption(s: dict) -> str:
-    """Metin ayrı gittiğinde fotonun kısa altyazısı: ⭐ ana band (yoksa en yakın tek)."""
+    """Metin ayrı gittiğinde fotonun kısa altyazısı: ⭐ ana band (yoksa en yakın tek).
+    Band tek pozisyonluysa "bandı" denmez — tek pozisyon band değildir."""
     sym = esc((s.get("coin") or "").split(":")[-1])
     mb = s.get("main_band") or ((s.get("clusters") or [None])[0])
     if mb:
         is_long = mb.get("side") == "long"
         rng = (f"{px(mb['px_lo'])}–{px(mb['px_hi'])}" if px(mb.get("px_lo")) != px(mb.get("px_hi"))
                else px(mb.get("px")))
-        return (f"📈 <b>{sym}</b> · {'LONG' if is_long else 'SHORT'} bandı {usd(mb['total'])} · {rng}"
+        kume = "bandı " if (mb.get("n") or 0) > 1 else ""
+        return (f"📈 <b>{sym}</b> · {'LONG' if is_long else 'SHORT'} {kume}{usd(mb['total'])} · {rng}"
                 f" · %{mb['dist_lo']:.1f} {'altta' if is_long else 'üstte'}")
     rows = s.get("rows") or []
     if rows:

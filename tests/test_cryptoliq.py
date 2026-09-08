@@ -521,8 +521,14 @@ def test_snapshot():
         t = fmt.crypto_liq_snapshot(s)
         assert t.startswith("🎯 <b>PUMP</b>") and "%0.90 üstte" in t and "$4.0M" in t and "canlı" in t
         assert s["cascade"] and s["cascade"]["direction"] == "up" and "💣 <b>Zincir</b>" in t, t
-        # zincir tetiği artık ana band (%10 içindeki en büyük: D'nin $4.0M short kovası), tek pozisyon değil
-        assert "$4.0M short" in t and "zorunlu alış" in t, t
+        # zincir tetiği ⭐ = en YAKIN anlamlı band: B'nin $700K short'u (%0,9). $300K (%0,3)
+        # coin tabanının ($500K) altında olduğu için başlığa çıkmaz, $4.0M ise %6'da uzak.
+        assert "$700K short" in t and "zorunlu alış" in t, t
+        tl = t.splitlines()
+        star = [ln for ln in tl if ln.endswith("⭐")]
+        assert len(star) == 1 and star[0].startswith("🔴 SHORT <b>$700K</b>") and "👤" in star[0], t
+        bands = [ln for ln in tl if ln[:1] in "🟢🔴"]
+        assert bands[0].startswith("🟢 LONG bandı <b>$300K</b>") and bands[1] == star[0], "bantlar mesafe sıralı"
         # ayar kapalı → satır yok, defter isteği yok
         cfg.crypto_liq_cascade = False
         cli_off = Client(rows, candles=synth_candles(MARK["PUMP"]))
@@ -535,7 +541,9 @@ def test_snapshot():
         await _seed(small)
         s2 = await cl.snapshot(cfg, Client(small), "PUMP")
         t2 = fmt.crypto_liq_snapshot(s2)
-        assert s2["n_big"] == 0 and len(s2["rows"]) == 1 and "liq bantları" in t2 and "En büyük tekler" in t2 and s2["png"] is None
+        # tek pozisyon = tek üyeli band: satır pozisyonun kendisi, ayrıca "En büyük tekler" yok
+        assert s2["n_big"] == 0 and len(s2["rows"]) == 1 and "liq bantları" in t2 and s2["png"] is None
+        assert t2.count("🟢 LONG <b>$300K</b>") == 1 and "👤" in t2 and "tekler" not in t2, t2
         s3 = await cl.snapshot(cfg, Client([]), "HYPE")
         assert s3["rows"] == [] and "açık pozisyon yok" in fmt.crypto_liq_snapshot(s3)
         # fiyat yoksa nedeni (kv'de olmayan coin, istek de boş dönüyor)
@@ -544,6 +552,74 @@ def test_snapshot():
         print("✅ anlık) /coin: ≥$500K en yakın önce, canlı fiyat; eşik altı/boş/fiyatsız durumlar dürüst")
     asyncio.run(run())
 
+# ------------------------------------------------ 8b2) PUMP 08.09: ⭐ en yakın anlamlı band
+PM = 0.00424                                       # ekran görüntüsündeki fiyat
+
+
+def test_near_band_beats_far_wall():
+    """Kullanıcının 08.09 ekran görüntüsü: 06:28 alarmı "$2.2M LONG · liq 0.0042" diyor,
+    09:07'deki /pump ise ⭐'yı %20-30'daki $17.6M duvara koyup AYNI pozisyonu en alta,
+    "Büyük tekler"e gömüyordu — band seçimi yalnız TOPLAMA baktığı için %1,3'teki band
+    listeye hiç giremiyordu. Artık yön başına önce "en yakın anlamlı band" alınır
+    (≥ en büyük bandın %5'i ve ≥ coin tabanı) ve tek pozisyonluk band, pozisyonun
+    kendisi olarak yazılır (adres + /takip aynı satırda, tekler listesinde tekrar yok)."""
+    async def run():
+        from app.radar import liqchart, liqmap
+        from app.telegram import format as fmt
+        t, rows = dbm.now(), []
+
+        def add(side, dist, ntl):
+            liq = PM * (1 - dist / 100) if side == "long" else PM * (1 + dist / 100)
+            rows.append({"coin": "PUMP", "address": "0x%040x" % (len(rows) + 1), "side": side,
+                         "notional": float(ntl), "liq_px": liq, "leverage": 10.0,
+                         "entry_px": PM, "ts": t, "entity": None})
+
+        add("long", 1.34, 2_200_000)                                    # ⭐ olması gereken (tek)
+        for k in range(7):
+            add("short", 7.7 + k * 0.3, 258_000 / 7)                    # $258K · %7,7-9,5
+        for k in range(20):
+            add("long", 3.2 + k * 0.08, 3_100_000 / 20)                 # araya giren şişmanlar:
+        for k in range(20):
+            add("long", 5.6 + k * 0.09, 2_600_000 / 20)                 # ikisi de $2.2M'den büyük
+        for k in range(58):
+            add("long", 10.2 + k * 0.08, 6_300_000 / 58)                # $6.3M · %10-15
+        for k in range(83):
+            add("long", 20.5 + k * 0.1, 17_600_000 / 83)                # $17.6M · %20-30 (duvar)
+        # regresyon: eski kural (yalnız toplam) yakın bandı listeden düşürüyordu
+        near = [{"side": r["side"], "notional": r["notional"], "liq_px": r["liq_px"],
+                 "dist": abs(r["liq_px"] - PM) / PM * 100} for r in rows]
+        has22 = lambda bs: any(abs(b["total"] - 2_200_000) < 1 for b in bs)   # noqa: E731
+        assert not has22(liqmap.clusters(near, PM, 50.0, per_side=3)), "eski davranış korunuyor"
+        assert has22(liqmap.clusters(near, PM, 50.0, per_side=3,
+                                     near_share=cl.NEAR_BAND_SIG_SHARE, near_min=500_000))
+        await _seed(rows)
+        await set_marks({**MARK, "PUMP": PM})
+        cfg = _cfg()
+        cfg.crypto_liq_cascade = False                 # bu vakada konu defter değil
+        s = await cl.snapshot(cfg, Client(rows, candles=synth_candles(PM)), "PUMP")
+        mb = s["main_band"]
+        assert mb and mb["n"] == 1 and abs(mb["total"] - 2_200_000) < 1 and mb["dist_lo"] < 2, mb
+        assert s["clusters"][0] is mb, "en yakın band aynı zamanda ilk satır"
+        assert [b["dist_lo"] for b in s["clusters"]] == sorted(b["dist_lo"] for b in s["clusters"])
+        assert has22(s["clusters"]) and any(abs(b["total"] - 17_600_000) < 1 for b in s["clusters"]), "duvar da listede"
+        assert s["n_big"] == 1 and [r["notional"] for r in s["rows"]] == [2_200_000.0]
+        txt = fmt.crypto_liq_snapshot(s, offers=[74])
+        line = txt.splitlines()[2]
+        assert line.startswith("🟢 LONG <b>$2.2M</b>") and "liq 0.0042" in line, line
+        assert "/takip_74" in line and "👤" in line and line.endswith("⭐"), line
+        assert "bandı" not in line and "Büyük tekler" not in txt and txt.count("$2.2M") == 1, txt
+        assert "LONG bandı <b>$17.6M</b>" in txt and "SHORT bandı <b>$258K</b>" in txt, txt
+        # foto altyazısı ve grafik başlığı da tek pozisyonda "band/küme" demez
+        capt = fmt.crypto_liq_photo_caption(s)
+        assert capt.startswith("📈 <b>PUMP</b> · LONG $2.2M · 0.0042 · %1.3") and "bandı" not in capt, capt
+        src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "app", "radar", "liqchart.py"), encoding="utf-8").read()
+        assert '(main.get("n") or 0) > 1' in src, "tek pozisyonluk band grafikte 'kümesi' demez"
+        assert s["png"] is None or s["png"][:8] == b"\x89PNG\r\n\x1a\n"
+        assert liqchart.render is not None
+        print("✅ PUMP 08.09) ⭐ = en yakın anlamlı band ($2.2M @%1,3); duvar listede ama başta değil;"
+              " tek pozisyonluk band adres + /takip taşır, tekler listesinde tekrar etmez")
+    asyncio.run(run())
 
 # ------------------------------------------------ 8c) zincir: ince defter uzanmıyorsa kaba defter
 def test_cascade_fallback():
@@ -610,6 +686,7 @@ test_send_gate()
 test_wiring()
 test_format_and_chart()
 test_snapshot()
+test_near_band_beats_far_wall()
 test_cascade_fallback()
 test_resolve()
 print("\n✅ KRİPTO LIQ TESTLERİ GEÇTİ")

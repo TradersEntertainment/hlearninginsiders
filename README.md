@@ -74,8 +74,9 @@ sahip `/tani` gibi tam zincir komutlarını da kullanabilir; sahip olmayanlar ya
 `/takip_N`, `/sim`, `/id` ve `/sembol` coin görüntüsünü alır, bilinmeyen komut sessiz
 kalır (başka botların komutları). `/tani` parça parça, her parça kendi `<pre>`'si
 ile gelir. `/sembol` cevabı TEK mesajdır: foto + 1024'e sığdırılmış altyazı (⭐ ana
-band, fiyata en yakın 2 band, en çok 2 büyük tek, zorunlu satış/alış, kısa zincir,
-bağlam) — sığmayan parça düşer (önce zincir, en son bantlar), tam metin ve ayrıntı
+band, **duvar** = en büyük band, kalanların en yakını — üçü de mesafe sırasıyla
+yazılır, en çok 2 büyük tek, zorunlu satış/alış, kısa zincir, bağlam) — sığmayan
+parça düşer (önce zincir, sonra en yakın band, en son duvar), tam metin ve ayrıntı
 coin sayfasında; altyazı hiç sığmazsa tam metin + ⭐ band altyazılı foto.
 
 ## Bildirimler
@@ -470,9 +471,24 @@ Kapsama yüzdesi (havuz $ / HL OI) bu dördünün toplam sonucudur; **tahmin yok
 yüzde düşükse eksik olduğumuz yazılır, çarpanla şişirilmez. Sayım "tam"
 dediğinde kalan fark, leaderboard'da olmayan (hiç işlem yapmamış ya da bakiyesi
 tabanın altındaki) hesaplardır. Anlık `/sembol` görünümü artık **band bazlı**:
-kovalı liq bantlarının %10 içindeki en büyüğü başlık olur, ≥ $500K tekler altta
+kovalı liq bantlarının **en yakın anlamlısı** ⭐ başlık olur, ≥ $500K tekler altta
 listelenir — dış sitenin "0.0042'de $2.87M band" dediğini biz de aynı dille
 (bizdeki payıyla, kapsama yüzdesiyle birlikte) söyleriz.
+
+**⭐ = en yakın ANLAMLI band (08.09 PUMP vakası).** Eskiden bantlar yalnız
+toplama göre seçilip yön başına en şişman 3'ü alınıyordu: PUMP'ta fiyatın %1,3
+altındaki $2.2M band, %20-30'daki $17.6M duvarın ve iki şişman bandın arkasında
+listeye HİÇ giremiyor, aynı pozisyon en alta "Büyük tekler"e düşüyordu — bot
+06:28'de o pozisyon için alarm atıp 09:07'de kullanıcıya duvarı gösteriyordu.
+Artık `liqmap.clusters(..., near_share=)` yön başına **önce** en yakın anlamlı
+bandı alır (anlamlı = toplamı en büyük bandın ≥ %5'i **ve** ≥ coin tabanı
+`crypto_liq_min_usd`; `cryptoliq.NEAR_BAND_SIG_SHARE`), kalan yuvalar eskisi gibi
+toplama göre dolar. ⭐, zincir tetiği ve grafik ana bandı hep bu banttır — alarm
+ile `/sembol` aynı pozisyonu aynı sırada anlatır. Soru "en büyük yığın nerede"
+değil, **"fiyat biraz oynarsa İLK neye çarpar"**. Tek pozisyonluk band artık
+"band" diye yazılmaz: satır pozisyonun kendisidir (adres + kaldıraç + `/takip_N`
+aynı satırda) ve "Büyük tekler" listesinde tekrar etmez; grafik başlığı da
+"kümesi" demez.
 
 ### Grafikte likidasyon barları
 
@@ -574,7 +590,8 @@ içindeki seviyeler ölçeği değiştirmeden üst/alt kenarda toplu etiket olur
 Anlık sorguda "en yakın büyük" listesi de önce %50 içindekileri alır; hiç yoksa
 "en yakın uzaklar" der ve grafik çizilmez. **Toz değil küme (HEMI vakası):** ≥ $500K
 tek pozisyon yoksa (pozisyon tavanlı dex'lerde hiç olamaz) OI'nin %0,1'i / $1K altı
-pozisyonlar toz sayılır, kalanlar kovalı haritanın bantlarına ayrılır ve yön başına
+pozisyonlar toz sayılır (yalnız TEK listesinden düşer, bant toplamına girer) ve
+kalanlar kovalı haritanın bantlarına ayrılır; yön başına en yakın anlamlı band +
 en büyük 2 **küme** başlık olur ("🟢 LONG kümesi $210K · 0.0072–0.0074 (%16.7–%18.9
 altta) · 40 pozisyon"); grafik bandı şerit olarak çizer, altında en büyük 3 tek
 pozisyon listelenir. Dış sitedeki "$591K long liq" bandının bizdeki karşılığı budur

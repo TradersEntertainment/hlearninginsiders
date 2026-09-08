@@ -176,10 +176,12 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     sym = coin.split(":")[-1]
     side_txt = side_of(main)
     where = "üstte" if main.get("side") == "short" else "altta"
-    title = f"{sym} · {side_txt} {'kümesi ' if main.get('cluster') else ''}{_usd(main.get('notional'))}"
+    # "kümesi" YALNIZ birden çok pozisyon varken: tek pozisyonluk band tek pozisyondur
+    kume = "kümesi " if (main.get("cluster") and (main.get("n") or 0) > 1) else ""
+    title = f"{sym} · {side_txt} {kume}{_usd(main.get('notional'))}"
     d.text((PAD_L, 22), title, fill=TEXT, font=f_title)
-    liq_txt = (f"liq {_px(main['px_lo'])}–{_px(main['px_hi'])} ({main.get('n')} poz)" if main.get("cluster")
-               else f"liq {_px(main['px'])}")
+    liq_txt = (f"liq {_px(main['px_lo'])}–{_px(main['px_hi'])} ({main.get('n')} poz)"
+               if main.get("cluster") and (main.get("n") or 0) > 1 else f"liq {_px(main['px'])}")
     sub = (f"{liq_txt} · fiyat {_px(mark)} · %{float(main.get('dist') or 0):.2f} {where}"
            f" · {interval} mumlar · {span_txt}")
     if coverage_txt:

@@ -194,13 +194,20 @@ def build(rows: list[dict], mark: float | None, max_dist_pct: float = 50.0) -> d
 
 
 def clusters(cands: list[dict], mark: float | None, max_dist_pct: float = 50.0,
-             per_side: int = 2, top: int = 3) -> list[dict]:
+             per_side: int = 2, top: int = 3, near_share: float = 0.0,
+             near_min: float = 0.0) -> list[dict]:
     """Anlık görüntü için KÜME seçimi (HEMI vakası): pozisyon tavanı $80K olan bir
     coinde ≥ $500K tek pozisyon olamaz; "en yakın"lar toz ($136) çıkar, asıl kütle
     %18 aşağıdaki onlarca küçük pozisyonun toplamıdır. Aynı kovalar (SLOT_EDGES)
     kullanılır; kova toplamı büyükten küçüğe, yön başına en çok `per_side` küme.
     `cands`: {side, notional, liq_px, dist}. Dönüş: {side, px_lo, px_hi, px (fiyata en
-    yakın kenar), dist_lo, dist_hi, total, n, top: [en büyük `top` pozisyon]}."""
+    yakın kenar), dist_lo, dist_hi, total, n, top: [en büyük `top` pozisyon]}.
+
+    `near_share`/`near_min`: yön başına ÖNCE "en yakın ANLAMLI" band alınır — anlamlı =
+    toplamı `max(near_min, en büyük band × near_share)` üstünde; kalan yuvalar toplama
+    göre dolar. Seçim yalnız toplama bakınca fiyata %1,3 uzaktaki $2.2M band, %20-30'daki
+    üç şişman bandın arkasında listeden düşüyordu (PUMP 08.09 vakası) — oysa "fiyat biraz
+    oynarsa İLK neye çarpar" sorusunun cevabı odur. İkisi de 0 = eski davranış."""
     if not mark or mark <= 0 or not cands:
         return []
     edges = _edges(float(max_dist_pct or 50.0))
@@ -221,11 +228,25 @@ def clusters(cands: list[dict], mark: float | None, max_dist_pct: float = 50.0,
                         "total": sum(float(c.get("notional") or 0) for c in grp), "n": len(grp),
                         "top": sorted(grp, key=lambda c: -float(c.get("notional") or 0))[:top]})
     out.sort(key=lambda c: -c["total"])
-    picked, cnt = [], {"long": 0, "short": 0}
-    for c in out:
-        if cnt[c["side"]] < per_side:
-            picked.append(c)
-            cnt[c["side"]] += 1
+    if not out:
+        return []
+    biggest = out[0]["total"]
+    picked: list[dict] = []
+    for side in ("long", "short"):
+        side_bands = [c for c in out if c["side"] == side]        # toplam azalan
+        chosen: list[dict] = []
+        floor = max(float(near_min or 0), biggest * float(near_share or 0))
+        if floor > 0:
+            sig = [c for c in side_bands if c["total"] >= floor]
+            if sig:
+                chosen.append(min(sig, key=lambda c: c["dist_lo"]))
+        for c in side_bands:
+            if len(chosen) >= per_side:
+                break
+            if not any(c is x for x in chosen):
+                chosen.append(c)
+        picked.extend(chosen)
+    picked.sort(key=lambda c: -c["total"])     # çağıranlar picked[0]'ı "en büyük" sayıyor
     return picked
 
 

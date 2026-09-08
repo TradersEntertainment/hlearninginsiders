@@ -47,8 +47,13 @@ CLOSE_NOTE_MAX_AGE = 24 * 3600     # bundan eski kapanışa not gitmez (kanal ye
 FILLS_LOOKBACK = 48 * 3600         # kapanış teyidi: fill'lere en çok bu kadar geriye bak
 CHART_INTERVAL, CHART_SPAN = "15m", 48 * 3600   # 192 mum; sağda pay renderer'da
 CHART_LABEL = ("15dk", "son 48 saat")
-NEAR_BAND_PCT = 10.0         # ana başlık: bu mesafe içindeki en büyük band (varsa)
-NEAR_BAND_MIN_SHARE = 0.10   # …ama en büyük bandın %10'undan küçükse en büyük band kazanır
+# ⭐ ana başlık = "fiyat biraz oynarsa İLK neye çarpar": en YAKIN anlamlı band.
+# Anlamlı = toplam ≥ max(coin'in bildirim tabanı `crypto_liq_min_usd`, en büyük bandın
+# %5'i): taban küçük-ama-yakın gürültüyü ($300K) başlığa çıkarmaz, pay ise dev bir
+# duvarın yanındaki cüce bandı eler. Hiçbiri geçmezse (HEMI gibi pozisyon tavanlı
+# coinlerde) en büyük band. Eski kural "%10 içindeki EN BÜYÜK band" idi: alarmın konusu
+# olan %1,3'teki $2.2M yerine %20-30'daki duvarı başlığa alıyordu (08.09 vakası).
+NEAR_BAND_SIG_SHARE = 0.05
 CAPTION_MAX = 1000                 # Telegram altyazı sınırı 1024 görünür karakter; pay bırak
 WATCH_KEEP_CLOSED = 7 * 86400
 WATCH_KEEP_IDLE = 3 * 86400
@@ -411,21 +416,20 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     # tek büyük pozisyon %19'da diye 0.0042'deki onlarca küçük pozisyonun toplamı
     # gizlenmez. Bantlar TÜM yakın pozisyonları toplar (toz dahil — dış sitelerin
     # bandı da öyle; PUMP'ta $36K'lık 30 pozisyon "toz" sayılıp eksik çıkıyordu);
-    # toz yalnız tek listesinden düşer. Ana başlık = %10 içindeki en büyük band (en
-    # büyük bandın en az %10'u ise), yoksa en büyük band. Mesajda bantlar mesafeye
-    # göre; büyük tekler altta.
+    # toz yalnız tek listesinden düşer. ⭐ = en YAKIN anlamlı band (bkz.
+    # NEAR_BAND_SIG_SHARE); mesajda bantlar mesafeye göre, büyük tekler altta.
     clusters: list[dict] = []
     main_band: dict | None = None
     chart_rows: list[dict]
     casc_rows = rows
     if near:
         from . import liqmap
-        bands = liqmap.clusters(near, mark, far_pct, per_side=3)
+        bands = liqmap.clusters(near, mark, far_pct, per_side=3,
+                                near_share=NEAR_BAND_SIG_SHARE, near_min=min_usd)
         if bands:
-            biggest = bands[0]["total"]
-            near_b = [b for b in bands if b["dist_lo"] <= NEAR_BAND_PCT
-                      and b["total"] >= biggest * NEAR_BAND_MIN_SHARE]
-            main_band = max(near_b, key=lambda b: b["total"]) if near_b else bands[0]
+            sig_floor = max(min_usd, bands[0]["total"] * NEAR_BAND_SIG_SHARE)
+            sig = [b for b in bands if b["total"] >= sig_floor]
+            main_band = min(sig, key=lambda b: b["dist_lo"]) if sig else bands[0]
             clusters = sorted(bands, key=lambda b: b["dist_lo"])
         show = (big or sorted(solid or near, key=lambda c: -c["notional"]))[:min(limit, 3)]
         order = sorted(bands, key=lambda b: (0 if b is main_band else 1, b["dist_lo"]))[:4]
