@@ -40,7 +40,10 @@ from .bigpos import MAJORS
 log = logging.getLogger("radar.cryptoliq")
 
 PROBE_MAX = 12                     # tur başına canlılık sondası (adres); kalanlar sonraki tura
-LIST_MAX = 6                       # mesajda tek tek yazılan pozisyon; fazlası toplamla
+LIST_MAX = 6                       # ALARM mesajında tek tek yazılan pozisyon; fazlası toplamla
+# /sembol listesinin üst sınırı: dış liq haritaları gibi "hepsi" gösterilir ama
+# mesaj/DB sonsuz büyümesin. Aşan sayı bağlam satırında dürüstçe söylenir.
+SHOW_MAX = 60
 RESET_FACTOR = 1.5                 # dist > dist1×1.5 → kademeler sıfırlanır (liqwatch: 1.0→1.5)
 STAGE_PROBE_SEC = {1: 600, 2: 0, 3: 0}   # izlenen pozisyonu yeniden sondalama aralığı
 CLOSE_NOTE_MAX_AGE = 24 * 3600     # bundan eski kapanışa not gitmez (kanal yeni açıldıysa yığılmasın)
@@ -325,7 +328,8 @@ def _far_pct(cfg) -> float:
 
 
 async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | None = None,
-                 coverage_txt: str | None = None, far_pct: float = 50.0) -> bytes | None:
+                 coverage_txt: str | None = None, far_pct: float = 50.0,
+                 fit_all: bool = False) -> bytes | None:
     """Mesajın resmi: son 48 saatin 15 dk mumları + liq çizgileri + kalan mesafe
     (+ zincir hedefi)."""
     fn = getattr(client, "candles", None)
@@ -340,14 +344,15 @@ async def _chart(client, coin: str, mark, fresh: list[dict], target: tuple | Non
         return None
     cands = pricechart.parse_candles(raw)
     # `main` işaretli satır varsa o ana seviye (band bazlı görünüm), yoksa en yakın
-    ordered = sorted(fresh, key=lambda q: (0 if q.get("main") else 1, q.get("dist") or 0))[:4]
+    ordered = sorted(fresh, key=lambda q: (0 if q.get("main") else 1, q.get("dist") or 0))
+    has_main = any(q.get("main") for q in ordered)      # işaretli varsa konuma göre EZME
     levels = [{"px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
-               "dist": p.get("dist"), "main": i == 0,
+               "dist": p.get("dist"), "main": bool(p.get("main")) if has_main else i == 0,
                **{k: p[k] for k in ("px_lo", "px_hi", "cluster", "n") if k in p}}   # küme bandı
               for i, p in enumerate(ordered)]
     return liqchart.render(coin, cands, mark, levels, interval=CHART_LABEL[0],
                            span_txt=CHART_LABEL[1], target=target, coverage_txt=coverage_txt,
-                           far_pct=far_pct)
+                           far_pct=far_pct, fit_all=fit_all)
 
 
 async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5) -> dict:
@@ -360,6 +365,10 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     yakın küçükler gösterilir ve söylenir. Dönüş: {coin, kind, mark, age, rows,
     n_all, n_big, min_usd, png}."""
     min_usd = float(getattr(cfg, "crypto_liq_min_usd", 500_000))
+    # SAYFA eşiği: /sembol listesi ve grafik bunun üstündeki HER pozisyonu tek tek
+    # gösterir. Alarm eşiğinin ÜSTÜNE çıkamaz (aksi hâlde kanala düşen pozisyon
+    # sorulduğunda listede olmazdı); boş/0 ise alarm eşiğine düşer.
+    show_usd = min(float(getattr(cfg, "crypto_liq_show_usd", 200_000) or 0) or min_usd, min_usd)
     age = None
     ctx, summ = None, None
     if kind == "crypto":
@@ -410,7 +419,7 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     dust = max(1_000.0, oi_ntl * 0.001)
     solid = [c for c in near if c["notional"] >= dust]
     n_dust = len(near) - len(solid)
-    big = [c for c in solid if c["notional"] >= min_usd]
+    big = [c for c in solid if c["notional"] >= show_usd]
     all_far = bool(cands) and not near
     # HER ZAMAN band bazlı (PUMP vakası): kovalı liq haritasının bantları başlık olur —
     # tek büyük pozisyon %19'da diye 0.0042'deki onlarca küçük pozisyonun toplamı
@@ -424,6 +433,9 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     casc_rows = rows
     if near:
         from . import liqmap
+        # near_min/sig_floor SAYFA eşiği değil ALARM eşiği: ⭐ ve zincir tetiği alarmın
+        # anlattığı pozisyon olmalı (README "alarm ile /sembol aynı sırada anlatır").
+        # SAYFA eşiği yalnız LİSTEYİ genişletir, başlığı değiştirmez.
         bands = liqmap.clusters(near, mark, far_pct, per_side=3,
                                 near_share=NEAR_BAND_SIG_SHARE, near_min=min_usd)
         if bands:
@@ -431,17 +443,28 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
             sig = [b for b in bands if b["total"] >= sig_floor]
             main_band = min(sig, key=lambda b: b["dist_lo"]) if sig else bands[0]
             clusters = sorted(bands, key=lambda b: b["dist_lo"])
-        show = (big or sorted(solid or near, key=lambda c: -c["notional"]))[:min(limit, 3)]
-        order = sorted(bands, key=lambda b: (0 if b is main_band else 1, b["dist_lo"]))[:4]
+        # SAYFA eşiğini geçen HER pozisyon listelenir (yakından uzağa — `cands`
+        # mesafeye göre sıralı). Eskiden 3 ile kesiliyordu: dış liq haritası onlarca
+        # seviye gösterirken biz "en büyük 3" diyorduk. Eşiği geçen HİÇ yoksa
+        # (HEMI gibi pozisyon tavanlı coinler) eski davranış: en büyük 3 küçük.
+        pool = big or sorted(solid or near, key=lambda c: -c["notional"])[:min(limit, 3)]
+        show = pool[:SHOW_MAX]
+        # Grafik: bantların ŞERİDİ + SAYFA eşiği üstündeki her pozisyonun ÇİZGİSİ.
+        # Aynı kovaya düşen pozisyonların etiketi renderer'da tek satırda toplanır.
+        order = sorted(bands, key=lambda b: (0 if b is main_band else 1, b["dist_lo"]))
         chart_rows = [{"liq_px": b["px"], "side": b["side"], "notional": b["total"], "dist": b["dist_lo"],
                        "px_lo": b["px_lo"], "px_hi": b["px_hi"], "cluster": True, "n": b["n"],
-                       "main": b is main_band, "mark": float(mark)} for b in order] or show
+                       "main": b is main_band, "mark": float(mark)} for b in order]
+        chart_rows += [{"liq_px": p["liq_px"], "side": p.get("side"), "notional": p.get("notional"),
+                        "dist": p.get("dist"), "main": False, "mark": float(mark)} for p in show]
+        chart_rows = chart_rows or show
         if main_band:
             # zincir tetiği = ana band (toplamı, fiyata yakın kenarından); üyeleri
             # "arada patlayan" diye ikinci kez sayılmasın
             casc_rows = [r for r in rows if not _in_band(r, main_band)]
     else:
         show = cands[:limit]
+        pool = show
         chart_rows = show
     trigger = chart_rows[0] if chart_rows else None
     casc = await _cascade(cfg, client, coin, mark, trigger, casc_rows) if trigger else None
@@ -456,11 +479,13 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
     if chart_rows and getattr(cfg, "crypto_liq_chart", True):
         try:
             png = await _chart(client, coin, mark, chart_rows, target=_target(casc),
-                               coverage_txt=_coverage.txt(cov), far_pct=far_pct)
+                               coverage_txt=_coverage.txt(cov), far_pct=far_pct,
+                               fit_all=bool(getattr(cfg, "crypto_liq_chart_fit_all", True)))
         except Exception:
             log.debug("anlık grafik üretilemedi (%s)", coin, exc_info=True)
     return {"coin": coin, "kind": kind, "mark": mark, "age": age, "rows": show,
-            "n_all": len(cands), "n_big": len(big), "min_usd": min_usd, "png": png,
+            "n_all": len(cands), "n_big": len(big), "min_usd": max(show_usd, dust), "png": png,
+            "alert_usd": min_usd, "n_more": max(0, len(pool) - len(show)),
             "cascade": casc, "coverage": cov, "all_far": all_far,
             "n_far": len(cands) - len(near), "far_pct": far_pct,
             "clusters": clusters, "main_band": main_band, "n_dust": n_dust, "dust": dust}

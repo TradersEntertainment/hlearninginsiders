@@ -614,8 +614,9 @@ class TelegramBot:
     async def _cmd_coin_liq(self, cmd: str, chat_id: str) -> bool:
         """/hype, /pump, /sndk → o coinin liq'e en yakın büyük pozisyonları +
         grafik, canlı fiyat ve güncel kalan mesafeyle. Dönüş: komut bir coin
-        miydi (değilse çağıran 'komut yok' der). Resim + sığdırılmış altyazı TEK
-        mesaj; sığmazsa tam metin ayrı, resim ⭐ band altyazısıyla."""
+        miydi (değilse çağıran 'komut yok' der). TAM liste altyazıya sığıyorsa
+        (kısa liste) resim + altyazı TEK mesaj; sığmıyorsa metin parçalı gider ve
+        resim ⭐ band altyazısıyla peşinden gelir — hiçbir pozisyon gizlenmez."""
         from ..hl.universe import resolve_coin
         from ..radar import cryptoliq
         t = await resolve_coin(cmd)
@@ -631,18 +632,19 @@ class TelegramBot:
         offers: list[int] = []
         if s.get("rows"):
             try:
-                from ..radar.tracker import offer_positions
-                offers = await offer_positions(t["coin"], t["symbol"], s["rows"])
+                from ..radar.tracker import OFFER_MAX, offer_positions
+                offers = await offer_positions(t["coin"], t["symbol"], s["rows"][:OFFER_MAX])
             except Exception:
                 log.debug("takip teklifi yazılamadı (%s)", t["coin"], exc_info=True)
         png = s.get("png")
-        if png:
-            # TEK mesaj: foto + sığdırılmış altyazı (⭐ band, yakın bantlar, tekler, bağlam);
-            # ayrıntı sayfada. Sığmazsa (nadir) tam metin + foto (⭐ band altyazısı).
-            cap = fmt.crypto_liq_snapshot(s, offers=offers, compact=True)
-            if _caption_fit(cap)[1] and await self.send_photo(png, cap, chat_id):
-                return True
-        await self.send(fmt.crypto_liq_snapshot(s, offers=offers), chat_id)
+        # Altyazı = TAM metin. Sığıyorsa tek mesaj (kısa liste, eski davranış); sığmıyorsa
+        # `send` satır sınırlarından parçalar ve foto ⭐ altyazısıyla ekte gelir. Eskiden
+        # compact altyazı tercih ediliyordu; o altyazı tekleri 2'yle sınırladığı için
+        # ≥$200K'lık 30 satırlık liste kullanıcıya HİÇ görünmezdi.
+        full = fmt.crypto_liq_snapshot(s, offers=offers)
+        if png and _caption_fit(full)[1] and await self.send_photo(png, full, chat_id):
+            return True
+        await self.send(full, chat_id)
         if png:
             await self.send_photo(png, fmt.crypto_liq_photo_caption(s), chat_id)
         return True

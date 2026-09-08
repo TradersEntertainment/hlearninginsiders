@@ -833,8 +833,13 @@ def _liq_ctx(s: dict, rows: list[dict]) -> tuple[list[str], list[str]]:
         extra.append(f"pozisyon ölçümü en eski {age_str(oldest)} önce (süpürme)")
     if s.get("n_far") and not s.get("all_far"):
         extra.append(f"{s['n_far']} pozisyon %{far:.0f}'den uzak (listede/grafikte yok)")
+    if s.get("n_more"):
+        extra.append(f"{s['n_more']} pozisyon daha ≥ {usd(s.get('min_usd'))} (liste sınırı — tamamı coin sayfasında)")
     if s.get("n_dust"):
         extra.append(f"{s['n_dust']} toz pozisyon (&lt; {usd(s.get('dust'))}) bantlarda var, tek listesinde yok")
+    alert = s.get("alert_usd")
+    if alert and float(alert) > float(s.get("min_usd") or 0):
+        extra.append(f"kanala düşme eşiği {usd(alert)} (liste eşiği daha düşük — sayfa daha çok gösterir)")
     cc = coverage_ctx(s.get("coverage"))
     core.append("HL'nin tamamı değil" + (f" · {cc}" if cc else ""))
     return core, extra

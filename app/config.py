@@ -344,8 +344,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                              "desc": "Kaç coin taranacak (PROPR ∩ ana dex, hacimce büyükten). Her coin turda 1 istek eder"},
     "crypto_liq_enabled": {"type": "bool", "label": "Kripto liq radarı", "group": "Kripto liq",
                            "desc": "Kapatılırsa tur hiç çalışmaz; istek maliyeti sıfırlanır"},
-    "crypto_liq_min_usd": {"type": "float", "label": "Asgari pozisyon ($)", "group": "Kripto liq",
-                           "desc": "Bu tutarın altındaki pozisyon bildirilmez (kullanıcı kuralı $500K). Coin sayfasındaki likidasyon haritası her boyutu gösterir — bu yalnız Telegram eşiği"},
+    "crypto_liq_min_usd": {"type": "float", "label": "Asgari pozisyon — BİLDİRİM ($)", "group": "Kripto liq",
+                           "desc": "Bu tutarın altındaki pozisyon KANALA düşmez (kullanıcı kuralı $500K); ⭐ ana band ve zincir tetiği de bu tabana bakar ki alarm ile /sembol aynı pozisyonu anlatsın. Sorulduğunda gösterilen liste için ayrı (daha düşük) SAYFA eşiği var"},
+    "crypto_liq_show_usd": {"type": "float", "label": "Asgari pozisyon — SAYFA ($)", "group": "Kripto liq",
+                            "desc": "/sembol cevabında ve grafikte TEK TEK yazılan pozisyonun alt sınırı (kullanıcı kuralı $200K). Bildirim eşiğinden düşük tutulur: kanalda gürültü olan pozisyon, sorulduğunda bağlamdır. Bildirim eşiğinin üstüne çıkamaz"},
+    "crypto_liq_chart_fit_all": {"type": "bool", "label": "Grafik tüm liq'leri kapsasın", "group": "Kripto liq",
+                                 "desc": "Açıkken /sembol grafiğinin fiyat ekseni SAYFA eşiği üstündeki TÜM likidasyonları kapsayacak kadar genişler (en fazla azami liq mesafesi) — dış likidasyon haritası siteleri gibi. Kapatılırsa eski dar pencere: mumlar rahat okunur, uzak liq'ler kenarda toplu etiket olur"},
     "crypto_liq_dist_pct": {"type": "float", "label": "Liq mesafesi (%)", "group": "Kripto liq",
                             "desc": "Likidasyon fiyatı şimdiye bu kadar ya da daha yakınsa bildirim (kullanıcı kuralı %2,5). BTC ve ETH her zaman hariç"},
     "crypto_liq_dist2_pct": {"type": "float", "label": "2. uyarı mesafesi (%)", "group": "Kripto liq",
@@ -654,6 +658,11 @@ class Config:
         self.notify_cryptoliq = True
         self.crypto_liq_enabled = True
         self.crypto_liq_min_usd = float(os.getenv("CRYPTO_LIQ_MIN_USD", "500000"))
+        # SAYFA eşiği bilerek DÜŞÜK (ev kuralı: sayfa daha çok gösterir, alarm daha
+        # sıkı): /sembol dış likidasyon haritaları gibi her anlamlı pozisyonu tek tek
+        # yazsın. snapshot bunu bildirim eşiğiyle kırpar — üstüne çıkamaz.
+        self.crypto_liq_show_usd = float(os.getenv("CRYPTO_LIQ_SHOW_USD", "200000"))
+        self.crypto_liq_chart_fit_all = True
         self.crypto_liq_dist_pct = float(os.getenv("CRYPTO_LIQ_DIST_PCT", "2.5"))
         self.crypto_liq_dist2_pct = float(os.getenv("CRYPTO_LIQ_DIST2_PCT", "1.0"))
         self.crypto_liq_dist3_pct = float(os.getenv("CRYPTO_LIQ_DIST3_PCT", "0.5"))

@@ -73,6 +73,20 @@ def _usd(v: float) -> str:
 # mumları tek çizgiye eziyordu.
 NEAR_FACTOR = 2.0
 NEAR_MIN_PCT = 10.0
+# Etiket düzeni: kutu 26px, `place()` 28px aralık istiyor; kullanılabilir şerit
+# plot_b-plot_t-26 ≈ 499px → ~17 etiket. Kenar etiketlerine pay bırakıp 14'te
+# kesiyoruz; artan seviyeler tek bir "kalanlar" etiketine toplanır.
+LABEL_PITCH = 28
+MAX_LABELS = 14
+# Tek pozisyon çizgisi: mumları ezmesin diye SAĞ KENARA yaslı kısa bir çubuk
+# (dış liq haritalarının derinlik merdiveni). Boy $ ile orantılı; 34 tam genişlik
+# çizgi denendi, grafik okunmaz bir duvara dönüyordu.
+STUB_MIN, STUB_MAX = 26, 190
+FAINT = 0.75
+
+
+def _mix(c, bg, a: float) -> tuple:
+    return tuple(int(round(c[i] * a + bg[i] * (1 - a))) for i in range(3))
 
 
 def _dist_pct(px: float, mark: float) -> float:
@@ -80,12 +94,18 @@ def _dist_pct(px: float, mark: float) -> float:
 
 
 def plan_levels(cs: list[dict], mark: float, lv: list[dict], target: tuple | None = None,
-                far_pct: float = 50.0) -> dict | None:
+                far_pct: float = 50.0, fit_all: bool = False) -> dict | None:
     """Saf: hangi seviye çizilir, hangisi kenarda toplu, hangisi görünmez; y aralığı.
 
     Dönüş {lo, hi, win, draw, pinned: {top, bottom}, omitted, tpx, target_pinned}
     ya da None (ana seviye bile far_pct'den uzaksa — grafik anlamsız, çizilmez).
-    Mesafe px'ten hesaplanır (`dist` alanına güvenilmez); kenar px > fiyat → top."""
+    Mesafe px'ten hesaplanır (`dist` alanına güvenilmez); kenar px > fiyat → top.
+
+    `fit_all`: /sembol anlık görüntüsü için pencere, far_pct içindeki TÜM seviyeleri
+    kapsayacak kadar açılır — kullanıcı kararı: "200k+ tüm pozları görelim, liq
+    olacak grafikte". Mumlar sıkışır, karşılığında her likidasyon gerçek bir çizgi
+    olur (dış liq haritası siteleri gibi). Alarm grafiği bunu KULLANMAZ: orada tek
+    bir pozisyon anlatılıyor, mumların okunması önemli (INJ dersi)."""
     if not cs or not lv or not mark:
         return None
     main = next((x for x in lv if x.get("main")), lv[0])
@@ -94,6 +114,10 @@ def plan_levels(cs: list[dict], mark: float, lv: list[dict], target: tuple | Non
     if main_d > far_pct:
         return None
     win = max(min(far_pct, max(NEAR_FACTOR * main_d, NEAR_MIN_PCT)), main_d)
+    if fit_all:
+        reach = max((_dist_pct(x["px"], mark) for x in lv if _dist_pct(x["px"], mark) <= far_pct),
+                    default=win)
+        win = min(far_pct, max(win, reach))
     draw, pinned, omitted = [], {"top": [], "bottom": []}, []
     for x in lv:
         d = _dist_pct(x["px"], mark)
@@ -131,10 +155,56 @@ def _pinned_text(items: list[dict], top: bool) -> str:
     return f"{arrow} {len(items)} {word} {_usd(total)} {sign}%{min(ds):.0f}…{max(ds):.0f}"
 
 
+def _group_text(items: list[dict]) -> str:
+    """Etiket metni: tek seviye tam, üst üste binenler TOPLU (adet · yön · toplam $
+    · liq aralığı). `_pinned_text` ile aynı dil, kenar oku yok — o kenarda, bu
+    çizginin yanında durur."""
+    # Bandın toplamı üyelerini ZATEN içeriyor: aynı gruba düşen tek pozisyonları
+    # bir daha toplamak $'ı şişirirdi. Bant varsa söz onun, tekler çizgileriyle durur.
+    bands = [x for x in items if x.get("cluster")]
+    if bands:
+        items = [max(bands, key=lambda x: float(x.get("notional") or 0))]
+    if len(items) == 1:
+        x = items[0]
+        side = "SHORT" if x.get("side") == "short" else "LONG"
+        if x.get("cluster") and (x.get("n") or 0) > 1:
+            return f"{side} {_usd(x.get('notional'))} {_px(x['px_lo'])}–{_px(x['px_hi'])}"
+        return f"{side} {_usd(x.get('notional'))} · liq {_px(x['px'])}"
+    sides = {x.get("side") for x in items}
+    word = "short" if sides == {"short"} else ("long" if sides == {"long"} else "seviye")
+    total = sum(float(x.get("notional") or 0) for x in items)
+    n = sum(int(x.get("n") or 1) for x in items)
+    pxs = [float(x["px"]) for x in items]
+    rng = _px(min(pxs)) if _px(min(pxs)) == _px(max(pxs)) else f"{_px(min(pxs))}–{_px(max(pxs))}"
+    return f"{n} {word} {_usd(total)} · {rng}"
+
+
+def label_groups(levels: list[dict], y_of, pitch: float = LABEL_PITCH,
+                 cap: int = MAX_LABELS) -> tuple[list[list[dict]], list[dict]]:
+    """(etiketlenecek gruplar, kalanlar) — SAF, testte piksel okumadan sayılabilir.
+
+    Her seviyenin kendi çizgisi çizilir ama 40 etiket 499px'lik şeride sığmaz.
+    y'si açık bir grubun çapasına `pitch` kadar yakın olan seviye o gruba katılır
+    ("3 long $840K · 0.0036–0.0038"), değilse yeni grup açar. Sıra: ana ⭐ önce,
+    sonra fiyata yakınlık — en çok `cap` grup etiketlenir, artanı çağıran tek bir
+    kenar etiketine toplar. Böylece hiçbir seviye sessizce kaybolmaz."""
+    groups: list[list[dict]] = []
+    anchors: list[float] = []
+    for x in levels:
+        y = y_of(float(x["px"]))
+        hit = next((i for i, a in enumerate(anchors) if abs(a - y) < pitch), None)
+        if hit is None:
+            groups.append([x])
+            anchors.append(y)
+        else:
+            groups[hit].append(x)
+    return groups[:cap], [x for g in groups[cap:] for x in g]
+
+
 def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict],
            *, interval: str = "15dk", span_txt: str = "son 48 saat",
            target: tuple | None = None, coverage_txt: str | None = None,
-           far_pct: float = 50.0) -> bytes | None:
+           far_pct: float = 50.0, fit_all: bool = False) -> bytes | None:
     """PNG bayt. `candles`: [{t,o,h,l,c}] (t saniye, artan). `levels`:
     [{px, side, notional, dist, main}] — `main` olan seviyeye kalan mesafe
     köprüsü çizilir, en çok 4 seviye. `target=(px, label)`: zincir hedefi
@@ -155,7 +225,7 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     mark = float(mark or cs[-1]["c"])
 
     # y ekseni: mumlar ∪ ÇİZİLEN seviyeler ∪ fiyat ∪ (yakınsa) hedef, %6 pay
-    plan = plan_levels(cs, mark, lv, target, far_pct)
+    plan = plan_levels(cs, mark, lv, target, far_pct, fit_all=fit_all)
     if plan is None:
         return None
     lo, hi, tpx = plan["lo"], plan["hi"], plan["tpx"]
@@ -201,12 +271,15 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     y_m, y_l = y_of(mark), y_of(main["px"])
     od.rectangle([plot_l, min(y_m, y_l), plot_r, max(y_m, y_l)],
                  fill=BAND.get(main.get("side"), BAND["long"]))
-    # küme bantları: iki liq fiyatı arası şerit (kovalı haritanın bandı)
+    # küme bantları: iki liq fiyatı arası şerit (kovalı haritanın bandı). Geniş
+    # pencerede (dense) şeritler plotun yarısını kaplıyor — orada daha soluk çizilir.
     for x in plan["draw"]:
         if x.get("cluster") and x.get("px_lo") and x.get("px_hi"):
             y1, y2 = y_of(float(x["px_hi"])), y_of(float(x["px_lo"]))
-            od.rectangle([plot_l, min(y1, y2), plot_r, max(y1, y2) + 1],
-                         fill=BAND.get(x.get("side"), BAND["long"]))
+            bc = BAND.get(x.get("side"), BAND["long"])
+            if fit_all:
+                bc = bc[:3] + (18,)
+            od.rectangle([plot_l, min(y1, y2), plot_r, max(y1, y2) + 1], fill=bc)
     img.paste(Image.alpha_composite(img.convert("RGBA"), over).convert("RGB"))
     d = ImageDraw.Draw(img)
 
@@ -277,16 +350,33 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     if plan["target_pinned"] and tpx and tpx > mark:
         tag(place(plot_t + 13, down=True), f"▲ {target[1] or f'zincir hedefi {_px(tpx)}'}", AMBER)
 
-    # liq seviyeleri (en yakın önce çizilir ki etiketi üstte kalsın)
+    # liq seviyeleri: ÇİZGİ her seviyeye, ETİKET gruba. En yakın önce işlenir ki
+    # etiketi üstte kalsın. Eskiden `draw[:4]` vardı — dış liq haritası onlarca
+    # seviye çizerken biz dördünü gösteriyorduk (kullanıcı: "200k+ tüm pozlar").
     draw = sorted(plan["draw"], key=lambda x: (0 if x.get("main") else 1, abs(x["px"] - mark)))
-    for x in draw[:4]:
-        y = y_of(x["px"])
+    seen_y: set[int] = set()
+    big = max((float(x.get("notional") or 0) for x in draw if not x.get("cluster")), default=0.0)
+    for x in draw:                                   # önce çizgiler, etiketler üstlerine
         col = LIQ.get(x.get("side"), LIQ["long"])
-        dashed(y, col, dash=12, width=3 if x.get("main") else 2)
-        if x.get("cluster"):
-            tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} {_px(x['px_lo'])}–{_px(x['px_hi'])}", col)   # oluğa sığsın
-        else:
-            tag(place(y), f"{side_of(x)} {_usd(x.get('notional'))} · liq {_px(x['px'])}", col)
+        yy = y_of(x["px"])
+        if x.get("main") or x.get("cluster"):        # ⭐ ve bantlar: tam genişlik
+            dashed(yy, col, dash=12, width=3 if x.get("main") else 2)
+            seen_y.add(int(round(yy)))
+            continue
+        if int(round(yy)) in seen_y:
+            continue                                 # aynı piksel satırı: aynı çizgi
+        seen_y.add(int(round(yy)))
+        # tek pozisyon: sağa yaslı çubuk, boyu $ ile orantılı (derinlik merdiveni)
+        ntl = float(x.get("notional") or 0)
+        ln = STUB_MIN + (STUB_MAX - STUB_MIN) * (ntl / big if big > 0 else 0)
+        d.line([(plot_r - ln, yy), (plot_r, yy)], fill=_mix(col, BG, FAINT), width=3)
+    groups, rest = label_groups(draw, y_of)
+    for g in groups:
+        col = LIQ.get(g[0].get("side"), LIQ["long"])
+        tag(place(y_of(g[0]["px"])), _group_text(g), col)
+    if rest:                                          # sığmayanlar tek satırda, kayıp yok
+        col = LIQ.get(rest[0].get("side"), LIQ["long"])
+        tag(place(plot_b - 13, down=False), f"+ {_group_text(rest)}", col)
 
     # zincir hedefi: pencere içindeyse noktalı amber çizgi + etiket; dışındaysa
     # yalnız kenar etiketi (aralığa girmez — grafiği bozmaz)

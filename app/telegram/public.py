@@ -540,8 +540,10 @@ async def run_query(bot, u: dict, raw: str) -> bool:
         _cache[coin] = (ts, s)
     left = await users.consume_query(u, cfg, ts)
     foot = footer(u, cfg, left)
-    await send_snapshot(bot, chat, fmt.crypto_liq_snapshot(s) + "\n" + foot, s.get("png"), sym,
-                        caption=fmt.crypto_liq_snapshot(s, compact=True, extra=foot),
+    # Altyazı = TAM metin: sığarsa tek foto, sığmazsa `send_snapshot` metni parçalı
+    # gönderip fotoyu ⭐ altyazısıyla ekler (bkz. bot._cmd_coin_liq — aynı kural).
+    full = fmt.crypto_liq_snapshot(s, extra=foot)
+    await send_snapshot(bot, chat, full, s.get("png"), sym, caption=full,
                         fallback=fmt.crypto_liq_photo_caption(s))
     return True
 

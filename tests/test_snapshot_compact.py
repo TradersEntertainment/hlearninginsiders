@@ -95,6 +95,10 @@ def test_compact_fit_and_drop_order():
     print("✅ compact) PUMP: tam metin > 1024, altyazı ≤ 1024; ⭐ + duvar + en yakın band (mesafe sıralı) + 2 tek + kısa zincir; düşme sırası; foto altyazısı ⭐ band")
 
 
+async def _val(x):
+    return x
+
+
 def test_bot_single_message():
     async def run():
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "compact.db"))
@@ -124,22 +128,29 @@ def test_bot_single_message():
             return {"coin": "PUMP", "symbol": "PUMP", "kind": "crypto"} if cmd == "pump" else None
         orig_snap, orig_res = cryptoliq.snapshot, universe.resolve_coin
         cryptoliq.snapshot, universe.resolve_coin = fake_snapshot, fake_resolve
+        orig_fit = botmod._caption_fit
         try:
+            # UZUN liste (PUMP fikstürü, tam metin > 1024): metin ayrı + foto ⭐ altyazısıyla.
+            # Hiçbir pozisyon gizlenmez — eskiden compact altyazılı TEK foto gidiyordu ve
+            # o altyazı tekleri 2'yle sınırlıyordu.
             assert await bot._cmd_coin_liq("pump", "111") is True
-            assert sent == [] and len(photos) == 1 and photos[0][0] == "111", (sent, photos)
+            assert len(sent) == 1 and len(photos) == 1 and sent[0][0] == "111", (sent, photos)
+            assert visible_len(sent[0][1]) > 1024 and "/takip_3" in sent[0][1], sent[0][1]
+            assert photos[0][1] == "📈 <b>PUMP</b> · LONG bandı $3.5M · 0.0034–0.0036 · %15.2 altta"
+            # KISA liste: tam metin altyazıya sığar → tek mesaj (eski davranış korunur)
+            short = dict(s, rows=s["rows"][:1], clusters=s["clusters"][:1], cascade=None,
+                         n_all=3, n_big=1, n_dust=0, n_more=0)
+            short["main_band"] = short["clusters"][0]
+            sent.clear(); photos.clear()
+            cryptoliq.snapshot = lambda *a, **k: _val(short)
+            assert await bot._cmd_coin_liq("pump", "111") is True
+            assert sent == [] and len(photos) == 1, (sent, photos)
             cap = photos[0][1]
-            assert visible_len(cap) <= 1024 and "⭐" in cap and "yatırım tavsiyesi" in cap, cap
-            # sığmazsa: tam metin + foto (⭐ band altyazısı)
-            orig_fit = botmod._caption_fit
-            botmod._caption_fit = lambda c, **kw: (c, False)
-            try:
-                await bot._cmd_coin_liq("pump", "111")
-            finally:
-                botmod._caption_fit = orig_fit
-            assert len(sent) == 1 and visible_len(sent[0][1]) > 1024 and len(photos) == 2
-            assert photos[1][1] == "📈 <b>PUMP</b> · LONG bandı $3.5M · 0.0034–0.0036 · %15.2 altta"
+            assert visible_len(cap) <= 1024 and "👤" in cap and "yatırım tavsiyesi" in cap, cap
+            cryptoliq.snapshot = fake_snapshot
             assert await bot._cmd_coin_liq("tani", "111") is False
         finally:
+            botmod._caption_fit = orig_fit
             cryptoliq.snapshot, universe.resolve_coin = orig_snap, orig_res
         # herkese açık gönderici: caption sığarsa tek foto; fallback altyazı
         from app.telegram import public

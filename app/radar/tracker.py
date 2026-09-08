@@ -97,6 +97,12 @@ async def offer_positions(coin: str, symbol: str, rows: list[dict]) -> list[int]
     return ids
 
 
+# /sembol'de en çok bu kadar pozisyona /takip teklifi yazılır: her teklif bir INSERT,
+# 60 satırlık liste × her sorgu gereksiz yazı kilidi olurdu ("database is locked"
+# dersi). Sonraki satırlar teklifsiz yazılır (format `i < len(offers)` ile korumalı).
+# Alarm yolundaki karşılığı `cryptoliq.LIST_MAX = 6`.
+OFFER_MAX = 12
+
 OFFER_KEEP_SEC = 14 * 86400
 
 

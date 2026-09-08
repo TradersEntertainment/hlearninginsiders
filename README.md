@@ -475,6 +475,28 @@ kovalı liq bantlarının **en yakın anlamlısı** ⭐ başlık olur, ≥ $500K
 listelenir — dış sitenin "0.0042'de $2.87M band" dediğini biz de aynı dille
 (bizdeki payıyla, kapsama yüzdesiyle birlikte) söyleriz.
 
+**Sayfa daha çok gösterir, alarm daha sıkı — iki ayrı eşik.** `/sembol` cevabı
+`crypto_liq_show_usd` (**SAYFA**, varsayılan **$200K**) üstündeki **her** pozisyonu
+tek tek listeler ve her birinin liq fiyatını grafikte kendi çizgisi yapar; kanala
+düşme eşiği `crypto_liq_min_usd` (**BİLDİRİM**, $500K) ayrı ve daha yüksektir.
+Kanalda gürültü olan pozisyon, sorulduğunda bağlamdır. SAYFA eşiği bildirim
+eşiğinin üstüne çıkamaz (kırpılır) ve OI'nin binde birinden düşük olamaz (toz
+tabanı) — mesajdaki "≥ $X" hangisi bağlayıcıysa onu yazar, uydurmaz. ⭐ ana band,
+zincir tetiği ve grafik başlığı **BİLDİRİM** tabanına bakmayı sürdürür: alarm ile
+`/sembol` aynı pozisyonu aynı sırada anlatsın diye. Liste `SHOW_MAX` (60) satırda
+kesilir ve kesilen sayı bağlam satırında söylenir; `/takip_N` teklifi yalnız ilk
+`OFFER_MAX` (12) satıra yazılır (her teklif bir DB yazımı). Liste altyazıya
+sığmıyorsa mesaj **foto + parçalı tam liste** olarak gider — hiçbir pozisyon
+gizlenmez. Grafikte pencere (`crypto_liq_chart_fit_all`, varsayılan açık) tüm bu
+seviyeleri kapsayacak kadar açılır (tavan: azami liq mesafesi %50). ⭐ ana seviye ve
+band şeritleri tam genişlik çizilir; **tek pozisyonlar sağ kenara yaslı, boyu $ ile
+orantılı kısa çubuklardır** — dış liq haritalarının derinlik merdiveni. (34 pozisyon
+tam genişlik çizgi olarak denendi: grafik okunmaz bir duvara dönüyordu, mumlar
+kayboluyordu.) Üst üste binen seviyelerin etiketi tek satırda toplanır ("6 long $1.6M ·
+0.00404–0.00415"), en çok `MAX_LABELS` (14) etiket yazılır, artanı kenarda tek satırda
+toplanır — hiçbir seviye sessizce kaybolmaz. Mumların sıkışması bilinçli bir dengedir:
+burada asıl konu liq haritasıdır, ayar kapatılırsa eski dar pencereye dönülür.
+
 **⭐ = en yakın ANLAMLI band (08.09 PUMP vakası).** Eskiden bantlar yalnız
 toplama göre seçilip yön başına en şişman 3'ü alınıyordu: PUMP'ta fiyatın %1,3
 altındaki $2.2M band, %20-30'daki $17.6M duvarın ve iki şişman bandın arkasında

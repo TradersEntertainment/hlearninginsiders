@@ -462,7 +462,8 @@ def test_send_gate():
 def test_wiring():
     from app.config import EDITABLE_FIELDS
     c = Config()
-    for f in ("crypto_liq_enabled", "crypto_liq_min_usd", "crypto_liq_dist_pct",
+    for f in ("crypto_liq_enabled", "crypto_liq_min_usd", "crypto_liq_show_usd",
+              "crypto_liq_chart_fit_all", "crypto_liq_dist_pct",
               "crypto_liq_dist2_pct", "crypto_liq_dist3_pct", "crypto_liq_notify_close",
               "crypto_liq_chart", "crypto_liq_cascade", "crypto_liq_poll_sec", "crypto_liq_cooldown",
               "notify_cryptoliq"):
@@ -471,6 +472,14 @@ def test_wiring():
     assert "crypto_chat_id" not in EDITABLE_FIELDS, "chat id env-only kalmalı"
     assert c.crypto_liq_min_usd == 500_000 and c.crypto_liq_dist_pct == 2.5 and c.notify_cryptoliq is True
     assert c.crypto_liq_dist2_pct == 1.0 and c.crypto_liq_dist3_pct == 0.5
+    # SAYFA eşiği BİLDİRİM eşiğinden düşük ("sayfa daha çok gösterir, alarm daha sıkı")
+    assert c.crypto_liq_show_usd == 200_000 and c.crypto_liq_show_usd <= c.crypto_liq_min_usd
+    assert c.crypto_liq_chart_fit_all is True
+    for lbl, key in (("SAYFA", "crypto_liq_show_usd"), ("BİLDİRİM", "crypto_liq_min_usd")):
+        assert lbl in EDITABLE_FIELDS[key]["label"], key
+    env = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            ".env.example"), encoding="utf-8").read()
+    assert "CRYPTO_LIQ_SHOW_USD=200000" in env
     from app.health import limits, periods
     assert "cryptoliq" in limits(c) and "cryptoliq" in periods(c)
     from app.notify import KINDS
@@ -516,8 +525,10 @@ def test_snapshot():
         cfg = _cfg()
         from app.telegram import format as fmt
         s = await cl.snapshot(cfg, Client(rows, candles=synth_candles(MARK["PUMP"])), "PUMP")
-        assert [p["address"] for p in s["rows"]] == [B, A, D], "≥$500K olanlar, yakından uzağa"
-        assert s["n_all"] == 4 and s["n_big"] == 3 and s["mark"] == MARK["PUMP"] and s["png"]
+        # SAYFA eşiği $200K: $300K'lık C de listeye girer (alarm eşiği hâlâ $500K)
+        assert [p["address"] for p in s["rows"]] == [C, B, A, D], "≥$200K olanlar, yakından uzağa"
+        assert s["n_all"] == 4 and s["n_big"] == 4 and s["mark"] == MARK["PUMP"] and s["png"]
+        assert s["min_usd"] == 200_000 and s["alert_usd"] == 500_000 and s["n_more"] == 0
         t = fmt.crypto_liq_snapshot(s)
         assert t.startswith("🎯 <b>PUMP</b>") and "%0.90 üstte" in t and "$4.0M" in t and "canlı" in t
         assert s["cascade"] and s["cascade"]["direction"] == "up" and "💣 <b>Zincir</b>" in t, t
@@ -526,23 +537,25 @@ def test_snapshot():
         assert "$700K short" in t and "zorunlu alış" in t, t
         tl = t.splitlines()
         star = [ln for ln in tl if ln.endswith("⭐")]
+        # ⭐ hâlâ $700K short: band seçimi ALARM tabanına bakar, liste tabanı onu kaydırmaz
         assert len(star) == 1 and star[0].startswith("🔴 SHORT <b>$700K</b>") and "👤" in star[0], t
         bands = [ln for ln in tl if ln[:1] in "🟢🔴"]
-        assert bands[0].startswith("🟢 LONG bandı <b>$300K</b>") and bands[1] == star[0], "bantlar mesafe sıralı"
+        assert bands[0].startswith("🟢 LONG <b>$300K</b>") and bands[1] == star[0], "bantlar mesafe sıralı"
+        assert "kanala düşme eşiği $500K" in t, "iki eşik farkı mesajda dürüstçe yazılı"
         # ayar kapalı → satır yok, defter isteği yok
         cfg.crypto_liq_cascade = False
         cli_off = Client(rows, candles=synth_candles(MARK["PUMP"]))
         s_off = await cl.snapshot(cfg, cli_off, "PUMP")
         assert s_off["cascade"] is None and cli_off.book_calls == [] and "Zincir" not in fmt.crypto_liq_snapshot(s_off)
         cfg.crypto_liq_cascade = True
-        assert "havuzda 4 açık pozisyon, 3'ü ≥ $500K" in t and "PROPR" not in t, t
-        # eşik üstü yoksa en yakın küçükler + not; pozisyon hiç yoksa nedeni
+        assert "havuzda 4 açık pozisyon, 4'ü ≥ $200K" in t and "PROPR" not in t, t
+        # $300K artık SAYFA eşiğini geçiyor (alarm eşiğini değil); pozisyon hiç yoksa nedeni
         small = [row("PUMP", C, "long", 300_000, 0.3)]
         await _seed(small)
         s2 = await cl.snapshot(cfg, Client(small), "PUMP")
         t2 = fmt.crypto_liq_snapshot(s2)
         # tek pozisyon = tek üyeli band: satır pozisyonun kendisi, ayrıca "En büyük tekler" yok
-        assert s2["n_big"] == 0 and len(s2["rows"]) == 1 and "liq bantları" in t2 and s2["png"] is None
+        assert s2["n_big"] == 1 and len(s2["rows"]) == 1 and "liq bantları" in t2 and s2["png"] is None
         assert t2.count("🟢 LONG <b>$300K</b>") == 1 and "👤" in t2 and "tekler" not in t2, t2
         s3 = await cl.snapshot(cfg, Client([]), "HYPE")
         assert s3["rows"] == [] and "açık pozisyon yok" in fmt.crypto_liq_snapshot(s3)
@@ -602,13 +615,17 @@ def test_near_band_beats_far_wall():
         assert s["clusters"][0] is mb, "en yakın band aynı zamanda ilk satır"
         assert [b["dist_lo"] for b in s["clusters"]] == sorted(b["dist_lo"] for b in s["clusters"])
         assert has22(s["clusters"]) and any(abs(b["total"] - 17_600_000) < 1 for b in s["clusters"]), "duvar da listede"
-        assert s["n_big"] == 1 and [r["notional"] for r in s["rows"]] == [2_200_000.0]
+        # SAYFA eşiği $200K: duvarın 83 üyesi ($212K'lık) de tek tek listelenir; ⭐ değişmez
+        assert s["n_big"] == 84 and s["rows"][0]["notional"] == 2_200_000.0 and len(s["rows"]) == 60
+        assert s["n_more"] == 24 and s["min_usd"] == 200_000 and s["alert_usd"] == 500_000
         txt = fmt.crypto_liq_snapshot(s, offers=[74])
         line = txt.splitlines()[2]
         assert line.startswith("🟢 LONG <b>$2.2M</b>") and "liq 0.0042" in line, line
         assert "/takip_74" in line and "👤" in line and line.endswith("⭐"), line
-        assert "bandı" not in line and "Büyük tekler" not in txt and txt.count("$2.2M") == 1, txt
+        assert "bandı" not in line and txt.count("$2.2M") == 1, txt
         assert "LONG bandı <b>$17.6M</b>" in txt and "SHORT bandı <b>$258K</b>" in txt, txt
+        assert "Büyük tekler" in txt and txt.count("👤") == 60, "her ≥$200K pozisyon tek satır"
+        assert "24 pozisyon daha ≥ $200K" in txt, "kesilen sayı dürüstçe söylenir"
         # foto altyazısı ve grafik başlığı da tek pozisyonda "band/küme" demez
         capt = fmt.crypto_liq_photo_caption(s)
         assert capt.startswith("📈 <b>PUMP</b> · LONG $2.2M · 0.0042 · %1.3") and "bandı" not in capt, capt
