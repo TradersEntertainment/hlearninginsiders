@@ -455,6 +455,14 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Emrin yarısı dolunca tek kısa not (dolan / plan, kalan süre, fiyat)"},
     "twap_alert_end_note": {"type": "bool", "label": "Bitiş notu", "group": "TWAP radarı",
                             "desc": "Emir bitince (🏁) ya da iptal edilince (⛔) gerçek dolan tutar, plan, süre ve fiyat değişimi yazılır"},
+    "twap_follow_enabled": {"type": "bool", "label": "👁 Takip düğmesi (/takip_N)", "group": "TWAP radarı",
+                            "desc": "TWAP alarmına 'emri takip et' düğmesi koyar. Basan kişi EMRİ izler: iptal edilirse ⛔, bitince 🏁 haber alır — yalnız basan, kanal sessiz kalır. Pozisyon takibinden farkı emrin izlenmesidir; spot TWAP'ta pozisyon yoktur ama emir vardır"},
+    "twap_follow_poll_sec": {"type": "int", "label": "Takip: durum sorgu aralığı (sn)", "group": "TWAP radarı",
+                             "desc": "İzlenen emirlerin HL emir geçmişi bu aralıkla sorulur. Adres başına TEK istek; yalnız aktif takipler için. Düşürmek iptali daha çabuk yakalar, HL bütçesinden yer"},
+    "twap_follow_expire_days": {"type": "int", "label": "Takip: kendiliğinden kapanma (gün)", "group": "TWAP radarı",
+                                "desc": "Bu süre sonunda takip sessizce kapanır — emir çoktan bitmiş de olabilir, sonsuza kadar sorgulanmasın"},
+    "twap_follow_progress": {"type": "bool", "label": "Takip: yarılanma notu", "group": "TWAP radarı",
+                             "desc": "İzlenen emrin yarısı dolunca da tek not gelir. Kapatırsan yalnız iptal (⛔) ve bitiş (🏁) haber edilir"},
     "twap_live_window_min": {"type": "int", "label": "Canlı pencere (dk)", "group": "TWAP radarı",
                              "desc": "Bildirilmemiş bir dizinin bellekte tutulduğu en uzun süre; boşta kalan dizi 30 dk'da düşer"},
     "twap_live_eval_sec": {"type": "int", "label": "Canlı değerlendirme aralığı (sn)", "group": "TWAP radarı",
@@ -749,6 +757,10 @@ class Config:
         self.twap_alert_cooldown = int(os.getenv("TWAP_ALERT_COOLDOWN", "21600"))
         self.twap_alert_progress = True
         self.twap_alert_end_note = True
+        self.twap_follow_enabled = True
+        self.twap_follow_poll_sec = int(os.getenv("TWAP_FOLLOW_POLL_SEC", "120"))
+        self.twap_follow_expire_days = int(os.getenv("TWAP_FOLLOW_EXPIRE_DAYS", "7"))
+        self.twap_follow_progress = True
         self.twap_live_window_min = int(os.getenv("TWAP_LIVE_WINDOW_MIN", "240"))
         self.twap_live_eval_sec = int(os.getenv("TWAP_LIVE_EVAL_SEC", "60"))
         self.notify_pattern = True

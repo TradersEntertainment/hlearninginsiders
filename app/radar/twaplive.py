@@ -592,6 +592,16 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 active = bool(order and order.get("status") == "activated")
                 done = bool(order and order.get("status") in ("finished", "terminated", "error"))
                 if done or (is_ended(run, mm, ts) and not active):
+                    # Sessizlikten "bitti" sayıyorsak elimizdeki emir BAYAT olabilir:
+                    # araya giren bir iptali "🏁 bitti" diye yazmak yanlış olurdu.
+                    # Bitiş notundan ÖNCE bir kez daha zorla sor (adres önbelleğini
+                    # atlar). Emir geçmişten tamamen düştüyse eski davranış sürer:
+                    # başlık 🏁, gövde "gördüğümüz toplam" — plan iddia edilmez.
+                    if not done and collector is not None:
+                        await lookup_order(collector, run, ts, cfg, out, force=True)
+                        order = run.order
+                        st = (order or {}).get("status")
+                        done = st in ("finished", "terminated", "error")
                     run.ended_ts = ts
                     out["ended"] += 1
                     vol = vols.get(run.coin)
@@ -603,7 +613,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         chat, can = chat_for(cfg, run.coin)
                         if can:
                             ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
-                                   "cancelled": bool(order and order.get("status") in ("terminated", "error"))}
+                                   "cancelled": (order or {}).get("status") in ("terminated", "error")}
                             ok = await notifier.send("twap", fmt.twap_end(mm, ctx), priority="high", coin=run.coin,
                                                      key=f"twap_end:{key}", chat_id=chat)
                             if not ok and not (not chat and in_quiet_hours(cfg)):
@@ -679,8 +689,18 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             if not chat:
                 await alert_log("twap", key, "")          # hisse yolu: sessiz saat özeti için işaret ÖNCE
             pos = await position_ctx(client, run.coin, run.address)
+            # Takip teklifi (/takip_N): kullanıcı basarsa BU EMİR izlenir ve iptal
+            # edilince haber gider. Teklif yazılamazsa mesaj eskisi gibi gider —
+            # düğme süs değil ama mesajı bloke de etmez.
+            offer = None
+            if getattr(cfg, "twap_follow_enabled", True):
+                try:
+                    offer = await _twap_offer(run)
+                except Exception:
+                    log.debug("twap takip teklifi yazılamadı (%s)", run.coin, exc_info=True)
             ctx = {"order": order, "day_vol": day_vol, "vol_pct": det["vol_pct"],
-                   "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or ""}
+                   "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or "",
+                   "offer": offer}
             text = fmt.twap_alert(m, ctx)
             ok = await notifier.send("twap", text, priority="high", key=f"twap:{key}", chat_id=chat, coin=run.coin)
             if ok:
@@ -761,8 +781,58 @@ async def _marks() -> dict[str, float]:
     return out
 
 
+async def _twap_offer(run: "Run") -> int:
+    """Mesajdaki /takip_N için teklif satırı. `track_offers` tablosu paylaşılır;
+    `kind='twap'` bunun POZİSYON değil EMİR takibi olduğunu söyler (bot komutu
+    ona göre dallanır). `ref_ts` = turun first_ts'i — takip edilecek tur bu."""
+    async with db() as conn:
+        cur = await conn.execute(
+            """INSERT INTO track_offers(address,coin,symbol,side,notional,created_ts,kind,ref_ts)
+               VALUES(?,?,?,?,?,?,'twap',?)""",
+            (run.address, run.coin, assets.label(run.coin), run.side,
+             float(run.total or 0), now(), int(run.first_ts)))
+        return int(cur.lastrowid)
+
+
 def _runs_for(pred) -> list["Run"]:
     return sorted((r for r in REG.runs.values() if pred(r)), key=lambda r: -r.total)
+
+
+def live_runs(coin: str) -> list[dict]:
+    """Bellekte OLUŞMAKTA olan turlar (coin sayfası paneli için) — SENKRON, I/O yok.
+
+    `twap_runs` tablosu bir turu ancak emir sorgusu yapıldığında (alarm / kapı /
+    bitiş yollarında `persist`) yazar. Henüz o eşiğe gelmemiş dizi yalnız bellekte
+    (`REG`) durur; panel onları da göstersin ki "canlı TWAP" gerçekten canlı olsun.
+    Satır şekli `twap.all_orders` ile uyumlu tutulur; çağıran DB satırlarıyla
+    (coin, address, side) üzerinden tekleştirir.
+
+    DİKKAT: `twap_live_enabled` kapalıysa ya da yeniden başlatmadan hemen sonra
+    bu liste BOŞTUR — sayfa bunu künyede söyler, "TWAP yok" diye yalan söylemez."""
+    out = []
+    for r in _runs_for(lambda x: x.coin == coin):
+        o = r.order or {}
+        out.append({
+            "coin": r.coin, "address": r.address, "side": r.side,
+            "first_ts": r.first_ts, "last_ts": r.last_ts,
+            "n_slices": r.n, "total": r.total, "sz_total": r.sz_total,
+            "avg_slice": (r.total / r.n) if r.n else 0.0,
+            "avg_gap": ((r.last_ts - r.first_ts) / (r.n - 1)) if r.n > 1 else 0,
+            "day_volume": r.day_volume, "src": "live",
+            "planned_usd": o.get("planned_usd"), "executed_usd": o.get("executed_usd"),
+            "remaining_usd": o.get("remaining_usd"), "order_status": o.get("status"),
+            "alerted_ts": r.alerted_ts, "ended_ts": r.ended_ts,
+            "symbol": assets.label(r.coin), "spot": assets.is_spot(r.coin),
+            "size_usd": float(o.get("planned_usd") or 0) or r.total,
+            "planned_known": bool(o.get("planned_usd")),
+            "filled_pct": ((float(o.get("executed_usd") or 0) / float(o["planned_usd"]) * 100)
+                           if o.get("planned_usd") else None),
+            "left_sec": None, "account_value": None, "account_ts": None,
+            "watchlist": 0, "entity": None,
+            "running": not r.ended_ts, "cancelled": False,
+            "forming": True,          # henüz kaydedilmedi — tabloda "📡 oluşuyor"
+        })
+    return out
 
 
 def _run_line(r: "Run") -> str:

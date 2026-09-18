@@ -342,6 +342,35 @@ emirleri, **emrin planlanan boyutuna** göre büyükten küçüğe, süzgeçli.
   geçmişinde **gerçek bir emir doğrulanan** her tur kaydedilir, bildirim alanları
   boş kalır. Sayfa ✅ ile bildirilmiş olanı ayırır.
 
+**Coin sayfasında TWAP defteri.** `/t/<sembol>` sayfalarında **📋 TWAP emirleri**
+paneli var: o coindeki geçmiş ve canlı TWAP'lar, emir boyutuna göre, sürenler
+üstte. Kaynak `twap.all_orders(coin=…)` — `/twaplar` ile aynı satır ve aynı
+sütunlar (Piyasa sütunu düşer, sembol zaten sayfanın kendisi). Üstüne
+`twaplive.live_runs(coin)`: **henüz kaydedilmemiş, oluşmakta olan** diziler de
+📡 *oluşuyor* diye görünür — bir tur `twap_runs`'a ancak emir sorgusu yapılınca
+yazılır. Künye kör noktaları söyler: kayıtlar **30 gün** saklanır ("tüm geçmiş"
+bu demek), dilim toplamı `twap_lookup_min_usd` altında kalan emirler hiç
+sorgulanmaz, spot çiftlerinin coin sayfası yoktur (onlar `/twaplar`'da).
+
+**👁 Takip düğmesi ve iptal bildirimi.** TWAP alarmının sonunda
+`👁 emri takip et → /takip_N` satırı var. Basınca **o emir** izlenir ve **iptal
+edilirse ⛔, bitince 🏁** haber gelir — yalnız basana, komutun geldiği sohbete;
+kanal sessiz kalır (`/twaptakipler` listeler, `/birak_twap_N` bırakır).
+
+Bu, balina **pozisyonu** takibinden (`tracker`) ayrı bir hattır ve olmak zorunda:
+o `live_position` ile canlı perp defterine bakar, oysa TWAP'ta izlenecek şey
+**emrin kendisidir** — spot TWAP'ta pozisyon diye bir şey yok ama emir var.
+Ayrıca durum **HL emir geçmişinden** okunur, bellekten değil: `twaplive.REG`
+30 dakika boşta kalan turu düşürür, iptal ondan sonra gelirse bellekte karşılığı
+kalmaz. Takip döngüsü aktif takipleri adrese göre gruplar (**adres başına tek**
+`userTwapHistory` isteği, `TWAP_FOLLOW_POLL_SEC` = 120 sn) ve `TWAP_FOLLOW_EXPIRE_DAYS`
+(7) sonunda kendiliğinden kapanır. İşaret **gönderimden sonra** yazılır: başarısız
+gönderim takibi kapatmaz, sonraki tur yeniden dener.
+
+Kanalın kendi bitiş notu (`twap_alert_end_note`) duruyor; yanına bir dürüstlük
+düzeltmesi geldi: dilim akışı kesilip tur "bitti" sayılmadan önce emir **bir kez
+daha zorla sorulur**, böylece araya giren bir iptal "🏁 bitti" diye yazılmaz.
+
 **Spot (yeni).** HL spot çiftleri (`@107` = `PURR/USDC`) artık `spotMetaAndAssetCtxs`
 ile hacimce ilk `SPOT_WATCH_TOP` (40) çift olarak WS'e abone ediliyor; tabloda 🪙
 ile işaretli. Spot'ta **pozisyon, likidasyon ve funding yoktur** — bu coinler yalnız
@@ -428,6 +457,36 @@ artık gelmez.
 
 **Bildirim markerı yalnız gönderim başarılıysa yazılır** — kapalı seans
 bandındaki dersin aynısı; başarısız gönderim cooldown'u yakmaz.
+
+### Kripto burada YOKTUR — `/kriptoliq`
+
+Kullanıcı ekran görüntüsüyle sordu: tablo baştan aşağı SP500, XYZ100, GOLD, CL,
+JPY, EUR… "TradFi'leri çıkarıp kriptoya bakmak istiyorum filtreyle." Filtre
+gerçekten yoktu — ama kök neden o değil: **bu radarın tarama evreni yapısal
+olarak TradFi.** `scan()` evreni `_equity_positions()`'tan alır, o da
+`positions_current JOIN tickers` yapar; `tickers`'a yalnız `refresh_universe`
+yazar ve orası **HIP-3 dex'leridir** — ana dex kriptosu (BTC, HYPE, PUMP) o
+tabloya hiç girmez. Kripto dex'i (`para:ANSEM`) ise açık bir satırla elenir:
+*"dayanak piyasa kapanmaz, saldırı tezi yok"*. Yani TradFi süzülse sayfa **boş**
+kalırdı. Tezin kendisi de hafta sonuna bağlı; kripto 7/24 açık, Cuma kapanışı
+gibi bir dönüş çıpası yok.
+
+Bu yüzden iki ayrı şey var:
+- **`/saldiri`** TradFi'de kalır, üstüne **sınıf süzgeci** geldi:
+  `hepsi · yalnız hisse · yalnız endeks/emtia/FX (📐)`. Ayrım `assets.klass(coin)`
+  ile — **coin** ister, symbol değil (`klass("SP500")` öneksiz kalır ve yanlışlıkla
+  `kripto` döner). Sayfa başlığındaki kapı artık **hisse kapısıdır**: eskiden döngü
+  değişkeni dönüşe sızıyor ve son aday endeks olduğunda başlık "≤%1 / $50M" diyordu.
+- **`/kriptoliq`** kriptonun kendi sayfası: ana dex kriptosunda coin-yön başına
+  **en yakın anlamlı liq bandı**, toplamı büyükten küçüğe. Süzgeçler: mesafe
+  (%1 / %2,5 / %5 / %10) ve yön (long/short).
+
+**Eksik olan kasıtlı:** `/kriptoliq`'te **defter derinliği yok**, dolayısıyla
+**oran da yok**. `/saldiri`'nin asıl rakamı "patlayacak $ ÷ yenmesi gereken defter $"
+canlı `l2Book` ister — coin başına bir istek. Bu sayfa **HL'ye hiç istek atmaz**
+(pozisyonlar süpürme havuzundan, fiyatlar metrik döngüsünün yazdığı ana dex
+özetinden), bu yüzden cevapladığı soru "nerede ne kadar liq birikmiş"tir,
+"itmek kaça mal olur" değil. Sayfa bunu başlıkta ve künyede yazar.
 
 ## Likidasyon haritası nasıl okunur — `/t/<sembol>`
 

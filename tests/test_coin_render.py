@@ -43,6 +43,7 @@ def ctx(hst, **over):
                 scanned_ts=None, scanning=False, max_liq=50.0, tg=None, has_bot=False,
                 entry=liqmap.build_entry(ROWS, 100.0), hs_min_n=hs.MIN_N,
                 liq=liqmap.build(ROWS, 100.0, 50.0), bwalls=[], pxchart=False, tv_sym=None,
+                twaps=[], twap_keep_d=30, twap_lookup_min=50_000,
                 propr=False, n_long=1, n_short=0, panel_err={},
                 hchart=hchart, hmeta=hs.chart_meta(hst) if hchart else None,
                 hstats_pending=hst is None, coverage=None,

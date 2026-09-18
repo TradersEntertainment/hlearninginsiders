@@ -25,6 +25,7 @@ dışında sayfa son sonuçları ve karneyi gösterir, istek atmaz.
 import asyncio
 import logging
 
+from .. import assets
 from ..db import alert_log, alert_recent, db, kv_set, now
 from . import hourstats
 from .bookwall import _parse_book
@@ -426,7 +427,16 @@ async def record(cfg) -> dict:
 
 # ─────────────────────────────────────────────── sayfa
 
-async def page(cfg) -> dict:
+# /saldiri sınıf süzgeci. Bu radarda KRİPTO YOKTUR: tarama evreni `tickers`
+# (yalnız HIP-3 dex'leri) ve `_equity_positions` kripto dex'i açıkça eliyor —
+# tezin kendisi "borsa kapalıyken perp'i itip Cuma kapanışına dönmek". Ayrım bu
+# yüzden hisse ile endeks/emtia/FX arasındadır: tabloyu SP500/XYZ100/GOLD/CL/
+# JPY/EUR dolduruyordu. `assets.klass` COIN ister (symbol verilirse 'SP500'
+# öneksiz kalır ve yanlışlıkla 'kripto' döner).
+PAGE_KLASS = ("hepsi", "hisse", "endeks")
+
+
+async def page(cfg, sinif: str = "hepsi") -> dict:
     wk = hourstats.weekend_window(None, int(getattr(cfg, "offhours_close_hour", 0)))
     async with db() as conn:
         cur = await conn.execute(
@@ -443,11 +453,20 @@ async def page(cfg) -> dict:
             """SELECT a.*, t.symbol FROM liq_attacks a JOIN tickers t ON t.coin = a.coin
                ORDER BY a.ts_start DESC LIMIT 40""")
         attacks = [dict(r) for r in await cur.fetchall()]
+    # Süzgeç SQL'de değil burada: `klass()` config/kv okur (kripto dex listesi),
+    # SQL'e çevrilemez. Aday listesi tavansız (`ORDER BY score DESC`, LIMIT yok),
+    # yani süzmek satır kaybettirmez — yalnız sınıfı tutmayanı düşürür.
+    n_all = len(cands)
+    if sinif in ("hisse", "endeks"):
+        cands = [c for c in cands if assets.klass(c.get("coin") or "") == sinif]
     from ..db import kv_get
     h = int(getattr(cfg, "offhours_close_hour", 0))
     # Ölçek: liq ve defter barları aynı $ ekseninde — karşılaştırma bu.
     mx = max([max(c["liq_usd"] or 0, c["cost_usd"] or 0) for c in cands] or [1.0])
     by = await _equity_positions() if cands else {}
+    # Sayfa BAŞLIĞININ yazdığı kapı: hisse kapısı. Eskiden bu iki değişken döngü
+    # içinde `gate_for(...)` ile yeniden bağlanıyor ve SON adayın kapısı dönüşe
+    # sızıyordu — son satır endeks olunca başlık "≤%1 / $50M" diyordu.
     alert_dist = float(getattr(cfg, "liq_attack_alert_dist_pct", 2.0))
     alert_min = float(getattr(cfg, "liq_attack_alert_min_usd", 1_000_000))
     min_score = float(getattr(cfg, "liq_attack_min_score", 2.0))
@@ -455,13 +474,14 @@ async def page(cfg) -> dict:
         c["liq_w"] = max(1.5, (c["liq_usd"] or 0) / mx * 100)
         c["cost_w"] = max(1.5, (c["cost_usd"] or 0) / mx * 100)
         # Kapı adayın sembol sınıfına göre (hisse / endeks-emtia-FX).
-        alert_dist, alert_min, big = gate_for(cfg, c.get("symbol") or "")
-        c["alert_dist"], c["alert_min"], c["big"] = alert_dist, alert_min, big
+        c_dist, c_min, big = gate_for(cfg, c.get("symbol") or "")
+        c["alert_dist"], c["alert_min"], c["big"] = c_dist, c_min, big
+        c["klass"] = assets.klass(c.get("coin") or "")
         # Telegram kapısı: kapıdan önceki kayıtlarda near_usd NULL → şimdiki
         # pozisyonlarla yeniden hesapla (targets ile aynı kaynak).
         if c.get("near_usd") is None:
             c["near_usd"] = sum(p["notional"] for p in
-                                liq_within(by.get(c["coin"], []), c["mark"], c["direction"], alert_dist))
+                                liq_within(by.get(c["coin"], []), c["mark"], c["direction"], c_dist))
         # Kapı = bölge adayının oranı (zone_score; defter gerekir, tur anında
         # yazıldı). Bölge sütunu olmayan eski kayıtlarda eski kural (yalnız $).
         if c.get("zone_score") is not None:
@@ -470,7 +490,7 @@ async def page(cfg) -> dict:
         else:
             c["alert_ok"] = (c["near_usd"] or 0) >= alert_min
             c["gate_why"] = "" if c["alert_ok"] else "usd"
-        if not c["alert_ok"] and (c["near_usd"] or 0) < alert_min:
+        if not c["alert_ok"] and (c["near_usd"] or 0) < c_min:
             c["gate_why"] = "usd"
         # Hedef pozisyonlar tabloda saklanmıyor (kimlik zaten positions_current'ta);
         # tur anındaki mark ile yeniden bulunur — ucuz ve tek kaynak.
@@ -479,6 +499,7 @@ async def page(cfg) -> dict:
         c["targets"] = [{"address": p["address"], "notional": p["notional"],
                          "liq_px": p["liq_px"]} for p in hit[:TOP_TARGETS]]
     return {"weekend": wk, "last_ts": last, "cands": cands, "attacks": attacks,
+            "sinif": sinif, "n_all": n_all, "n_hidden": n_all - len(cands),
             "alert_dist": alert_dist, "alert_min": alert_min, "min_score": min_score,
             "big_dist": float(getattr(cfg, "liq_attack_alert_big_dist_pct", 1.0)),
             "big_min": float(getattr(cfg, "liq_attack_alert_big_min_usd", 50_000_000)),

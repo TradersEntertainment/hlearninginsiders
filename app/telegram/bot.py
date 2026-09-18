@@ -8,6 +8,7 @@ from collections import deque
 
 import aiohttp
 
+from .. import assets
 from ..config import Config
 from ..db import db, now
 from ..db import kv_get
@@ -488,6 +489,8 @@ class TelegramBot:
             await self._cmd_watchlist(chat_id)
         elif cmd.startswith("takip_"):
             await self._cmd_track_start(cmd, chat_id)
+        elif cmd in ("twaptakipler", "twaptakip"):
+            await self._cmd_twap_follow_list(chat_id)
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
             await self._cmd_sim(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
@@ -556,6 +559,8 @@ class TelegramBot:
         """Takip komutları (kanaldan da çalışır; haber komutun geldiği sohbete gider)."""
         if cmd.startswith("takip_"):
             await self._cmd_track_start(cmd, chat_id)
+        elif cmd in ("twaptakipler", "twaptakip"):
+            await self._cmd_twap_follow_list(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -993,6 +998,40 @@ class TelegramBot:
         await self.send(("🚫 Elendi (MM/vault muamelesi): " if on else "✅ Tekrar dahil: ")
                         + fmt.short(addr), chat_id)
 
+    async def _cmd_twap_follow_list(self, chat_id: str) -> None:
+        """/twaptakipler — izlenen TWAP emirleri."""
+        from ..radar import twapfollow
+        rows = await twapfollow.active()
+        if not rows:
+            await self.send("👁 İzlenen TWAP emri yok. TWAP alarmındaki /takip_N komutuna bas.", chat_id)
+            return
+        lines = [f"👁 <b>İzlenen TWAP emirleri</b> ({len(rows)})"]
+        for r in rows[:20]:
+            lines.append(f"#{r['id']} <b>{fmt.esc(assets.label(r['coin']))}</b>"
+                         f" · {'ALIM' if r['side'] == 'buy' else 'SATIM'}"
+                         f" · {fmt.alink(r['address'])}"
+                         f" · {fmt.age_str(r['created_ts'])} önce → /birak_twap_{r['id']}")
+        await self.send("\n".join(lines), chat_id)
+
+    async def _cmd_twap_follow(self, offer: dict, offer_id: int, chat_id: str) -> None:
+        """TWAP EMRİ takibi: iptal edilirse ⛔, bitince 🏁 haber gelir — yalnız
+        basana. Pozisyon takibinden farkı emrin izlenmesidir; spot TWAP'ta
+        pozisyon yoktur ama emir vardır."""
+        from ..radar import twapfollow
+        async with db() as conn:
+            await conn.execute("UPDATE track_offers SET used=1 WHERE id=?", (offer_id,))
+        fid = await twapfollow.start(self.cfg, offer["coin"], offer["address"],
+                                     offer["side"], int(offer.get("ref_ts") or 0),
+                                     chat_id=self._track_chat(chat_id))
+        days = int(getattr(self.cfg, "twap_follow_expire_days", 7) or 7)
+        sym = fmt.esc(offer.get("symbol") or offer["coin"])
+        half = "; yarılanınca da not düşerim" if getattr(self.cfg, "twap_follow_progress", True) else ""
+        await self.send(
+            f"👁 <b>{sym}</b> TWAP emri takipte (#{fid}) · {fmt.alink(offer['address'])}\n"
+            f"İptal edilirse <b>⛔</b>, bitince <b>🏁</b> haber vereceğim{half}."
+            f" Takip {days} gün sonra kendiliğinden kapanır · bırakmak için"
+            f" /birak_twap_{fid}", chat_id)
+
     async def _cmd_track_start(self, cmd: str, chat_id: str) -> None:
         """Teklif mesajındaki /takip_N — balina çıkış takibini başlat."""
         from ..radar.tracker import live_position
@@ -1008,6 +1047,12 @@ class TelegramBot:
             await self.send(f"#{offer_id} numaralı takip teklifi bulunamadı.", chat_id)
             return
         offer = dict(row)
+        # Teklif türü: 'twap' = EMİR takibi (iptal/bitiş haberi), 'pos' = balina
+        # POZİSYONU takibi (boyut adımı, liq kayması, kapanış). Eski satırlarda
+        # sütun NULL gelir → 'pos' okunur.
+        if (offer.get("kind") or "pos") == "twap":
+            await self._cmd_twap_follow(offer, offer_id, chat_id)
+            return
         async with db() as conn:
             cur = await conn.execute(
                 "SELECT id FROM trackers WHERE active=1 AND address=? AND coin=?",
@@ -1084,6 +1129,19 @@ class TelegramBot:
         await self.send(fmt.track_list(rows), chat_id)
 
     async def _cmd_track_stop(self, cmd: str, chat_id: str) -> None:
+        # /birak_twap_N → TWAP EMRİ takibi; /birak_N → pozisyon takibi
+        rest = cmd.split("_", 1)[1] if "_" in cmd else ""
+        if rest.startswith("twap_"):
+            from ..radar import twapfollow
+            try:
+                fid = int(rest.split("_", 1)[1])
+            except (ValueError, IndexError):
+                await self.send("Kullanım: /twaptakipler listesindeki /birak_twap_N komutuna bas.", chat_id)
+                return
+            ok = await twapfollow.stop(fid, "elle bırakıldı")
+            await self.send(f"👁 TWAP emri takibi #{fid} bırakıldı." if ok
+                            else f"#{fid} numaralı aktif TWAP takibi yok.", chat_id)
+            return
         try:
             tid = int(cmd.split("_", 1)[1])
         except (ValueError, IndexError):

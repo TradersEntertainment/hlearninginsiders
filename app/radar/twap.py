@@ -201,15 +201,20 @@ def order_size(r: dict) -> float:
 
 
 async def all_orders(hours: int = 168, status: str = "hepsi", market: str = "hepsi",
-                     limit: int = ORDERS_MAX) -> list[dict]:
+                     limit: int = ORDERS_MAX, coin: str = "") -> list[dict]:
     """/twaplar: görülen TÜM TWAP turları, emrin PLANLANAN boyutuna göre büyükten
     küçüğe. `recent()`ten farkı: pencere/durum/piyasa süzgeçleri, süren-önce
     sıralaması YOK (soru "en büyük emir hangisi") ve spot çiftleri de listede.
 
     status: hepsi | suren | bitmis      market: hepsi | perp | spot | hisse
     hours = 0 → pencere yok (tüm arşiv, `prune` neyi tuttuysa).
+    `coin` verilirse yalnız o coin (coin sayfasının TWAP paneli) — PK
+    (coin, address, side, first_ts) coin'le başlıyor, ek indeks gerekmez.
     """
     where, args = [], []
+    if coin:
+        where.append("t.coin = ?")
+        args.append(coin)
     if hours:
         where.append("t.last_ts >= ?")
         args.append(now() - int(hours) * 3600)

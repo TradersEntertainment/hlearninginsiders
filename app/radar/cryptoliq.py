@@ -34,6 +34,7 @@ metin zaten gitmiştir.
 import asyncio
 import logging
 
+from .. import assets
 from ..db import alert_log, alert_recent, db, kv_set, now
 from .bigpos import MAJORS
 
@@ -533,6 +534,74 @@ async def snapshot(cfg, client, coin: str, kind: str = "crypto", limit: int = 5)
 
 
 # ─────────────────────────────────────────────── tarama
+
+PAGE_DISTS = (1.0, 2.5, 5.0, 10.0)      # /kriptoliq mesafe seçenekleri (%)
+PAGE_MAX = 200                          # sayfa tavanı (coin-yön satırı)
+
+
+async def page(cfg, dist_pct: float = 5.0, side: str = "hepsi",
+               limit: int = PAGE_MAX) -> dict:
+    """/kriptoliq: ana dex kriptosunda likidasyona YAKIN birikim — coin-yön başına
+    en yakın anlamlı band, toplamı büyükten küçüğe.
+
+    SAF: DB + kv okur, HL'ye İSTEK ATMAZ (fiyatlar metrik döngüsünün yazdığı ana
+    dex özetinden). Bu yüzden `/saldiri`den bir şey EKSİK ve bu kasıtlı: orada
+    "oran = patlayacak $ ÷ yenmesi gereken defter $" var, burada DEFTER DERİNLİĞİ
+    YOK — coin başına bir `l2Book` isteği demek olurdu. Buranın cevapladığı soru
+    "nerede ne kadar liq birikmiş", "itmek kaça mal olur" DEĞİL.
+
+    Hafta sonu tezi de burada geçmez: `/saldiri` borsa kapalıyken perp'i kümeye
+    itip Cuma kapanışına dönmeye bakar; kripto 7/24 açık, öyle bir çıpa yok.
+
+    Dönüş: {rows, dist, side, n_coins, n_pos, total, min_usd, mark_ts, dists}.
+    """
+    from ..db import kv_get
+    from ..hl.universe import MAIN_CTX_KV
+    from . import liqmap
+    min_usd = float(getattr(cfg, "crypto_liq_min_usd", 500_000))
+    show_usd = min(float(getattr(cfg, "crypto_liq_show_usd", 200_000) or 0) or min_usd, min_usd)
+    dist_pct = float(dist_pct or 5.0)
+    rec = await kv_get(MAIN_CTX_KV) or {}
+    marks = {c: v["m"] for c, v in (rec.get("c") or {}).items() if (v or {}).get("m")}
+    rows_all = await _rows(show_usd, []) if marks else []
+    near = near_liq(rows_all, marks, dist_pct, show_usd)
+    merge = float(getattr(cfg, "crypto_liq_band_merge", 5) or 0) / 100
+    out: list[dict] = []
+    n_pos = 0
+    for coin, lst in near.items():
+        mark = float(marks[coin])
+        bands = liqmap.clusters(lst, mark, dist_pct, per_side=3,
+                                near_share=NEAR_BAND_SIG_SHARE, near_min=min_usd,
+                                merge_share=merge)
+        if not bands:
+            continue
+        n_pos += len(lst)
+        sig_floor = max(min_usd, bands[0]["total"] * NEAR_BAND_SIG_SHARE)
+        for sd in ("long", "short"):
+            mine = [b for b in bands if b["side"] == sd]
+            if not mine:
+                continue
+            # Satır = o yöndeki EN YAKIN ANLAMLI band (⭐ ile aynı kural, tek kaynak).
+            # Anlamlı yoksa yöndeki en şişman band — "hiç yok" demek yanlış olurdu.
+            sig = [b for b in mine if b["total"] >= sig_floor]
+            b = min(sig, key=lambda x: x["dist_lo"]) if sig else max(mine, key=lambda x: x["total"])
+            out.append({
+                "coin": coin, "symbol": assets.label(coin), "mark": mark, "side": sd,
+                "px_lo": b["px_lo"], "px_hi": b["px_hi"], "px": b["px"],
+                "dist_lo": b["dist_lo"], "dist_hi": b["dist_hi"],
+                "total": b["total"], "n": b["n"], "top": b.get("top") or [],
+                "coin_total": sum(x["total"] for x in mine),
+                "n_bands": len(mine), "sig": bool(sig),
+            })
+    if side in ("long", "short"):
+        out = [r for r in out if r["side"] == side]
+    out.sort(key=lambda r: -r["total"])
+    return {"rows": out[:limit], "dist": dist_pct, "side": side,
+            "n_coins": len({r["coin"] for r in out}), "n_pos": n_pos,
+            "total": sum(r["total"] for r in out), "min_usd": min_usd,
+            "show_usd": show_usd, "mark_ts": int(rec.get("ts") or 0),
+            "n_all": len(out), "cap": limit, "dists": PAGE_DISTS}
+
 
 async def scan(cfg, client, notifier=None) -> dict:
     out = {"coins": 0, "positions": 0, "candidates": 0, "fresh": 0, "probed": 0,

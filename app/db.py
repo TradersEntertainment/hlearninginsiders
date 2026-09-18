@@ -107,6 +107,18 @@ CREATE TABLE IF NOT EXISTS track_offers(
   address TEXT, coin TEXT, symbol TEXT, side TEXT, notional REAL,
   created_ts INTEGER, used INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS twap_follows(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  coin TEXT, address TEXT, side TEXT,
+  first_ts INTEGER,                -- takip edilen turun kimliği (twap_runs PK'sının parçası)
+  chat_id TEXT,                    -- komut hangi sohbetten geldiyse haber oraya (boş = ana sohbet)
+  created_ts INTEGER, expires_ts INTEGER,
+  active INTEGER DEFAULT 1,
+  last_status TEXT,                -- son görülen HL emir durumu; değişince haber
+  last_check_ts INTEGER, half_ts INTEGER, end_note TEXT,
+  UNIQUE(coin, address, side, first_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_twapfollow_active ON twap_follows(active, last_check_ts);
 CREATE TABLE IF NOT EXISTS book_walls(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   coin TEXT, side TEXT,            -- ask = satış duvarı (fiyatın üstünde) / bid = alış (altında)
@@ -480,6 +492,12 @@ MIGRATIONS = [
     # çıktı — coin sayfasındaki kapsama satırı "312 adres → 41 poz" bunu okur.
     "ALTER TABLE scans ADD COLUMN n_addrs INTEGER",
     "ALTER TABLE scans ADD COLUMN n_found INTEGER",
+    # Takip teklifi ne için: 'pos' = balina POZİSYONU (canlı pozisyona dayanır),
+    # 'twap' = TWAP EMRİ (emir geçmişine dayanır; spot'ta pozisyon yok, emir var).
+    # Eski satırlar NULL gelir; okuyan `kind or 'pos'` der (geriye dönük UPDATE yok).
+    "ALTER TABLE track_offers ADD COLUMN kind TEXT",
+    # ref_ts: 'twap' teklifinde takip edilen turun first_ts'i (twap_runs PK parçası)
+    "ALTER TABLE track_offers ADD COLUMN ref_ts INTEGER",
 ]
 
 

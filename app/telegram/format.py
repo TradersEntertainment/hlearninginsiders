@@ -1821,6 +1821,9 @@ def twap_alert(m: dict, ctx: dict) -> str:
         lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
     if klass == "hisse" and is_listed(sym):
         lines.append(PROPR_NOTE)
+    if ctx.get("offer"):
+        # Bu emri izle: iptal edilirse ⛔, bitince 🏁 haber gelir (yalnız basana).
+        lines.append(f"👁 emri takip et → /takip_{ctx['offer']}")
     lines.append(DISCLAIMER)
     return "\n".join(lines)
 

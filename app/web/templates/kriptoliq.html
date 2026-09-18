@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}💥 Kripto liq · HL Radar{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>💥 Kripto liq kümeleri <span class="st">· ana dex kriptosunda likidasyona yakın birikim · toplamı büyükten küçüğe</span></h2>
+  <p class="sub">Tek soru: <b>fiyat biraz oynarsa hangi coinde, hangi yönde, ne kadar dolar zorla kapanır?</b>
+  Her satır bir coin-yön: o yöndeki <b>en yakın anlamlı</b> likidasyon bandı. Bantlar fiyatta
+  bitişikse birleştirilir, yani "kova sınırı" aynı fiyat bölgesini ikiye bölmez.
+  Fiyatlar ana dex özetinden, pozisyonlar süpürme havuzundan — <b>bu sayfa HL'ye istek atmaz</b>.</p>
+
+  <form method="get" action="/kriptoliq" class="btnrow">
+    {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
+    <label>Mesafe
+      <select name="mesafe" onchange="this.form.submit()">
+        {% for d in cl.dists %}<option value="{{ d }}"{% if d == mesafe %} selected{% endif %}>%{{ '%g'|format(d) }} içinde</option>{% endfor %}
+      </select></label>
+    <label>Yön
+      <select name="yon" onchange="this.form.submit()">
+        <option value="hepsi"{% if yon == 'hepsi' %} selected{% endif %}>hepsi</option>
+        <option value="long"{% if yon == 'long' %} selected{% endif %}>yalnız LONG (fiyat düşerse)</option>
+        <option value="short"{% if yon == 'short' %} selected{% endif %}>yalnız SHORT (fiyat çıkarsa)</option>
+      </select></label>
+    <button type="submit" class="btn sm">Uygula</button>
+  </form>
+
+  {% if cl.rows %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Coin</th><th>Yön</th>
+        <th title="Bandın toplam notional'ı — fiyat bandın içine girerse zorla kapanacak $">Patlayacak</th>
+        <th title="Bandın kaç pozisyondan oluştuğu">Poz</th>
+        <th title="Şimdiki fiyattan bandın YAKIN kenarına uzaklık">Mesafe</th>
+        <th title="Bandın fiyat aralığı — likidasyonlar bu aralıkta">Band</th>
+        <th title="Şimdiki işaret fiyatı">Fiyat</th>
+        <th title="Bu coinde bu yöndeki TÜM bantların toplamı (yalnız en yakın anlamlısı listelendi)">Coin toplamı</th>
+        <th class="l" title="Banddaki en büyük pozisyonlar">Kimler</th></tr>
+    {% for r in cl.rows %}
+    <tr>
+      <td class="l"><a href="/t/{{ r.coin }}{{ k }}"><b>{{ r.symbol }}</b></a></td>
+      <td class="{{ r.side }}">{{ 'LONG' if r.side == 'long' else 'SHORT' }}</td>
+      <td data-v="{{ r.total|int }}"><b>{{ r.total|usd }}</b>
+        {%- if not r.sig %} <span class="dim" title="Bu yönde 'anlamlı' eşiğini geçen band yok — yöndeki en şişman band gösteriliyor">zayıf</span>{% endif %}</td>
+      <td class="dim">{{ r.n }}</td>
+      <td class="{{ 'warn' if r.dist_lo < 1 else '' }}">%{{ '%.2f'|format(r.dist_lo) }}</td>
+      <td class="dim">{{ r.px_lo|px }}{% if r.px_hi != r.px_lo %}–{{ r.px_hi|px }}{% endif %}</td>
+      <td class="dim">{{ r.mark|px }}</td>
+      <td class="dim">{{ r.coin_total|usd }}{% if r.n_bands > 1 %} <span class="dim" title="Bu yönde {{ r.n_bands }} band var">({{ r.n_bands }})</span>{% endif %}</td>
+      <td class="l">{% for t in r.top[:3] %}{{ m.addr(t.address, k, 6) }} <span class="dim">{{ t.notional|usd }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">🧾 {{ cl.rows|length }} coin-yön satırı{% if cl.n_all > cl.rows|length %} (sayfa tavanı {{ cl.cap }}, toplam {{ cl.n_all }}){% endif %} ·
+  {{ cl.n_coins }} coin · %{{ '%g'|format(cl.dist) }} içindeki {{ cl.n_pos }} pozisyon ·
+  toplam {{ cl.total|usd }}{% if cl.mark_ts %} · fiyatlar {{ cl.mark_ts|age }} önce yazıldı{% endif %}.
+  Sıralama <b>banddaki $</b>'a göre; "mesafe" sütunu yakınlığı söyler — ikisini birlikte oku.
+  Sütun başlığına tıklayarak başka ölçüye göre sıralayabilirsin.</p>
+  {% else %}
+  {{ m.empty(['Bu süzgeçle kümelenmiş likidasyon yok.',
+              'Mesafeyi genişlet (%' ~ '%g'|format(cl.dist) ~ ' dar olabilir) ya da yön süzgecini gevşet.',
+              'Fiyat yazılmamışsa liste boş kalır: ana dex özeti metrik döngüsünden gelir.']) }}
+  {% endif %}
+
+  <p class="kunye">Havuzda pozisyon tabanı {{ cl.show_usd|usd }} (sayfa) / {{ cl.min_usd|usd }} (alarm ve ⭐ bandı) ·
+  {{ crypto_n }} ana dex coini dinleniyor{% if ws_ts %} · evren {{ ws_ts|age }} önce yazıldı{% endif %}.</p>
+
+  <details class="panel note"><summary>Bu sayfa neyi gösterir, neyi göstermez</summary>
+  <div class="prose">
+  <p><b>Bu sayfa <a href="/saldiri{{ k }}">🎯 liq attack</a> DEĞİLDİR.</b> Orada asıl rakam
+  <b>oran</b>dır: patlayacak $ ÷ fiyatı oraya itmek için yenmesi gereken defter $. O oran
+  canlı <code>l2Book</code> ister — coin başına bir istek. Burada defter derinliği
+  <b>yok</b>, dolayısıyla <b>oran da yok</b>: bu sayfa "nerede ne kadar liq birikmiş"
+  sorusunu cevaplar, "itmek kaça mal olur" sorusunu değil. <b>Tahmin yok.</b></p>
+  <p><b>Hafta sonu tezi burada geçmez.</b> Liq attack radarı hisse/endeks perp'ine bakar:
+  borsa kapalıyken perp fiyatını yakın kümeye itip patlatanın dönüşü garantidir (Pazartesi
+  fiyat Cuma kapanışına döner). Kripto 7/24 açık — öyle bir çıpa yok, bu yüzden kripto
+  o radarın evreninde hiç yer almaz ve burası ayrı bir sayfadır.</p>
+  <p><b>Gösterir:</b> ana dex kripto perp'lerinde, süpürme havuzunda görülen ve likidasyon
+  fiyatı bilinen pozisyonların kümelenmesi. Yön sağlaması yapılır: long'un liq'i fiyatın
+  <b>altında</b>, short'unki <b>üstünde</b> olmalı; tersi veri tutarsızlığıdır ve atlanır.</p>
+  <p><b>Göstermez:</b> havuzda olmayan adresleri (kapsama sayfada coin başına yazılır),
+  pozisyon tabanının altında kalan küçükleri, HIP-3 hisse/endeks perp'lerini (onlar
+  <a href="/saldiri{{ k }}">liq attack</a> ve ana sayfa haritasında) ve <b>spot çiftlerini</b> —
+  spot'ta pozisyon, likidasyon ve funding yoktur.</p>
+  <p>Bir coinin tüm bantlarını, grafiğini ve zincir simülasyonunu görmek için coin adına
+  tıkla ya da Telegram'da <code>/&lt;sembol&gt;</code> yaz.</p>
+  </div></details>
+</div>
+{% endblock %}

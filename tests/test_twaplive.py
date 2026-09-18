@@ -695,7 +695,9 @@ def test_messages_and_wiring():
               "twap_alert_vol_pct_major",
               "twap_alert_big_usd", "twap_alert_min_slices", "twap_lookup_min_usd", "twap_lookup_cooldown",
               "twap_alert_cooldown", "twap_alert_progress", "twap_alert_end_note", "twap_live_window_min",
-              "twap_live_eval_sec", "twap_min_usd", "twap_window_h", "twap_scan_sec"):
+              "twap_live_eval_sec", "twap_min_usd", "twap_window_h", "twap_scan_sec",
+              "twap_follow_enabled", "twap_follow_poll_sec", "twap_follow_expire_days",
+              "twap_follow_progress"):
         assert f in EDITABLE_FIELDS and hasattr(c, f) and EDITABLE_FIELDS[f]["group"] == "TWAP radarı", f
         assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
     assert "twap_alert_rate_pct" not in EDITABLE_FIELDS and not hasattr(c, "twap_alert_rate_pct")
@@ -718,7 +720,7 @@ def test_messages_and_wiring():
     assert "Canlı TWAP alarmı" in rd("README.md") and "userTwapHistory" in rd("README.md") and fmt.TASK_TR.get("twaplive")
     for p in (("app", "telegram", "format.py"), ("app", "web", "templates", "twap.html")):
         assert "bu hızla" not in rd(*p), p
-    print("✅ mesaj/bağlantı) alarm/ilerleme/bitiş metinleri tahminsiz; 17 ayar TWAP radarı grubunda ($1M/$1M/%5, BTC/ETH %20); KINDS/health/spawn/kanca/migrasyon/README")
+    print("✅ mesaj/bağlantı) alarm/ilerleme/bitiş metinleri tahminsiz; 21 ayar TWAP radarı grubunda ($1M/$1M/%5, BTC/ETH %20); KINDS/health/spawn/kanca/migrasyon/README")
 
 
 # ------------------------------------------------ 10) PUMP vakası: sınıfa göre hacim kuralı, $1M taban, teşhis

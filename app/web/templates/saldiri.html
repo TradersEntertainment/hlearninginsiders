@@ -48,6 +48,20 @@
     {% endif %}
   </div>
 
+  <form method="get" action="/saldiri" class="btnrow">
+    {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
+    <label>Sınıf
+      <select name="sinif" onchange="this.form.submit()">
+        <option value="hepsi"{% if sinif == 'hepsi' %} selected{% endif %}>hepsi</option>
+        <option value="hisse"{% if sinif == 'hisse' %} selected{% endif %}>yalnız hisse</option>
+        <option value="endeks"{% if sinif == 'endeks' %} selected{% endif %}>yalnız endeks/emtia/FX (📐)</option>
+      </select></label>
+    <button type="submit" class="btn sm">Uygula</button>
+    {% if lq.n_hidden %}<span class="dim">· süzgeç {{ lq.n_hidden }} adayı gizledi ({{ lq.n_all }} aday var)</span>{% endif %}
+    <span class="hint" title="Bu radarın evreni HIP-3 dex'leridir (xyz:). Ana dex kriptosu tickers'a hiç girmez, kripto dex'i (para:) ise 'dayanak piyasa kapanmaz, saldırı tezi yok' diye elenir.">·
+      kripto burada YOKTUR → <a href="/kriptoliq{{ k }}">💥 kripto liq</a></span>
+  </form>
+
   {% set hot = lq.cands|selectattr('hot')|list %}
   <div class="kpi">
     <div><div class="l">Aday</div><div class="v">{{ hot|length }}</div>

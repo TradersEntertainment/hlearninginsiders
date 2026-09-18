@@ -489,6 +489,66 @@
 </div>
 
 <div class="panel">
+  <h2>📋 TWAP emirleri <span class="st">· bu coindeki geçmiş ve canlı TWAP'lar · emir boyutuna göre, sürenler üstte</span></h2>
+  <p class="sub">Düzenli aralıklarla, benzer boyutta gelen fill dizisi = <b>TWAP</b>. Dizi yakalanınca
+  adresin <b>HL emir geçmişi</b> sorulur ve emrin <b>planlanan toplamı</b>, <b>dolanı</b>, <b>kalanı</b>
+  buraya yazılır; sorgulanamadıysa satır ölçülen dilim toplamıyla gelir ve <span class="dim">ölçülen</span>
+  diye işaretlenir — <b>tahmin yok</b>.</p>
+  {% if panel_err.twap %}<p class="alert bad">⚠️ {{ panel_err.twap }}</p>{% endif %}
+  {% if twaps %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Adres</th><th>Yön</th>
+        <th title="HL TWAP emrinin planlanan toplamı. Emir sorgulanamadıysa ölçülen dilim toplamı">Emir boyutu</th>
+        <th title="Emrin dolan kısmı">Doldu</th>
+        <th title="Emrin dolmamış kısmı">Kalan</th>
+        <th title="Bizim ölçtüğümüz: dilimlerin $ toplamı">Görülen</th>
+        <th title="Kaç dilime bölünmüş">Dilim</th>
+        <th title="Dilimler arası ortalama süre">Aralık</th>
+        <th title="Ölçüm anındaki 24 saatlik hacim">24s hacim</th>
+        <th title="HL perp teminatı — net worth değil">HL bakiye</th>
+        <th title="Son dilim ne zaman görüldü">Son dilim</th>
+        <th title="📡 canlı sayaç · 🗄 fills arşivi">Kaynak</th>
+        <th>Durum</th></tr>
+    {% for r in twaps %}
+    <tr>
+      <td class="l">{{ m.addr(r.address, k, 6) }}
+        {%- if r.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}
+        {%- if r.entity %}<span class="dim" title="Etiketli hesap"> {{ r.entity }}</span>{% endif %}</td>
+      <td class="{{ 'long' if r.side == 'buy' else 'short' }}">{{ 'ALIM' if r.side == 'buy' else 'SATIM' }}</td>
+      <td data-v="{{ r.size_usd|int }}"><b>{{ r.size_usd|usd }}</b>
+        {%- if not r.planned_known %} <span class="dim" title="HL emri sorgulanamadı — bu, ölçülen dilim toplamıdır">ölçülen</span>{% endif %}</td>
+      <td class="dim">{% if r.filled_pct is not none %}%{{ '%.0f'|format(r.filled_pct) }}{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.planned_known %}{{ (r.remaining_usd or 0)|usd }}{% else %}—{% endif %}</td>
+      <td class="dim">{{ r.total|usd }}</td>
+      <td class="dim">{{ r.n_slices }}</td>
+      <td class="dim">{{ (r.avg_gap or 0)|int }}sn</td>
+      <td class="dim">{% if r.day_volume %}{{ r.day_volume|usd }}{% else %}—{% endif %}</td>
+      <td>{{ m.equity_cell(r.account_value, r.account_ts) }}</td>
+      <td class="dim">{{ r.last_ts|age }}</td>
+      <td class="dim">{{ '📡' if r.src == 'live' else '🗄' }}</td>
+      <td>{% if r.forming %}<span class="long" title="Dizi şu anda oluşuyor — henüz emir sorgusu yapılmadı, kayda geçmedi">📡 oluşuyor</span>
+        {%- elif r.running %}<span class="long" title="Son dilim yakın zamanda geldi ve emir kapanmadı">▶ sürüyor</span>
+        {%- elif r.cancelled %}<span class="dim" title="HL emri iptal/hata ile bitti">⛔ iptal</span>
+        {%- else %}<span class="dim">🏁 bitti</span>{% endif %}
+        {%- if r.alerted_ts %} <span title="Telegram'a düştü">✅</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">🧾 {{ twaps|length }} emir · kayıtlar <b>{{ twap_keep_d }} gün</b> saklanır, öncesi budanır —
+  "tüm geçmiş" bu demek · emir geçmişi yalnız dilim toplamı {{ twap_lookup_min|usd }} üstüne çıkan adresler için
+  sorgulanır, altındaki emirler burada <b>görünmez ve görünmediklerini bilemeyiz</b> ·
+  tümü için <a href="/twaplar{{ k }}">📋 twap emirleri</a>.</p>
+  {% else %}
+  {{ m.empty(['Bu coinde kayıtlı TWAP emri yok.',
+              'Dizi yakalanması için düzenli aralıklı, benzer boyutta en az birkaç dilim gerekir; dilim toplamı '
+              ~ twap_lookup_min|usd ~ ' altında kalan emirler sorgulanmaz.',
+              'Kayıtlar ' ~ twap_keep_d ~ ' gün saklanır; öncesi budanır.']) }}
+  {% endif %}
+</div>
+
+<div class="panel">
   <h2>⚡ Son büyük işlemler <span class="st">· canlı akıştan yakalanan alım-satımlar</span></h2>
   <p class="sub">Canlı akıştan (WS) yakalanan büyük alım-satımlar — balina avlama havuzu buradan beslenir.</p>
   {% if fills %}

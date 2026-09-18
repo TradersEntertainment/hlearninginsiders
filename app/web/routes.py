@@ -20,7 +20,7 @@ from ..hl.universe import (MAIN_CTX_KV, crypto_names, find_in_hip3, find_ticker,
                            resolve_coin, similar_names)
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, bars, bigpos, clusters, cryptovol, equityvol, liqattack, liqmap,
+from ..radar import (autoscan, bars, bigpos, clusters, cryptoliq, cryptovol, equityvol, liqattack, liqmap,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
                      patterns, pricechart, sim, twap)
 
@@ -781,6 +781,23 @@ async def coin_page(request: Request, symbol: str):
         except Exception:                      # noqa: BLE001 — legend süsü, sayfa düşmesin
             log.exception("now_verdict %s", coin)
 
+    # Bu coinin TWAP emirleri: arşiv + canlı. `all_orders` zaten kaydedilmiş
+    # (canlı + arşiv) turları birleştirip `running`'i hesaplıyor; `live_runs`
+    # yalnız HENÜZ kaydedilmemiş, oluşmakta olan dizileri ekler. Panel patlarsa
+    # sayfa düşmesin — `coverage` ile aynı desen (`_safe` senkron, burada olmaz).
+    twaps = []
+    try:
+        twaps = await twap.all_orders(hours=0, coin=coin, limit=60)
+        seen = {(r["coin"], r["address"], r["side"]) for r in twaps}
+        if getattr(cfg, "twap_live_enabled", True):
+            from ..radar import twaplive as _tl
+            twaps += [r for r in _tl.live_runs(coin)
+                      if (r["coin"], r["address"], r["side"]) not in seen]
+        twaps.sort(key=lambda r: (not r.get("running"), -float(r.get("size_usd") or 0)))
+    except Exception:                          # noqa: BLE001
+        log.exception("twap paneli %s", coin)
+        panel_err["twap"] = "TWAP emirleri okunamadı"
+
     # Kapsama: havuz / HL OI (dürüstlük satırı). Süs — hesaplanamazsa sayfa düşmez.
     try:
         from ..radar import coverage as _coverage
@@ -806,6 +823,8 @@ async def coin_page(request: Request, symbol: str):
         # Likidasyon haritası: kovalı, saf modül (bkz. radar/liqmap.py).
         "liq": _safe(panel_err, "liq", liqmap.build, rows, mark, cfg.max_liq_distance_pct),
         "bwalls": bwalls,
+        "twaps": twaps, "twap_keep_d": twap.RETENTION_D,
+        "twap_lookup_min": getattr(cfg, "twap_lookup_min_usd", 50_000),
         "pxchart": pxchart,
         "klass": t.get("klass") or assets.klass(coin),
         "tv_sym": (tv_symbol(t["symbol"]) if cfg.show_tradingview and kind != "crypto"
@@ -1143,6 +1162,22 @@ def _parse_window(request: Request) -> tuple[int, int, str]:
     return start, end, "son 15 dakika (varsayılan)"
 
 
+@router.get("/kriptoliq")
+async def crypto_liq_page(request: Request, mesafe: float = 5.0, yon: str = "hepsi"):
+    """Kripto liq kümeleri — ana dex kriptosunda likidasyona yakın birikim."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    yon = yon if yon in ("hepsi", "long", "short") else "hepsi"
+    mesafe = mesafe if any(abs(mesafe - d) < 1e-9 for d in cryptoliq.PAGE_DISTS) else 5.0
+    ws = await kv_get("ws_universe") or {}
+    return _render(request, "kriptoliq.html", {
+        "cl": await cryptoliq.page(cfg, dist_pct=mesafe, side=yon),
+        "mesafe": mesafe, "yon": yon,
+        "crypto_n": len(ws.get("crypto") or []), "ws_ts": int(ws.get("ts") or 0),
+        "max_liq": getattr(cfg, "max_liq_distance_pct", 50),
+    })
+
+
 @router.get("/twaplar")
 async def twap_orders_page(request: Request, pencere: int = 168, durum: str = "hepsi",
                            piyasa: str = "hepsi"):
@@ -1395,13 +1430,14 @@ async def census_ingest(request: Request):
 
 
 @router.get("/saldiri")
-async def liq_attack_page(request: Request):
+async def liq_attack_page(request: Request, sinif: str = "hepsi"):
     """Liq attack radarı — hafta sonu yakın liq kümesini kim ucuza patlatabilir."""
     _guard(request)
     cfg = request.app.state.cfg
-    lq = await liqattack.page(cfg)
+    sinif = sinif if sinif in liqattack.PAGE_KLASS else "hepsi"
+    lq = await liqattack.page(cfg, sinif=sinif)
     return _render(request, "saldiri.html", {
-        "lq": lq,
+        "lq": lq, "sinif": sinif, "klasses": liqattack.PAGE_KLASS,
         "min_usd": getattr(cfg, "liq_attack_min_usd", 2_000_000),
         "max_dist": getattr(cfg, "liq_attack_max_dist_pct", 4.0),
         "min_score": getattr(cfg, "liq_attack_min_score", 2.0),

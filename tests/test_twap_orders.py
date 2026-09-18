@@ -85,6 +85,10 @@ def test_filters():
         assert [r["symbol"] for r in await twap.all_orders(market="hisse")] == ["SNDK"]
         perp = [r["symbol"] for r in await twap.all_orders(market="perp")]
         assert perp == ["HYPE", "BTC"], perp
+        # coin süzgeci: coin sayfasının TWAP paneli bunu kullanır
+        assert [r["symbol"] for r in await twap.all_orders(coin="@107")] == ["PURR/USDC"]
+        assert [r["symbol"] for r in await twap.all_orders(coin="HYPE", hours=0)] == ["HYPE"]
+        assert await twap.all_orders(coin="YOKBÖYLE") == []
         # pencere: 3 gün önceki BTC 24 saatlik pencerede yok, 'hepsi'de var
         assert "BTC" not in [r["symbol"] for r in await twap.all_orders(hours=24)]
         assert "BTC" in [r["symbol"] for r in await twap.all_orders(hours=0)]
@@ -154,6 +158,49 @@ def test_collector_spot_universe():
         from app.radar import twaplive
         assert (await twaplive.volumes())["@151"][0] == 9_900_000.0
         print("✅ evren) spotMeta → hacimce ilk N çift, kv önbellek, WS evreni, ayrı fill tabanı, TWAP hacmi")
+    asyncio.run(run())
+
+
+def test_coin_page_panel():
+    """Kullanıcı: "her hissenin ve kriptonun sayfasına girdiğimde geçmiş tüm
+    twapları ve canlı tüm twapları görebileyim." Panel iki kaynağı birleştirir:
+    kaydedilmiş turlar (`all_orders(coin=)`) + henüz kaydedilmemiş, OLUŞMAKTA
+    olan diziler (`twaplive.live_runs`). Tekleştirme (coin, adres, yön) ile."""
+    async def run():
+        from test_routes_smoke import _fresh, get
+        from app.radar import twaplive as tl
+        app = await _fresh()
+        t = await _seed()
+        async with dbm.db() as c:                       # coin sayfası için ticker
+            await c.execute("INSERT OR IGNORE INTO tickers(coin,dex,symbol,name,max_leverage,"
+                            "listed_at) VALUES('xyz:SNDK','xyz','SNDK','SNDK',5,?)", (t,))
+        st, body = await get(app, "/t/SNDK")
+        assert st == 200 and "📋 TWAP emirleri" in body, body[-400:]
+        assert "$300K" in body and "0xdddd..dddd" in body, "o coinin emri listede"
+        assert "HYPE" not in body and "PURR/USDC" not in body, "başka coinin emri sızmaz"
+        assert "30 gün" in body and "tahmin yok" in body, "kör nokta ve tahmin yasağı künyede"
+        # bellekteki OLUŞAN dizi de görünür ve "📡 oluşuyor" der
+        tl.REG.runs.clear()
+        r = tl.Run("xyz:SNDK", "0x" + "e" * 40, "buy", t - 600, 10.0)
+        r.n, r.total, r.last_ts = 12, 120_000.0, t
+        tl.REG.runs[r.key] = r
+        st, body = await get(app, "/t/SNDK")
+        assert "📡 oluşuyor" in body and "0xeeee..eeee" in body, "kaydedilmemiş canlı dizi de panelde"
+        # aynı tur hem DB'de hem bellekte ise TEK satır
+        r2 = tl.Run("xyz:SNDK", D, "buy", t - 1800, 10.0)
+        r2.n, r2.total, r2.last_ts = 40, 300_000.0, t
+        tl.REG.runs[r2.key] = r2
+        st, body = await get(app, "/t/SNDK")
+        assert body.count("0xdddd..dddd") == 1, "DB + bellek aynı turu çiftlemez"
+        tl.REG.runs.clear()
+        # emri olmayan coinde panel dürüstçe boş
+        async with dbm.db() as c:
+            await c.execute("INSERT OR IGNORE INTO tickers(coin,dex,symbol,name,max_leverage,"
+                            "listed_at) VALUES('xyz:BOSS','xyz','BOSS','BOSS',5,?)", (t,))
+        st, body = await get(app, "/t/BOSS")
+        assert st == 200 and "Bu coinde kayıtlı TWAP emri yok" in body
+        print("✅ coin sayfası) 📋 TWAP paneli: o coinin geçmiş + canlı emirleri;"
+              " oluşan dizi 📡, çiftleme yok, boş durum dürüst")
     asyncio.run(run())
 
 
