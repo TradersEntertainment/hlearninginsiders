@@ -20,9 +20,11 @@ ve /tani bunu gösterir ki filtre bir daha sessizce körleşmesin.
 import asyncio
 import logging
 
+from .. import assets
 from ..db import alert_log, alert_recent, db, kv_set, now
-from .cryptovol import (INTERVAL, LOOKBACK_SEC, MIN_BUCKETS, find_record,
-                        n_closed, note_miss, parse_vol_candles, prefilter_skip, unit_sane)
+from .cryptovol import (INTERVAL, LOOKBACK_SEC, MIN_BUCKETS, find_record, last_bucket,
+                        n_closed, note_miss, parse_vol_candles, prefilter_skip, save_movers,
+                        unit_sane)
 
 log = logging.getLogger("radar.equityvol")
 
@@ -103,6 +105,7 @@ async def scan(cfg, client, notifier=None) -> dict:
     chat = (getattr(cfg, "crypto_stocks_id", "") or "").strip()
     ts = now()
     end_ms, start_ms = ts * 1000, (ts - LOOKBACK_SEC) * 1000
+    movers: list[dict] = []
 
     for coin in coins:
         # WS ön-süzgeci: yeni rekor ancak son KAPANMIŞ 5 dk mumu sayfa tabanını aşarsa
@@ -130,6 +133,11 @@ async def scan(cfg, client, notifier=None) -> dict:
         out["n_bucket"] += 1
         if unit_sane(candles, vols.get(coin)) is False:
             out["unit_bad"].append(coin.split(":")[-1])
+        # HAREKET: rekor kapısından ÖNCE ve ondan bağımsız (bkz. save_movers).
+        b = last_bucket(candles, ts)
+        if b:
+            movers.append({**b, "coin": coin, "symbol": assets.label(coin),
+                           "day_vol": float(vols.get(coin) or 0), "market": "equity"})
         rec = find_record(candles, ts)
         if not rec:
             continue
@@ -186,6 +194,7 @@ async def scan(cfg, client, notifier=None) -> dict:
             if mode == "combined":
                 out["combined"] += 1
 
+    await save_movers("equity", movers, out, ts)
     if out["unit_bad"]:
         log.warning("hisse hacim birimi şüpheli (%d sembol, ör. %s): v×fiyat "
                     "toplamı dayNtlVlm ile uyuşmuyor — $ değerleri yanıltıcı olabilir",

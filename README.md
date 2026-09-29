@@ -216,6 +216,40 @@ yap, Railway'e ilgili değişkeni ekle. Yeni bot/token gerekmez. Tanımlı deği
 olaylar sitede kaydedilir ama **gönderilmez** — ana kanala düşürmek ayırma
 isteğini bozardı.
 
+### 5 dakikalık en büyük hareketler: `/hareket`
+
+`/hacim` *hacmin* kendi normalini kırmasına bakıyor. Bir coin **%8 oynayıp hacim
+rekoru kırmazsa** `vol_events`'e hiç girmiyor — yani "son 5 dakikada en çok ne
+oynadı" sorusu o tablodan cevaplanamıyordu. `/hareket` o soruyu cevaplıyor:
+**PROPR listesi, 24 saatlik hacmi ≥ $1M olanlar, |%| büyükten küçüğe tek liste**
+(yön renkle: yeşil yükselen, kırmızı düşen). Süzgeçler: piyasa (hepsi / kripto /
+hisse-endeks) ve 24s hacim tabanı ($1M / $5M / $25M / taban yok).
+
+**Hacim eşiği 24 SAATLİKTİR**, kovanın kendi hacmi değil — bu bir *likidite
+tabanı*: ince bir perp'te %20'lik sıçrama gürültüdür. Ayar
+`MOVERS_MIN_DAY_VOL` (Ayarlar → *Hareket*), 0 = taban yok.
+
+**Yeni HL isteği yok.** Hacim radarları zaten tam olarak bu evreni (PROPR ∩ ana
+dex + PROPR ∩ HIP-3) 5 dakikalık mumlarla tarıyor ve 24s hacmi elinde tutuyor;
+mumlar rekor kontrolünden sonra atılıyordu. Artık her tur, mumu çekilen **her**
+coin için son **kapanmış** kovanın açılış→kapanış değişimini `movers5m:*`
+kv'sine yazıyor (`cryptovol.save_movers`). Hesap tek kaynakta: `last_bucket()`
+son kapanmış kovayı çıkarır, `find_record()` onun üstüne rekor kapısını koyar.
+
+**Devam eden mum sayılmaz.** Yarım kova hem hacimde hem fiyatta yanıltır —
+"%3 düştü" dediğimiz şey daha kapanmamış olurdu. **Tahmin yok.**
+
+**Tazelik dürüstçe yazılır.** Veri hacim radarının turundan geliyor (varsayılan
+5 dakika) ve her satır son kapanmış kovayı gösteriyor; yani gösterilen kova en
+kötü ~10 dakika öncesine ait olabilir. Her satırda kova saati var, künyede turun
+yaşı var, sayfa **"şu an" demiyor**. Daha tazesi isteniyorsa Ayarlar →
+*Kripto hacim / Hisse hacim* tarama aralığı düşürülür (HL bütçesinden yer alır).
+
+**Kör nokta sayılır, gizlenmez.** Canlı akış ön süzgeci (`vol_ws_prefilter`)
+akışı sayfa tabanının altında kalan sembole mum sormuyor; o sembol burada da
+görünemez. Kaç sembolün atlandığı künyede yazar. Spot çiftleri PROPR'da
+olmadığı için listede yoktur.
+
 **PROPR listesi elle tutulur ve eskir.** Liste `app/propr.py` içinde sabit bir
 kopya; HL yeni perp ekledikçe geride kalır ve filtre koyduğumuz her yerde
 (hacim radarı, kapalı seans bildirimi) o semboller **sessizce** elenir. SHEIN

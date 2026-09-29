@@ -20,7 +20,7 @@ from ..hl.universe import (MAIN_CTX_KV, crypto_names, find_in_hip3, find_ticker,
                            resolve_coin, similar_names)
 from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
-from ..radar import (autoscan, bars, bigpos, clusters, cryptoliq, cryptovol, equityvol, liqattack, liqmap,
+from ..radar import (autoscan, bars, bigpos, clusters, cryptoliq, cryptovol, equityvol, liqattack, liqmap, movers,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
                      patterns, pricechart, sim, twap)
 
@@ -1160,6 +1160,23 @@ def _parse_window(request: Request) -> tuple[int, int, str]:
     if t1:
         return t1 - 900, t1, ""
     return start, end, "son 15 dakika (varsayılan)"
+
+
+@router.get("/hareket")
+async def movers_page(request: Request, piyasa: str = "hepsi", taban: float = -1.0):
+    """Son 5 dakikanın en büyük fiyat hareketleri — PROPR, 24s hacim tabanı üstü."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    piyasa = piyasa if piyasa in movers.MARKETS else "hepsi"
+    dflt = float(getattr(cfg, "movers_min_day_vol", 1_000_000) or 0)
+    taban = taban if any(abs(taban - v) < 1e-9 for v in movers.VOL_STEPS) else dflt
+    return _render(request, "hareket.html", {
+        "mv": await movers.page(cfg, market=piyasa, min_day_vol=taban,
+                                limit=int(getattr(cfg, "movers_max_rows", 50) or 50)),
+        "piyasa": piyasa, "taban": taban,
+        "poll": max(int(getattr(cfg, "crypto_vol_poll_sec", 300) or 300),
+                    int(getattr(cfg, "equity_vol_poll_sec", 300) or 300)),
+    })
 
 
 @router.get("/kriptoliq")

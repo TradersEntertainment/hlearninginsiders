@@ -18,7 +18,8 @@ denetler: 24 saatlik toplamı `dayNtlVlm` ile kabaca uyuşmuyorsa uyarı üretil
 import asyncio
 import logging
 
-from ..db import alert_recent, alert_log, db, now
+from .. import assets
+from ..db import alert_recent, alert_log, db, kv_set, now
 
 log = logging.getLogger("radar.cryptovol")
 
@@ -94,6 +95,29 @@ def short_caption(coin: str, rec: dict) -> str:
             f" · 24 saatin rekoru")
 
 
+def last_bucket(candles: list[dict], ref_ts: int | None = None) -> dict | None:
+    """Son KAPANMIŞ 5dk kovası — rekor olsun olmasın. SAF.
+
+    Devam eden mum ATLANIR: yarım kova hem hacimde hem fiyatta yanıltır
+    ("%3 düştü" diye yazdığımız şey aslında daha kapanmamış olurdu).
+
+    `find_record` bunun üstüne rekor kapısını koyar; `/hareket` sayfası ise
+    kapısız kullanır — bir coin hacim rekoru kırmadan da en çok oynayan
+    olabilir. İki yerde iki kopya hesap olmasın diye tek kaynak burası.
+    """
+    ts = int(ref_ts) if ref_ts else now()
+    closed = [c for c in candles if c["t"] + BUCKET_SEC <= ts]
+    if len(closed) < MIN_BUCKETS:        # en az bir saatlik taban olsun
+        return None
+    last = closed[-1]
+    return {
+        "bucket_ts": last["t"], "vol": last["v"], "px": last["c"],
+        "open_px": last["o"], "notional": last["v"] * last["c"],
+        "chg_pct": (last["c"] / last["o"] - 1) * 100 if last["o"] else 0.0,
+        "n_closed": len(closed),
+    }
+
+
 def find_record(candles: list[dict], ref_ts: int | None = None) -> dict | None:
     """Son KAPANMIŞ kova, önceki 24 saatin hepsinden büyük mü?
 
@@ -101,20 +125,44 @@ def find_record(candles: list[dict], ref_ts: int | None = None) -> dict | None:
     armut olurdu. `ref_ts` verilmezse şimdi.
     """
     ts = int(ref_ts) if ref_ts else now()
-    closed = [c for c in candles if c["t"] + BUCKET_SEC <= ts]
-    if len(closed) < MIN_BUCKETS:        # en az bir saatlik taban olsun
+    b = last_bucket(candles, ts)
+    if not b:
         return None
-    last, prev = closed[-1], closed[:-1]
+    closed = [c for c in candles if c["t"] + BUCKET_SEC <= ts]
+    prev = closed[:-1]
     prev_max = max((c["v"] for c in prev), default=0.0)
-    if last["v"] <= prev_max or last["v"] <= 0:
+    if b["vol"] <= prev_max or b["vol"] <= 0:
         return None
     return {
-        "bucket_ts": last["t"], "vol": last["v"], "prev_max": prev_max,
-        "ratio": (last["v"] / prev_max) if prev_max else None,
-        "px": last["c"], "notional": last["v"] * last["c"],
-        "chg_pct": (last["c"] / last["o"] - 1) * 100 if last["o"] else 0.0,
+        "bucket_ts": b["bucket_ts"], "vol": b["vol"], "prev_max": prev_max,
+        "ratio": (b["vol"] / prev_max) if prev_max else None,
+        "px": b["px"], "notional": b["notional"],
+        "chg_pct": b["chg_pct"],
         "n_buckets": len(prev),
     }
+
+
+MOVERS_KV = "movers5m"          # + ":crypto" / ":equity" — /hareket sayfasının kaynağı
+
+
+async def save_movers(market: str, rows: list[dict], out: dict, ts: int) -> None:
+    """Turun HAREKET anlık görüntüsü — `/hareket` bunu okur.
+
+    Neden ayrı bir kayıt: `vol_events` yalnız HACİM REKORU kıran kovayı yazıyor.
+    Rekor kırmadan %8 oynayan bir coin oraya hiç girmiyor, yani "en çok oynayan"
+    sorusu o tablodan cevaplanamaz. Buradaki satır, mumu çekilen HER coin için
+    yazılır — ek HL isteği yok, aynı mumlar.
+
+    Anlık görüntü: her tur üzerine yazılır, birikmez (geçmiş istenmiyor, "şu anki
+    son 5 dakika" isteniyor). İki piyasa AYRI anahtar: iki döngü bağımsız koşuyor,
+    tek anahtar olsa birbirlerini ezerlerdi.
+    """
+    await kv_set(f"{MOVERS_KV}:{market}", {
+        "ts": ts, "rows": rows, "market": market,
+        "n_coins": out.get("coins") or 0,
+        "n_prefiltered": out.get("prefiltered") or 0,
+        "n_nodata": out.get("n_nodata") or 0,
+    })
 
 
 def unit_sane(candles: list[dict], day_ntl_vlm: float | None) -> bool | None:
@@ -184,6 +232,7 @@ async def scan(cfg, client, notifier=None) -> dict:
     chat = (getattr(cfg, "crypto_chat_id", "") or "").strip()
     ts = now()
     end_ms, start_ms = ts * 1000, (ts - LOOKBACK_SEC) * 1000
+    movers: list[dict] = []
 
     for coin in coins:
         # WS ön-süzgeci: yeni rekor ancak son KAPANMIŞ 5 dk mumu sayfa tabanını aşarsa
@@ -208,6 +257,12 @@ async def scan(cfg, client, notifier=None) -> dict:
         out["n_bucket"] += 1
         if unit_sane(candles, vols.get(coin)) is False:
             out["unit_bad"].append(coin)
+        # HAREKET: rekor kapısından ÖNCE ve ondan bağımsız — aşağıdaki
+        # `continue`'lar bu satırı düşürmesin.
+        b = last_bucket(candles, ts)
+        if b:
+            movers.append({**b, "coin": coin, "symbol": assets.label(coin),
+                           "day_vol": float(vols.get(coin) or 0), "market": "crypto"})
         rec = find_record(candles, ts)
         if not rec:
             continue
@@ -264,6 +319,7 @@ async def scan(cfg, client, notifier=None) -> dict:
             if mode == "combined":
                 out["combined"] += 1
 
+    await save_movers("crypto", movers, out, ts)
     if out["unit_bad"]:
         log.warning("hacim birimi şüpheli (%d coin, ör. %s): v×fiyat toplamı "
                     "dayNtlVlm ile uyuşmuyor — $ değerleri ve alt sınır yanıltıcı olabilir",
@@ -271,7 +327,6 @@ async def scan(cfg, client, notifier=None) -> dict:
     if out["events"]:
         log.info("kripto hacim: %d coin tarandı, %d rekor, %d bildirim",
                  out["checked"], out["events"], out["alerted"])
-    from ..db import kv_set
     await kv_set("cryptovol_stats", {**out, "ts": ts,
                                      "unit_bad": out["unit_bad"][:10],
                                      "chat": bool(chat)})

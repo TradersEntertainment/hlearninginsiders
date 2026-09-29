@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}📊 5dk hareket · HL Radar{% endblock %}
+{# 60'ın ALTINA inme: base.html'deki yumuşak yenileme, sayfada `.scanbar` yoksa
+   45'ten küçük her aralığı ilk tıkta kalıcı olarak 45'e çekiyor. Zaten veri
+   5 dakikalık tura bağlı — 60 sn fazlasıyla yeterli. #}
+{% block bodyattrs %} data-refresh="60"{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>📊 5 dakikalık en büyük hareketler <span class="st">· PROPR listesi · 24s hacim ≥ {{ mv.floor|usd if mv.floor else 'taban yok' }} · |%| büyükten küçüğe</span></h2>
+  <p class="sub">Tek soru: <b>son 5 dakikada en çok ne oynadı?</b> Hareket, son
+  <b>kapanmış</b> 5 dakikalık mumun <b>açılış→kapanış</b> değişimidir — devam eden mum
+  sayılmaz, yarım kova yanıltır. Hacim süzgeci <b>24 saatlik</b> hacimdir (likidite
+  tabanı), kovanın kendi hacmi değil. <b>Tahmin yok:</b> ölçülen mum ne diyorsa o.</p>
+
+  <form method="get" action="/hareket" class="btnrow">
+    {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
+    <label>Piyasa
+      <select name="piyasa" onchange="this.form.submit()">
+        <option value="hepsi"{% if piyasa == 'hepsi' %} selected{% endif %}>hepsi</option>
+        <option value="kripto"{% if piyasa == 'kripto' %} selected{% endif %}>yalnız kripto</option>
+        <option value="hisse"{% if piyasa == 'hisse' %} selected{% endif %}>yalnız hisse/endeks</option>
+      </select></label>
+    <label>24s hacim tabanı
+      <select name="taban" onchange="this.form.submit()">
+        {% for v in mv.vol_steps %}<option value="{{ v }}"{% if v == taban %} selected{% endif %}>{% if v %}≥ {{ v|usd }}{% else %}taban yok{% endif %}</option>{% endfor %}
+      </select></label>
+    <button type="submit" class="btn sm">Uygula</button>
+    {% if mv.age is not none %}<span class="dim">· veri {{ mv.age // 60 }}dk önceki turdan</span>{% endif %}
+  </form>
+
+  {% if mv.rows %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Sembol</th><th>Piyasa</th>
+        <th title="Son kapanmış 5 dakikalık mumun açılış→kapanış değişimi">Değişim</th>
+        <th title="O 5 dakikadaki dolar hacmi (mum hacmi × kapanış)">5dk hacim</th>
+        <th title="Mumun açılış fiyatı">Açılış</th>
+        <th title="Mumun kapanış fiyatı">Kapanış</th>
+        <th title="24 saatlik dolar hacmi — süzgeç bunun üzerinden">24s hacim</th>
+        <th title="Bu kova ne zaman kapandı">Kova</th></tr>
+    {% for r in mv.rows %}
+    <tr data-propr="1">
+      <td class="l">{% if r.kind == 'kripto' %}<a href="/t/{{ r.coin }}{{ k }}"><b>{{ r.symbol }}</b></a>
+        {%- else %}<a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>{% endif %}
+        <span title="propr.xyz'de listeli — işlem açabilirsin">✅</span></td>
+      <td class="dim">{{ '🪙 kripto' if r.kind == 'kripto' else '📈 hisse' }}</td>
+      <td class="{{ 'long' if r.up else 'short' }}"><b>{{ '%+.2f'|format(r.chg_pct) }}%</b></td>
+      <td data-v="{{ r.notional|int }}">{{ r.notional|usd }}</td>
+      <td class="dim">{{ r.open_px|px }}</td>
+      <td class="dim">{{ r.px|px }}</td>
+      <td data-v="{{ r.day_vol|int }}" class="dim">{{ r.day_vol|usd }}</td>
+      <td class="dim">{{ r.bucket_ts|dt }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">🧾 {{ mv.rows|length }} satır ({{ mv.n_up }} yükselen · {{ mv.n_down }} düşen){% if mv.n_all > mv.rows|length %} — sayfa tavanı {{ mv.cap }}, süzgeçten geçen {{ mv.n_all }}{% endif %} ·
+  24s hacim tabanına takılan {{ mv.n_below_vol }} sembol{% if mv.min_chg %} · |%| {{ '%g'|format(mv.min_chg) }} altında kalan {{ mv.n_below_chg }}{% endif %} ·
+  kova saatleri satırda: sayfa "şu an" demiyor, ölçtüğü mumun saatini yazıyor.
+  Sütun başlığına tıklayarak başka ölçüye göre sıralayabilirsin.</p>
+  {% else %}
+  {{ m.empty(['Bu süzgeçle hareket yok.',
+              'Hacim tabanını düşür ya da piyasa süzgecini gevşet — 24s hacim tabanına ' ~ mv.n_below_vol ~ ' sembol takıldı.',
+              'Tarama henüz koşmadıysa liste boş olur: veri hacim radarının turundan gelir (her ' ~ (poll // 60) ~ ' dakika).']) }}
+  {% endif %}
+
+  <p class="kunye">Evren: <b>PROPR ∩ ana dex</b> (kripto) + <b>PROPR ∩ HIP-3</b> (hisse/endeks/emtia/FX) —
+  hacim radarının taradığı liste.
+  {%- for kind, d in mv.meta.items() %}
+  {{ '🪙' if kind == 'kripto' else '📈' }} {{ kind }}: {% if d.ts %}{{ d.n_coins }} sembol tarandı,
+  {{ d.n_rows }} mum okundu{% if d.n_prefiltered %}, {{ d.n_prefiltered }} sembol canlı akış ön süzgeciyle atlandı{% endif %}
+  {%- if d.n_nodata %}, {{ d.n_nodata }} sembolde mum yok{% endif %} · {{ d.ts|age }} önce{% else %}tur henüz koşmadı{% endif %}.
+  {%- endfor %}</p>
+
+  <details class="panel note"><summary>Bu sekme neyi gösterir, neyi göstermez</summary>
+  <div class="prose">
+  <p><b>Bu sayfa <a href="/hacim{{ k }}">🚀 hacim</a> DEĞİLDİR.</b> Orada soru
+  "hacim kendi 24 saatlik normalini kırdı mı"; burada "fiyat ne kadar oynadı".
+  Bir coin hacim rekoru kırmadan da en çok oynayan olabilir — o yüzden bu liste
+  <code>vol_events</code>'ten değil, aynı mumlardan ayrıca çıkarılıyor.</p>
+  <p><b>Tazelik.</b> Veri hacim radarının turundan geliyor (her {{ poll // 60 }} dakika)
+  ve her satır <b>son kapanmış</b> kovayı gösteriyor. Yani gösterilen kova en kötü
+  ihtimalle ~{{ (poll // 60) * 2 }} dakika öncesine ait olabilir. Her satırda kova saati
+  yazılı, künyede de turun yaşı var; sayfa <b>"şu an" demiyor</b>. Daha tazesi
+  gerekiyorsa Ayarlar → <i>Kripto hacim / Hisse hacim</i> tarama aralığı düşürülebilir
+  (HL istek bütçesinden yer alır).</p>
+  <p><b>Ön süzgeç kör noktası.</b> Canlı akış penceresinde (15 dk) sayfa tabanının
+  altında kalan sembole mum sorulmuyor — o sembol burada da <b>görünemez</b>. Kaç
+  sembolün atlandığı yukarıda yazıyor. Akışı olmayan sembol zaten oynamamıştır, ama
+  bu bir <i>varsayım</i>dır ve gizlenmiyor.</p>
+  <p><b>Göstermez:</b> PROPR'da olmayan sembolleri (liste elle tutulur ve eskir —
+  eksik olanı Ayarlar → <i>propr.xyz ek semboller</i> ile eklersin), spot çiftlerini
+  (PROPR'da yoklar), ve her iki radarın 24s hacimce ilk N sembol tavanının dışında
+  kalanları.</p>
+  </div></details>
+</div>
+{% endblock %}

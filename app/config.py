@@ -354,6 +354,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                        "desc": "24 saatlik hacimce ilk N spot çifti. Her çift bir WS aboneliği; yükseltmek trafiği ve fills kayıt hacmini artırır"},
     "spot_fill_min_notional": {"type": "float", "label": "Spot: asgari işlem ($)", "group": "Spot",
                                "desc": "Bu tutarın altındaki spot işlemi fills'e yazılmaz (0 = spot kaydı kapalı). TWAP dilimleri küçüktür — taban düşük tutulur, yoksa dilimler görünmez"},
+    "movers_min_day_vol": {"type": "float", "label": "Hareket: asgari 24s hacim ($)", "group": "Hareket",
+                           "desc": "/hareket sayfasında 24 saatlik hacmi bunun altında kalan sembol listelenmez — likidite tabanı (kullanıcı kuralı $1M). Kovanın KENDİ hacmi değil, sembolün 24 saatlik hacmi. 0 = taban yok"},
+    "movers_max_rows": {"type": "int", "label": "Hareket: sayfa tavanı (satır)", "group": "Hareket",
+                        "desc": "/hareket tablosunda en çok kaç satır gösterilsin. Süzgeçten geçen toplam sayı künyede yazar, satır sessizce kaybolmaz"},
+    "movers_min_chg_pct": {"type": "float", "label": "Hareket: asgari değişim (%)", "group": "Hareket",
+                           "desc": "|%| bunun altında kalan hareket listelenmez (gürültü kesici). 0 = kapalı, her hareket listelenir"},
     "spot_twap_min_day_vol": {"type": "float", "label": "Spot TWAP: asgari 24s hacim ($)", "group": "Spot",
                               "desc": "24 saatlik hacmi bu tutarın altındaki spot çifti TWAP alarmı ÜRETMEZ (0 = taban kapalı). Yüzde kuralı (Emrin hacme oranı) ince spot çiftlerinde işe yaramaz: oran küçülmez, patlar — $238K hacimli bir çiftteki $1,9M emir hacmin %799'uydu. Kaçan emir gizlenmez, /tani 'spot çifti ince' sayacında görünür"},
     "crypto_liq_band_merge": {"type": "float", "label": "Band birleştirme (mesafenin %'si)", "group": "Kripto liq",
@@ -693,6 +699,9 @@ class Config:
         self.spot_watch_top = int(os.getenv("SPOT_WATCH_TOP", "40"))
         self.spot_fill_min_notional = float(os.getenv("SPOT_FILL_MIN_NOTIONAL", "5000"))
         self.spot_twap_min_day_vol = float(os.getenv("SPOT_TWAP_MIN_DAY_VOL", "1000000"))
+        self.movers_min_day_vol = float(os.getenv("MOVERS_MIN_DAY_VOL", "1000000"))
+        self.movers_max_rows = int(os.getenv("MOVERS_MAX_ROWS", "50"))
+        self.movers_min_chg_pct = float(os.getenv("MOVERS_MIN_CHG_PCT", "0"))
         self.crypto_liq_chart_fit_all = True
         self.crypto_liq_dist_pct = float(os.getenv("CRYPTO_LIQ_DIST_PCT", "2.5"))
         self.crypto_liq_dist2_pct = float(os.getenv("CRYPTO_LIQ_DIST2_PCT", "1.0"))
