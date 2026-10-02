@@ -68,6 +68,11 @@ FALLBACK_CANDS = 5          # akış sahibi doğrulanamazsa sorulacak pozisyon s
 FOLLOW_DAYS = 2             # takip kendiliğinden kapanır
 TRACK_DRIFT_PCT = 3.0       # doğrulanmış sahibin emri: son fiyattan bu kadar içinde aranır
 SWEEP_TIMEOUT = 8           # düşük öncelikli tarama isteği en çok bu kadar bekler (odak beklemesin)
+RECHECK_N = 4               # izlenen duvar okumada yoksa (sahibin açık emirleri ya da defter):
+RECHECK_GAP = 2.0           # bu aralıkla bu kadar hızlı yeniden bakış. 02.10 ölçümleri: drkmttr
+                            # duvarı açık emir okumalarının %38'inde, akşam 15'te 10'unda YOK
+                            # (iptal + yeniden koyma); 15 bakışın hepsi ≤3 yeniden bakışta
+                            # bulundu, cloid sabit. Okunamayan bakış kaçırma sayılmaz.
 KEEP_DAYS = 30              # bitmiş duvar kaydı
 STATS_KV = "sticky_stats"
 EFFECT_TXT = {("ask", "open"): "SHORT açıyor / büyütüyor",
@@ -334,6 +339,27 @@ def owner_order(orders, coin: str, side: str, px_ref: float, reduce_only=None,
             best = {"px": opx, "sz": osz, "ntl": opx * osz, "cloid": o.get("cloid") or "",
                     "oid": o.get("oid")}
     return best
+
+
+def owner_wall(orders, row: dict) -> dict | None:
+    """Doğrulanmış sahibin duvarı bu okumada: önce aynı CLOID (yeniden koymada oid
+    değişir, cloid değişmez; eriyen kuyruk da aynı duvardır), yoksa `owner_order`
+    (son fiyata yakın, aynı reduce-only bayraklı en büyük emir)."""
+    cl = row.get("cloid") or ""
+    want = "A" if row["side"] == "ask" else "B"
+    if cl:
+        for o in orders or []:
+            try:
+                if ((o.get("cloid") or "") != cl or o.get("coin") != row["coin"]
+                        or o.get("side") != want or o.get("isTrigger")):
+                    continue
+                px, sz = float(o.get("limitPx") or 0), float(o.get("sz") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if px > 0 and sz > 0:
+                return {"px": px, "sz": sz, "ntl": px * sz, "cloid": cl, "oid": o.get("oid")}
+    return owner_order(orders, row["coin"], row["side"], float(row.get("px_last") or 0),
+                       row.get("reduce_only"))
 
 
 def book_level(bids: list[dict], asks: list[dict], side: str, px: float) -> dict:
@@ -878,26 +904,46 @@ async def _owner_fills_after(client, row: dict, since: int, until: int) -> float
 
 async def _track(cfg, client, notifier, row: dict, bids, asks, day_vol, oi_usd, ts, out) -> None:
     """İzlenen duvarın bu bakışı. Sahibi AÇIK EMRİYLE doğrulanmışsa duvar o emrin
-    kendisidir (defterdeki en büyük seviye değil); değilse son fiyata en yakın,
-    büyümeyen tek emirli seviye. Bitiş: ardışık kaçırmalar GONE_SEC'i doldurunca."""
+    kendisidir (önce aynı cloid; defterdeki en büyük seviye değil); değilse son fiyata
+    en yakın, büyümeyen tek emirli seviye. Okumada yoksa RECHECK_N kez hızlı yeniden
+    bakılır (yeniden koyma boşluğu kaçırma değildir). Bitiş: ardışık doğrulanmış
+    kaçırmalar GONE_SEC'i doldurunca."""
     wid = int(row["id"])
     verified = row.get("owner_src") == "order" and row.get("owner")
     w = None
     if verified:
-        try:
-            orders = await client.frontend_open_orders(row["owner"])
-        except Exception:
-            # Sahibin emirleri okunamadı: bu bakış ne görüş ne kaçırmadır — defterdeki
-            # başka bir seviyeyi duvar sanmaktansa bir sonraki bakışı bekle.
-            log.debug("izleme: açık emirler alınamadı", exc_info=True)
-            return
-        o = owner_order(orders, row["coin"], row["side"], float(row.get("px_last") or 0),
-                        row.get("reduce_only"))
+        o = None
+        # Yeniden koyma boşluğuna denk gelen tek okuma "yok" demez: RECHECK_GAP arayla
+        # RECHECK_N kez daha bakılır (boşluk canlıda ≤ ~4 sn ölçüldü).
+        for attempt in range(1 + RECHECK_N):
+            if attempt:
+                await asyncio.sleep(RECHECK_GAP)
+            try:
+                orders = await client.frontend_open_orders(row["owner"])
+            except Exception:
+                # Sahibin emirleri okunamadı: bu bakış ne görüş ne kaçırmadır — defterdeki
+                # başka bir seviyeyi duvar sanmaktansa bir sonraki bakışı bekle.
+                log.debug("izleme: açık emirler alınamadı", exc_info=True)
+                return
+            o = owner_wall(orders, row)
+            if o is not None:
+                break
         if o is not None:
             bl = book_level(bids, asks, row["side"], o["px"])
             w = {**o, "level": bl["level"], "n": bl["n"], "opp_ntl": bl["opp_ntl"]}
     else:
         w = pick_continuation(bids, asks, row["side"], row, _cont_floor(row))
+        # Sahibi bilinmeyen duvar defterden izlenir: aynı boşluk defterde de var.
+        for _ in range(RECHECK_N if w is None else 0):
+            await asyncio.sleep(RECHECK_GAP)
+            try:
+                b2, a2 = parse_levels(await _book(client, row["coin"], False))
+            except Exception:
+                log.debug("izleme: defter yeniden okunamadı", exc_info=True)
+                return
+            w = pick_continuation(b2, a2, row["side"], row, _cont_floor(row))
+            if w is not None:
+                break
     until = max(ts, now())
     if w is not None:
         REG.misses.pop(wid, None)

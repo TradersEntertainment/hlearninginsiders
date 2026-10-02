@@ -365,7 +365,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "movers_min_chg_pct": {"type": "float", "label": "Hareket: asgari değişim (%)", "group": "Hareket",
                            "desc": "|%| bunun altında kalan hareket listelenmez (gürültü kesici). 0 = kapalı, her hareket listelenir"},
     "acct_watch_enabled": {"type": "bool", "label": "👤 İzlenen hesaplar", "group": "👤 İzlenen hesaplar",
-                           "desc": "Listedeki hesapların pozisyonları ve emirleri izlenir; olaylar AYRI gruba gider (ACCOUNT_CHAT_ID, env — boşsa hiçbir yere gitmez, yoklama da yapılmaz). HL arayüzü vault'ların açık emirlerini göstermiyor; burada post-only duvarlar ve kâr al / stop merdivenleri de görünür"},
+                           "desc": "Listedeki hesapların pozisyonları ve emirleri izlenir; olaylar AYRI gruba gider (ACCOUNT_CHAT_ID, env — boşsa hiçbir yere gitmez, yoklama da yapılmaz). HL arayüzü vault'ların açık emirlerini göstermiyor; burada post-only duvarlar, bekleyen kapatma / stop emirleri ve son 1 saatin gerçekleşen dolumları da görünür"},
     "acct_watch_list": {"type": "str", "label": "İzlenen hesaplar (adres:isim)", "group": "👤 İzlenen hesaplar",
                         "desc": "Virgülle: 0xADRES:isim, 0xADRES2:isim2. Başlangıç: drkmttr vault'u (SAND yapışkan duvarının sahibi). Hesap başına her turda 2 istek (clearinghouseState + frontendOpenOrders). Yeni eklenen hesap ilk turda 'takip başladı' özeti atar, sonra yalnız değişiklikler"},
     "acct_poll_sec": {"type": "int", "label": "Yoklama aralığı (sn)", "group": "👤 İzlenen hesaplar",

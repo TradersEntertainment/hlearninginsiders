@@ -10,27 +10,34 @@ NEDEN AYRI HAT (mevcut takipler yetmiyor):
   • `/takip_N` (tracker) TEK coindeki TEK pozisyonu izler. Burada izlenen HESABIN
     TAMAMIDIR: yeni coinde açılan pozisyon da, defterdeki emirler de.
   • HL arayüzü vault sayfasında açık emirleri GÖSTERMİYOR (yalnız işlemler), ama
-    `frontendOpenOrders` veriyor: post-only duvar, reduce-only kâr al merdiveni, stop'lar.
+    `frontendOpenOrders` veriyor: post-only duvar, reduce-only kapatma emirleri, stop'lar.
 
 Ölçüm (hesap başına her `acct_poll_sec`): `clearinghouseState` (ağırlık 2) +
 `frontendOpenOrders` (20); liste 100 emirde kesilmiş olabilirse sınırsız `openOrders`
 (20) ile canlı oid kümesi doğrulanır. Tur başına bir `allMids` (2) — taze fiyat
 (150 sn'lik önbellek, duvarı izlerken "uzaklaştı/kalktı" yanılgısı üretiyordu).
-Durum kv'de (`acctwatch:<adres>`).
+İzlenen duvar okumada yoksa en çok RECHECK_N hızlı yeniden bakış (frontendOpenOrders).
+"Takip başladı" özetinde bir kez son 1 saatin dolumları (`userFillsByTime`, ≤3 sayfa).
+Durum kv'de (`acctwatch:<adres>`, sürümlü — STATE_V).
 
 Olay kuralları (hepsi ÖLÇÜLEN; tahmin yok):
   • pozisyon: açtı / kapattı / ters çevirdi; son BİLDİRİLEN boyuta göre ≥ step_pct
     VE ≥ step_min_usd adım (adet üzerinden — fiyat oynaması tetiklemez). Taban altı
     (toz) pozisyon da durumda tutulur ama sessizdir: fiyatla tabanı geçmesi "açtı" değildir.
-  • duvar: reduce-only OLMAYAN, tetiksiz, fiyata %1 içinde tek emir ≥ `acct_wall_min_usd`,
-    iki yoklama üst üste. Devam için histerezis: %3 bant ve tabanın yarısı; bilinen
-    emri defterde duruyorsa "fiyat uzaklaştı" kalkış sayılmaz. Bitince süre ve o sürede
-    pozisyon (işaretli). 15 dk içinde dönerse "geri geldi".
-  • merdiven: reduce-only limit (kâr al), tetikli kâr al / stop, tetikli giriş — her
-    biri ayrı grup. Pozisyona bağlı TP/SL (`isPositionTpsl`, sz 0) "tüm pozisyon".
-    Kuruldu / ÖNEMLİ değişiklik (yeni emirler iki yoklama sabit VE sayı, aralık ya da
-    $ belirgin değişti) / tamamen kalktı. Basamak dolumu ve aynı yere yeniden koyma
-    mesaj ÜRETMEZ — dolum, pozisyonun küçülmesi olarak görünür.
+  • duvar: tetiksiz, fiyata %1 içinde tek emir ≥ `acct_wall_min_usd` (reduce-only ise
+    yalnız post-only: pozisyonu aynı yapışkan yolla kapatan duvar), iki yoklama üst
+    üste. Kimlik önce cloid (yeniden koymada oid değişir, cloid değişmez). Devam için
+    histerezis: %3 bant ve tabanın yarısı; bilinen emri defterde duruyorsa "fiyat
+    uzaklaştı" kalkış sayılmaz. Kalkış: okumada yoksa hızlı yeniden bakışlar (02.10:
+    duvar okumaların %38'inde yeniden koyma boşluğundaydı), 2 doğrulanmış kaçırma VE
+    150 sn. Bitince süre ve o sürede pozisyon (işaretli). 15 dk içinde dönerse "geri geldi".
+  • emir grupları (adlar niyet varsaymaz): kapatma emirleri (Gtc reduce-only limit),
+    post-only kapatma kotasyonu (olay ÜRETMEZ — sürekli yeniden konur), tetikli kâr al
+    (HL'nin adı) / stop, tetikli giriş — her biri ayrı grup. Pozisyona bağlı TP/SL
+    (`isPositionTpsl`, sz 0) "tüm pozisyon". Kuruldu / ÖNEMLİ değişiklik (yeni emirler
+    iki yoklama sabit VE sayı, aralık ya da $ belirgin değişti) / tamamen kalktı.
+    Basamak dolumu ve aynı yere yeniden koyma mesaj ÜRETMEZ — dolum, pozisyonun
+    küçülmesi olarak görünür.
 Bir yoklamanın olayları TEK mesajda. Gönderilemezse durum yazılmaz: sonraki yoklama aynı
 farkı yeniden bulur. Bildirim kapalıysa ya da kanal yoksa yoklama da yapılmaz; uzun
 aradan / kanal değişiminden sonra eski fark "şimdi oldu" diye yazılmaz, takip yeniden başlar.
@@ -51,7 +58,13 @@ ADDRS_KV = "acctwatch_addrs"     # son turdaki liste (çıkarılan hesabın duru
 NEAR_PCT = 1.0                   # duvar girişi: fiyata bu kadar yakın
 WIDE_PCT = 3.0                   # izlenen duvarın devamı (histerezis)
 KEEP_SHARE = 0.5                 # devam için en az taban × bu
-WALL_GONE_POLLS = 2              # duvar bu kadar yoklama üst üste yoksa bitti
+WALL_GONE_POLLS = 2              # duvar bu kadar yoklama üst üste yoksa bitti …
+WALL_GONE_SEC = 150              # … VE son görüşten bu kadar sn geçtiyse
+RECHECK_N = 4                    # izlenen duvar yoklamada yoksa: bu kadar hızlı yeniden bakış …
+RECHECK_GAP = 2.0                # … bu aralıkla. 02.10 ölçümleri: drkmttr duvarı okumaların %38'inde,
+                                 # akşam 15'te 10'unda YOK — sürekli iptal edip yeniden koyuyor; 15
+                                 # bakışın hepsi ≤3 yeniden bakışta bulundu. Tek okumayla "kalktı"
+                                 # demek sahte bildirim üretiyordu.
 WALL_BACK_SEC = 900              # kalkan duvar bu süre içinde dönerse "geri geldi"
 LADDER_MIN_N = 2                 # merdiven: en az bu kadar emir …
 LADDER_MIN_USD = 100_000         # … ya da bu kadar $ (tek büyük TP/stop da sayılır)
@@ -62,9 +75,16 @@ CHANGE_NTL_USD = 100_000
 OIDS_KEEP = 400                  # duvar başına hatırlanan oid (yeniden koyma sayacı)
 FRONT_CAP = 100                  # frontendOpenOrders bu kadar dönerse openOrders ile doğrula
 STALE_MIN_SEC = 600              # durum bundan (ve 10 yoklamadan) eskiyse takip yeniden başlar
+STATE_V = 2                      # durum sürümü: değişirse takip "yeniden başladı" özetiyle sıfırlanır
+FLOW_WINDOW = 3600               # "son 1 saat gerçekleşen dolumlar" penceresi
+FLOW_PAGES = 3                   # userFillsByTime en çok bu kadar sayfa (2000'er dolum)
 ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
-KIND_LABEL = {"tp": "kâr al", "tptrig": "kâr al (tetik)", "stop": "stop", "entry": "tetikli giriş"}
+# Tür adları NİYET varsaymaz (02.10: "kâr al" denen alışlar, piyasa yapıcının fiyatın
+# %0.2 altındaki post-only geri alım kotasyonuydu). 'tptrig' HL'nin kendi orderType adı.
+KIND_LABEL = {"close": "kapatma emirleri", "quote": "post-only kapatma kotasyonu",
+              "tptrig": "kâr al (tetik)", "stop": "stop", "entry": "tetikli giriş"}
+SILENT_KINDS = ("quote",)        # yeniden koyma/dolum doğası gereği sürekli: olay üretmez
 
 
 def parse_watch_list(raw: str) -> list[tuple[str, str]]:
@@ -113,21 +133,29 @@ def positions_of(state: dict | None) -> dict[str, dict]:
     return out
 
 
-def classify_orders(orders, marks: dict, pos: dict | None = None) -> tuple[dict, dict, dict]:
-    """(dar duvar adayları, geniş duvar adayları, emir grupları).
+def classify_orders(orders, marks: dict, pos: dict | None = None,
+                    wall_min_usd: float = 0.0) -> tuple[dict, dict, dict, dict]:
+    """(dar duvar adayları, geniş duvar adayları, emir grupları, cloid → duvar adayı).
 
-    duvar: reduce-only OLMAYAN tetiksiz limit; (coin|side) → fiyata NEAR_PCT (dar) /
-    WIDE_PCT (geniş) içindeki EN BÜYÜK emir. Reduce-only emir duvar sayılmaz — o,
-    kâr al merdiveninin bir basamağıdır (fiyat değince sınıf değiştirip sahte
-    "kalktı/değişti" üretmesin).
-    grup: (coin|side|tür) → tür 'tp' (reduce-only limit), 'tptrig' (tetikli kâr al),
-    'stop' (reduce-only / pozisyona bağlı stop), 'entry' (reduce-only olmayan tetik).
-    Pozisyona bağlı TP/SL (sz 0) pozisyonun tamamı sayılır ('whole'). Tetik emrinin
-    $'ı tetik fiyatıyla (piyasa tetiğinde limitPx ~%10 kaydırılmış koruma fiyatıdır)."""
+    cloid: yeniden koymada oid değişir ama CLOID değişmez (02.10 canlı ölçüm) — izlenen
+    duvarın kimliği budur; fiyatı/boyutu değişse de aynı cloid aynı duvardır.
+
+    duvar: tetiksiz limit; (coin|side) → fiyata NEAR_PCT (dar) / WIDE_PCT (geniş)
+    içindeki EN BÜYÜK emir. Reduce-only olmayan her limit aday olabilir; reduce-only
+    olan YALNIZ post-only (Alo) ve tabanı geçiyorsa — pozisyonu aynı yapışkan yolla
+    kapatan duvar. Gtc reduce-only emir duvar sayılmaz (kapatma merdiveninin
+    basamağıdır; fiyat değince sınıf değiştirip sahte "kalktı/değişti" üretmesin).
+    grup: (coin|side|tür) → 'close' (Gtc reduce-only limit: bekleyen kapatma emirleri),
+    'quote' (tabanın altındaki post-only reduce-only limit: piyasa yapıcının kapatma
+    kotasyonu — olay üretmez), 'tptrig' (tetikli kâr al), 'stop' (reduce-only /
+    pozisyona bağlı stop), 'entry' (reduce-only olmayan tetik). Pozisyona bağlı TP/SL
+    (sz 0) pozisyonun tamamı sayılır ('whole'). Tetik emrinin $'ı tetik fiyatıyla
+    (piyasa tetiğinde limitPx ~%10 kaydırılmış koruma fiyatıdır)."""
     pos = pos or {}
     near: dict[str, dict] = {}
     wide: dict[str, dict] = {}
     groups: dict[str, dict] = {}
+    by_cloid: dict[str, dict] = {}
     for o in orders or []:
         if not isinstance(o, dict):
             continue
@@ -149,20 +177,31 @@ def classify_orders(orders, marks: dict, pos: dict | None = None) -> tuple[dict,
         else:
             if sz <= 0 or px <= 0:
                 continue
-            if not ro:
+            alo = (o.get("tif") or "").lower() == "alo"
+            if not ro or alo:
                 mark = _f(marks.get(coin))
-                if mark > 0:
-                    d = abs(px - mark) / mark * 100
-                    cand = {"coin": coin, "side": side, "px": px, "sz": sz, "ntl": px * sz,
-                            "oid": o.get("oid"), "tif": o.get("tif") or "", "ro": False,
-                            "dist": (px - mark) / mark * 100}
+                ntl = px * sz
+                d = abs(px - mark) / mark * 100 if mark > 0 else None
+                if d is not None and d <= WIDE_PCT:
+                    cand = {"coin": coin, "side": side, "px": px, "sz": sz, "ntl": ntl,
+                            "oid": o.get("oid"), "cloid": o.get("cloid") or "",
+                            "tif": o.get("tif") or "", "ro": ro, "dist": (px - mark) / mark * 100}
                     k = f"{coin}|{side}"
-                    if d <= WIDE_PCT and (k not in wide or cand["ntl"] > wide[k]["ntl"]):
+                    if k not in wide or ntl > wide[k]["ntl"]:
                         wide[k] = cand
-                    if d <= NEAR_PCT and (k not in near or cand["ntl"] > near[k]["ntl"]):
+                    if d <= NEAR_PCT and (not ro or ntl >= wall_min_usd) \
+                            and (k not in near or ntl > near[k]["ntl"]):
                         near[k] = cand
-                continue                     # reduce-only olmayan limit asla merdiven değil
-            kind, ref = "tp", px
+                    if cand["cloid"] and (cand["cloid"] not in by_cloid
+                                          or ntl > by_cloid[cand["cloid"]]["ntl"]):
+                        by_cloid[cand["cloid"]] = cand
+                if not ro:
+                    continue                 # reduce-only olmayan limit asla merdiven değil
+                if d is not None and d <= NEAR_PCT and ntl >= wall_min_usd:
+                    continue                 # reduce-only post-only DUVAR (kapatma duvarı)
+                kind, ref = "quote", px      # tabanın altındaki post-only kapatma kotasyonu
+            else:
+                kind, ref = "close", px
         if ref <= 0:
             continue
         k = f"{coin}|{side}|{kind}"
@@ -178,7 +217,7 @@ def classify_orders(orders, marks: dict, pos: dict | None = None) -> tuple[dict,
         G["ro"] = G["ro"] and (ro or whole)
         if o.get("oid") is not None:
             G["oids"].append(o.get("oid"))
-    return near, wide, groups
+    return near, wide, groups, by_cloid
 
 
 def position_events(prev: dict, cur: dict, marks: dict, step_pct: float, step_min_usd: float,
@@ -223,30 +262,48 @@ def position_events(prev: dict, cur: dict, marks: dict, step_pct: float, step_mi
     return ev, nxt
 
 
-def wall_events(prev: dict, near: dict, wide: dict, pos: dict, marks: dict, wall_min_usd: float,
-                ts: int, alive: set | None, ended: dict) -> tuple[list[dict], dict, dict]:
+def wall_cand(k: str, s: dict | None, near: dict, wide: dict, by_cloid: dict,
+              wall_min_usd: float) -> dict | None:
+    """Bu okumada (coin|side) duvarı. Önce izlenen duvarın CLOID'i (yeniden koymada oid
+    değişir, cloid değişmez; eriyen kuyruk da aynı duvardır), sonra boyut kuralları:
+    izlenen duvar dar bantta ya da geniş bantta tabanın yarısıyla, aday dar bantta
+    tabanla."""
+    coin, side = k.split("|")[:2]
+    cl = (s or {}).get("cloid")
+    if cl and cl in by_cloid:
+        c = by_cloid[cl]
+        if c["coin"] == coin and c["side"] == side and (
+                (s or {}).get("alerted") or c["ntl"] >= wall_min_usd):
+            return c
+    if s and s.get("alerted"):
+        c = near.get(k)
+        if c is None or c["ntl"] < KEEP_SHARE * wall_min_usd:
+            w2 = wide.get(k)
+            c = w2 if (w2 and w2["ntl"] >= KEEP_SHARE * wall_min_usd) else None
+        return c
+    c = near.get(k)
+    return c if (c is not None and c["ntl"] >= wall_min_usd) else None
+
+
+def wall_events(prev: dict, near: dict, wide: dict, by_cloid: dict, pos: dict, marks: dict,
+                wall_min_usd: float, ts: int, alive: set | None, ended: dict,
+                unsure: set | None = None) -> tuple[list[dict], dict, dict]:
     """Duvar olayları + yeni durum + yakın zamanda bitenler.
 
     Aday: dar bantta ≥ taban, iki yoklama üst üste → 'kurdu' (15 dk içinde bitmiş
-    aynı coin+yön ise 'geri geldi'). İzlenen duvar: dar bant, ya da GENİŞ bantta
-    tabanın yarısını geçen emir devam sayılır (fiyat oynaması kalkış değildir); bilinen
-    emri hâlâ açıksa ya da o coinin fiyatı bu tur yoksa kaçırma SAYILMAZ. Görülen farklı
-    oid = kaç kez yeniden konduğu (en az)."""
+    aynı coin+yön ise 'geri geldi'). İzlenen duvar: aynı cloid, dar bant, ya da GENİŞ
+    bantta tabanın yarısını geçen emir devam sayılır (fiyat oynaması kalkış değildir);
+    bilinen emri hâlâ açıksa, o coinin fiyatı bu tur yoksa ya da yeniden bakış okunamadıysa
+    (`unsure`) kaçırma SAYILMAZ. Kalkış: WALL_GONE_POLLS doğrulanmış kaçırma VE son
+    görüşten WALL_GONE_SEC (poll_account her kaçırmayı hızlı yeniden bakışlarla doğrular).
+    Görülen farklı oid = kaç kez yeniden konduğu (en az)."""
     ev: list[dict] = []
     nxt: dict = {}
     ended = {k: t for k, t in (ended or {}).items() if ts - int(t) < WALL_BACK_SEC}
     for k in sorted(set(prev) | set(near)):
         p = prev.get(k)
         coin = k.split("|")[0]
-        if p and p.get("alerted"):
-            c = near.get(k)
-            if c is None or c["ntl"] < KEEP_SHARE * wall_min_usd:
-                w2 = wide.get(k)
-                c = w2 if (w2 and w2["ntl"] >= KEEP_SHARE * wall_min_usd) else None
-        else:
-            c = near.get(k)
-            if c is not None and c["ntl"] < wall_min_usd:
-                c = None
+        c = wall_cand(k, p, near, wide, by_cloid, wall_min_usd)
         if c is None and p is None:
             continue
         if c is not None:
@@ -257,8 +314,9 @@ def wall_events(prev: dict, near: dict, wide: dict, pos: dict, marks: dict, wall
             if c.get("oid") is not None and c["oid"] not in oids:
                 oids.append(c["oid"])
             s.update(seen=int(s.get("seen") or 0) + 1, miss=0, oids=oids[-OIDS_KEEP:],
+                     cloid=c.get("cloid") or s.get("cloid") or "",
                      last_ts=ts, coin=c["coin"], side=c["side"], px=c["px"], sz=c["sz"],
-                     ntl=c["ntl"], tif=c["tif"], ro=False, dist=c["dist"],
+                     ntl=c["ntl"], tif=c["tif"], ro=bool(c.get("ro")), dist=c["dist"],
                      px_min=min(_f(s.get("px_min"), c["px"]), c["px"]),
                      px_max=max(_f(s.get("px_max"), c["px"]), c["px"]),
                      ntl_max=max(_f(s.get("ntl_max")), c["ntl"]))
@@ -271,11 +329,12 @@ def wall_events(prev: dict, near: dict, wide: dict, pos: dict, marks: dict, wall
             continue
         s = dict(p)
         last_oid = (s.get("oids") or [None])[-1]
-        if _f(marks.get(coin)) <= 0 or alive is None or (last_oid is not None and last_oid in alive):
-            nxt[k] = s                       # fiyat yok / liste belirsiz / emri hâlâ açık: kaçırma değil
-            continue
+        if (_f(marks.get(coin)) <= 0 or alive is None or k in (unsure or ())
+                or (last_oid is not None and last_oid in alive)):
+            nxt[k] = s                       # fiyat yok / liste ya da yeniden bakış belirsiz /
+            continue                         # emri hâlâ açık: kaçırma değil
         s["miss"] = int(s.get("miss") or 0) + 1
-        if s["miss"] < WALL_GONE_POLLS:
+        if s["miss"] < WALL_GONE_POLLS or ts - int(s.get("last_ts") or ts) < WALL_GONE_SEC:
             nxt[k] = s
             continue
         if s.get("alerted"):
@@ -310,7 +369,9 @@ def ladder_events(prev: dict, cur: dict, alive: set | None) -> tuple[list[dict],
       (önceki = değişiklikten hemen önceki CANLI hal; arada dolan basamaklar sahibin
       değişikliği gibi gösterilmez). Önemsizse sessizce benimsenir.
     • kalktı: iki yoklama hiç yok — bilinen emirlerinden biri hâlâ açıksa (kesik liste) değil
-    Basamak dolumu (oid'in kaybolması) mesaj ÜRETMEZ; pozisyon küçülmesi olarak görünür."""
+    Basamak dolumu (oid'in kaybolması) mesaj ÜRETMEZ; pozisyon küçülmesi olarak görünür.
+    'quote' (post-only kapatma kotasyonu) hiç olay üretmez: fiyatla birlikte sürekli
+    yeniden konur — durumda tutulur, yalnız özet ve /hesaplar'da görünür."""
     ev: list[dict] = []
     nxt: dict = {}
     for k in sorted(set(prev) | set(cur)):
@@ -357,6 +418,7 @@ def ladder_events(prev: dict, cur: dict, alive: set | None) -> tuple[list[dict],
         else:
             s.update(oids=sorted(cur_oids | known), pending=[], view=_view(c))
         nxt[k] = s
+    ev = [e for e in ev if (e.get("L") or {}).get("kind") not in SILENT_KINDS]
     return ev, nxt
 
 
@@ -382,13 +444,24 @@ async def poll_account(cfg, client, addr: str, name: str, marks: dict, ts: int,
     m = dict(marks)
     m.update({c: p["mark"] for c, p in pos.items() if p.get("mark")})
     wall_min = float(getattr(cfg, "acct_wall_min_usd", 250_000) or 0)
-    near, wide, groups = classify_orders(orders, m, pos)
+    near, wide, groups, by_cloid = classify_orders(orders, m, pos, wall_min)
     prev = await kv_get(STATE_KV + addr) or {}
     poll = int(getattr(cfg, "acct_poll_sec", 60) or 60)
     gap = ts - int(prev.get("ts") or 0) if prev else None
-    restart = bool(prev) and (gap > max(STALE_MIN_SEC, 10 * poll) or (prev.get("chat") or "") != chat)
+    reason = None
+    if prev:
+        if int(prev.get("v") or 1) != STATE_V:
+            reason = "version"               # tür adları/anahtarları değişti: eski durumla kıyaslanmaz
+        elif (prev.get("chat") or "") != chat:
+            reason = "chat"                  # yeni grup: özetle başlasın
+        elif gap > max(STALE_MIN_SEC, 10 * poll):
+            reason = "stale"
+    restart = reason is not None
     if restart:
         prev = {}
+    live = None if truncated else alive
+    rechecks, unsure = await _recheck_walls(client, addr, prev.get("walls") or {}, near, wide,
+                                            by_cloid, m, pos, wall_min, live)
     min_pos = float(getattr(cfg, "acct_min_pos_usd", 100_000) or 0)
     pev, pstate = position_events(prev.get("pos") or {}, pos, m,
                                   float(getattr(cfg, "acct_step_pct", 25) or 25),
@@ -396,14 +469,14 @@ async def poll_account(cfg, client, addr: str, name: str, marks: dict, ts: int,
     # Kesik listede HANGİ emirlerin görüneceği belirsiz (en yeni 100 değil): görünür pencere
     # kaydıkça hiç görülmemiş emirler "yeni", gizlenenler "kalktı" gibi okunurdu. Bu turda
     # merdiven olayları ve duvar kalkışı askıda; durum korunur, altbilgi bunu söyler.
-    wev, wstate, ended = wall_events(prev.get("walls") or {}, near, wide, pos, m, wall_min, ts,
-                                     None if truncated else alive, prev.get("wall_ended") or {})
+    wev, wstate, ended = wall_events(prev.get("walls") or {}, near, wide, by_cloid, pos, m,
+                                     wall_min, ts, live, prev.get("wall_ended") or {}, unsure)
     if truncated and prev:
         lev, lstate = [], dict(prev.get("ladders") or {})
     else:
         lev, lstate = ladder_events(prev.get("ladders") or {}, groups, alive)
     ms = st.get("marginSummary") or {}
-    snap = {"ts": ts, "name": name, "chat": chat, "pos": pstate, "walls": wstate,
+    snap = {"v": STATE_V, "ts": ts, "name": name, "chat": chat, "pos": pstate, "walls": wstate,
             "wall_ended": ended, "ladders": lstate, "orders_n": len(orders),
             "truncated": truncated, "acct": _f(ms.get("accountValue")),
             "ntl": _f(ms.get("totalNtlPos")), "live": pos}
@@ -414,8 +487,130 @@ async def poll_account(cfg, client, addr: str, name: str, marks: dict, ts: int,
             L.update(alerted=True, view=_view(L))
         for w in wstate.values():
             w["alerted"] = True
-        return {"events": [], "state": snap, "first": True, "gap": gap if restart else None}
-    return {"events": pev + wev + lev, "state": snap, "first": False, "gap": None}
+        return {"events": [], "state": snap, "first": True, "gap": gap if restart else None,
+                "reason": reason, "rechecks": rechecks}
+    return {"events": pev + wev + lev, "state": snap, "first": False, "gap": None, "reason": None,
+            "rechecks": rechecks}
+
+
+async def _recheck_walls(client, addr: str, prev_walls: dict, near: dict, wide: dict,
+                         by_cloid: dict, marks: dict, pos: dict, wall_min: float,
+                         alive: set | None) -> tuple[int, set]:
+    """İzlenen bir duvar bu okumada yoksa RECHECK_GAP arayla RECHECK_N kez yeniden bak.
+    Bulunan aday sözlüklere işlenir (aynı cloid / boyut kuralı); hiçbir bakışta
+    bulunamayan DOĞRULANMIŞ kaçırmadır. Yeniden bakış okunamazsa kalanlar belirsizdir
+    (kaçırma sayılmaz). Yalnız kaçırma sayılacak duvarlara bakılır (fiyatı var, bilinen
+    emri kapalı); liste belirsizse (alive None — kesik liste) hiç bakılmaz, orada kalkış
+    zaten askıda. Dönüş: (ek istek sayısı, belirsiz anahtarlar)."""
+    if alive is None:
+        return 0, set()
+    missing = []
+    for k, s in prev_walls.items():
+        last = (s.get("oids") or [None])[-1]
+        if _f(marks.get(k.split("|")[0])) <= 0 or (last is not None and last in alive):
+            continue
+        if wall_cand(k, s, near, wide, by_cloid, wall_min) is None:
+            missing.append(k)
+    n = 0
+    for _ in range(RECHECK_N if missing else 0):
+        await asyncio.sleep(RECHECK_GAP)
+        try:
+            o2 = await client.frontend_open_orders(addr)
+        except Exception:
+            log.debug("duvar yeniden bakışı okunamadı %s", addr[:10], exc_info=True)
+            return n, set(missing)
+        n += 1
+        if not isinstance(o2, list):
+            return n, set(missing)
+        n2, w2, _g, c2 = classify_orders(o2, marks, pos, wall_min)
+        still = []
+        for k in missing:
+            c = wall_cand(k, prev_walls[k], n2, w2, c2, wall_min)
+            if c is None:
+                still.append(k)
+                continue
+            near[k] = c
+            wide[k] = c
+            if c.get("cloid"):
+                by_cloid[c["cloid"]] = c
+            if c.get("oid") is not None:
+                alive.add(c["oid"])
+        missing = still
+        if not missing:
+            break
+    return n, set()
+
+
+def _flow_add(agg: dict, f: dict) -> None:
+    try:
+        coin, d = f.get("coin") or "", f.get("dir") or "?"
+        usd = float(f.get("px") or 0) * float(f.get("sz") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return
+    if not coin:
+        return
+    a = agg.setdefault(coin, {}).setdefault(d, {"usd": 0.0, "n": 0, "maker_usd": 0.0})
+    a["usd"] += usd
+    a["n"] += 1
+    if not f.get("crossed"):
+        a["maker_usd"] += usd
+
+
+async def fill_flow(client, addr: str, since: int, until: int | None = None,
+                    max_pages: int = FLOW_PAGES) -> dict:
+    """Hesabın [since, until] aralığında GERÇEKLEŞEN dolumları, coin → yön → {$, dolum,
+    maker $}. "Geri alıyor mu?" sorusunu ölçerek cevaplar (emir listesi bekleyeni
+    söyler, bu olanı). Sayfalama HL'nin önerdiği gibi: sonraki sayfa son dolumun
+    zamanından (dahil) başlar, aynı milisaniyedeki tekrarlar `tid` ile atılır — tek
+    taker'ın süpürdüğü birden çok dolum sayfa sınırında kaybolmasın. Sayfa sınırına
+    takılırsa `complete=False` — mesaj eksik der."""
+    end = int(until or now())
+    start = int(since) * 1000
+    agg: dict = {}
+    seen: set = set()
+    n, complete = 0, True
+    for _ in range(max_pages):
+        fills = await client.user_fills_by_time(addr, start, end * 1000)
+        if not isinstance(fills, list) or not fills:
+            break
+        for f in fills:
+            if not isinstance(f, dict):
+                continue
+            key = f.get("tid") or (f.get("hash"), f.get("oid"), f.get("time"), f.get("px"),
+                                   f.get("sz"), f.get("side"))
+            if key in seen:
+                continue
+            seen.add(key)
+            _flow_add(agg, f)
+            n += 1
+        if len(fills) < 2000:
+            break
+        last = int(fills[-1].get("time") or 0)
+        if last <= start:                    # tek milisaniyede 2000+ dolum: ilerlenemez
+            complete = False
+            break
+        start = last
+    else:
+        complete = False
+    return {"coins": agg, "n": n, "complete": complete, "since": int(since), "until": end}
+
+
+_FLOW_CACHE: dict[str, tuple[int, dict]] = {}
+
+
+async def fill_flow_cached(client, addr: str, ttl: int = 60) -> dict | None:
+    """/hesaplar için: son 1 saatin akışı, 60 sn önbellekli (komut tekrarında HL'ye yüklenmesin)."""
+    ts = now()
+    hit = _FLOW_CACHE.get(addr)
+    if hit and ts - hit[0] < ttl:
+        return hit[1]
+    try:
+        flow = await fill_flow(client, addr, ts - FLOW_WINDOW, ts)
+    except Exception:
+        log.debug("dolum akışı alınamadı %s", addr[:10], exc_info=True)
+        return None
+    _FLOW_CACHE[addr] = (ts, flow)
+    return flow
 
 
 async def _marks(client) -> dict:
@@ -471,10 +666,20 @@ async def run_once(cfg, client, notifier, ts: int | None = None) -> dict:
         st = r["state"]
         out["truncated"] += 1 if st["truncated"] else 0
         if r["first"]:
-            title = ("takip başladı" if r["gap"] is None else
-                     f"takip yeniden başladı (son yoklama {fmt.dur_txt(r['gap'])} önce —"
-                     " aradaki değişiklikler zamanı bilinmediği için yazılmadı)")
-            text = fmt.acct_started(addr, st, marks, title=title)
+            reason = r.get("reason")
+            if reason == "version":
+                title = "takip yeniden başladı (emir etiketleri düzeltildi)"
+            elif reason == "stale":
+                title = (f"takip yeniden başladı (son yoklama {fmt.dur_txt(r['gap'])} önce —"
+                         " aradaki değişiklikler zamanı bilinmediği için yazılmadı)")
+            else:
+                title = "takip başladı"
+            try:
+                flow = await fill_flow(client, addr, ts - FLOW_WINDOW, ts)
+            except Exception:
+                log.debug("dolum akışı alınamadı %s", addr[:10], exc_info=True)
+                flow = None
+            text = fmt.acct_started(addr, st, marks, title=title, flow=flow)
             ok = await notifier.send("acct", text, priority="high", key=f"acct:{addr}:start:{ts}",
                                      chat_id=chat, public=False)
             if ok:

@@ -58,7 +58,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
 | `/takipler` · `/birak_N` | Aktif pozisyon takipleri · takibi bırak |
 | `/duvartakipler` · `/birak_duvar_N` | İzlenen 🧲 yapışkan duvarlar · takibi bırak |
-| `/hesaplar` | 👤 İzlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, kâr al / stop emirleri |
+| `/hesaplar` | 👤 İzlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
@@ -452,7 +452,7 @@ ile alınması için… aşağı da gidebiliyor yukarı da. Biri liq mi olmuş?"
   (`0xc179…ce0c8`, açıklaması "market making automation") tek emrinin kalanı, birebir.
   Hesap 16:59 TSİ'de **sıfırdan** başladı; 56 dakikada 3,771 dolum, **hepsi "Open
   Short", hepsi maker**, $2.46M, hiçbirinde `liquidation` alanı yok. 0.044–0.058
-  arasına 30 reduce-only alışla kâr al merdiveni de kurmuştu.
+  arasına 30 reduce-only alış (bekleyen kapatma emirleri) da kurmuştu.
 - Emir **post-only (`Alo`)**, reduce-only değil. Her 1,5–3 saniyede iptal edilip
   **kalanıyla** en iyi fiyata yeniden konuyor (saatte ~258 farklı oid, `cloid` sabit) —
   bu yüzden fiyat düşünce aşağı, çıkınca yukarı geliyor. HL'nin kendi *Chase* emri tam
@@ -482,7 +482,8 @@ piyasa yapıcı yığınıydı (`n=5–21`) ve **≤%0,24**. Kural:
 
 Kimlik oid ya da fiyatla tutulmaz (ikisi de saniyede değişir), `(coin, yön)` + sahiple.
 Sahibi açık emriyle doğrulanmış duvar teyitten sonra **doğrudan o emirle** izlenir
-(her 30 sn `frontendOpenOrders`): defterde yanına başka birinin daha büyük emri gelse
+(her 30 sn `frontendOpenOrders`; önce aynı `cloid` — yeniden koymada oid değişir, cloid
+değişmez): defterde yanına başka birinin (ya da sahibin kendi) daha büyük emri gelse
 de kimlik kaymaz, yenildikçe tabanın altına inen kuyruk da görünür kalır. Doğrulanmamış
 duvar defterden izlenir ama yalnız son fiyata en yakın, **büyümeyen** seviye devam sayılır.
 **Sahip:** duvar fiyatında taker işlemlerinin karşısındaki baskın maker; açık emriyle
@@ -499,7 +500,12 @@ yenen. Aynı coin+yön için 6 saatte bir. Alarmdaki **`/takip_N`**'e basan, yal
 - **yeni dilim** (boyut ≥%25 ve ≥$250K artarsa — sahibin açık emriyle doğrulanır),
 - **yeniden geldi** (bittikten sonra 15 dk içinde aynı sahip aynı yöne dönerse; kanal tekrar yok),
 - **bitti**: tek bakış asla bitirmez (iptal-yeniden-koy boşluğu, yeniden başlatma sonrası
-  ilk tur) — en az 2 ardışık kaçırma ve ~90 sn gerekir. Sonuç sahibin **gerçek dolum
+  ilk tur) — en az 2 ardışık kaçırma ve ~90 sn gerekir. **Her kaçırma da doğrulanır:**
+  izlenen duvar okumada yoksa (sahibin açık emirleri; sahip bilinmiyorsa defter) 2 sn
+  arayla 4 kez daha bakılır, okunamayan bakış kaçırma sayılmaz. 02.10 ölçümleri: drkmttr
+  duvarı açık emir okumalarının **%38'inde**, akşam **15'te 10'unda** yoktu — sürekli
+  iptal edip yeniden koyuyor (her bakışta yeni oid, aynı `cloid`); 15 bakışın hepsi en
+  çok 3 yeniden bakışta bulundu. Sonuç sahibin **gerçek dolum
   geçmişinden** (`userFillsByTime`) ölçülür, yeniden başlatmaya dayanıklıdır: son görülen
   kalanın ≥%70'i dolduysa **yenildi**, ≤%20'si → **çekildi**, arası → **kısmen**. Sahip
   bilinmiyorsa, dolum geçmişi okunamadıysa ve canlı akış o aralığı görmediyse **kayboldu**
@@ -527,40 +533,74 @@ yoklanmaz** (bütçe harcanmaz). Kurulum: Telegram'da grup aç, botu ekle, grupt
 çıkan sayıyı Railway'de `ACCOUNT_CHAT_ID` olarak gir.
 
 **Neden emirler de:** HL arayüzü vault sayfasında açık emirleri göstermiyor (yalnız
-işlemler), ama `frontendOpenOrders` veriyor. drkmttr'da 02.10'da 63 açık emir vardı:
-SAND'de post-only satış duvarı, 0.044–0.0605 arası 34 reduce-only alıştan kâr al
-merdiveni, LIT'te 4.35–5.4 arası 29 emirlik ($6.0M) kâr al merdiveni.
+işlemler), ama `frontendOpenOrders` veriyor. drkmttr'da 02.10 öğlen 63 açık emir vardı:
+SAND'de post-only satış duvarı, 0.044–0.0605 arası 34 reduce-only Gtc alış, LIT'te
+4.35–5.4 arası 29 emirlik ($6.0M) reduce-only satış. Akşam (21:00 TSİ) SAND'deki 34
+emir iptal edilmişti; yerinde fiyatın %0.2–0.4 altında ~$14K'lık 6 **post-only
+reduce-only** alış vardı (sürekli yeniden konan, `cloid` ailesi aynı).
+
+**"Kâr al" adı neden kalktı (02.10).** Grup özetinde bu 6 alış "kâr al" diye yazıldı;
+kullanıcı itiraz etti: vault geçmişinde o an hep `Open Short` görünüyordu. Ölçüm iki
+tarafı da doğruladı: son 6 saatte SAND'de 12,062 `Open Short` ($8.89M) ve **3,369
+`Close Short` ($3.21M, hepsi maker)** — yani geri alıyor, ama kâr al merdiveniyle değil:
+üstten post-only satıp biraz aşağıdan post-only geri alan piyasa yapıcı kotasyonuyla.
+"Kâr al" niyet varsayıyordu. Artık emirler **ölçülene göre** adlanır ve konumları
+pozisyonun girişine göre ölçülerek yazılır ("girişin altında → kârda kapatır",
+"zararda kapatır", "kısmen zararda"; pozisyon yoksa yazılmaz). Ne olduğu da artık
+görünür: özet ve `/hesaplar` son 1 saatin **gerçekleşen dolumlarını** gösterir
+("SAND: açılış (Open Short) $2.9M · kapatma (Close Short) $2.6M · %100 maker").
 
 **Olaylar** (bir yoklamadakiler TEK mesajda; tahmin yok):
 - 🆕 pozisyon açtı · 🚪 kapattı · 🔄 yön değiştirdi
 - 📈 / 📉 büyüttü / küçülttü — son **bildirilen** boyuta göre ≥%25 **ve** ≥$500K
   (adet üzerinden; fiyat oynaması tetiklemez)
 - 🧲 yeni duvar — fiyatın %1 yakınında ≥$250K tek emir, iki yoklama üst üste (post-only mi,
-  reduce-only mi, pozisyona etkisi, kaç farklı emir numarasıyla yeniden kondu);
-  🧲❌ kalktı — süresi, tepesi, o sürede pozisyon değişimi
-- 🎯 emir grupları — her biri ayrı: **kâr al** (reduce-only limit merdiveni), **kâr al
-  (tetik)**, **stop**, **tetikli giriş** (reduce-only olmayan tetik); pozisyona bağlı TP/SL
-  (HL arayüzünün pozisyon satırından konan, `sz 0`) "tüm pozisyon" olarak. $ tetik
-  fiyatıyla. Kurdu · **önemli** değişiklik (yeni emirler iki yoklama sabit VE emir sayısı
-  ≥3, aralık >%1 ya da $ ≥%25 ve ≥$100K değişti; "önceki" = değişiklikten hemen önceki canlı
-  hal) · kalktı. **Basamak dolumu ve aynı yere yeniden koyma mesaj üretmez** — dolum,
-  pozisyonun küçülmesi olarak (≥%25 adımda) görünür.
+  reduce-only mi, pozisyona etkisi, kaç farklı emir numarasıyla yeniden kondu). Pozisyonu
+  aynı yapışkan yolla **kapatan** post-only reduce-only duvar da sayılır ("SHORT'u
+  kapatıyor"); 🧲❌ kalktı — süresi, tepesi, o sürede pozisyon değişimi
+- 🎯 emir grupları — her biri ayrı: **kapatma emirleri** (Gtc reduce-only limit),
+  **kâr al (tetik)** (HL'nin kendi emir türü adı), **stop**, **tetikli giriş** (reduce-only
+  olmayan tetik); pozisyona bağlı TP/SL (HL arayüzünün pozisyon satırından konan, `sz 0`)
+  "tüm pozisyon" olarak. $ tetik fiyatıyla. Kurdu · **önemli** değişiklik (yeni emirler iki
+  yoklama sabit VE emir sayısı ≥3, aralık >%1 ya da $ ≥%25 ve ≥$100K değişti; "önceki" =
+  değişiklikten hemen önceki canlı hal) · kalktı. **Basamak dolumu ve aynı yere yeniden
+  koyma mesaj üretmez** — dolum, pozisyonun küçülmesi olarak (≥%25 adımda) görünür.
+- **Post-only kapatma kotasyonu** (tabanın altındaki post-only reduce-only limitler)
+  **olay üretmez**: fiyatla birlikte sürekli yeniden konur, her kayışta "değişti" yazmak
+  spam olurdu. Yalnız özette ve `/hesaplar`'da görünür; ne kadar dolduğunu dolum satırı söyler.
+  Kör nokta, açıkça: sınıf emir türüne (post-only) göre ayrılır — fiyattan uzak post-only
+  reduce-only emirler de sessizdir (drkmttr'ın uzak kapatma emirleri Gtc'ydi; mesafeye göre
+  ayırmak, fiyat sınırı geçtikçe sınıf değiştirip sahte "kalktı / kurdu" üretirdi).
 - Duvar sallanmaz: devam için %3 bant ve tabanın yarısı yeter, fiyat `allMids` ile her
-  turda taze; bilinen emri hâlâ açıksa "kalktı" denmez. 15 dk içinde dönen duvar
-  "geri geldi". Reduce-only emir duvar sayılmaz (merdivenin basamağıdır).
+  turda taze; bilinen emri hâlâ açıksa "kalktı" denmez; kimlik önce `cloid` (yeniden
+  koymada oid değişir, cloid değişmez — eriyen kuyruk da aynı duvardır). 15 dk içinde
+  dönen duvar "geri geldi". Gtc reduce-only emir duvar sayılmaz (kapatma emirlerinin
+  basamağıdır).
+- **Kalkış doğrulanır (02.10 düzeltmesi).** Kullanıcı: "duvar kalktı diye bildirim atıyor
+  ama aslında kalkmıyor, adam aşağı yukarı indiriyor". Ölçüm: drkmttr duvarı
+  `frontendOpenOrders` okumalarının %38'inde yok — her 1–25 sn'de iptal edip yeniden
+  koyuyor (akşam ölçümünde 15 okumanın 10'unda yok); iki yoklamanın ikisi de boşluğa
+  denk gelince "kalktı" yazılıyordu. Artık izlenen duvar yoklamada yoksa 2 sn arayla 4
+  kez daha bakılır; hiçbirinde yoksa kaçırmadır, yeniden bakış okunamazsa kaçırma
+  sayılmaz. Kalkış için 2 doğrulanmış kaçırma **ve** son görüşten 150 sn gerekir.
 - Taban altı (toz) pozisyon izlenir ama sessizdir: fiyat yükselip tabanı geçti diye
   "açtı" yazılmaz.
 
 Yeni eklenen hesap ilk turda **"takip başladı"** özeti atar (mevcut pozisyonlar, duvar,
-merdivenler) — bunlar sonra "yeni" diye bildirilmez. Listeden çıkarılıp yeniden eklenen
-hesap da özetle başlar. Uzun aradan (≥10 yoklama / 10 dk) ya da grup değişiminden sonra
-eski fark "şimdi oldu" diye yazılmaz: **"takip yeniden başladı"** özeti gelir. Bildirim
-kapalıysa (`notify_acct`) ya da `ACCOUNT_CHAT_ID` boşsa yoklama da yapılmaz. Gönderilemeyen
-mesajın durumu yazılmaz, sonraki yoklama aynı farkı yeniden bulur. Bütçe: hesap başına
-dakikada 2 istek (+ tur başına bir `allMids`). `frontendOpenOrders` bazı hesaplarda (HLP alt
-vault'unda 100'de kesildiği görüldü) eksik dönebildiği için 100'e ulaşınca sınırsız
-`openOrders` ile canlı emirler doğrulanır: görünmeyen emir "kalktı" sayılmaz. `/hesaplar`
-son yoklamanın kaydını gösterir (HL'ye istek atmaz). Kör nokta: yalnız ana dex.
+bekleyen emirler, son 1 saatin gerçekleşen dolumları) — bunlar sonra "yeni" diye
+bildirilmez. Listeden çıkarılıp yeniden eklenen hesap ya da yeni grup da özetle başlar.
+Uzun aradan (≥10 yoklama / 10 dk) sonra eski fark "şimdi oldu" diye yazılmaz: **"takip
+yeniden başladı"** özeti gelir. Durum biçimi değişince (02.10: emir adları düzeldi) eski
+durumla kıyaslanmaz — **"takip yeniden başladı (emir etiketleri düzeltildi)"** özeti gelir,
+sahte "kalktı / kurdu" çifti yok. Bildirim kapalıysa (`notify_acct`) ya da
+`ACCOUNT_CHAT_ID` boşsa yoklama da yapılmaz. Gönderilemeyen mesajın durumu yazılmaz,
+sonraki yoklama aynı farkı yeniden bulur. Bütçe: hesap başına dakikada 2 istek (+ tur
+başına bir `allMids`; izlenen duvar okumada yoksa en çok 4 yeniden bakış; özet başına 1–3
+`userFillsByTime`). `frontendOpenOrders` bazı hesaplarda (HLP alt vault'unda 100'de
+kesildiği görüldü) eksik dönebildiği için 100'e ulaşınca sınırsız `openOrders` ile canlı
+emirler doğrulanır: görünmeyen emir "kalktı" sayılmaz. `/hesaplar` son yoklamanın
+kaydını ve son 1 saatin dolumlarını gösterir (hesap başına 1–3 `userFillsByTime`, 60 sn
+önbellekli; pozisyon/emir için HL'ye istek atmaz). Kör nokta: yalnız ana dex.
 
 ## Liq attack radarı: `/saldiri`
 

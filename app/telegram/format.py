@@ -758,7 +758,14 @@ def _dist_range(lo, hi, mark) -> str:
     if where == "iki yanında":
         return f" · fiyatın {where}"
     lo_p, hi_p = sorted((abs(a), abs(b)))
-    return f" · fiyatın %{lo_p:.0f}–{hi_p:.0f} {where}" if hi_p - lo_p >= 1 else f" · fiyatın %{lo_p:.1f} {where}"
+    if hi_p - lo_p >= 1:
+        return f" · fiyatın %{lo_p:.0f}–{hi_p:.0f} {where}"
+
+    def pc(x: float) -> str:                 # fiyatın dibindeki kotasyon "%0.0" görünmesin
+        return f"{x:.2f}" if x < 0.1 else f"{x:.1f}"
+    if pc(lo_p) != pc(hi_p):
+        return f" · fiyatın %{pc(lo_p)}–{pc(hi_p)} {where}"
+    return f" · fiyatın %{pc(lo_p)} {where}"
 
 
 def _ladder_kind(L: dict) -> str:
@@ -766,10 +773,35 @@ def _ladder_kind(L: dict) -> str:
     return KIND_LABEL.get(L.get("kind") or "", L.get("kind") or "emir")
 
 
-def _ladder_txt(L: dict, mark) -> str:
-    """Emir grubu satırı. Tür etiketi ölçülen alanlardan: tetikli kâr al 'stop'
-    yazılmaz, reduce-only olmayan tetik 'tetikli giriş'tir, pozisyona bağlı TP/SL
-    "tüm pozisyon"dur; $ tetik fiyatıyla."""
+def _entry_tag(L: dict, pos: dict | None) -> str:
+    """Kapatan emir girişe göre kârda mı zararda mı kapatır — ÖLÇÜLEN (canlı pozisyonun
+    ortalama girişi ile emir fiyatları). Niyet ("kâr al") varsayılmaz."""
+    if not pos or not pos.get("entry") or L.get("kind") == "entry":
+        return ""
+    e, lo, hi = float(pos["entry"]), L.get("lo"), L.get("hi")
+    if lo is None or hi is None:
+        return ""
+    if pos.get("side") == "short" and L.get("side") == "bid":     # short'u kapatan alış
+        if hi < e:
+            return " · girişin altında → kârda kapatır"
+        if lo > e:
+            return " · girişin üstünde → zararda kapatır"
+        return " · girişin iki yanında → kısmen zararda"
+    if pos.get("side") == "long" and L.get("side") == "ask":      # long'u kapatan satış
+        if lo > e:
+            return " · girişin üstünde → kârda kapatır"
+        if hi < e:
+            return " · girişin altında → zararda kapatır"
+        return " · girişin iki yanında → kısmen zararda"
+    return ""
+
+
+def _ladder_txt(L: dict, mark, pos: dict | None = None) -> str:
+    """Emir grubu satırı. Tür etiketi ölçülen alanlardan: Gtc reduce-only = "kapatma
+    emirleri", küçük post-only reduce-only = "post-only kapatma kotasyonu" (piyasa
+    yapıcının geri alım tarafı), tetikli kâr al HL'nin kendi adıyla, reduce-only olmayan
+    tetik "tetikli giriş", pozisyona bağlı TP/SL "tüm pozisyon"; $ tetik fiyatıyla.
+    Girişe göre kârda/zararda kapatacağı yazılır (pozisyon varsa)."""
     sym = esc(assets.label(L.get("coin") or ""))
     side = "satış" if L.get("side") == "ask" else "alış"
     ro = ", reduce-only" if L.get("ro") and L.get("kind") != "entry" else ""
@@ -777,7 +809,39 @@ def _ladder_txt(L: dict, mark) -> str:
     rng = px5(L.get("lo")) if L.get("lo") == L.get("hi") else f"{px5(L.get('lo'))}–{px5(L.get('hi'))}"
     size = "tüm pozisyon" if L.get("whole") else f"{qty_txt(L.get('sz'))} {sym}"
     return (f"<b>{sym}</b> {_ladder_kind(L)} ({side}{ro}): {n} emir {rng} · {size}"
-            f" ({usd(L.get('ntl'))}){_dist_range(L.get('lo'), L.get('hi'), mark)}")
+            f" ({usd(L.get('ntl'))}){_dist_range(L.get('lo'), L.get('hi'), mark)}{_entry_tag(L, pos)}")
+
+
+_DIR_TXT = {"Open Long": "açılış (Open Long)", "Close Long": "kapatma (Close Long)",
+            "Open Short": "açılış (Open Short)", "Close Short": "kapatma (Close Short)"}
+
+
+def _flow_lines(flow: dict | None, limit: int = 6) -> list[str]:
+    """GERÇEKLEŞEN dolumlar (emir değil): coin başına yön → $, maker payı. "Geri alıyor
+    mu?" sorusunun ölçülen cevabı. Sayfa sınırına takıldıysa eksik olduğunu yazar."""
+    if flow is None:
+        return []
+    mins = max(1, round((int(flow.get("until") or 0) - int(flow.get("since") or 0)) / 60))
+    span = "Son 1 saat" if 55 <= mins <= 65 else f"Son {mins} dk"
+    coins = flow.get("coins") or {}
+    if not coins:
+        return [f"🔁 <b>{span}: gerçekleşen dolum yok</b>"]
+    out = [f"🔁 <b>{span} — gerçekleşen dolumlar</b>"]
+    rows = sorted(coins.items(), key=lambda kv: -sum(d["usd"] for d in kv[1].values()))
+    for coin, dirs in rows[:limit]:
+        tot = sum(d["usd"] for d in dirs.values())
+        mk = sum(d["maker_usd"] for d in dirs.values())
+        parts = [f"{_DIR_TXT.get(k, esc(k))} {usd(v['usd'])}"
+                 for k, v in sorted(dirs.items(), key=lambda kv: -kv[1]["usd"])]
+        line = f"• <b>{esc(assets.label(coin))}</b>: " + " · ".join(parts)
+        if tot:
+            line += f" · %{mk / tot * 100:.0f} maker"
+        out.append(line)
+    if len(rows) > limit:
+        out.append(f"• … ve {len(rows) - limit} coin daha")
+    if not flow.get("complete"):
+        out.append(f"<i>(ilk {flow.get('n')} dolum sayıldı — fazlası var)</i>")
+    return out
 
 
 def _wall_txt(w: dict, live: dict) -> str:
@@ -803,9 +867,9 @@ def _wall_txt(w: dict, live: dict) -> str:
 
 
 def acct_started(addr: str, st: dict, marks: dict, title: str = "takip başladı",
-                 tail: bool = True) -> str:
+                 tail: bool = True, flow: dict | None = None) -> str:
     """Takip başladı (ya da /hesaplar anlık durumu): pozisyonlar + defterdeki duvar
-    ve merdivenler."""
+    ve bekleyen kapatma/stop emirleri + (verildiyse) son 1 saatin GERÇEKLEŞEN dolumları."""
     lines = [f"{_acct_head(addr, st)} — <b>{esc(title)}</b>"]
     live = st.get("live") or {}
     if live:
@@ -825,14 +889,17 @@ def acct_started(addr: str, st: dict, marks: dict, title: str = "takip başladı
             lines.append("• " + _wall_txt(w, live))
     lads = sorted((st.get("ladders") or {}).values(), key=lambda L: -float(L.get("ntl") or 0))
     if lads:
-        lines.append("🎯 <b>Kâr al / stop emirleri</b> (arayüzde görünmüyor)")
+        lines.append("🎯 <b>Bekleyen kapatma / stop emirleri</b> — henüz dolmamış (arayüzde görünmüyor)")
         for L in lads[:10]:
-            lines.append("• " + _ladder_txt(L, _f_or_none(marks.get(L.get("coin")))))
+            lines.append("• " + _ladder_txt(L, _f_or_none(marks.get(L.get("coin"))),
+                                            live.get(L.get("coin"))))
         if len(lads) > 10:
             lines.append(f"• … ve {len(lads) - 10} emir grubu daha")
+    lines.extend(_flow_lines(flow))
     if tail:
         lines.append("Bundan sonra bu gruba: pozisyon aç / kapa / ters çevir, %25+ büyüme-küçülme,"
-                     " fiyatın dibine konan yeni duvar ve kâr al / stop merdiveni kurulum-değişim-kalkış.")
+                     " fiyatın dibine konan yeni duvar (açma ya da kapatma) ve kapatma / stop"
+                     " emirlerinin kurulumu-değişimi-kalkışı. Küçük post-only kotasyonlar mesaj üretmez.")
     lines.append(_acct_foot(st))
     return "\n".join(lines)
 
@@ -885,18 +952,19 @@ def acct_events(addr: str, st: dict, events: list[dict], marks: dict) -> str:
             lines.append(f"🧲❌ <b>{sym}</b> {side} duvarı kalktı · en az {dur_txt(life)} sürdü ·"
                          f" tepe {usd(w.get('ntl_max'))}{chg}")
         elif t == "ladder_new":
-            lines.append("🎯 Kurdu: " + _ladder_txt(e["L"], _f_or_none(marks.get(coin))))
+            lines.append("🎯 Kurdu: " + _ladder_txt(e["L"], _f_or_none(marks.get(coin)), live.get(coin)))
         elif t == "ladder_change":
             was = e.get("was") or {}
             L = e["L"]
             prev_txt = (f"{int(was.get('n') or 0)} emir {px5(was.get('lo'))}–{px5(was.get('hi'))}"
                         f" ({usd(was.get('ntl'))})") if was else "?"
-            lines.append(f"🎯 Değiştirdi: {_ladder_txt(L, _f_or_none(marks.get(coin)))} · önceki {prev_txt}")
+            lines.append(f"🎯 Değiştirdi: {_ladder_txt(L, _f_or_none(marks.get(coin)), live.get(coin))}"
+                         f" · önceki {prev_txt}")
         elif t == "ladder_gone":
             L = e["L"]
             now_p = live.get(coin)
             pos_txt = f" · pozisyon şimdi {_pos_txt(coin, now_p)}" if now_p else f" · {sym} pozisyonu yok"
-            lines.append(f"🎯❌ <b>{sym}</b> {_ladder_kind(L)} emirleri kalktı (son görülen:"
+            lines.append(f"🎯❌ <b>{sym}</b> {_ladder_kind(L)} kalktı (son görülen:"
                          f" {int(L.get('n') or 0)} emir, {usd(L.get('ntl'))}) — doldu mu iptal mi,"
                          f" pozisyondan okunur{pos_txt}")
     lines.append(_acct_foot(st))

@@ -1041,8 +1041,9 @@ class TelegramBot:
             f" /birak_twap_{fid}", chat_id)
 
     async def _cmd_accounts(self, chat_id: str) -> None:
-        """/hesaplar — izlenen hesapların son anlık durumu (pozisyon + duvar + kâr al/stop).
-        Son yoklamanın kaydından okunur: HL'ye istek atmaz."""
+        """/hesaplar — izlenen hesapların son anlık durumu (pozisyon + duvar + bekleyen
+        kapatma/stop emirleri) son yoklamanın kaydından; ayrıca son 1 saatin GERÇEKLEŞEN
+        dolumları (hesap başına bir istek grubu, 60 sn önbellekli)."""
         from ..hl.universe import main_dex_ctx
         from ..radar import acctwatch
         snaps = await acctwatch.snapshots(self.cfg)
@@ -1061,9 +1062,11 @@ class TelegramBot:
                        else "henüz yoklanmadı")
                 await self.send(f"👤 <b>{fmt.esc(s['name'])}</b> · {fmt.alink(s['address'])} — {why}.", chat_id)
                 continue
+            flow = (await acctwatch.fill_flow_cached(self.client, s["address"])
+                    if self.client is not None else None)
             await self.send(fmt.acct_started(s["address"], st, marks,
                                              title=f"anlık durum ({fmt.age_str(st.get('ts'))} önce)",
-                                             tail=False), chat_id)
+                                             tail=False, flow=flow), chat_id)
 
     async def _cmd_sticky_follow_list(self, chat_id: str) -> None:
         """/duvartakipler — izlenen yapışkan duvarlar."""

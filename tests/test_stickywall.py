@@ -75,13 +75,23 @@ class Client:
         self.calls = {"l2": 0, "oo": 0, "ch": 0, "vd": 0, "uf": 0}
         self.fills = []            # sahibin dolum geçmişi (userFillsByTime)
         self.fills_err = False
+        self.oo_seq = []           # sıradaki açık emir yanıtları (yeniden bakış; istisna = hata)
+        self.book_seq = {}         # coin → sıradaki defter yanıtları
 
     async def l2_book(self, coin, n_sig_figs=None):
         self.calls["l2"] += 1
+        q = self.book_seq.get(coin)
+        if q:
+            return q.pop(0)
         return self.book
 
     async def frontend_open_orders(self, user, dex=""):
         self.calls["oo"] += 1
+        if self.oo_seq:
+            r = self.oo_seq.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
         return self.orders.get(user, [])
 
     async def clearinghouse(self, user, dex="", priority=None, stats=None):
@@ -128,6 +138,7 @@ async def _fresh(chat="-200"):
     await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"SAND": {"m": SAND_MARK, "oi": SAND_OI, "v": SAND_VOL},
                                              "ETH": {"m": 2708.0, "oi": 400_000, "v": 1.25e9}},
                                        "ts": dbm.now()})
+    sw.RECHECK_GAP = 0                      # yeniden bakış beklemesi testte yok
     cfg = Config()
     cfg.crypto_chat_id = chat
     return cfg
@@ -360,6 +371,74 @@ def test_pulled_unknown_owner_failed_send_no_chat():
         print("✅ kenar) çekildi (dolum geçmişi boş) / kayboldu (veri yok, sahip yok) ayrımı;"
               " restart sonrası tek bakış bitirmez; başarısız gönderim yeniden denenir ama"
               " sayaç ve teklif BİR kez; tür kapalıyken denenmez")
+    asyncio.run(run())
+
+
+def test_flapping_wall_recheck_and_cloid():
+    """Canlıdaki hata (02.10, drkmttr SAND): duvar her 1–25 sn'de iptal edilip yeniden
+    konuyor (yeni oid, AYNI cloid); açık emir okumalarının %38'inde YOK. Okumada yok →
+    hızlı yeniden bakış; okunamayan bakış kaçırma değil; kimlik cloid."""
+    async def run():
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        t0 = dbm.now()
+        await _confirmed(cfg, cl, nt, t0)
+        w = (await sw._actives())[("SAND", "ask")]
+        assert w["owner_src"] == "order" and w["cloid"] == "0xc10d"
+        await sw.follow_start(cfg, w["id"], chat_id="-300")
+        n = len(nt.sent)
+        # 12 bakış (6 dk): iki okuma boş, üçüncüde yeni oid + aynı cloid; defterde de boşluk
+        for i in range(12):
+            o = {**order(px=WALL_PX + (i % 3) * 0.00001), "oid": 600 + i}
+            cl.oo_seq = [[], [], [o]]
+            cl.book = sand_book(sz=0)
+            out = await sw.tick(cfg, cl, nt, ts=t0 + 90 + i * 30)
+            assert out["ended"] == 0 and not cl.oo_seq, i
+        assert len(nt.sent) == n, "takipçiye de sahte 'bitti' yok"
+        # kimlik cloid: yanına sahibin daha BÜYÜK başka emri gelse de izlenen aynı cloid
+        other = {**order(px=WALL_PX + 0.00002, sz=WALL_SZ * 2), "cloid": "0xbeef", "oid": 999}
+        cl.orders[OWNER] = [other, {**order(), "oid": 700}]
+        cl.book = sand_book()
+        await sw.tick(cfg, cl, nt, ts=t0 + 460)
+        w = (await sw._actives())[("SAND", "ask")]
+        assert abs(w["ntl_last"] - WALL_PX * WALL_SZ) < 1 and w["tranches"] == 0, \
+            "aynı cloid izlenir; büyük komşu emir 'yeni dilim' sayılmaz"
+        # okumada yok + yeniden bakış okunamadı (429) → kaçırma sayılmaz (4 dk)
+        for i in range(8):
+            cl.oo_seq = [[], RuntimeError("429")]
+            out = await sw.tick(cfg, cl, nt, ts=t0 + 490 + i * 30)
+            assert out["ended"] == 0, i
+        assert len(nt.sent) == n
+        # gerçekten kalktı: her bakışta tüm yeniden bakışlar boş → MISS_MIN + süre → bir kez
+        cl.oo_seq, cl.orders[OWNER], cl.book = [], [], sand_book(sz=0)
+        oo = cl.calls["oo"]
+        ended = (await sw.tick(cfg, cl, nt, ts=t0 + 760))["ended"]
+        assert cl.calls["oo"] - oo == 1 + sw.RECHECK_N, "kaçırma ancak yeniden bakışlardan sonra"
+        for i in range(1, 4):
+            ended += (await sw.tick(cfg, cl, nt, ts=t0 + 760 + i * 30))["ended"]
+        assert ended == 1
+        assert "ÇEKİLDİ" in nt.sent[-1][2] and nt.sent[-1][1] == "-300", nt.sent[-1]
+
+        # sahibi bilinmeyen duvar defterden izlenir: defterdeki boşlukta defter yeniden okunur
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        cl.orders = {}
+        sw.REG.focus["SAND"] = dbm.now() + 9999
+        for dt in (0, 30, 60):
+            await sw.tick(cfg, cl, nt, ts=t0 + dt)
+        assert "Sahibi bulunamadı" in nt.sent[-1][2]
+        for i in range(10):
+            cl.book_seq = {"SAND": [sand_book(sz=0), sand_book(px=WALL_PX + (i % 2) * 0.00001)]}
+            out = await sw.tick(cfg, cl, nt, ts=t0 + 90 + i * 30)
+            assert out["ended"] == 0 and not cl.book_seq["SAND"], i
+        cl.book = sand_book(sz=0)
+        ended = 0
+        for i in range(4):
+            ended += (await sw.tick(cfg, cl, nt, ts=t0 + 400 + i * 30))["ended"]
+        assert ended == 1 and (await sw.page_rows())["ended"][0]["status"] == "kayboldu"
+        print("✅ boşluk) okumada yok → yeniden bakış (açık emir / defter); yeni oid + aynı cloid"
+              " aynı duvar, büyük komşu emir kimliği kaydırmaz; okunamayan bakış kaçırma değil;"
+              " gerçek kalkış bir kez")
     asyncio.run(run())
 
 
