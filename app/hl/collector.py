@@ -14,7 +14,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
-from ..radar import twaplive
+from ..radar import stickywall, twaplive
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -369,6 +369,13 @@ class Collector:
             # süpüren taker'dır — bu yüzden adres perspektifinden kaydediyoruz.
             aggr = str(t.get("side") or "").upper()
             buyer, seller = (users[0] or "").lower(), (users[1] or "").lower()
+            # 🧲 Yapışkan duvar: maker'ı kim karşılıyor (yalnız ana dex kripto).
+            # Sıcak yol: senkron, I/O yok (bkz. app/radar/stickywall.py).
+            if coin in self.crypto_coins:
+                try:
+                    stickywall.observe(coin, aggr, buyer, seller, px, sz, ts)
+                except Exception:
+                    stickywall.REG.errors += 1
             for addr, side in ((buyer, "buy"), (seller, "sell")):
                 if not addr:
                     continue

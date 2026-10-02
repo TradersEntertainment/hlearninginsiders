@@ -22,7 +22,7 @@ from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bars, bigpos, clusters, cryptoliq, cryptovol, equityvol, liqattack, liqmap, movers,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
-                     patterns, pricechart, sim, twap)
+                     patterns, pricechart, sim, stickywall, twap)
 
 log = logging.getLogger("web.routes")
 
@@ -93,7 +93,14 @@ def _posage(p):
     return "?"
 
 
-templates.env.filters.update(usd=_usd, px=_px, age=_age, dt=_dt, posage=_posage)
+def _px5(p):
+    """5 anlamlı hane (HL tick'i) — `px` 0.0626'ya keser, yapışkan duvarın adımı kaybolur."""
+    if not p:
+        return "-"
+    return f"{p:,.0f}" if p >= 100_000 else f"{p:.5g}"
+
+
+templates.env.filters.update(usd=_usd, px=_px, px5=_px5, age=_age, dt=_dt, posage=_posage)
 
 
 def _stale_acct(ts) -> bool:
@@ -1176,6 +1183,22 @@ async def movers_page(request: Request, piyasa: str = "hepsi", taban: float = -1
         "piyasa": piyasa, "taban": taban,
         "poll": max(int(getattr(cfg, "crypto_vol_poll_sec", 300) or 300),
                     int(getattr(cfg, "equity_vol_poll_sec", 300) or 300)),
+    })
+
+
+@router.get("/yapiskan")
+async def sticky_page(request: Request):
+    """🧲 Yapışkan duvarlar — en iyi fiyata yapışan dev TEK emirler (ana dex kripto)."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    return _render(request, "yapiskan.html", {
+        "yd": await stickywall.page_rows(),
+        "st": await kv_get(stickywall.STATS_KV) or {},
+        "min_usd": float(getattr(cfg, "sticky_min_usd", 1_000_000) or 0),
+        "min_pct": float(getattr(cfg, "sticky_min_vol_pct", 2.0) or 0),
+        "poll": int(getattr(cfg, "sticky_poll_sec", 300) or 0),
+        "enabled": bool(getattr(cfg, "sticky_enabled", True)),
+        "C": stickywall,
     })
 
 

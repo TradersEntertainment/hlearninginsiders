@@ -491,6 +491,8 @@ class TelegramBot:
             await self._cmd_track_start(cmd, chat_id)
         elif cmd in ("twaptakipler", "twaptakip"):
             await self._cmd_twap_follow_list(chat_id)
+        elif cmd in ("duvartakipler", "duvartakip"):
+            await self._cmd_sticky_follow_list(chat_id)
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
             await self._cmd_sim(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
@@ -561,6 +563,8 @@ class TelegramBot:
             await self._cmd_track_start(cmd, chat_id)
         elif cmd in ("twaptakipler", "twaptakip"):
             await self._cmd_twap_follow_list(chat_id)
+        elif cmd in ("duvartakipler", "duvartakip"):
+            await self._cmd_sticky_follow_list(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -1032,6 +1036,48 @@ class TelegramBot:
             f" Takip {days} gün sonra kendiliğinden kapanır · bırakmak için"
             f" /birak_twap_{fid}", chat_id)
 
+    async def _cmd_sticky_follow_list(self, chat_id: str) -> None:
+        """/duvartakipler — izlenen yapışkan duvarlar."""
+        from ..radar import stickywall
+        rows = await stickywall.follows_active()
+        if not rows:
+            await self.send("🧲 İzlenen yapışkan duvar yok. Alarmdaki /takip_N komutuna bas.", chat_id)
+            return
+        lines = [f"🧲 <b>İzlenen yapışkan duvarlar</b> ({len(rows)})"]
+        for r in rows[:20]:
+            state = (f"şimdi {fmt.usd(r['ntl_last'])}" if r["wall_active"]
+                     else f"bitti: {fmt.esc(r.get('status') or '?')}")
+            lines.append(f"#{r['id']} <b>{fmt.esc(assets.label(r['coin']))}</b>"
+                         f" · {'SATIŞ' if r['side'] == 'ask' else 'ALIŞ'} · {state}"
+                         f" (tepe {fmt.usd(r['peak_ntl'])})"
+                         f" · {fmt.age_str(r['created_ts'])} önce → /birak_duvar_{r['id']}")
+        await self.send("\n".join(lines), chat_id)
+
+    async def _cmd_sticky_follow(self, offer: dict, offer_id: int, chat_id: str) -> None:
+        """YAPIŞKAN DUVAR takibi: yarılanma, yeni dilim, bitiş (yenildi/çekildi) —
+        yalnız basana. Kanal yalnız ilk alarmı alır."""
+        from ..radar import stickywall
+        fid, w = await stickywall.follow_start(self.cfg, int(offer.get("ref_ts") or 0),
+                                               chat_id=self._track_chat(chat_id))
+        sym = fmt.esc(offer.get("symbol") or offer["coin"])
+        if fid is None:
+            if w is None:
+                await self.send(f"#{offer_id} numaralı duvar kaydı bulunamadı.", chat_id)
+            else:
+                await self.send(f"🧲 <b>{sym}</b> duvarı ZATEN BİTTİ"
+                                f" ({fmt.esc(w.get('status') or '?')}, {fmt.age_str(w.get('end_ts'))} önce)"
+                                " — takip edilecek bir şey kalmadı.", chat_id)
+            return
+        async with db() as conn:
+            await conn.execute("UPDATE track_offers SET used=1 WHERE id=?", (offer_id,))
+        now_txt = (f"şimdi {fmt.usd(w.get('ntl_last'))}" if w.get("active")
+                   else "az önce bitti — 15 dk içinde dönerse haber veririm")
+        await self.send(
+            f"👁 <b>{sym}</b> yapışkan duvarı takipte (#{fid}) · {now_txt}\n"
+            "Yarılanınca, yeni dilim gelince ve bitince (<b>yenildi</b> / <b>çekildi</b>) haber"
+            f" vereceğim. Takip {stickywall.FOLLOW_DAYS} gün sonra kendiliğinden kapanır ·"
+            f" bırakmak için /birak_duvar_{fid}", chat_id)
+
     async def _cmd_track_start(self, cmd: str, chat_id: str) -> None:
         """Teklif mesajındaki /takip_N — balina çıkış takibini başlat."""
         from ..radar.tracker import live_position
@@ -1052,6 +1098,9 @@ class TelegramBot:
         # sütun NULL gelir → 'pos' okunur.
         if (offer.get("kind") or "pos") == "twap":
             await self._cmd_twap_follow(offer, offer_id, chat_id)
+            return
+        if offer.get("kind") == "sticky":
+            await self._cmd_sticky_follow(offer, offer_id, chat_id)
             return
         async with db() as conn:
             cur = await conn.execute(
@@ -1131,6 +1180,17 @@ class TelegramBot:
     async def _cmd_track_stop(self, cmd: str, chat_id: str) -> None:
         # /birak_twap_N → TWAP EMRİ takibi; /birak_N → pozisyon takibi
         rest = cmd.split("_", 1)[1] if "_" in cmd else ""
+        if rest.startswith("duvar_"):
+            from ..radar import stickywall
+            try:
+                fid = int(rest.split("_", 1)[1])
+            except (ValueError, IndexError):
+                await self.send("Kullanım: /duvartakipler listesindeki /birak_duvar_N komutuna bas.", chat_id)
+                return
+            ok = await stickywall.follow_stop(fid, "elle bırakıldı")
+            await self.send(f"🧲 Yapışkan duvar takibi #{fid} bırakıldı." if ok
+                            else f"#{fid} numaralı aktif duvar takibi yok.", chat_id)
+            return
         if rest.startswith("twap_"):
             from ..radar import twapfollow
             try:

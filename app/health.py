@@ -72,6 +72,7 @@ def limits(cfg: Config) -> dict[str, int]:
         "tracker": cfg.track_poll_sec * 5 + 120,
         "lowvol": 1800,
         "bookwall": cfg.wall_poll_sec * 4 + 120,
+        "stickywall": 15 * 20 + 300,       # 15 sn adım; kapalıyken de nabız atar
         "sweeper": cfg.sweep_interval_sec * 5 + 120,
         "hourstats": 7200,
         "digest": 2400,
@@ -121,6 +122,7 @@ def periods(cfg: Config) -> dict[str, int]:
         "tracker": cfg.track_poll_sec,
         "lowvol": 300,
         "bookwall": cfg.wall_poll_sec,
+        "stickywall": 15,
         "sweeper": cfg.sweep_interval_sec,
         "hourstats": 600,
         "digest": 600,

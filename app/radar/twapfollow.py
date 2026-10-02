@@ -207,7 +207,7 @@ async def loop(cfg, collector, notifier) -> None:
                 log.info("twap takip: %d iptal, %d bitti, %d yarılandı (%d aktif)",
                          out["cancelled"], out["ended"], out["progress"], out["active"])
             await prune()
-            beat("twapfollow")
+            await beat("twapfollow")
         except Exception:
             log.exception("twap takip turu")
         await asyncio.sleep(max(30, int(getattr(cfg, "twap_follow_poll_sec", 120) or 120)))

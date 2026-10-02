@@ -554,6 +554,152 @@ def wall_gone(w: dict) -> str:
             " daha rahat hareket edebilir.</i>")
 
 
+# ---------------- 🧲 yapışkan duvar ----------------
+
+def px5(p: float | None) -> str:
+    """5 anlamlı hane (HL tick'i): 0.062640 → 0.06264; `px` 4 haneye keser."""
+    if not p:
+        return "-"
+    return f"{p:,.0f}" if p >= 100_000 else f"{p:.5g}"
+
+
+def _sticky_head(w: dict) -> tuple[str, str, str]:
+    sym = esc(assets.label(w.get("coin") or ""))
+    side = "SATIŞ" if w.get("side") == "ask" else "ALIŞ"
+    where = "en iyi satışta" if w.get("side") == "ask" else "en iyi alışta"
+    return sym, side, where
+
+
+def _sticky_owner(w: dict) -> str:
+    """Sahip satırı: kim, nasıl bulundu, emir türü — bilinmiyorsa AÇIKÇA söyler."""
+    owner = w.get("owner") or ""
+    if not owner:
+        return ("👤 Sahibi bulunamadı — defter anonim; duvardan dolum görülmedi ya da"
+                " açık emirle eşleşmedi")
+    name = f' (vault "{esc(w["owner_name"])}")' if w.get("owner_name") else ""
+    if w.get("owner_src") == "order":
+        tif = "post-only (Alo)" if (w.get("order_tif") or "").lower() == "alo" else esc(w.get("order_tif") or "limit")
+        ro = "reduce-only" if w.get("reduce_only") else "reduce-only DEĞİL"
+        return f"👤 Sahibi {alink(owner)}{name} · {tif}, {ro} — açık emriyle doğrulandı"
+    share = f", akışın %{float(w['owner_share']) * 100:.0f}'i" if w.get("owner_share") else ""
+    return (f"👤 Muhtemel sahibi {alink(owner)}{name} — duvar fiyatındaki dolumların en büyük"
+            f" maker'ı{share}; açık emirle doğrulanamadı")
+
+
+def _sticky_pos(w: dict, end: bool = False) -> str | None:
+    """Sahibin o coindeki pozisyonu + emrin pozisyona etkisi (ölçülen, tahmin değil)."""
+    if not w.get("owner"):
+        return None
+    sym = esc(assets.label(w.get("coin") or ""))
+    pre = "end_pos_" if end else "pos_"
+    side = w.get(pre + "side")
+    if side is None:
+        return None
+    if not side:
+        line = f"📭 {sym}'da açık pozisyonu {'kalmadı' if end else 'yok'}"
+    else:
+        szi = abs(float(w.get(pre + "szi") or 0))
+        line = (f"{'📉' if side == 'short' else '📈'} Pozisyon: <b>{side.upper()} {qty_txt(szi)} {sym}</b>"
+                f" ({usd(w.get(pre + 'ntl'))}")
+        if not end and w.get("pos_entry"):
+            line += f", giriş {px5(w['pos_entry'])}"
+        line += ")"
+        if end and w.get("pos_side") is not None:
+            before = abs(float(w.get("pos_szi") or 0))
+            if w.get("pos_side") == side and before:
+                line += f" · duvar başında {qty_txt(before)}"
+    eff = {("ask", "open"): "bu emir SHORT açıyor / büyütüyor",
+           ("ask", "close"): "bu emir LONG'u boşaltıyor",
+           ("bid", "open"): "bu emir LONG açıyor / büyütüyor",
+           ("bid", "close"): "bu emir SHORT'u kapatıyor"}.get((w.get("side"), w.get("effect") or ""))
+    if eff and not end:
+        line += f" → <b>{eff}</b>"
+    return line
+
+
+def sticky_alert(w: dict, offer: int | None = None) -> str:
+    """Kanal alarmı: en iyi fiyata yapışan dev TEK emir. Yalnız ölçülen."""
+    sym, side, where = _sticky_head(w)
+    ntl = float(w.get("ntl_last") or 0)
+    lines = [f"🧲 <b>YAPIŞKAN DUVAR</b> — <b>{sym}</b> · {side}",
+             f"Tek emir <b>{usd(ntl)}</b> ({qty_txt(w.get('sz_last'))} {sym}) @ {px5(w.get('px_last'))}"
+             f" — {where}" + (f" ({int(w['level_last']) + 1}. seviye)" if w.get("level_last") else "")]
+    facts = []
+    if w.get("day_vol"):
+        facts.append(f"24s hacme oranı <b>%{ntl / float(w['day_vol']) * 100:.1f}</b>")
+    if w.get("oi_usd"):
+        facts.append(f"OI'ye oranı %{ntl / float(w['oi_usd']) * 100:.0f}")
+    opp = float(w.get("opp_ntl") or 0)
+    if opp > 0 and ntl / opp >= 2:
+        r = ntl / opp
+        facts.append(f"karşı tarafın görünen derinliğinin {'100+' if r > 100 else f'{r:.0f}'} katı")
+    if facts:
+        lines.append("📊 " + " · ".join(facts))
+    life = int(w.get("last_ts") or now()) - int(w.get("first_ts") or now())
+    mv = int(w.get("n_moves") or 0)
+    lo, hi = w.get("px_min"), w.get("px_max")
+    line = f"🔁 defterde {dur_txt(life)}"
+    if mv:
+        line += f" · fiyatla <b>{mv} kez</b> yer değiştirdi ({px5(lo)}–{px5(hi)})"
+    else:
+        line += " · bu sürede yerinden oynamadı"
+    lines.append(line)
+    lines.append(_sticky_owner(w))
+    p = _sticky_pos(w)
+    if p:
+        lines.append(p)
+    if w.get("eaten_usd"):
+        lines.append(f"🍽 Duvardan şimdiye yenen: <b>{usd(w['eaten_usd'])}</b> (sahibin maker dolumu)")
+    lines.append("<i>Likidasyon değil: HL likidasyonu piyasa emridir, defterde beklemez."
+                 " Bu, en iyi fiyata kendini yeniden koyan tek bir emir.</i>")
+    if offer:
+        lines.append(f"👁 Yenince, çekilince ya da yeni dilim gelince haber → /takip_{offer}")
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
+def sticky_note(w: dict, stage: str) -> str:
+    """Takipçi notu: yarılandı / yeni dilim / yeniden geldi."""
+    sym, side, where = _sticky_head(w)
+    head = {"half": "🧲 <b>Yapışkan duvar yarılandı</b>",
+            "tranche": "🧲 <b>Yapışkan duvara yeni dilim</b>",
+            "reopen": "🧲 <b>Yapışkan duvar yeniden geldi</b>"}.get(stage, "🧲 <b>Yapışkan duvar</b>")
+    ntl = float(w.get("ntl_last") or 0)
+    lines = [f"👁 <b>takip ettiğin duvar</b>\n{head} — <b>{sym}</b> · {side}",
+             f"şimdi <b>{usd(ntl)}</b> @ {px5(w.get('px_last'))} · tepe {usd(w.get('peak_ntl'))}"
+             f" · defterde {dur_txt(int(w.get('last_ts') or now()) - int(w.get('first_ts') or now()))}"]
+    if w.get("eaten_usd"):
+        lines.append(f"🍽 şimdiye yenen {usd(w['eaten_usd'])} · {int(w.get('n_moves') or 0)} kez yer değiştirdi")
+    if w.get("owner"):
+        lines.append(f"👤 {alink(w['owner'])}" + (f' (vault "{esc(w["owner_name"])}")' if w.get("owner_name") else ""))
+    return "\n".join(lines)
+
+
+STICKY_END = {"yenildi": "🍽 YENİLDİ — kalan son kısım da sahibin dolumu oldu",
+              "çekildi": "🫥 ÇEKİLDİ — sahibi emri kaldırdı, son kalan dolmadan",
+              "kısmen": "◐ KISMEN — son kalanın bir kısmı doldu, gerisi çekildi",
+              "kayboldu": "❔ KAYBOLDU — sahibi bilinmediği için dolum/çekilme ayrılamadı"}
+
+
+def sticky_end(w: dict) -> str:
+    """Takipçiye bitiş: ne oldu, ne kadar yendi, ne kadar sürdü, pozisyon sonu."""
+    sym, side, _ = _sticky_head(w)
+    st = w.get("status") or "kayboldu"
+    life = int(w.get("end_ts") or w.get("last_ts") or now()) - int(w.get("first_ts") or now())
+    lines = [f"👁 <b>takip ettiğin duvar</b>\n🧲 <b>Yapışkan duvar bitti</b> — <b>{sym}</b> · {side}",
+             f"<b>{STICKY_END.get(st, esc(st))}</b>",
+             f"tepe {usd(w.get('peak_ntl'))} · son görülen {usd(w.get('ntl_last'))} · {dur_txt(life)}"
+             f" · {int(w.get('n_moves') or 0)} kez yer değiştirdi ({px5(w.get('px_min'))}–{px5(w.get('px_max'))})"]
+    if w.get("owner"):
+        lines.append(f"🍽 duvardan toplam yenen <b>{usd(w.get('eaten_usd'))}</b>"
+                     + (f" · {int(w['tranches'])} yeni dilim/dönüş" if w.get("tranches") else ""))
+        p = _sticky_pos(w, end=True)
+        if p:
+            lines.append(p)
+    lines.append("<i>Aynı sahip 15 dk içinde dönerse \"yeniden geldi\" diye yazarım.</i>")
+    return "\n".join(lines)
+
+
 # Manşet emojisi verdict'e bağlı: mesaja bakan kişi tek karakterden ne
 # olduğunu anlasın diye. Sıra ÖNEMLİ — "SHORT kapanmış" içinde "kapan" geçtiği
 # için long kapanışından SONRA denenirse yanlış eşleşir.
@@ -1476,7 +1622,7 @@ DIGEST_LABELS = {
     "anomaly": "📡 anomali", "liq": "💥 likidasyon", "liqmap": "🧲 liq duvarı",
     "earnings": "📊 earnings",
     "eval": "🏁 sonuç", "track": "👣 pozisyon takibi", "lowvol": "🐘 sessiz su devi",
-    "wall": "🧱 emir duvarı", "health": "⚕️ sağlık",
+    "wall": "🧱 emir duvarı", "sticky": "🧲 yapışkan duvar", "health": "⚕️ sağlık",
 }
 
 

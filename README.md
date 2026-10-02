@@ -57,6 +57,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/whale 0x…` | Adres karnesi + canlı pozisyonları |
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
 | `/takipler` · `/birak_N` | Aktif pozisyon takipleri · takibi bırak |
+| `/duvartakipler` · `/birak_duvar_N` | İzlenen 🧲 yapışkan duvarlar · takibi bırak |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
@@ -434,6 +435,76 @@ yine görünür.
 tabanının (`twap_lookup_min_usd`, $50K) altında kalan küçük emirler ve dilimleri
 kayıt tabanının altında kalan çok sabırlı emirler burada **görünmez — ve
 görünmediklerini de bilemeyiz**. Sayfa bunu yazar, kapalı olduğunu ima etmez.
+
+## 🧲 Yapışkan duvar: `/yapiskan`
+
+**Soru (02.10, SAND ekranı):** "Büyük bir emir sürekli oralarda bekliyor, market buy
+ile alınması için… aşağı da gidebiliyor yukarı da. Biri liq mi olmuş?"
+
+**Cevap — canlı veriyle kanıtlandı: likidasyon DEĞİL.**
+
+- HL'de likidasyon önce **piyasa emri** olarak deftere gider (`tif=LiquidationMarket`,
+  defterde beklemez). Dolmayan kısım saniyeler içinde HLP Liquidator'a geçer; o da
+  ≤$18K'lık, en çok ~6 sn yaşayan dilimlerle, çoğunlukla taker olarak çıkar. Defterde
+  dakikalarca bekleyen dev tek emir hiçbir likidasyon yolundan çıkmaz.
+- Ekrandaki $571,620.26 = 9,017,088 SAND × 0.063393 = vault **"drkmttr"**
+  (`0xc179…ce0c8`, açıklaması "market making automation") tek emrinin kalanı, birebir.
+  Hesap 16:59 TSİ'de **sıfırdan** başladı; 56 dakikada 3,771 dolum, **hepsi "Open
+  Short", hepsi maker**, $2.46M, hiçbirinde `liquidation` alanı yok. 0.044–0.058
+  arasına 30 reduce-only alışla kâr al merdiveni de kurmuştu.
+- Emir **post-only (`Alo`)**, reduce-only değil. Her 1,5–3 saniyede iptal edilip
+  **kalanıyla** en iyi fiyata yeniden konuyor (saatte ~258 farklı oid, `cloid` sabit) —
+  bu yüzden fiyat düşünce aşağı, çıkınca yukarı geliyor. HL'nin kendi *Chase* emri tam
+  bunu yapar (ALO, en iyi fiyatı iki yönde izler); aynı mantıkta bot da olabilir. Taker
+  alışlar onu parça parça yer: sahibi taker ücreti ödemeden ve fiyatı süpürmeden
+  pozisyon kurar. WS'te duvar $1,439,525 → $1,241,982 inerken bu adres tam o fiyatlarda
+  $200.5K maker dolum aldı. Aynı vault ETH/XMR/LIT'te long'u **alış** duvarıyla kuruyor.
+
+**Adı: 🧲 yapışkan duvar** — en iyi fiyata yapışan, fiyatla birlikte gezen dev tek emir.
+
+**Nasıl yakalanır.** Defter seviyesindeki `n` o fiyattaki **emir sayısıdır**; `n=1` tek
+emir demektir. Canlı kalibrasyon (24s hacmi ≥$1M olan 83 ana dex coini, ilk 10 seviye):
+SAND'daki tek emir 24s hacmin **%5,8**'iydi; geri kalan her büyük seviye çok emirli
+piyasa yapıcı yığınıydı (`n=5–21`) ve **≤%0,24**. Kural:
+
+- tek emir (`n=1`), en iyi fiyattan ilk 10 seviye ve %1 içinde,
+- **≥ `STICKY_MIN_USD` ($1M) VE ≥ 24s hacmin `STICKY_MIN_VOL_PCT` (%2)'si**,
+- en az 60 sn arayla iki kez görülmüş (anlık spoof sayılmaz).
+
+İki kaynak, yeni WS aboneliği yok:
+1. **Akış tetiği (bedava, anında):** kollektör zaten her işlemi `users=[alıcı, satıcı]`
+   ile alıyor. Bir yanın taker akışının ≥%60'ını son 2 dakikada tek maker ≥$25K ile
+   karşıladıysa o coin odağa girer ve defteri 30 sn'de bir sorulur.
+2. **Seyrek tarama:** dinlenen kripto evreni `STICKY_POLL_SEC` (300 sn) içinde bir kez,
+   **düşük öncelikle** taranır (~24 istek/dk) — henüz yenmeyen duvar da görünsün.
+   `bbo` aboneliği denendi: 120 coinde **525 mesaj/sn** — kollektöre bindirilmedi.
+
+Kimlik oid ya da fiyatla tutulmaz (ikisi de saniyede değişir), `(coin, yön)` + sahiple.
+**Sahip:** duvar fiyatında taker işlemlerinin karşısındaki baskın maker; açık emriyle
+(`frontendOpenOrders`: coin, yön, fiyat bandı, $ ±%35) doğrulanırsa ✓, doğrulanamazsa ≈.
+Olmazsa o coindeki en büyük 5 bilinen pozisyon sahibi denenir. Sahibin pozisyonu
+(`clearinghouseState`) emrin **etkisini** söyler: reduce-only ya da pozisyona ters →
+kapatıyor; düz ya da aynı yön → açıyor/büyütüyor.
+
+**Bildirim.** Kanal (`CRYPTO_CHAT_ID`, `notify_sticky`) yalnız **ilk alarmı** alır: tek
+emir $, adet, fiyat, 24s hacim ve OI oranı, karşı derinlik katı, kaç dakikadır defterde
+ve fiyatla kaç kez yer değiştirdiği, sahip + emir türü, pozisyon + etki, şimdiye kadar
+yenen. Aynı coin+yön için 6 saatte bir. Alarmdaki **`/takip_N`**'e basan, yalnız kendisi:
+- **yarılandı** (kalan ≤ tepenin yarısı),
+- **yeni dilim** (boyut ≥%25 ve ≥$250K artarsa — sahibin açık emriyle doğrulanır),
+- **yeniden geldi** (bittikten sonra 15 dk içinde aynı sahip aynı yöne dönerse; kanal tekrar yok),
+- **bitti**: son görülen kalanın ≥%70'i sahibin dolumu oldu → **yenildi**; ≤%20 → **çekildi**;
+  arası → **kısmen**; sahip bilinmiyorsa **kayboldu** (ayırt edilemez, uydurulmaz). Bitişte
+  sahibin pozisyonu bir kez daha okunur.
+
+`/duvartakipler` listeler, `/birak_duvar_N` bırakır; takip 2 gün sonra kendiliğinden kapanır.
+Gönderilemeyen not işaretlenmez, sonraki adım (15 sn) yeniden dener.
+
+**Kör noktalar, açıkça:** HIP-3 hisse defterleri burada yok (onlar çok seviyeli 🧱 duvar
+radarında); spot yok; en iyi fiyattan 10 seviye / %1 uzağa konan emir sayılmaz; yeniden
+başlatmada akış ve teyit bekleyen adaylar sıfırlanır (izlenen duvarlar DB'de); "yenen" $
+kollektör akışından ölçülür — akış kesikse eksik kalır. `/tani` satırı: evren, akış,
+odak, aday, teyit, bildirim, bitiş, takip notu ve "CRYPTO_CHAT_ID tanımsız" uyarısı.
 
 ## Liq attack radarı: `/saldiri`
 

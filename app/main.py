@@ -410,6 +410,8 @@ async def lifespan(app: FastAPI):
     _spawn("tracker", lambda: tracker_loop(cfg, client, notifier), notifier)
     _spawn("lowvol", lambda: lowvol.loop(cfg, notifier), notifier)
     _spawn("bookwall", lambda: bookwall.loop(cfg, client, notifier), notifier)
+    from .radar import stickywall
+    _spawn("stickywall", lambda: stickywall.loop(cfg, client, notifier), notifier)
     _spawn("sweeper", lambda: sweeper.loop(cfg, client), notifier)
     _spawn("hourstats", lambda: hourstats.refresh_loop(cfg, client), notifier)
     _spawn("digest", lambda: digest_loop(cfg, notifier), notifier)

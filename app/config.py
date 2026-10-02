@@ -84,6 +84,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                         "desc": "ABD kapalıyken (hafta sonu/gece) kapanış fiyatından sapan ya da ani sıçrayan hisseler — yalnız PROPR'da listeli olanlar"},
     "notify_wall": {"type": "bool", "label": "🧱 Emir defteri duvarı", "group": "Bildirimler",
                     "desc": "Deftere fiyatın hemen yanına konan dev bekleyen emir duvarları (ve çekilirse/dolarsa haberi)"},
+    "notify_sticky": {"type": "bool", "label": "🧲 Yapışkan duvar", "group": "Bildirimler",
+                      "desc": "Ana dex kriptoda en iyi fiyata yapışan dev TEK emir ($ ve 24s hacim oranı kapısını geçerse) — ayrı kanala gider (CRYPTO_CHAT_ID). Kanal yalnız ilk alarmı alır; yarılanma, yeni dilim ve bitiş (yenildi/çekildi) yalnız /takip_N'e basana gider"},
     "wall_window_pct": {"type": "float", "label": "Duvar penceresi (%)", "group": "Emir defteri radarı",
                         "desc": "Orta fiyata bu kadar yakın bekleyen emirler duvara sayılır (SPCX örneği %0.3'teydi)"},
     "wall_min_usd": {"type": "float", "label": "Sitede gösterim tabanı ($)", "group": "Emir defteri radarı",
@@ -360,6 +362,14 @@ EDITABLE_FIELDS: dict[str, dict] = {
                         "desc": "/hareket tablosunda en çok kaç satır gösterilsin. Süzgeçten geçen toplam sayı künyede yazar, satır sessizce kaybolmaz"},
     "movers_min_chg_pct": {"type": "float", "label": "Hareket: asgari değişim (%)", "group": "Hareket",
                            "desc": "|%| bunun altında kalan hareket listelenmez (gürültü kesici). 0 = kapalı, her hareket listelenir"},
+    "sticky_enabled": {"type": "bool", "label": "🧲 Yapışkan duvar radarı", "group": "🧲 Yapışkan duvar",
+                       "desc": "Ana dex kriptoda en iyi fiyata yapışan dev TEK emri (n=1) izler: kendini her birkaç saniyede en iyi fiyata yeniden koyan post-only emir — fiyatla aşağı da yukarı da gider. Likidasyon değildir (HL likidasyonu piyasa emridir, defterde beklemez). Kapatınca tarama ve takip notları durur"},
+    "sticky_min_usd": {"type": "float", "label": "Alarm: tek emir en az ($)", "group": "🧲 Yapışkan duvar",
+                       "desc": "Tek emrin dolar büyüklüğü bunun altındaysa kanal alarmı yok (kullanıcı kuralı $1M). İzlenen duvar yenildikçe bunun altına inebilir — takip bitene kadar sürer"},
+    "sticky_min_vol_pct": {"type": "float", "label": "Alarm: 24s hacmin en az %'si", "group": "🧲 Yapışkan duvar",
+                           "desc": "Tek emir 24 saatlik hacmin bu yüzdesinden küçükse alarm yok — BTC/ETH'teki $1M'lık emir sıradandır. Canlı kalibrasyon: SAND'daki duvar %5.8, ana dexteki en büyük MM yığını ≤%0.24. 0 = oran kuralı kapalı (yalnız $ tabanı)"},
+    "sticky_poll_sec": {"type": "int", "label": "Tarama turu (sn)", "group": "🧲 Yapışkan duvar",
+                        "desc": "Dinlenen kripto evreninin defterleri bu sürede bir kez, DÜŞÜK öncelikle taranır (120 coin / 300 sn ≈ 24 istek/dk). Yenilen duvar akıştan anında yakalanır (bedava); bu tarama henüz yenmeyen duvarlar için. 0 = tarama kapalı, yalnız akış tetiği"},
     "spot_twap_min_day_vol": {"type": "float", "label": "Spot TWAP: asgari 24s hacim ($)", "group": "Spot",
                               "desc": "24 saatlik hacmi bu tutarın altındaki spot çifti TWAP alarmı ÜRETMEZ (0 = taban kapalı). Yüzde kuralı (Emrin hacme oranı) ince spot çiftlerinde işe yaramaz: oran küçülmez, patlar — $238K hacimli bir çiftteki $1,9M emir hacmin %799'uydu. Kaçan emir gizlenmez, /tani 'spot çifti ince' sayacında görünür"},
     "crypto_liq_band_merge": {"type": "float", "label": "Band birleştirme (mesafenin %'si)", "group": "Kripto liq",
@@ -702,6 +712,11 @@ class Config:
         self.movers_min_day_vol = float(os.getenv("MOVERS_MIN_DAY_VOL", "1000000"))
         self.movers_max_rows = int(os.getenv("MOVERS_MAX_ROWS", "50"))
         self.movers_min_chg_pct = float(os.getenv("MOVERS_MIN_CHG_PCT", "0"))
+        self.sticky_enabled = True
+        self.notify_sticky = True
+        self.sticky_min_usd = float(os.getenv("STICKY_MIN_USD", "1000000"))
+        self.sticky_min_vol_pct = float(os.getenv("STICKY_MIN_VOL_PCT", "2.0"))
+        self.sticky_poll_sec = int(os.getenv("STICKY_POLL_SEC", "300"))
         self.crypto_liq_chart_fit_all = True
         self.crypto_liq_dist_pct = float(os.getenv("CRYPTO_LIQ_DIST_PCT", "2.5"))
         self.crypto_liq_dist2_pct = float(os.getenv("CRYPTO_LIQ_DIST2_PCT", "1.0"))
@@ -981,7 +996,7 @@ class Config:
         self.stars_per_usd = float(os.getenv("STARS_PER_USD", "77"))
         self.public_kinds = _csv(os.getenv(
             "PUBLIC_KINDS", "cryptoliq,liqmap,liqattack,twap,cryptovol,equityvol,new_big,whale_fill,"
-                            "wall,offhours,lowvol,anomaly,pattern,earnings,liq"))
+                            "wall,sticky,offhours,lowvol,anomaly,pattern,earnings,liq"))
         self.pro_default_kinds = _csv(os.getenv(
             "PRO_DEFAULT_KINDS", "cryptoliq,liqmap,liqattack,twap,cryptovol,new_big,whale_fill"))
         self.support_contact = os.getenv("SUPPORT_CONTACT", "")

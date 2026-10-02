@@ -651,6 +651,27 @@ async def _subsystems(cfg, state=None) -> list[str]:
             out.append(f"       ilk emir snapshot örneği: {str(tl['sample'])[:300]}")
     else:
         out.append("  canlı twap: tur HENÜZ ÇALIŞMADI")
+    # 🧲 Yapışkan duvar: akış tetiği + seyrek tarama. "0 alarm"ın sebebi (evren boş,
+    # akış yok, kanal tanımsız, defter hatası) burada ayrışmalı.
+    sw = await kv_get("sticky_stats") or {}
+    if sw.get("disabled"):
+        out.append("  yapışkan duvar: kapalı (sticky_enabled=0)")
+    elif sw.get("ts"):
+        tot = sw.get("tot") or {}
+        out.append("  yapışkan duvar: "
+                   f"{sw.get('universe', 0)} coin evren · akış {sw.get('flow_coins', 0)} coin"
+                   f" ({_num(sw.get('observed'))} işlem) · odak {sw.get('focus', 0)}"
+                   f" · aday {sw.get('cands', 0)}"
+                   f" · toplam: {tot.get('checked', 0)} defter, {tot.get('triggers', 0)} tetik,"
+                   f" {tot.get('confirmed', 0)} teyit, {tot.get('alerted', 0)} bildirim,"
+                   f" {tot.get('ended', 0)} bitti, {tot.get('follow_sent', 0)} takip notu"
+                   + (f" · ⚠️ CRYPTO_CHAT_ID TANIMSIZ ({tot['no_chat']} alarm gönderilmedi)" if tot.get("no_chat") else "")
+                   + (f" · ⚠️ {tot['failed']} gönderilemedi" if tot.get("failed") else "")
+                   + (f" · ⚠️ {tot['book_err']} defter hatası" if tot.get("book_err") else "")
+                   + (f" · ⚠️ hata {sw['errors']}" if sw.get("errors") else "")
+                   + f" · {_dur(now() - int(sw['ts']))} önce")
+    else:
+        out.append("  yapışkan duvar: tur HENÜZ ÇALIŞMADI")
     # ---- satılabilir bot: kullanıcılar, ödeme kanalları, fan-out
     try:
         from . import users as _users

@@ -383,6 +383,40 @@ CREATE TABLE IF NOT EXISTS fanout_log(
   n_targets INTEGER, n_sent INTEGER, n_fail INTEGER, n_blocked INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_fanout_ts ON fanout_log(ts DESC);
+-- 🧲 Yapışkan duvar: en iyi fiyata yapışan dev TEK emir (radar/stickywall.py).
+-- Kimlik (coin, side) + sahip — oid/fiyat değil (ikisi de saniyede değişir).
+CREATE TABLE IF NOT EXISTS sticky_walls(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  coin TEXT, side TEXT,                  -- ask = satış duvarı / bid = alış duvarı
+  first_ts INTEGER, confirm_ts INTEGER, last_ts INTEGER, alerted_ts INTEGER,
+  px_first REAL, px_last REAL, px_min REAL, px_max REAL,
+  ntl_first REAL, ntl_last REAL, peak_ntl REAL, sz_last REAL,
+  level_last INTEGER, n_last INTEGER,    -- en iyi fiyattan kaçıncı seviye / seviyedeki emir sayısı
+  day_vol REAL, oi_usd REAL, opp_ntl REAL,
+  n_seen INTEGER, n_moves INTEGER,       -- görüş sayısı / fiyat değiştirme sayısı
+  tranches INTEGER DEFAULT 0,            -- yeni dilim + yeniden geliş sayısı
+  owner TEXT, owner_src TEXT,            -- 'order' = açık emirle doğrulandı, 'flow' = yalnız akıştan
+  owner_name TEXT, owner_fill REAL, owner_share REAL,
+  order_tif TEXT, reduce_only INTEGER, cloid TEXT, order_ts INTEGER,
+  pos_side TEXT, pos_szi REAL, pos_ntl REAL, pos_entry REAL, pos_liq REAL,
+  effect TEXT,                           -- open | close (emrin pozisyona etkisi)
+  eaten_usd REAL,                        -- sahibin bu duvardan aldığı maker dolumu (akıştan)
+  status TEXT,                           -- aktif | yenildi | çekildi | kısmen | kayboldu
+  end_ts INTEGER, end_pos_side TEXT, end_pos_szi REAL, end_pos_ntl REAL,
+  active INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_sticky_active ON sticky_walls(active, coin, side);
+CREATE INDEX IF NOT EXISTS idx_sticky_end ON sticky_walls(end_ts);
+CREATE TABLE IF NOT EXISTS sticky_follows(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  wall_id INTEGER, chat_id TEXT,         -- haber komutun geldiği sohbete (boş = ana sohbet)
+  created_ts INTEGER, expires_ts INTEGER, active INTEGER DEFAULT 1,
+  half_ts INTEGER, tranche_seen INTEGER DEFAULT 0,
+  end_seen_ts INTEGER,                   -- bitiş notu gönderilen duvar bitişi (dönüşü ayırır)
+  end_note TEXT,
+  UNIQUE(wall_id, chat_id)
+);
+CREATE INDEX IF NOT EXISTS idx_stickyfollow_active ON sticky_follows(active);
 """
 
 

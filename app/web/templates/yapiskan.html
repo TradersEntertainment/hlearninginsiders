@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}🧲 Yapışkan duvar · HL Radar{% endblock %}
+{% block bodyattrs %} data-refresh="60"{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>🧲 Yapışkan duvarlar <span class="st">· ana dex kripto · en iyi fiyata yapışan dev TEK emir</span></h2>
+  <p class="sub">Tek soru: <b>defterin tepesinde, fiyatla birlikte aşağı yukarı gezen dev bir tek emir var mı, kimin, ne yapıyor?</b>
+  Kapı: tek emir (seviyede <code>n=1</code>), en iyi fiyata yakın, <b>≥ {{ min_usd|usd }}</b> ve
+  <b>24s hacmin ≥ %{{ '%g'|format(min_pct) }}'si</b>, en az {{ C.CONFIRM_SEC }} sn arayla iki kez görülmüş.
+  <b>Tahmin yok:</b> sayfa ölçüleni yazar; HL'ye istek atmaz (radarın kaydını okur).</p>
+  {% if not enabled %}<p class="warn">⏸ Radar kapalı (Ayarlar → 🧲 Yapışkan duvar).</p>{% endif %}
+
+  <h3>Şu an defterde</h3>
+  {% if yd.active %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Coin</th><th>Yön</th>
+        <th title="Son görülen tek emrin dolar büyüklüğü">Şimdi</th>
+        <th title="Bu duvarın gördüğümüz en büyük hali">Tepe</th>
+        <th title="Tepe ÷ 24 saatlik hacim">%24s hacim</th>
+        <th title="Son görülen fiyat; parantezde gezdiği aralık">Fiyat</th>
+        <th title="Fiyatla birlikte kaç kez yer değiştirdi">Yer değ.</th>
+        <th title="Sahibin bu duvardan aldığı maker dolumu (canlı akıştan)">Yenen</th>
+        <th title="İlk görüşten beri">Süre</th>
+        <th class="l" title="Açık emriyle doğrulandıysa ✓; yalnız akıştan bulunduysa ≈">Sahibi</th>
+        <th class="l" title="Emrin sahibin pozisyonuna etkisi">Ne yapıyor</th>
+        <th title="/takip_N ile izleyen sohbet sayısı">👁</th></tr>
+    {% for r in yd.active %}
+    <tr>
+      <td class="l"><a href="/t/{{ r.coin }}{{ k }}"><b>{{ r.coin }}</b></a></td>
+      <td class="{{ 'short' if r.side == 'ask' else 'long' }}">{{ 'SATIŞ' if r.side == 'ask' else 'ALIŞ' }}</td>
+      <td data-v="{{ (r.ntl_last or 0)|int }}"><b>{{ r.ntl_last|usd }}</b></td>
+      <td data-v="{{ (r.peak_ntl or 0)|int }}">{{ r.peak_ntl|usd }}{% if r.tranches %} <span class="dim" title="Yeni dilim / yeniden geliş">+{{ r.tranches }}</span>{% endif %}</td>
+      <td>{% if r.vol_pct is not none %}%{{ '%.1f'|format(r.vol_pct) }}{% else %}-{% endif %}</td>
+      <td class="dim">{{ r.px_last|px5 }} <span class="dim">({{ r.px_min|px5 }}–{{ r.px_max|px5 }})</span></td>
+      <td>{{ r.n_moves or 0 }}</td>
+      <td data-v="{{ (r.eaten_usd or 0)|int }}">{{ r.eaten_usd|usd if r.eaten_usd else '-' }}</td>
+      <td class="dim">{{ r.first_ts|age }}</td>
+      <td class="l">{% if r.owner %}{{ m.addr(r.owner, k, 6) }}{% if r.owner_src == 'order' %} <span title="açık emriyle doğrulandı">✓</span>{% else %} <span title="yalnız akıştan — açık emirle doğrulanamadı">≈</span>{% endif %}
+        {%- if r.owner_name %} <span class="dim">"{{ r.owner_name }}"</span>{% endif %}
+        {%- if r.order_tif %} <span class="dim">{{ r.order_tif }}{% if r.reduce_only %}, reduce-only{% endif %}</span>{% endif %}
+        {%- else %}<span class="dim">bilinmiyor</span>{% endif %}</td>
+      <td class="l">{% if r.effect_txt %}{{ r.effect_txt }}{% if r.pos_side %} <span class="dim">({{ r.pos_side|upper }} {{ r.pos_ntl|usd }})</span>{% endif %}{% else %}<span class="dim">-</span>{% endif %}</td>
+      <td>{{ r.followers or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}
+  {{ m.empty(['Şu an kapıyı geçen yapışkan duvar yok.',
+              'Ana dexteki büyük seviyelerin neredeyse hepsi çok emirli piyasa yapıcı yığınıdır (n=5–21) ve 24s hacmin %0,3\'ünü bile bulmaz — bu sayfanın boş olması normaldir.',
+              'Tarama kapalıysa ya da kollektör akışı yoksa da boş kalır: künyeye bak.']) }}
+  {% endif %}
+
+  {% if yd.cands %}
+  <p class="kunye">⏳ Teyit bekleyen aday: {% for c in yd.cands %}<b>{{ c.coin }}</b> {{ 'satış' if c.side == 'ask' else 'alış' }} {{ c.ntl|usd }}{% if c.vol_pct %} (%{{ '%.1f'|format(c.vol_pct) }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}
+  — {{ C.CONFIRM_SEC }} sn sonra hâlâ oradaysa sayılır.</p>
+  {% endif %}
+
+  <h3>Son 24 saatte bitenler</h3>
+  {% if yd.ended %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Coin</th><th>Yön</th><th>Sonuç</th>
+        <th title="Bu duvarın gördüğümüz en büyük hali">Tepe</th>
+        <th title="Sahibin duvardan aldığı toplam maker dolumu">Yenen</th>
+        <th>Süre</th><th>Yer değ.</th>
+        <th class="l">Sahibi</th><th class="l">Pozisyon (başta → sonda)</th><th>Bitti</th></tr>
+    {% for r in yd.ended %}
+    <tr>
+      <td class="l"><a href="/t/{{ r.coin }}{{ k }}"><b>{{ r.coin }}</b></a></td>
+      <td class="{{ 'short' if r.side == 'ask' else 'long' }}">{{ 'SATIŞ' if r.side == 'ask' else 'ALIŞ' }}</td>
+      <td title="yenildi = son kalanın ≥%70'i sahibin dolumu; çekildi = ≤%20; kayboldu = sahibi bilinmiyor">{{ {'yenildi': '🍽 yenildi', 'çekildi': '🫥 çekildi', 'kısmen': '◐ kısmen', 'kayboldu': '❔ kayboldu'}.get(r.status, r.status) }}</td>
+      <td data-v="{{ (r.peak_ntl or 0)|int }}">{{ r.peak_ntl|usd }}</td>
+      <td data-v="{{ (r.eaten_usd or 0)|int }}">{{ r.eaten_usd|usd if r.eaten_usd else '-' }}</td>
+      <td class="dim">{{ ((r.end_ts or 0) - (r.first_ts or 0)) // 60 }}dk</td>
+      <td>{{ r.n_moves or 0 }}</td>
+      <td class="l">{% if r.owner %}{{ m.addr(r.owner, k, 6) }}{% if r.owner_name %} <span class="dim">"{{ r.owner_name }}"</span>{% endif %}{% else %}<span class="dim">bilinmiyor</span>{% endif %}</td>
+      <td class="l dim">{% if r.pos_side is not none and r.owner %}{{ (r.pos_side|upper) or 'yok' }} {{ r.pos_ntl|usd if r.pos_ntl else '' }} → {{ (r.end_pos_side|upper) if r.end_pos_side else ('yok' if r.end_pos_side is not none else '?') }} {{ r.end_pos_ntl|usd if r.end_pos_ntl else '' }}{% else %}-{% endif %}</td>
+      <td class="dim">{{ r.end_ts|age }} önce</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}
+  <p class="dim">Son 24 saatte biten yapışkan duvar yok.</p>
+  {% endif %}
+
+  <p class="kunye">
+  {%- if st.ts %}Radar: {{ st.universe or 0 }} coin evren · akışı izlenen {{ st.flow_coins or 0 }} coin ·
+  odakta {{ st.focus or 0 }} · tarama turu {% if poll %}{{ poll }} sn (düşük öncelik){% else %}KAPALI (yalnız akış tetiği){% endif %} ·
+  {{ st.ts|age }} önce yazıldı.
+  {%- if (st.tot or {}).get('no_chat') %} ⚠️ CRYPTO_CHAT_ID tanımsız — {{ st.tot.no_chat }} alarm gönderilmedi.{% endif %}
+  {%- else %}Radar henüz bir tur yazmadı (açılıştan ~75 sn sonra başlar).{% endif %}
+  Yeniden başlatmada akış ve teyit bekleyen adaylar sıfırlanır; izlenen duvarlar kayıtta durur.</p>
+
+  <details class="panel note"><summary>Bu nedir? (02.10 SAND vakasıyla kanıtlandı)</summary>
+  <div class="prose">
+  <p><b>Likidasyon değildir.</b> HL'de likidasyon önce piyasa emri olarak deftere gider
+  (<code>LiquidationMarket</code>, defterde beklemez); dolmayan kısım saniyeler içinde HLP Liquidator'a
+  geçer, o da ≤$18K'lık, birkaç saniye yaşayan dilimlerle çıkar. Defterde dakikalarca bekleyen dev tek
+  emir hiçbir likidasyon mekanizmasından çıkmaz.</p>
+  <p><b>Ne olduğu:</b> bir hesabın <b>post-only (Alo)</b> emri. Emir her 1,5–3 saniyede iptal edilip
+  <b>kalanıyla</b> en iyi fiyata yeniden konur — bu yüzden fiyat düşünce aşağı, çıkınca yukarı gelir
+  ("yapışkan"). HL'nin kendi <i>Chase</i> emri tam bunu yapar; aynı mantıkta bot da olabilir. Taker
+  alışlar onu parça parça yer; sahibi taker ücreti ödemeden ve fiyatı süpürmeden pozisyon kurar ya da boşaltır.</p>
+  <p><b>Kanıt (SAND, 02.10):</b> ekrandaki $571,620 = vault "drkmttr"ın tek emrinin kalanı, birebir.
+  Hesap 16:59'da sıfırdan başlayıp 56 dakikada $2,46M short açtı — dolumların %100'ü maker, hiçbiri
+  likidasyon değil. Aynı hesap ETH/XMR/LIT'te long'u alış duvarıyla aynı yoldan kuruyor.</p>
+  <p><b>Nasıl ölçülür:</b> defter seviyesindeki <code>n</code> o fiyattaki emir sayısıdır. Ana dexteki büyük
+  seviyelerin neredeyse hepsi çok emirli piyasa yapıcı yığınıdır (n=5–21) ve 24s hacmin %0,24'ünü geçmez;
+  SAND'daki tek emir %5,8'di. Sahip, duvar fiyatında taker işlemlerinin karşısındaki maker'dan bulunur
+  ve açık emriyle doğrulanır (✓); doğrulanamazsa ≈ ile gösterilir.</p>
+  <p><b>Bildirim:</b> kanal (<code>CRYPTO_CHAT_ID</code>) yalnız ilk alarmı alır. Alarmdaki
+  <code>/takip_N</code>'e basan yarılanma, yeni dilim, yeniden geliş ve bitiş (yenildi / çekildi) notlarını
+  alır. <code>/duvartakipler</code> listeler, <code>/birak_duvar_N</code> bırakır.</p>
+  <p><b>Göstermez:</b> HIP-3 hisse defterlerini (onlar <a href="/{{ k }}">ana sayfadaki 🧱 duvar radarında</a>,
+  çok seviyeli toplamla), spot çiftlerini ve en iyi fiyattan {{ C.MAX_LEVELS }} seviye / %{{ '%g'|format(C.NEAR_PCT) }}
+  uzağa konmuş emirleri.</p>
+  </div></details>
+</div>
+{% endblock %}
