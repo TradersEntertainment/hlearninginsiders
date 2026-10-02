@@ -280,6 +280,22 @@ class HLClient:
             p["dex"] = dex
         return await self.info(p)
 
+    async def open_orders(self, user: str, dex: str = ""):
+        """Açık emirlerin SINIRSIZ listesi (yalnız coin/side/limitPx/sz/oid…).
+        `frontendOpenOrders` bazı hesaplarda (vault'lar) 100 emirde kesiliyor;
+        "emir kayboldu" kararından önce canlı oid kümesi buradan doğrulanır."""
+        p = {"type": "openOrders", "user": user}
+        if dex:
+            p["dex"] = dex
+        return await self.info(p)
+
+    async def all_mids(self, dex: str = ""):
+        """Tüm coinlerin anlık orta fiyatı {coin: px} (ağırlık 2) — taze fiyat."""
+        p: dict = {"type": "allMids"}
+        if dex:
+            p["dex"] = dex
+        return await self.info(p)
+
     async def vault_details(self, address: str):
         """Adres bir vault ise detay döner, değilse null."""
         return await self.info({"type": "vaultDetails", "vaultAddress": address})

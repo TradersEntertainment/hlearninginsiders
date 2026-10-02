@@ -681,11 +681,14 @@ async def _subsystems(cfg, state=None) -> list[str]:
         out.append("  izlenen hesaplar: "
                    + (f"⚠️ ACCOUNT_CHAT_ID TANIMSIZ — {aw.get('accounts', 0)} hesap yoklanmıyor"
                       if aw.get("no_chat") else
+                      f"bildirim kapalı (notify_acct=0) — {aw.get('accounts', 0)} hesap yoklanmıyor"
+                      if aw.get("muted") else
                       f"{aw.get('accounts', 0)} hesap · bu tur {aw.get('polled', 0)} yoklandı"
                       f" · toplam {tot.get('events', 0)} olay, {tot.get('sent', 0)} mesaj"
                       + (f" · ⚠️ {tot['failed']} gönderilemedi" if tot.get("failed") else "")
                       + (f" · ⚠️ {tot['errors']} okuma hatası" if tot.get("errors") else "")
-                      + (f" · ⚠️ {aw['truncated']} hesapta emir listesi kesik" if aw.get("truncated") else ""))
+                      + (f" · {aw['truncated']} hesapta ayrıntılı emir listesi kesik (openOrders ile doğrulanıyor)"
+                         if aw.get("truncated") else ""))
                    + f" · {_dur(now() - int(aw['ts']))} önce")
     else:
         out.append("  izlenen hesaplar: tur HENÜZ ÇALIŞMADI")

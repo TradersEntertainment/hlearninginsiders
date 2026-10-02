@@ -70,7 +70,16 @@ class Client:
     def __init__(self):
         self.st = state(**BASE)
         self.orders = SAND_TP + LIT_TP
+        self.full = None           # openOrders (sınırsız) — None: frontend ile aynı
         self.calls = 0
+        self.mids = None
+
+    async def all_mids(self, dex=""):
+        return {c: str(m) for c, m in (self.mids or MARKS).items()}
+
+    async def open_orders(self, user, dex=""):
+        self.calls += 1
+        return list(self.full if self.full is not None else self.orders)
 
     async def clearinghouse(self, user, dex="", priority=None, stats=None):
         self.calls += 1
@@ -154,7 +163,8 @@ def test_started_then_events_in_one_message():
         assert "📈 <b>SAND</b> SHORT büyüttü" in text and "duvarı kalktı" not in text
         await aw.run_once(cfg, cl, nt, ts=t0 + 420)
         text = nt.sent[-1][2]
-        assert "🧲❌ <b>SAND</b> satış duvarı kalktı" in text and "pozisyon 79.00M → 100.00M SAND" in text, text
+        assert "🧲❌ <b>SAND</b> satış duvarı kalktı" in text, text
+        assert "pozisyon SHORT 79.00M SAND → SHORT 100.00M SAND" in text, text
 
         # merdiven değişti: yeni emirler, iki yoklama sabit kalınca
         extra = ladder("SAND", "B", 0.0606, 0.0612, 3, 500_000.0, 3000)
@@ -165,7 +175,7 @@ def test_started_then_events_in_one_message():
         await aw.run_once(cfg, cl, nt, ts=t0 + 540)
         text = nt.sent[-1][2]
         assert "🎯 Değiştirdi: <b>SAND</b> kâr al (alış, reduce-only): 36 emir 0.044–0.0612" in text, text
-        assert "önceki 34 emir 0.044–0.0605" in text
+        assert "önceki 33 emir 0.044–" in text, "önceki = değişiklikten hemen önceki CANLI hal"
 
         # aynı yoklamada üç olay → TEK mesaj: yeni coin, kapanış, yön değişimi; toz atlanır
         st = {**BASE, "SAND": -100_000_000.0, "ETH": -500.0}
@@ -182,7 +192,7 @@ def test_started_then_events_in_one_message():
         assert "DUST" not in text, "taban altı yeni pozisyon 'açtı' sayılmaz"
         await aw.run_once(cfg, cl, nt, ts=t0 + 660)
         text = nt.sent[-1][2]
-        assert "🎯❌ <b>LIT</b> kâr al emirleri kalktı" in text and "LIT pozisyonu yok" in text, text
+        assert "🎯❌ <b>LIT</b> kâr al emirleri kalktı (son görülen" in text and "LIT pozisyonu yok" in text, text
         print("✅ olaylar) takip başladı özeti; büyüttü (adım son bildirilene göre); duvar iki yoklama"
               " + kalktı (pozisyon değişimi); merdiven değişti/kalktı, basamak dolumu sessiz;"
               " çoklu olay tek mesaj")
@@ -246,4 +256,124 @@ def test_wiring_and_command():
             assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
         print("✅ kablo) /hesaplar son kaydı gösterir; spawn, sağlık, tür (satılmaz), env-only kanal,"
               " 8 ayar künyeli")
+    asyncio.run(run())
+
+
+def test_review_regressions_wall_ladder_tpsl_dust():
+    async def run():
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        t0 = dbm.now()
+        await aw.run_once(cfg, cl, nt, ts=t0)
+        # duvar kur (iki yoklama)
+        cl.orders = SAND_TP + LIT_TP + [wall(9001)]
+        await aw.run_once(cfg, cl, nt, ts=t0 + 60)
+        cl.orders = SAND_TP + LIT_TP + [wall(9002)]
+        await aw.run_once(cfg, cl, nt, ts=t0 + 120)
+        assert "🧲 Yeni duvar" in nt.sent[-1][2]
+        n = len(nt.sent)
+        # fiyat %1.5 kaydı: duvar aynı yerde durur → "kalktı" YOK (histerezis)
+        cl.mids = {**MARKS, "SAND": 0.0627}
+        cl.st = state(**BASE)
+        cl.st["assetPositions"] = [p_ for p_ in cl.st["assetPositions"] if p_["position"]["coin"] != "SAND"]
+        cl.st["assetPositions"].append({"position": {"coin": "SAND", "szi": str(BASE["SAND"]),
+                                                     "positionValue": str(abs(BASE["SAND"]) * 0.0627),
+                                                     "entryPx": "0.0632"}})
+        for dt in (180, 240, 300):
+            await aw.run_once(cfg, cl, nt, ts=t0 + dt)
+        assert len(nt.sent) == n, "fiyat oynaması duvar kalkışı değil"
+        # duvar çekildi, yanında $3K'lık küçük emir kaldı → duvarı canlı tutmaz
+        cl.mids = None
+        cl.st = state(**BASE)
+        cl.orders = SAND_TP + LIT_TP + [wall(9100, sz=50_000.0)]
+        await aw.run_once(cfg, cl, nt, ts=t0 + 360)
+        await aw.run_once(cfg, cl, nt, ts=t0 + 420)
+        assert "duvarı kalktı" in nt.sent[-1][2], "küçük yabancı emir duvarı yaşatmaz"
+        # 15 dk içinde dönen duvar → "geri geldi"
+        cl.orders = SAND_TP + LIT_TP + [wall(9201)]
+        await aw.run_once(cfg, cl, nt, ts=t0 + 480)
+        cl.orders = SAND_TP + LIT_TP + [wall(9202)]
+        await aw.run_once(cfg, cl, nt, ts=t0 + 540)
+        assert "🧲↩️ Duvar geri geldi" in nt.sent[-1][2], nt.sent[-1][2]
+        # merdivende aynı fiyata yeniden koyma (yeni oid) → mesaj YOK
+        n = len(nt.sent)
+        refill = SAND_TP[:-1] + [{**SAND_TP[-1], "oid": 7777}]
+        cl.orders = refill + LIT_TP + [wall(9203)]
+        for dt in (600, 660, 720):
+            await aw.run_once(cfg, cl, nt, ts=t0 + dt)
+        assert len(nt.sent) == n, "aynı yere yeniden koyma 'Değiştirdi' değil"
+        # pozisyona bağlı TP/SL (sz 0) → ayrı gruplar, "tüm pozisyon", tetik fiyatıyla $
+        tpsl = [{"coin": "ETH", "side": "A", "limitPx": "2790", "sz": "0.0", "oid": 8001, "isTrigger": True,
+                 "triggerPx": "3100", "isPositionTpsl": True, "reduceOnly": True, "orderType": "Take Profit Market"},
+                {"coin": "ETH", "side": "A", "limitPx": "2160", "sz": "0.0", "oid": 8002, "isTrigger": True,
+                 "triggerPx": "2400", "isPositionTpsl": True, "reduceOnly": True, "orderType": "Stop Market"}]
+        cl.orders = refill + LIT_TP + tpsl
+        await aw.run_once(cfg, cl, nt, ts=t0 + 780)
+        await aw.run_once(cfg, cl, nt, ts=t0 + 840)
+        text = nt.sent[-1][2]
+        assert "<b>ETH</b> kâr al (tetik) (satış, reduce-only): 1 emir 3100 · tüm pozisyon" in text, text
+        assert "<b>ETH</b> stop (satış, reduce-only): 1 emir 2400 · tüm pozisyon" in text, text
+        assert f"(${4108.379 * 3100 / 1e6:.1f}M)" in text, "TP $'ı tetik fiyatıyla"
+        print("✅ inceleme) histerezis; küçük emir duvarı yaşatmaz; geri geldi; yeniden koyma sessiz;"
+              " pozisyon TP/SL ayrı ve 'tüm pozisyon'")
+    asyncio.run(run())
+
+
+def test_review_regressions_lists_mute_restart_dust():
+    async def run():
+        # kesik liste: frontend 100 döner, openOrders daha fazla → görünmeyen "kalktı" sayılmaz
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        t0 = dbm.now()
+        filler = [{"coin": "HYPE", "side": "B", "limitPx": str(50 + i * 0.01), "sz": "10", "oid": 50_000 + i,
+                   "isTrigger": False, "reduceOnly": True, "orderType": "Limit"} for i in range(80)]
+        allo = SAND_TP + LIT_TP + filler
+        cl.orders = allo[:100]
+        cl.full = allo
+        await aw.run_once(cfg, cl, nt, ts=t0)
+        hidden = [o for o in allo if o not in allo[:100]]
+        cl.orders = [o for o in allo if o not in LIT_TP][:100]   # pencere kaydı: LIT gizlendi, yeni dolgu göründü
+        for dt in (60, 120, 180):
+            await aw.run_once(cfg, cl, nt, ts=t0 + dt)
+        assert len(nt.sent) == 1, ("kesik listede pencere kayması olay üretmez", nt.sent[-1][2])
+        assert "kesik" in nt.sent[0][2], "kesik olduğu açıkça yazılır"
+        assert hidden, "fikstür gerçekten kesik"
+        # bildirim kapalı → yoklama yok
+        cfg = await _fresh()
+        cfg.notify_acct = False
+        cl, nt = Client(), Notifier()
+        out = await aw.run_once(cfg, cl, nt, ts=t0)
+        assert out["muted"] == 1 and cl.calls == 0 and not nt.sent
+        # uzun ara → eski fark yazılmaz, "takip yeniden başladı"
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        await aw.run_once(cfg, cl, nt, ts=t0)
+        cl.st = state(**{**BASE, "SAND": -10_000_000.0})
+        await aw.run_once(cfg, cl, nt, ts=t0 + 7200)
+        text = nt.sent[-1][2]
+        assert "takip yeniden başladı" in text and "küçülttü" not in text, text
+        # grup değişti → yeni gruba özet
+        cfg.account_chat_id = "-777"
+        await aw.run_once(cfg, cl, nt, ts=t0 + 7260)
+        assert nt.sent[-1][1] == "-777" and "takip yeniden başladı" in nt.sent[-1][2]
+        # listeden çıkar → durum silinir; geri ekle → "takip başladı"
+        cfg.acct_watch_list = ""
+        await aw.run_once(cfg, cl, nt, ts=t0 + 7320)
+        assert not await dbm.kv_get(aw.STATE_KV + A)
+        cfg.acct_watch_list = f"{A}:drkmttr"
+        await aw.run_once(cfg, cl, nt, ts=t0 + 7380)
+        assert "— <b>takip başladı</b>" in nt.sent[-1][2]
+        # toz pozisyon fiyatla tabanı geçerse "açtı" YOK
+        MARKS["DUST2"] = 1.0
+        st = state(**{**BASE, "SAND": -10_000_000.0})
+        st["assetPositions"].append({"position": {"coin": "DUST2", "szi": "95000", "positionValue": "95000",
+                                                  "entryPx": "1"}})
+        cl.st = st
+        n = len(nt.sent)
+        await aw.run_once(cfg, cl, nt, ts=t0 + 7440)
+        st["assetPositions"][-1]["position"]["positionValue"] = "101000"
+        await aw.run_once(cfg, cl, nt, ts=t0 + 7500)
+        assert len(nt.sent) == n, "yalnız fiyatla tabanı geçen toz 'açtı' değil"
+        print("✅ inceleme) kesik liste güvenli; bildirim kapalıysa yoklama yok; uzun ara / grup"
+              " değişimi / yeniden ekleme → özet; toz fiyatla 'açtı' olmaz")
     asyncio.run(run())

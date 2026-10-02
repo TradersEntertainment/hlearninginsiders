@@ -538,17 +538,29 @@ merdiveni, LIT'te 4.35–5.4 arası 29 emirlik ($6.0M) kâr al merdiveni.
 - 🧲 yeni duvar — fiyatın %1 yakınında ≥$250K tek emir, iki yoklama üst üste (post-only mi,
   reduce-only mi, pozisyona etkisi, kaç farklı emir numarasıyla yeniden kondu);
   🧲❌ kalktı — süresi, tepesi, o sürede pozisyon değişimi
-- 🎯 kâr al / stop merdiveni kurdu · değiştirdi (yeni emir/yeniden fiyatlama, iki yoklama
-  sabit) · kalktı. **Basamak dolumu mesaj üretmez** — fiyat merdivene değdikçe basamaklar
-  dolar; bu, pozisyonun küçülmesi olarak (≥%25 adımda) görünür. Böylece grup dolum
-  başına mesajla dolmaz.
+- 🎯 emir grupları — her biri ayrı: **kâr al** (reduce-only limit merdiveni), **kâr al
+  (tetik)**, **stop**, **tetikli giriş** (reduce-only olmayan tetik); pozisyona bağlı TP/SL
+  (HL arayüzünün pozisyon satırından konan, `sz 0`) "tüm pozisyon" olarak. $ tetik
+  fiyatıyla. Kurdu · **önemli** değişiklik (yeni emirler iki yoklama sabit VE emir sayısı
+  ≥3, aralık >%1 ya da $ ≥%25 ve ≥$100K değişti; "önceki" = değişiklikten hemen önceki canlı
+  hal) · kalktı. **Basamak dolumu ve aynı yere yeniden koyma mesaj üretmez** — dolum,
+  pozisyonun küçülmesi olarak (≥%25 adımda) görünür.
+- Duvar sallanmaz: devam için %3 bant ve tabanın yarısı yeter, fiyat `allMids` ile her
+  turda taze; bilinen emri hâlâ açıksa "kalktı" denmez. 15 dk içinde dönen duvar
+  "geri geldi". Reduce-only emir duvar sayılmaz (merdivenin basamağıdır).
+- Taban altı (toz) pozisyon izlenir ama sessizdir: fiyat yükselip tabanı geçti diye
+  "açtı" yazılmaz.
 
 Yeni eklenen hesap ilk turda **"takip başladı"** özeti atar (mevcut pozisyonlar, duvar,
-merdivenler) — bunlar sonra "yeni" diye bildirilmez. Durum kv'de; yeniden başlatma eski
-olayları tekrarlamaz. Gönderilemeyen mesajın durumu yazılmaz, sonraki yoklama aynı farkı
-yeniden bulur. Bütçe: hesap başına dakikada 2 istek. `/hesaplar` son yoklamanın kaydını
-gösterir (HL'ye istek atmaz). Kör nokta: yalnız ana dex pozisyonları; `frontendOpenOrders`
-~100 emirde kesilebilir (mesaj bunu yazar).
+merdivenler) — bunlar sonra "yeni" diye bildirilmez. Listeden çıkarılıp yeniden eklenen
+hesap da özetle başlar. Uzun aradan (≥10 yoklama / 10 dk) ya da grup değişiminden sonra
+eski fark "şimdi oldu" diye yazılmaz: **"takip yeniden başladı"** özeti gelir. Bildirim
+kapalıysa (`notify_acct`) ya da `ACCOUNT_CHAT_ID` boşsa yoklama da yapılmaz. Gönderilemeyen
+mesajın durumu yazılmaz, sonraki yoklama aynı farkı yeniden bulur. Bütçe: hesap başına
+dakikada 2 istek (+ tur başına bir `allMids`). `frontendOpenOrders` bazı hesaplarda (HLP alt
+vault'unda 100'de kesildiği görüldü) eksik dönebildiği için 100'e ulaşınca sınırsız
+`openOrders` ile canlı emirler doğrulanır: görünmeyen emir "kalktı" sayılmaz. `/hesaplar`
+son yoklamanın kaydını gösterir (HL'ye istek atmaz). Kör nokta: yalnız ana dex.
 
 ## Liq attack radarı: `/saldiri`
 
