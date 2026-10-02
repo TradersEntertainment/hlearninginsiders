@@ -722,6 +722,164 @@ def sticky_end(w: dict) -> str:
     return "\n".join(lines)
 
 
+# ---------------- 👤 izlenen hesaplar ----------------
+
+def _acct_head(addr: str, st: dict) -> str:
+    return f"👤 <b>{esc(st.get('name') or short(addr))}</b> · {alink(addr)}"
+
+
+def _acct_foot(st: dict) -> str:
+    foot = f"hesap {usd(st.get('acct'))} · açık pozisyon {usd(st.get('ntl'))}"
+    if st.get("truncated"):
+        foot += f" · ⚠️ emir listesi ilk {st.get('orders_n')} emirle kesik — fazlası görünmüyor"
+    return f"<i>{foot}</i>"
+
+
+def _pos_txt(coin: str, p: dict) -> str:
+    sym = esc(assets.label(coin))
+    out = f"{(p.get('side') or '').upper()} {qty_txt(abs(float(p.get('szi') or 0)))} {sym} ({usd(p.get('ntl'))})"
+    return out
+
+
+def _dist_range(lo, hi, mark) -> str:
+    if not mark or not lo or not hi:
+        return ""
+    a, b = (lo - mark) / mark * 100, (hi - mark) / mark * 100
+    a, b = sorted((a, b))
+    where = "üstünde" if a > 0 else ("altında" if b < 0 else "iki yanında")
+    if where == "iki yanında":
+        return f" · fiyatın {where}"
+    lo_p, hi_p = sorted((abs(a), abs(b)))
+    return f" · fiyatın %{lo_p:.0f}–{hi_p:.0f} {where}" if hi_p - lo_p >= 1 else f" · fiyatın %{lo_p:.1f} {where}"
+
+
+def _ladder_txt(L: dict, mark) -> str:
+    sym = esc(assets.label(L.get("coin") or ""))
+    kind = "stop" if L.get("kind") == "stop" else "kâr al"
+    side = "satış" if L.get("side") == "ask" else "alış"
+    n = int(L.get("n") or 0)
+    rng = px5(L.get("lo")) if L.get("lo") == L.get("hi") else f"{px5(L.get('lo'))}–{px5(L.get('hi'))}"
+    return (f"<b>{sym}</b> {kind} ({side}, reduce-only): {n} emir {rng} · {qty_txt(L.get('sz'))} {sym}"
+            f" ({usd(L.get('ntl'))}){_dist_range(L.get('lo'), L.get('hi'), mark)}")
+
+
+def _wall_txt(w: dict, live: dict) -> str:
+    from ..radar.stickywall import effect_of
+    sym = esc(assets.label(w.get("coin") or ""))
+    side = "SATIŞ" if w.get("side") == "ask" else "ALIŞ"
+    tif = "post-only" if (w.get("tif") or "").lower() == "alo" else esc(w.get("tif") or "limit")
+    ro = ", reduce-only" if w.get("ro") else ""
+    pos = live.get(w.get("coin")) if live else None
+    eff = effect_of(w.get("side"), pos, w.get("ro"), w.get("sz"))
+    eff_txt = {("ask", "open"): "SHORT açıyor / büyütüyor", ("ask", "close"): "LONG'u boşaltıyor",
+               ("ask", "flip"): "LONG'u kapatıp SHORT açıyor", ("bid", "open"): "LONG açıyor / büyütüyor",
+               ("bid", "close"): "SHORT'u kapatıyor", ("bid", "flip"): "SHORT'u kapatıp LONG açıyor"
+               }.get((w.get("side"), eff), "")
+    line = (f"<b>{sym}</b> {side} duvarı <b>{usd(w.get('ntl'))}</b> ({qty_txt(w.get('sz'))} {sym})"
+            f" {tif}{ro} @ {px5(w.get('px'))} (fiyata %{float(w.get('dist') or 0):+.2f})")
+    if eff_txt:
+        line += f" — {eff_txt}"
+    n_o = len(w.get("oids") or [])
+    if n_o > 1:
+        line += f" · yoklamalarda {n_o} farklı emir numarası (kendini yeniden koyuyor)"
+    return line
+
+
+def acct_started(addr: str, st: dict, marks: dict, title: str = "takip başladı",
+                 tail: bool = True) -> str:
+    """Takip başladı (ya da /hesaplar anlık durumu): pozisyonlar + defterdeki duvar
+    ve merdivenler."""
+    lines = [f"{_acct_head(addr, st)} — <b>{esc(title)}</b>"]
+    live = st.get("live") or {}
+    if live:
+        lines.append("📊 <b>Pozisyonlar</b>")
+        for coin, p in sorted(live.items(), key=lambda kv: -float(kv[1].get("ntl") or 0))[:12]:
+            ent = f" · giriş {px5(p['entry'])}" if p.get("entry") else ""
+            lines.append(f"• {_pos_txt(coin, p)}{ent}")
+        if len(live) > 12:
+            lines.append(f"• … ve {len(live) - 12} pozisyon daha")
+    else:
+        lines.append("📭 Açık pozisyon yok")
+    walls = [w for w in (st.get("walls") or {}).values()]
+    if walls:
+        lines.append("🧲 <b>Defterde, fiyatın dibinde</b>")
+        for w in walls:
+            lines.append("• " + _wall_txt(w, live))
+    lads = sorted((st.get("ladders") or {}).values(), key=lambda L: -float(L.get("ntl") or 0))
+    if lads:
+        lines.append("🎯 <b>Kâr al / stop emirleri</b> (arayüzde görünmüyor)")
+        for L in lads[:8]:
+            lines.append("• " + _ladder_txt(L, _f_or_none(marks.get(L.get("coin")))))
+    if tail:
+        lines.append("Bundan sonra bu gruba: pozisyon aç / kapa / ters çevir, %25+ büyüme-küçülme,"
+                     " fiyatın dibine konan yeni duvar ve kâr al / stop merdiveni kurulum-değişim-kalkış.")
+    lines.append(_acct_foot(st))
+    return "\n".join(lines)
+
+
+def _f_or_none(x):
+    try:
+        return float(x) or None
+    except (TypeError, ValueError):
+        return None
+
+
+def acct_events(addr: str, st: dict, events: list[dict], marks: dict) -> str:
+    """Bir yoklamanın olayları TEK mesajda."""
+    lines = [_acct_head(addr, st)]
+    live = st.get("live") or {}
+    for e in events:
+        t = e["t"]
+        coin = e.get("coin") or (e.get("w") or e.get("L") or {}).get("coin") or ""
+        sym = esc(assets.label(coin))
+        if t == "open":
+            c = e["cur"]
+            ent = f" · giriş {px5(c['entry'])}" if c.get("entry") else ""
+            lev = f" · {c['lev']}x" if c.get("lev") else ""
+            lines.append(f"🆕 <b>{sym}</b> {c['side'].upper()} açtı: {_pos_txt(coin, c)}{ent}{lev}")
+        elif t == "close":
+            lines.append(f"🚪 <b>{sym}</b> {e['prev'].get('side', '').upper()} kapattı"
+                         f" (önceki {_pos_txt(coin, e['prev'])})")
+        elif t == "flip":
+            p, c = e["prev"], e["cur"]
+            lines.append(f"🔄 <b>{sym}</b> yön değiştirdi: {p.get('side', '').upper()} →"
+                         f" <b>{_pos_txt(coin, c)}</b>")
+        elif t in ("grow", "shrink"):
+            c = e["cur"]
+            verb = "büyüttü" if t == "grow" else "küçülttü"
+            icon = "📈" if t == "grow" else "📉"
+            lines.append(f"{icon} <b>{sym}</b> {c['side'].upper()} {verb}: {qty_txt(abs(e['base']))} →"
+                         f" <b>{qty_txt(abs(c['szi']))}</b> {sym} ({e['pct']:+.0f}%,"
+                         f" {'+' if e['dusd'] > 0 else '−'}{usd(abs(e['dusd']))}) · şimdi {usd(c['ntl'])}")
+        elif t == "wall":
+            lines.append("🧲 Yeni duvar: " + _wall_txt(e["w"], live) + " · /yapiskan")
+        elif t == "wall_end":
+            w = e["w"]
+            side = "satış" if w.get("side") == "ask" else "alış"
+            life = int(w.get("last_ts") or 0) - int(w.get("first_ts") or 0)
+            a, b = abs(float(w.get("start_szi") or 0)), abs(float(e.get("end_szi") or 0))
+            chg = f" · bu sürede pozisyon {qty_txt(a)} → {qty_txt(b)} {sym}" if (a or b) else ""
+            lines.append(f"🧲❌ <b>{sym}</b> {side} duvarı kalktı · en az {dur_txt(life)} sürdü ·"
+                         f" tepe {usd(w.get('ntl_max'))}{chg}")
+        elif t == "ladder_new":
+            lines.append("🎯 Kurdu: " + _ladder_txt(e["L"], _f_or_none(marks.get(coin))))
+        elif t == "ladder_change":
+            was = e.get("was") or {}
+            L = e["L"]
+            prev_txt = (f"{int(was.get('n') or 0)} emir {px5(was.get('lo'))}–{px5(was.get('hi'))}"
+                        f" ({usd(was.get('ntl'))})") if was else "?"
+            lines.append(f"🎯 Değiştirdi: {_ladder_txt(L, _f_or_none(marks.get(coin)))} · önceki {prev_txt}")
+        elif t == "ladder_gone":
+            L = e["L"]
+            kind = "stop" if L.get("kind") == "stop" else "kâr al"
+            now_p = live.get(coin)
+            pos_txt = f" · pozisyon şimdi {_pos_txt(coin, now_p)}" if now_p else f" · {sym} pozisyonu yok"
+            lines.append(f"🎯❌ <b>{sym}</b> {kind} emirleri kalktı (son: {int(L.get('n') or 0)} emir,"
+                         f" {usd(L.get('ntl'))}) — doldu mu iptal mi, pozisyondan okunur{pos_txt}")
+    lines.append(_acct_foot(st))
+    return "\n".join(lines)
+
+
 # Manşet emojisi verdict'e bağlı: mesaja bakan kişi tek karakterden ne
 # olduğunu anlasın diye. Sıra ÖNEMLİ — "SHORT kapanmış" içinde "kapan" geçtiği
 # için long kapanışından SONRA denenirse yanlış eşleşir.
@@ -1644,7 +1802,8 @@ DIGEST_LABELS = {
     "anomaly": "📡 anomali", "liq": "💥 likidasyon", "liqmap": "🧲 liq duvarı",
     "earnings": "📊 earnings",
     "eval": "🏁 sonuç", "track": "👣 pozisyon takibi", "lowvol": "🐘 sessiz su devi",
-    "wall": "🧱 emir duvarı", "sticky": "🧲 yapışkan duvar", "health": "⚕️ sağlık",
+    "wall": "🧱 emir duvarı", "sticky": "🧲 yapışkan duvar", "acct": "👤 izlenen hesap",
+    "health": "⚕️ sağlık",
 }
 
 

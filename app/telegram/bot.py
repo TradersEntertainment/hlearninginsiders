@@ -493,6 +493,8 @@ class TelegramBot:
             await self._cmd_twap_follow_list(chat_id)
         elif cmd in ("duvartakipler", "duvartakip"):
             await self._cmd_sticky_follow_list(chat_id)
+        elif cmd in ("hesaplar", "hesap"):
+            await self._cmd_accounts(chat_id)
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
             await self._cmd_sim(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
@@ -565,6 +567,8 @@ class TelegramBot:
             await self._cmd_twap_follow_list(chat_id)
         elif cmd in ("duvartakipler", "duvartakip"):
             await self._cmd_sticky_follow_list(chat_id)
+        elif cmd in ("hesaplar", "hesap"):
+            await self._cmd_accounts(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -1035,6 +1039,31 @@ class TelegramBot:
             f"İptal edilirse <b>⛔</b>, bitince <b>🏁</b> haber vereceğim{half}."
             f" Takip {days} gün sonra kendiliğinden kapanır · bırakmak için"
             f" /birak_twap_{fid}", chat_id)
+
+    async def _cmd_accounts(self, chat_id: str) -> None:
+        """/hesaplar — izlenen hesapların son anlık durumu (pozisyon + duvar + kâr al/stop).
+        Son yoklamanın kaydından okunur: HL'ye istek atmaz."""
+        from ..hl.universe import main_dex_ctx
+        from ..radar import acctwatch
+        snaps = await acctwatch.snapshots(self.cfg)
+        if not snaps:
+            await self.send("👤 İzlenen hesap yok. Ayarlar → 👤 İzlenen hesaplar → 'adres:isim'.", chat_id)
+            return
+        try:
+            marks = {c: v.get("m") for c, v in ((await main_dex_ctx(None, fetch=False)).get("c") or {}).items()}
+        except Exception:
+            marks = {}
+        for s in snaps:
+            st = s["state"]
+            if not st:
+                why = ("ACCOUNT_CHAT_ID tanımsız — yoklanmıyor"
+                       if not (getattr(self.cfg, "account_chat_id", "") or "").strip()
+                       else "henüz yoklanmadı")
+                await self.send(f"👤 <b>{fmt.esc(s['name'])}</b> · {fmt.alink(s['address'])} — {why}.", chat_id)
+                continue
+            await self.send(fmt.acct_started(s["address"], st, marks,
+                                             title=f"anlık durum ({fmt.age_str(st.get('ts'))} önce)",
+                                             tail=False), chat_id)
 
     async def _cmd_sticky_follow_list(self, chat_id: str) -> None:
         """/duvartakipler — izlenen yapışkan duvarlar."""

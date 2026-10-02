@@ -672,6 +672,23 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + f" · {_dur(now() - int(sw['ts']))} önce")
     else:
         out.append("  yapışkan duvar: tur HENÜZ ÇALIŞMADI")
+    # 👤 İzlenen hesaplar: ayrı grup (ACCOUNT_CHAT_ID). Boşsa yoklama da yok — söyle.
+    aw = await kv_get("acctwatch_stats") or {}
+    if aw.get("disabled"):
+        out.append("  izlenen hesaplar: kapalı (acct_watch_enabled=0)")
+    elif aw.get("ts"):
+        tot = aw.get("tot") or {}
+        out.append("  izlenen hesaplar: "
+                   + (f"⚠️ ACCOUNT_CHAT_ID TANIMSIZ — {aw.get('accounts', 0)} hesap yoklanmıyor"
+                      if aw.get("no_chat") else
+                      f"{aw.get('accounts', 0)} hesap · bu tur {aw.get('polled', 0)} yoklandı"
+                      f" · toplam {tot.get('events', 0)} olay, {tot.get('sent', 0)} mesaj"
+                      + (f" · ⚠️ {tot['failed']} gönderilemedi" if tot.get("failed") else "")
+                      + (f" · ⚠️ {tot['errors']} okuma hatası" if tot.get("errors") else "")
+                      + (f" · ⚠️ {aw['truncated']} hesapta emir listesi kesik" if aw.get("truncated") else ""))
+                   + f" · {_dur(now() - int(aw['ts']))} önce")
+    else:
+        out.append("  izlenen hesaplar: tur HENÜZ ÇALIŞMADI")
     # ---- satılabilir bot: kullanıcılar, ödeme kanalları, fan-out
     try:
         from . import users as _users

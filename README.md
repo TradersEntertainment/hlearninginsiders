@@ -58,6 +58,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
 | `/takipler` · `/birak_N` | Aktif pozisyon takipleri · takibi bırak |
 | `/duvartakipler` · `/birak_duvar_N` | İzlenen 🧲 yapışkan duvarlar · takibi bırak |
+| `/hesaplar` | 👤 İzlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, kâr al / stop emirleri |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
@@ -512,6 +513,42 @@ radarında); spot yok; en iyi fiyattan 10 seviye / %1 uzağa konan emir sayılma
 başlatmada akış ve teyit bekleyen adaylar sıfırlanır (izlenen duvarlar DB'de); "yenen" $
 kollektör akışından ölçülür — akış kesikse eksik kalır. `/tani` satırı: evren, akış,
 odak, aday, teyit, bildirim, bitiş, takip notu ve "CRYPTO_CHAT_ID tanımsız" uyarısı.
+
+## 👤 İzlenen hesaplar: ayrı grup (`ACCOUNT_CHAT_ID`)
+
+Adı konmuş birkaç hesabın **tüm** pozisyonları ve emirleri. İlk hesap **drkmttr**
+(`0xc179…ce0c8`) — SAND yapışkan duvarının sahibi, "hybrid strategies, market making
+automation" açıklamalı, ~$13M'lık, 100 yatırımcılı kullanıcı vault'u. Liste Ayarlar →
+👤 İzlenen hesaplar'dan (`adres:isim`, virgülle) genişletilir.
+
+**Neden ayrı grup:** kullanıcı kararı — kripto kanalına karışırsa spam olur. Mesajlar
+yalnız `ACCOUNT_CHAT_ID` (env) grubuna gider; **boşsa hiçbir yere gitmez ve hesaplar
+yoklanmaz** (bütçe harcanmaz). Kurulum: Telegram'da grup aç, botu ekle, grupta `/id` yaz,
+çıkan sayıyı Railway'de `ACCOUNT_CHAT_ID` olarak gir.
+
+**Neden emirler de:** HL arayüzü vault sayfasında açık emirleri göstermiyor (yalnız
+işlemler), ama `frontendOpenOrders` veriyor. drkmttr'da 02.10'da 63 açık emir vardı:
+SAND'de post-only satış duvarı, 0.044–0.0605 arası 34 reduce-only alıştan kâr al
+merdiveni, LIT'te 4.35–5.4 arası 29 emirlik ($6.0M) kâr al merdiveni.
+
+**Olaylar** (bir yoklamadakiler TEK mesajda; tahmin yok):
+- 🆕 pozisyon açtı · 🚪 kapattı · 🔄 yön değiştirdi
+- 📈 / 📉 büyüttü / küçülttü — son **bildirilen** boyuta göre ≥%25 **ve** ≥$500K
+  (adet üzerinden; fiyat oynaması tetiklemez)
+- 🧲 yeni duvar — fiyatın %1 yakınında ≥$250K tek emir, iki yoklama üst üste (post-only mi,
+  reduce-only mi, pozisyona etkisi, kaç farklı emir numarasıyla yeniden kondu);
+  🧲❌ kalktı — süresi, tepesi, o sürede pozisyon değişimi
+- 🎯 kâr al / stop merdiveni kurdu · değiştirdi (yeni emir/yeniden fiyatlama, iki yoklama
+  sabit) · kalktı. **Basamak dolumu mesaj üretmez** — fiyat merdivene değdikçe basamaklar
+  dolar; bu, pozisyonun küçülmesi olarak (≥%25 adımda) görünür. Böylece grup dolum
+  başına mesajla dolmaz.
+
+Yeni eklenen hesap ilk turda **"takip başladı"** özeti atar (mevcut pozisyonlar, duvar,
+merdivenler) — bunlar sonra "yeni" diye bildirilmez. Durum kv'de; yeniden başlatma eski
+olayları tekrarlamaz. Gönderilemeyen mesajın durumu yazılmaz, sonraki yoklama aynı farkı
+yeniden bulur. Bütçe: hesap başına dakikada 2 istek. `/hesaplar` son yoklamanın kaydını
+gösterir (HL'ye istek atmaz). Kör nokta: yalnız ana dex pozisyonları; `frontendOpenOrders`
+~100 emirde kesilebilir (mesaj bunu yazar).
 
 ## Liq attack radarı: `/saldiri`
 

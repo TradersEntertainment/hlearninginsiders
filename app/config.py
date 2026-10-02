@@ -84,6 +84,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                         "desc": "ABD kapalıyken (hafta sonu/gece) kapanış fiyatından sapan ya da ani sıçrayan hisseler — yalnız PROPR'da listeli olanlar"},
     "notify_wall": {"type": "bool", "label": "🧱 Emir defteri duvarı", "group": "Bildirimler",
                     "desc": "Deftere fiyatın hemen yanına konan dev bekleyen emir duvarları (ve çekilirse/dolarsa haberi)"},
+    "notify_acct": {"type": "bool", "label": "👤 İzlenen hesaplar", "group": "Bildirimler",
+                    "desc": "Listedeki hesapların (ör. drkmttr) pozisyon ve emir olayları — AYRI gruba gider (ACCOUNT_CHAT_ID, env)"},
     "notify_sticky": {"type": "bool", "label": "🧲 Yapışkan duvar", "group": "Bildirimler",
                       "desc": "Ana dex kriptoda en iyi fiyata yapışan dev TEK emir ($ ve 24s hacim oranı kapısını geçerse) — ayrı kanala gider (CRYPTO_CHAT_ID). Kanal yalnız ilk alarmı alır; yarılanma, yeni dilim ve bitiş (yenildi/çekildi) yalnız /takip_N'e basana gider"},
     "wall_window_pct": {"type": "float", "label": "Duvar penceresi (%)", "group": "Emir defteri radarı",
@@ -362,6 +364,20 @@ EDITABLE_FIELDS: dict[str, dict] = {
                         "desc": "/hareket tablosunda en çok kaç satır gösterilsin. Süzgeçten geçen toplam sayı künyede yazar, satır sessizce kaybolmaz"},
     "movers_min_chg_pct": {"type": "float", "label": "Hareket: asgari değişim (%)", "group": "Hareket",
                            "desc": "|%| bunun altında kalan hareket listelenmez (gürültü kesici). 0 = kapalı, her hareket listelenir"},
+    "acct_watch_enabled": {"type": "bool", "label": "👤 İzlenen hesaplar", "group": "👤 İzlenen hesaplar",
+                           "desc": "Listedeki hesapların pozisyonları ve emirleri izlenir; olaylar AYRI gruba gider (ACCOUNT_CHAT_ID, env — boşsa hiçbir yere gitmez, yoklama da yapılmaz). HL arayüzü vault'ların açık emirlerini göstermiyor; burada post-only duvarlar ve kâr al / stop merdivenleri de görünür"},
+    "acct_watch_list": {"type": "str", "label": "İzlenen hesaplar (adres:isim)", "group": "👤 İzlenen hesaplar",
+                        "desc": "Virgülle: 0xADRES:isim, 0xADRES2:isim2. Başlangıç: drkmttr vault'u (SAND yapışkan duvarının sahibi). Hesap başına her turda 2 istek (clearinghouseState + frontendOpenOrders). Yeni eklenen hesap ilk turda 'takip başladı' özeti atar, sonra yalnız değişiklikler"},
+    "acct_poll_sec": {"type": "int", "label": "Yoklama aralığı (sn)", "group": "👤 İzlenen hesaplar",
+                      "desc": "Her hesap bu aralıkla sorulur. Duvar ve merdiven olayları iki yoklama teyit ister — 60 sn'de bir haber en geç ~2 dk'da gelir"},
+    "acct_min_pos_usd": {"type": "float", "label": "Pozisyon tabanı ($)", "group": "👤 İzlenen hesaplar",
+                         "desc": "Bunun altındaki yeni pozisyon 'açtı' sayılmaz (toz). İzlenen pozisyon küçülürse kapanışına kadar izlenir"},
+    "acct_step_pct": {"type": "float", "label": "Büyüdü/küçüldü adımı (%)", "group": "👤 İzlenen hesaplar",
+                      "desc": "Pozisyon son BİLDİRİLEN boyutuna göre en az bu kadar değişince haber (adet üzerinden — fiyat oynaması tetiklemez). Aşağıdaki $ tabanıyla birlikte"},
+    "acct_step_min_usd": {"type": "float", "label": "Büyüdü/küçüldü adımı en az ($)", "group": "👤 İzlenen hesaplar",
+                          "desc": "Adım hem yüzde hem $ olarak geçmeli: küçük pozisyondaki %25 gürültü olmasın"},
+    "acct_wall_min_usd": {"type": "float", "label": "Duvar tabanı ($)", "group": "👤 İzlenen hesaplar",
+                          "desc": "Fiyatın %1 yakınındaki tek emir bu boyutu geçerse 'yeni duvar' (iki yoklama üst üste). Genel yapışkan duvar radarının $1M ve %2 hacim kapısı burada aranmaz"},
     "sticky_enabled": {"type": "bool", "label": "🧲 Yapışkan duvar radarı", "group": "🧲 Yapışkan duvar",
                        "desc": "Ana dex kriptoda en iyi fiyata yapışan dev TEK emri (n=1) izler: kendini her birkaç saniyede en iyi fiyata yeniden koyan post-only emir — fiyatla aşağı da yukarı da gider. Likidasyon değildir (HL likidasyonu piyasa emridir, defterde beklemez). Kapatınca tarama ve takip notları durur"},
     "sticky_min_usd": {"type": "float", "label": "Alarm: tek emir en az ($)", "group": "🧲 Yapışkan duvar",
@@ -712,6 +728,16 @@ class Config:
         self.movers_min_day_vol = float(os.getenv("MOVERS_MIN_DAY_VOL", "1000000"))
         self.movers_max_rows = int(os.getenv("MOVERS_MAX_ROWS", "50"))
         self.movers_min_chg_pct = float(os.getenv("MOVERS_MIN_CHG_PCT", "0"))
+        self.acct_watch_enabled = True
+        self.notify_acct = True
+        self.acct_watch_list = os.getenv(
+            "ACCT_WATCH_LIST", "0xc179e03922afe8fa9533d3f896338b9fb87ce0c8:drkmttr")
+        self.account_chat_id = os.getenv("ACCOUNT_CHAT_ID", "")   # env-only: izlenen hesaplar grubu
+        self.acct_poll_sec = int(os.getenv("ACCT_POLL_SEC", "60"))
+        self.acct_min_pos_usd = float(os.getenv("ACCT_MIN_POS_USD", "100000"))
+        self.acct_step_pct = float(os.getenv("ACCT_STEP_PCT", "25"))
+        self.acct_step_min_usd = float(os.getenv("ACCT_STEP_MIN_USD", "500000"))
+        self.acct_wall_min_usd = float(os.getenv("ACCT_WALL_MIN_USD", "250000"))
         self.sticky_enabled = True
         self.notify_sticky = True
         self.sticky_min_usd = float(os.getenv("STICKY_MIN_USD", "1000000"))

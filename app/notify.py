@@ -29,6 +29,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "twap":      ("notify_twap",      "⏳ TWAP (düşük hacimli coinde büyük)",  "high"),
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "sticky":    ("notify_sticky",    "🧲 Yapışkan duvar (kripto kanalı)",    "high"),
+    "acct":      ("notify_acct",      "👤 İzlenen hesaplar (hesap grubu)",     "high"),
     "offhours":  ("notify_offhours",  "🌙 Kapalı seans hareketi",             "high"),
     "cryptovol": ("notify_cryptovol", "🚀 Kripto hacim patlaması",            "high"),
     "cryptoliq": ("notify_cryptoliq", "💥 Kripto liq yakını (kripto kanalı)", "high"),
