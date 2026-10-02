@@ -403,7 +403,9 @@ CREATE TABLE IF NOT EXISTS sticky_walls(
   eaten_usd REAL,                        -- sahibin bu duvardan aldığı maker dolumu (akıştan)
   status TEXT,                           -- aktif | yenildi | çekildi | kısmen | kayboldu
   end_ts INTEGER, end_pos_side TEXT, end_pos_szi REAL, end_pos_ntl REAL,
-  active INTEGER DEFAULT 1
+  active INTEGER DEFAULT 1,
+  offer_id INTEGER,                      -- /takip_N teklifi (duvar başına bir kez yazılır)
+  seg_peak REAL                          -- bu dilimin tepesi (yarılanma bununla kıyaslanır)
 );
 CREATE INDEX IF NOT EXISTS idx_sticky_active ON sticky_walls(active, coin, side);
 CREATE INDEX IF NOT EXISTS idx_sticky_end ON sticky_walls(end_ts);
@@ -532,6 +534,9 @@ MIGRATIONS = [
     "ALTER TABLE track_offers ADD COLUMN kind TEXT",
     # ref_ts: 'twap' teklifinde takip edilen turun first_ts'i (twap_runs PK parçası)
     "ALTER TABLE track_offers ADD COLUMN ref_ts INTEGER",
+    # 🧲 yapışkan duvar: teklif tek sefer + dilim tepesi (ilk sürümde yoktu)
+    "ALTER TABLE sticky_walls ADD COLUMN offer_id INTEGER",
+    "ALTER TABLE sticky_walls ADD COLUMN seg_peak REAL",
 ]
 
 

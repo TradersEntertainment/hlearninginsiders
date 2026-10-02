@@ -21,11 +21,11 @@
         <th title="Bu duvarın gördüğümüz en büyük hali">Tepe</th>
         <th title="Tepe ÷ 24 saatlik hacim">%24s hacim</th>
         <th title="Son görülen fiyat; parantezde gezdiği aralık">Fiyat</th>
-        <th title="Fiyatla birlikte kaç kez yer değiştirdi">Yer değ.</th>
+        <th title="30 sn'lik bakışlarda görülen fiyat değişimi — gerçek sayı en az bu kadar">Yer değ.</th>
         <th title="Sahibin bu duvardan aldığı maker dolumu (canlı akıştan)">Yenen</th>
-        <th title="İlk görüşten beri">Süre</th>
+        <th title="İlk görüşten beri (defterde daha önce de olabilir)">Süre</th>
         <th class="l" title="Açık emriyle doğrulandıysa ✓; yalnız akıştan bulunduysa ≈">Sahibi</th>
-        <th class="l" title="Emrin sahibin pozisyonuna etkisi">Ne yapıyor</th>
+        <th class="l" title="Emrin sahibin pozisyonuna etkisi (teyit anındaki pozisyonla)">Ne yapıyor</th>
         <th title="/takip_N ile izleyen sohbet sayısı">👁</th></tr>
     {% for r in yd.active %}
     <tr>
@@ -72,7 +72,7 @@
     <tr>
       <td class="l"><a href="/t/{{ r.coin }}{{ k }}"><b>{{ r.coin }}</b></a></td>
       <td class="{{ 'short' if r.side == 'ask' else 'long' }}">{{ 'SATIŞ' if r.side == 'ask' else 'ALIŞ' }}</td>
-      <td title="yenildi = son kalanın ≥%70'i sahibin dolumu; çekildi = ≤%20; kayboldu = sahibi bilinmiyor">{{ {'yenildi': '🍽 yenildi', 'çekildi': '🫥 çekildi', 'kısmen': '◐ kısmen', 'kayboldu': '❔ kayboldu'}.get(r.status, r.status) }}</td>
+      <td title="yenildi = son kalanın ≥%70'i sahibin dolumu; çekildi = ≤%20; kayboldu = ölçülemedi (sahip bilinmiyor / dolum geçmişi okunamadı / akış o aralığı görmedi)">{{ {'yenildi': '🍽 yenildi', 'çekildi': '🫥 çekildi', 'kısmen': '◐ kısmen', 'kayboldu': '❔ kayboldu'}.get(r.status, r.status) }}</td>
       <td data-v="{{ (r.peak_ntl or 0)|int }}">{{ r.peak_ntl|usd }}</td>
       <td data-v="{{ (r.eaten_usd or 0)|int }}">{{ r.eaten_usd|usd if r.eaten_usd else '-' }}</td>
       <td class="dim">{{ ((r.end_ts or 0) - (r.first_ts or 0)) // 60 }}dk</td>

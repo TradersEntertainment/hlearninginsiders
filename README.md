@@ -480,6 +480,10 @@ piyasa yapıcı yığınıydı (`n=5–21`) ve **≤%0,24**. Kural:
    `bbo` aboneliği denendi: 120 coinde **525 mesaj/sn** — kollektöre bindirilmedi.
 
 Kimlik oid ya da fiyatla tutulmaz (ikisi de saniyede değişir), `(coin, yön)` + sahiple.
+Sahibi açık emriyle doğrulanmış duvar teyitten sonra **doğrudan o emirle** izlenir
+(her 30 sn `frontendOpenOrders`): defterde yanına başka birinin daha büyük emri gelse
+de kimlik kaymaz, yenildikçe tabanın altına inen kuyruk da görünür kalır. Doğrulanmamış
+duvar defterden izlenir ama yalnız son fiyata en yakın, **büyümeyen** seviye devam sayılır.
 **Sahip:** duvar fiyatında taker işlemlerinin karşısındaki baskın maker; açık emriyle
 (`frontendOpenOrders`: coin, yön, fiyat bandı, $ ±%35) doğrulanırsa ✓, doğrulanamazsa ≈.
 Olmazsa o coindeki en büyük 5 bilinen pozisyon sahibi denenir. Sahibin pozisyonu
@@ -490,12 +494,15 @@ kapatıyor; düz ya da aynı yön → açıyor/büyütüyor.
 emir $, adet, fiyat, 24s hacim ve OI oranı, karşı derinlik katı, kaç dakikadır defterde
 ve fiyatla kaç kez yer değiştirdiği, sahip + emir türü, pozisyon + etki, şimdiye kadar
 yenen. Aynı coin+yön için 6 saatte bir. Alarmdaki **`/takip_N`**'e basan, yalnız kendisi:
-- **yarılandı** (kalan ≤ tepenin yarısı),
+- **yarılandı** (kalan ≤ bu dilimin tepesinin yarısı — dönüşten/dilimden hemen sonra sahte not yok),
 - **yeni dilim** (boyut ≥%25 ve ≥$250K artarsa — sahibin açık emriyle doğrulanır),
 - **yeniden geldi** (bittikten sonra 15 dk içinde aynı sahip aynı yöne dönerse; kanal tekrar yok),
-- **bitti**: son görülen kalanın ≥%70'i sahibin dolumu oldu → **yenildi**; ≤%20 → **çekildi**;
-  arası → **kısmen**; sahip bilinmiyorsa **kayboldu** (ayırt edilemez, uydurulmaz). Bitişte
-  sahibin pozisyonu bir kez daha okunur.
+- **bitti**: tek bakış asla bitirmez (iptal-yeniden-koy boşluğu, yeniden başlatma sonrası
+  ilk tur) — en az 2 ardışık kaçırma ve ~90 sn gerekir. Sonuç sahibin **gerçek dolum
+  geçmişinden** (`userFillsByTime`) ölçülür, yeniden başlatmaya dayanıklıdır: son görülen
+  kalanın ≥%70'i dolduysa **yenildi**, ≤%20'si → **çekildi**, arası → **kısmen**. Sahip
+  bilinmiyorsa, dolum geçmişi okunamadıysa ve canlı akış o aralığı görmediyse **kayboldu**
+  — dolum mu çekilme mi, veri olmadan söylenmez. Bitişte sahibin pozisyonu bir kez daha okunur.
 
 `/duvartakipler` listeler, `/birak_duvar_N` bırakır; takip 2 gün sonra kendiliğinden kapanır.
 Gönderilemeyen not işaretlenmez, sonraki adım (15 sn) yeniden dener.

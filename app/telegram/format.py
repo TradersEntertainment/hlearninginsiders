@@ -560,13 +560,22 @@ def px5(p: float | None) -> str:
     """5 anlamlı hane (HL tick'i): 0.062640 → 0.06264; `px` 4 haneye keser."""
     if not p:
         return "-"
-    return f"{p:,.0f}" if p >= 100_000 else f"{p:.5g}"
+    return f"{p:,.0f}" if p >= 10_000 else f"{p:.5g}"
 
 
 def _sticky_head(w: dict) -> tuple[str, str, str]:
+    """(sembol, yön, nerede). "Nerede" ÖLÇÜLEN sıraya göre: en iyi fiyattaysa öyle,
+    gerisindeyse kaç seviye geride olduğu — "en iyi satışta" yalnız sıra 0 ise."""
     sym = esc(assets.label(w.get("coin") or ""))
     side = "SATIŞ" if w.get("side") == "ask" else "ALIŞ"
-    where = "en iyi satışta" if w.get("side") == "ask" else "en iyi alışta"
+    best = "en iyi satış" if w.get("side") == "ask" else "en iyi alış"
+    lvl = w.get("level_last")
+    if lvl is None:
+        where = f"{best} fiyatına %1 içinde"
+    elif int(lvl) == 0:
+        where = f"{best} fiyatında"
+    else:
+        where = f"{best}ın {int(lvl)} seviye gerisinde"
     return sym, side, where
 
 
@@ -610,8 +619,11 @@ def _sticky_pos(w: dict, end: bool = False) -> str | None:
                 line += f" · duvar başında {qty_txt(before)}"
     eff = {("ask", "open"): "bu emir SHORT açıyor / büyütüyor",
            ("ask", "close"): "bu emir LONG'u boşaltıyor",
+           ("ask", "flip"): "bu emir LONG'u kapatıp SHORT açıyor (pozisyondan büyük)",
            ("bid", "open"): "bu emir LONG açıyor / büyütüyor",
-           ("bid", "close"): "bu emir SHORT'u kapatıyor"}.get((w.get("side"), w.get("effect") or ""))
+           ("bid", "close"): "bu emir SHORT'u kapatıyor",
+           ("bid", "flip"): "bu emir SHORT'u kapatıp LONG açıyor (pozisyondan büyük)"}.get(
+        (w.get("side"), w.get("effect") or ""))
     if eff and not end:
         line += f" → <b>{eff}</b>"
     return line
@@ -623,7 +635,7 @@ def sticky_alert(w: dict, offer: int | None = None) -> str:
     ntl = float(w.get("ntl_last") or 0)
     lines = [f"🧲 <b>YAPIŞKAN DUVAR</b> — <b>{sym}</b> · {side}",
              f"Tek emir <b>{usd(ntl)}</b> ({qty_txt(w.get('sz_last'))} {sym}) @ {px5(w.get('px_last'))}"
-             f" — {where}" + (f" ({int(w['level_last']) + 1}. seviye)" if w.get("level_last") else "")]
+             f" — {where}"]
     facts = []
     if w.get("day_vol"):
         facts.append(f"24s hacme oranı <b>%{ntl / float(w['day_vol']) * 100:.1f}</b>")
@@ -638,11 +650,12 @@ def sticky_alert(w: dict, offer: int | None = None) -> str:
     life = int(w.get("last_ts") or now()) - int(w.get("first_ts") or now())
     mv = int(w.get("n_moves") or 0)
     lo, hi = w.get("px_min"), w.get("px_max")
-    line = f"🔁 defterde {dur_txt(life)}"
+    # Ölçüm 30 sn'de bir bakıştır: süre "ilk görüşten beri", hareket "en az" N kez.
+    line = f"🔁 ilk görüşten beri {dur_txt(life)}"
     if mv:
-        line += f" · fiyatla <b>{mv} kez</b> yer değiştirdi ({px5(lo)}–{px5(hi)})"
+        line += f" · bakışlarda en az <b>{mv} kez</b> yer değiştirdi ({px5(lo)}–{px5(hi)})"
     else:
-        line += " · bu sürede yerinden oynamadı"
+        line += " · bakışlarda aynı fiyattaydı"
     lines.append(line)
     lines.append(_sticky_owner(w))
     p = _sticky_pos(w)
@@ -650,8 +663,12 @@ def sticky_alert(w: dict, offer: int | None = None) -> str:
         lines.append(p)
     if w.get("eaten_usd"):
         lines.append(f"🍽 Duvardan şimdiye yenen: <b>{usd(w['eaten_usd'])}</b> (sahibin maker dolumu)")
-    lines.append("<i>Likidasyon değil: HL likidasyonu piyasa emridir, defterde beklemez."
-                 " Bu, en iyi fiyata kendini yeniden koyan tek bir emir.</i>")
+    if mv:
+        lines.append("<i>Likidasyon değil: HL likidasyonu piyasa emridir, defterde beklemez."
+                     " Bu, fiyatla birlikte kendini yeniden koyan tek bir emir.</i>")
+    else:
+        lines.append("<i>Likidasyon değil: HL likidasyonu piyasa emridir, defterde beklemez."
+                     " Fiyatı izleyip izlemediği henüz görülmedi — takipte belli olur.</i>")
     if offer:
         lines.append(f"👁 Yenince, çekilince ya da yeni dilim gelince haber → /takip_{offer}")
     lines.append(DISCLAIMER)
@@ -666,7 +683,8 @@ def sticky_note(w: dict, stage: str) -> str:
             "reopen": "🧲 <b>Yapışkan duvar yeniden geldi</b>"}.get(stage, "🧲 <b>Yapışkan duvar</b>")
     ntl = float(w.get("ntl_last") or 0)
     lines = [f"👁 <b>takip ettiğin duvar</b>\n{head} — <b>{sym}</b> · {side}",
-             f"şimdi <b>{usd(ntl)}</b> @ {px5(w.get('px_last'))} · tepe {usd(w.get('peak_ntl'))}"
+             f"şimdi <b>{usd(ntl)}</b> @ {px5(w.get('px_last'))}"
+             f" · bu dilimin tepesi {usd(w.get('seg_peak') or w.get('peak_ntl'))}"
              f" · defterde {dur_txt(int(w.get('last_ts') or now()) - int(w.get('first_ts') or now()))}"]
     if w.get("eaten_usd"):
         lines.append(f"🍽 şimdiye yenen {usd(w['eaten_usd'])} · {int(w.get('n_moves') or 0)} kez yer değiştirdi")
@@ -678,7 +696,7 @@ def sticky_note(w: dict, stage: str) -> str:
 STICKY_END = {"yenildi": "🍽 YENİLDİ — kalan son kısım da sahibin dolumu oldu",
               "çekildi": "🫥 ÇEKİLDİ — sahibi emri kaldırdı, son kalan dolmadan",
               "kısmen": "◐ KISMEN — son kalanın bir kısmı doldu, gerisi çekildi",
-              "kayboldu": "❔ KAYBOLDU — sahibi bilinmediği için dolum/çekilme ayrılamadı"}
+              "kayboldu": "❔ KAYBOLDU — dolum mu çekilme mi ölçülemedi"}
 
 
 def sticky_end(w: dict) -> str:
@@ -696,7 +714,11 @@ def sticky_end(w: dict) -> str:
         p = _sticky_pos(w, end=True)
         if p:
             lines.append(p)
-    lines.append("<i>Aynı sahip 15 dk içinde dönerse \"yeniden geldi\" diye yazarım.</i>")
+    if w.get("owner") and w.get("owner_src") == "order":
+        lines.append("<i>Aynı sahip 15 dk içinde dönerse \"yeniden geldi\" diye yazarım.</i>")
+    if st == "kayboldu":
+        lines.append("<i>Dolum mu çekilme mi ayırt edilemedi: sahibin dolum geçmişi okunamadı"
+                     " ya da canlı akış o aralığı görmedi (yeniden başlatma / kesinti).</i>")
     return "\n".join(lines)
 
 

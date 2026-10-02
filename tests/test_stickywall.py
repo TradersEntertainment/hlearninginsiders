@@ -72,7 +72,9 @@ class Client:
         self.book = sand_book()
         self.orders = {OWNER: [order()]}
         self.state = {OWNER: short_state()}
-        self.calls = {"l2": 0, "oo": 0, "ch": 0, "vd": 0}
+        self.calls = {"l2": 0, "oo": 0, "ch": 0, "vd": 0, "uf": 0}
+        self.fills = []            # sahibin dolum geçmişi (userFillsByTime)
+        self.fills_err = False
 
     async def l2_book(self, coin, n_sig_figs=None):
         self.calls["l2"] += 1
@@ -86,6 +88,12 @@ class Client:
         self.calls["ch"] += 1
         return self.state.get(user, {"assetPositions": []})
 
+    async def user_fills_by_time(self, user, start_ms, end_ms=None):
+        self.calls["uf"] += 1
+        if self.fills_err:
+            raise RuntimeError("429")
+        return [f for f in self.fills if f["time"] >= start_ms and (end_ms is None or f["time"] <= end_ms)]
+
     async def vault_details(self, a):
         self.calls["vd"] += 1
         return {"name": "drkmttr"} if a == OWNER else None
@@ -98,6 +106,12 @@ class Notifier:
     async def send(self, kind, text, **kw):
         self.sent.append((kind, kw.get("chat_id"), text))
         return self.ok
+
+
+def hist_fill(usd, ts, px=WALL_PX, side="A", crossed=False):
+    """userFillsByTime satırı (sahibin kendi dolumu)."""
+    return {"coin": "SAND", "side": side, "px": str(px), "sz": str(usd / px), "time": ts * 1000,
+            "crossed": crossed, "dir": "Open Short"}
 
 
 def fills(maker, usd, ts, px=WALL_PX, n=20, aggr="B"):
@@ -186,46 +200,55 @@ def test_lifecycle_alert_half_tranche_eaten_reopen():
         assert out["confirmed"] == 1 and out["alerted"] == 1, out
         kind, chat, text = nt.sent[-1]
         assert kind == "sticky" and chat == "-200", (kind, chat)
-        for s in ("🧲 <b>YAPIŞKAN DUVAR</b>", "SAND", "SATIŞ", "post-only (Alo)", "reduce-only DEĞİL",
-                  "drkmttr", "SHORT açıyor / büyütüyor", "/takip_", "24s hacme oranı <b>%10.", "1 kez",
-                  "Likidasyon değil", "Duvardan şimdiye yenen"):
-            assert s in text, (s, text)
+        for s_ in ("🧲 <b>YAPIŞKAN DUVAR</b>", "SAND", "SATIŞ", "post-only (Alo)", "reduce-only DEĞİL",
+                   "drkmttr", "SHORT açıyor / büyütüyor", "/takip_", "24s hacme oranı <b>%10.",
+                   "en az <b>1 kez</b>", "en iyi satışın 5 seviye gerisinde", "Likidasyon değil",
+                   "fiyatla birlikte kendini yeniden koyan", "Duvardan şimdiye yenen"):
+            assert s_ in text, (s_, text)
+        assert "en iyi satışta" not in text, "6. seviyedeki emir 'en iyi satışta' denmez"
         rows = await sw._actives()
         w = rows[("SAND", "ask")]
         assert w["owner"] == OWNER and w["owner_src"] == "order" and w["effect"] == "open"
         assert w["pos_side"] == "short" and w["order_tif"] == "Alo" and w["reduce_only"] == 0
-        assert w["eaten_usd"] >= 199_000
+        assert w["eaten_usd"] >= 199_000 and w["offer_id"]
         async with dbm.db() as c:
             cur = await c.execute("SELECT * FROM track_offers WHERE kind='sticky'")
             offer = dict(await cur.fetchone())
         assert offer["ref_ts"] == w["id"] and f"/takip_{offer['id']}" in text
-        fid, _ = await sw.follow_start(cfg, w["id"], chat_id="-300")
+        await sw.follow_start(cfg, w["id"], chat_id="-300")
         await sw.tick(cfg, cl, nt, ts=t0 + 90)
         assert len(nt.sent) == 1, "kanal TEK alarm; aynı duvar yeniden alarm üretmez"
 
-        # yarılandı → yalnız takipçiye
+        # yarılandı → yalnız takipçiye (sahibin AÇIK EMRİ küçüldü)
         cl.book = sand_book(sz=WALL_SZ * 0.45)
+        cl.orders[OWNER] = [order(sz=WALL_SZ * 0.45)]
         fills(OWNER, 700_000, t0 + 100)
         await sw.tick(cfg, cl, nt, ts=t0 + 120)
         assert nt.sent[-1][0] == "track" and nt.sent[-1][1] == "-300"
         assert "yarılandı" in nt.sent[-1][2] and "takip ettiğin duvar" in nt.sent[-1][2]
 
-        # yeni dilim: boyut sıçradı + sahibin açık emri doğruluyor
+        # yeni dilim: sahibin kendi emri büyüdü
         big = 23_800_000.0
         cl.book = sand_book(px=0.062100, sz=big)
         cl.orders[OWNER] = [order(px=0.062100, sz=big)]
         await sw.tick(cfg, cl, nt, ts=t0 + 150)
         assert "yeni dilim" in nt.sent[-1][2] and nt.sent[-1][1] == "-300", nt.sent[-1]
         w = (await sw._actives())[("SAND", "ask")]
-        assert w["tranches"] == 1 and w["peak_ntl"] > 1_470_000
+        assert w["tranches"] == 1 and w["peak_ntl"] > 1_470_000 and w["seg_peak"] > 1_470_000
+        n_notes = len(nt.sent)
+        await sw.tick(cfg, cl, nt, ts=t0 + 165)
+        assert len(nt.sent) == n_notes, "dilimden hemen sonra sahte 'yarılandı' yok (dilim tepesiyle kıyas)"
 
-        # duvar gitti, son kalanın tamamı sahibin dolumu → yenildi
+        # emir gitti; sahibin GERÇEK dolum geçmişi son kalanı karşılıyor → yenildi
         cl.book = sand_book(sz=0)
-        fills(OWNER, 1_400_000, t0 + 160, px=0.062100)
+        cl.orders[OWNER] = []
+        cl.fills = [hist_fill(700_000, t0 + 155, px=0.0621), hist_fill(700_000, t0 + 170, px=0.0621)]
         cl.state[OWNER] = short_state(szi=-61_900_000.0, ntl=3_840_000.0)
-        out = await sw.tick(cfg, cl, nt, ts=t0 + 200)
-        assert out["ended"] == 0, "90 sn dolmadan bitti denmez (iptal-yeniden-koy boşluğu)"
-        out = await sw.tick(cfg, cl, nt, ts=t0 + 245)
+        out = await sw.tick(cfg, cl, nt, ts=t0 + 195)
+        assert out["ended"] == 0, "tek kaçırma bitirmez"
+        out = await sw.tick(cfg, cl, nt, ts=t0 + 225)
+        assert out["ended"] == 0, "iki kaçırma ama 60 sn dolmadı"
+        out = await sw.tick(cfg, cl, nt, ts=t0 + 260)
         assert out["ended"] == 1
         e = nt.sent[-1][2]
         assert "YENİLDİ" in e and nt.sent[-1][1] == "-300" and "SHORT 61.90M SAND" in e, e
@@ -234,10 +257,11 @@ def test_lifecycle_alert_half_tranche_eaten_reopen():
         chan = [x for x in nt.sent if x[0] == "sticky"]
         assert len(chan) == 1, "kanal bitişi DUYMAZ — yalnız takipçi"
 
-        # aynı sahip 15 dk içinde döner → aynı satır, kanal tekrar yok, takipçiye "yeniden geldi"
+        # aynı sahip 15 dk içinde döner (açık emriyle doğrulanır) → aynı satır, kanal tekrar
+        # yok, takipçiye "yeniden geldi" — ve eski tepenin yarısı altında olduğu için
+        # ardından sahte "yarılandı" GELMEZ
         cl.book = sand_book(px=0.061900, sz=10_000_000)
         cl.orders[OWNER] = [order(px=0.061900, sz=10_000_000)]
-        fills(OWNER, 60_000, t0 + 300, px=0.061900)
         await sw.tick(cfg, cl, nt, ts=t0 + 310)
         await sw.tick(cfg, cl, nt, ts=t0 + 340)
         out = await sw.tick(cfg, cl, nt, ts=t0 + 375)
@@ -245,25 +269,48 @@ def test_lifecycle_alert_half_tranche_eaten_reopen():
         w2 = (await sw._actives())[("SAND", "ask")]
         assert w2["id"] == w["id"] and w2["tranches"] == 2 and w2["status"] == "aktif"
         assert "yeniden geldi" in nt.sent[-1][2] and nt.sent[-1][1] == "-300"
+        n_notes = len(nt.sent)
+        await sw.tick(cfg, cl, nt, ts=t0 + 410)
+        assert len(nt.sent) == n_notes, "dönüşün ardından sahte 'yarılandı' yok"
         assert len([x for x in nt.sent if x[0] == "sticky"]) == 1
-        print("✅ yaşam) 60 sn teyit → tek kanal alarmı (Alo, short açıyor, %10.5);"
-              " takipçiye yarılandı / yeni dilim / YENİLDİ / yeniden geldi; kanal tekrar yok")
+        print("✅ yaşam) 60 sn teyit → tek kanal alarmı (Alo, short açıyor, seviye dürüst);"
+              " takipçiye yarılandı / yeni dilim / YENİLDİ (dolum geçmişinden) / yeniden geldi;"
+              " tek kaçırma bitirmez; sahte 'yarılandı' yok")
     asyncio.run(run())
+
+
+async def _confirmed(cfg, cl, nt, t0):
+    fills(OWNER, 100_000, t0 - 30)
+    for dt in (0, 30, 60):
+        out = await sw.tick(cfg, cl, nt, ts=t0 + dt)
+    return out
 
 
 def test_pulled_unknown_owner_failed_send_no_chat():
     async def run():
-        # çekildi: sahip biliniyor, son kalandan dolum yok
+        # çekildi: emir gitti, sahibin dolum geçmişinde son kalandan dolum yok
         cfg = await _fresh()
         cl, nt = Client(), Notifier()
         t0 = dbm.now()
-        fills(OWNER, 100_000, t0 - 30)
-        for dt in (0, 30, 60):
+        await _confirmed(cfg, cl, nt, t0)
+        cl.book, cl.orders[OWNER] = sand_book(sz=0), []
+        for dt in (90, 120, 155):
             await sw.tick(cfg, cl, nt, ts=t0 + dt)
-        cl.book = sand_book(sz=0)
-        await sw.tick(cfg, cl, nt, ts=t0 + 155)
         ended = (await sw.page_rows())["ended"]
         assert ended and ended[0]["status"] == "çekildi", ended
+
+        # dolum geçmişi okunamadı + akış o aralığı görmedi (yeniden başlatma) → kayboldu
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        await _confirmed(cfg, cl, nt, t0)
+        sw.REG = sw.Registry()                          # yeniden başlatma: akış/sayaçlar sıfır
+        sw.REG.started = t0 + 80
+        cl.book, cl.orders[OWNER], cl.fills_err = sand_book(sz=0), [], True
+        out = await sw.tick(cfg, cl, nt, ts=t0 + 100)
+        assert out["ended"] == 0, "yeniden başlatma sonrası TEK bakış bitirmez"
+        for dt in (130, 165):
+            await sw.tick(cfg, cl, nt, ts=t0 + dt)
+        assert (await sw.page_rows())["ended"][0]["status"] == "kayboldu", "veri yokken 'çekildi' denmez"
 
         # sahip bulunamadı: akış yok, açık emir yok → alarm bunu SÖYLER, bitiş "kayboldu"
         cfg = await _fresh()
@@ -274,29 +321,85 @@ def test_pulled_unknown_owner_failed_send_no_chat():
             await sw.tick(cfg, cl, nt, ts=t0 + dt)
         assert "Sahibi bulunamadı" in nt.sent[-1][2] and "/takip_" in nt.sent[-1][2]
         cl.book = sand_book(sz=0)
-        await sw.tick(cfg, cl, nt, ts=t0 + 155)
+        for dt in (90, 120, 155):
+            await sw.tick(cfg, cl, nt, ts=t0 + dt)
         assert (await sw.page_rows())["ended"][0]["status"] == "kayboldu", "dolum/çekilme uydurulmaz"
 
-        # gönderim başarısız → işaret yok, sonraki adım yeniden dener
+        # gönderim başarısız → işaret yok, sonraki adım yeniden dener; sayaç ve teklif BİR kez
         cfg = await _fresh()
         cl, nt = Client(), Notifier(ok=False)
-        fills(OWNER, 100_000, t0 - 30)
-        for dt in (0, 30, 60):
-            out = await sw.tick(cfg, cl, nt, ts=t0 + dt)
+        out = await _confirmed(cfg, cl, nt, t0)
         assert out["failed"] == 1 and not (await sw._actives())[("SAND", "ask")]["alerted_ts"]
-        nt.ok = True
         out = await sw.tick(cfg, cl, nt, ts=t0 + 90)
+        assert out["failed"] == 0, "aynı duvarın her denemesi ayrı 'gönderilemedi' sayılmaz"
+        nt.ok = True
+        out = await sw.tick(cfg, cl, nt, ts=t0 + 120)
         assert out["alerted"] == 1 and (await sw._actives())[("SAND", "ask")]["alerted_ts"]
+        async with dbm.db() as c:
+            cur = await c.execute("SELECT COUNT(*) n FROM track_offers WHERE kind='sticky'")
+            assert (await cur.fetchone())["n"] == 1, "teklif duvar başına bir kez"
+        assert nt.sent[-1][0] == "sticky"
 
-        # CRYPTO_CHAT_ID boş → gönderilmez, sayılır
+        # tür kapalı → hiç denenmez, teklif yazılmaz
+        cfg = await _fresh()
+        cfg.notify_sticky = False
+        cl, nt = Client(), Notifier()
+        await _confirmed(cfg, cl, nt, t0)
+        await sw.tick(cfg, cl, nt, ts=t0 + 90)
+        async with dbm.db() as c:
+            cur = await c.execute("SELECT COUNT(*) n FROM track_offers")
+            assert (await cur.fetchone())["n"] == 0 and not nt.sent
+
+        # CRYPTO_CHAT_ID boş → gönderilmez, BİR kez sayılır
         cfg = await _fresh(chat="")
         cl, nt = Client(), Notifier()
-        fills(OWNER, 100_000, t0 - 30)
-        for dt in (0, 30, 60):
-            out = await sw.tick(cfg, cl, nt, ts=t0 + dt)
+        out = await _confirmed(cfg, cl, nt, t0)
         assert out["no_chat"] == 1 and not nt.sent
-        print("✅ kenar) çekildi / kayboldu ayrımı; sahipsiz alarm dürüst; başarısız gönderim"
-              " yeniden denenir; kanal tanımsızsa sayılır, gönderilmez")
+        out = await sw.tick(cfg, cl, nt, ts=t0 + 90)
+        assert out["no_chat"] == 0
+        print("✅ kenar) çekildi (dolum geçmişi boş) / kayboldu (veri yok, sahip yok) ayrımı;"
+              " restart sonrası tek bakış bitirmez; başarısız gönderim yeniden denenir ama"
+              " sayaç ve teklif BİR kez; tür kapalıyken denenmez")
+    asyncio.run(run())
+
+
+def test_identity_foreign_orders_and_attribution():
+    async def run():
+        # doğrulanmış duvarın yanına BAŞKASININ daha büyük tek emri gelir → kimlik kaymaz
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        t0 = dbm.now()
+        await _confirmed(cfg, cl, nt, t0)
+        await sw.follow_start(cfg, (await sw._actives())[("SAND", "ask")]["id"], chat_id="-300")
+        bk = sand_book()
+        bk["levels"][1].insert(7, {"px": f"{WALL_PX + 0.000004:.6f}", "sz": "40000000", "n": 1})
+        cl.book = bk
+        before = len(nt.sent)
+        for dt in (90, 120, 150, 180):
+            out = await sw.tick(cfg, cl, nt, ts=t0 + dt)
+            assert out["tranches"] == 0 and out["ended"] == 0
+        w = (await sw._actives())[("SAND", "ask")]
+        assert abs(w["ntl_last"] - WALL_PX * WALL_SZ) < 1, "duvar sahibin emri olarak kaldı"
+        assert len(nt.sent) == before, "başkasının emri dilim/yarılanma notu üretmez"
+        # sahip akış lideri değil ama yedek adaylardan doğrulanırsa: dolum O ADRESİN dolumu
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO addr_positions(coin,address,dex,side,szi,notional,ts)"
+                            " VALUES('SAND',?, '', 'short', -1, 2000000, ?)", (OWNER, dbm.now()))
+        fills(MM, 300_000, t0 - 30)                      # akışı başka bir MM domine ediyor
+        fills(OWNER, 6_000, t0 - 30, n=3)
+        for dt in (0, 30, 60):
+            await sw.tick(cfg, cl, nt, ts=t0 + dt)
+        w = (await sw._actives())[("SAND", "ask")]
+        assert w["owner"] == OWNER and w["owner_src"] == "order"
+        assert w["eaten_usd"] < 10_000, "başka maker'ın $300K'ı sahibe yazılmaz"
+        # pozisyondan büyük reduce-only olmayan emir → 'flip'
+        assert sw.effect_of("ask", {"side": "long", "szi": 800_000.0}, False, 23_000_000) == "flip"
+        assert sw.effect_of("ask", {"side": "long", "szi": 80_000_000.0}, False, 23_000_000) == "close"
+        assert sw.effect_of("bid", {"side": "long", "szi": 1.0}, False, 9.0) == "open"
+        print("✅ kimlik) yanına gelen büyük yabancı emir dilim/not üretmez; yedekten doğrulanan"
+              " sahibin dolumu kendi dolumu; pozisyondan büyük emir 'flip'")
     asyncio.run(run())
 
 
@@ -322,6 +425,12 @@ def test_budget_sweep_low_priority():
         seen.clear()
         out = await sw.tick(cfg, cl, nt, ts=dbm.now())
         assert out["swept"] == 0 and not seen, "0 = tarama kapalı, yalnız akış tetiği"
+        cfg.sticky_poll_sec = 300
+        cl.low_paused = lambda: 30.0                 # 429 sonrası düşük şerit susuyor
+        seen.clear()
+        out = await sw.tick(cfg, cl, nt, ts=dbm.now() + 20)
+        assert out["swept"] == 0 and out["sweep_skipped"] == 1 and not seen, \
+            "şerit susarken tarama atlanır — izlenen duvarlar ve notlar onu beklemez"
         print("✅ bütçe) 120 coin / 300 sn → adım başına 6 defter, DÜŞÜK öncelik; 0 = kapalı")
     asyncio.run(run())
 
@@ -403,7 +512,8 @@ def test_page_and_wiring():
         c = Config()
         assert c.sticky_min_usd == 1_000_000.0 and c.sticky_min_vol_pct == 2.0, "kullanıcı kuralı"
         assert "sticky" in c.public_kinds
-        assert fmt.px5(0.062640) == "0.06264" and fmt.px5(85595.0) == "85595"
+        assert fmt.px5(0.062640) == "0.06264" and fmt.px5(85595.0) == "85,595"
+        assert "e+" not in fmt.px5(99_999.7), "bilimsel gösterim yok"
         print("✅ sayfa+kablo) /yapiskan 200 (aktif + biten, 5 haneli fiyat); nav, README, .env,"
               " kollektör kancası, spawn, sağlık, tür, 5 ayar künyeli; twapfollow nabzı await'li")
     asyncio.run(run())

@@ -97,7 +97,7 @@ def _px5(p):
     """5 anlamlı hane (HL tick'i) — `px` 0.0626'ya keser, yapışkan duvarın adımı kaybolur."""
     if not p:
         return "-"
-    return f"{p:,.0f}" if p >= 100_000 else f"{p:.5g}"
+    return f"{p:,.0f}" if p >= 10_000 else f"{p:.5g}"
 
 
 templates.env.filters.update(usd=_usd, px=_px, px5=_px5, age=_age, dt=_dt, posage=_posage)

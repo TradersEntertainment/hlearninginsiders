@@ -43,11 +43,13 @@ FLOW_SEC = 180              # coin başına akış penceresi (maker dolumları)
 TRIGGER_WIN = 120           # tetik: son bu kadar sn'deki taker akışı
 TRIGGER_USD = 25_000        # tetik: tek makerın o yanda aldığı en az $
 TRIGGER_SHARE = 0.60        # tetik: o yanın taker akışındaki payı
-TRIGGER_COOLDOWN = 120      # boş çıkan tetikten sonra aynı coin bu kadar susar
+TRIGGER_COOLDOWN = 900      # boş çıkan tetikten sonra aynı coin bu kadar susar (tek MM'li coin
+                            # her 2 dk'da normal öncelikli defter yemesin)
 FOCUS_SEC = 30              # odaktaki coinin defteri bu aralıkla sorulur
 FOCUS_HOLD = 300            # tetikle giren odak en çok bu kadar sürer
 CONFIRM_SEC = 60            # aday → teyit: en az bu kadar arayla iki görüş
 GONE_SEC = 90               # bu kadar görünmezse bitti (iptal-yeniden-koy boşluğu var)
+MISS_MIN = 2                # … ve en az bu kadar ARDIŞIK kaçırma (tek bakış asla bitirmez)
 REJOIN_SEC = 900            # aynı sahip bu süre içinde dönerse aynı duvar ("yeniden geldi")
 COOLDOWN_SEC = 6 * 3600     # aynı coin+yön için kanal alarmı aralığı
 MAX_LEVELS = 10             # en iyi fiyattan bu kadar seviye içinde
@@ -64,12 +66,16 @@ OWNER_MIN_USD = 5_000       # akıştan sahip adayı için en az dolum
 MATCH_TOL = 0.35            # açık emir eşleşmesi: $ ±%35 (yeniden koyma arası dolar)
 FALLBACK_CANDS = 5          # akış sahibi doğrulanamazsa sorulacak pozisyon sahibi
 FOLLOW_DAYS = 2             # takip kendiliğinden kapanır
+TRACK_DRIFT_PCT = 3.0       # doğrulanmış sahibin emri: son fiyattan bu kadar içinde aranır
+SWEEP_TIMEOUT = 8           # düşük öncelikli tarama isteği en çok bu kadar bekler (odak beklemesin)
 KEEP_DAYS = 30              # bitmiş duvar kaydı
 STATS_KV = "sticky_stats"
 EFFECT_TXT = {("ask", "open"): "SHORT açıyor / büyütüyor",
               ("ask", "close"): "LONG'u boşaltıyor",
+              ("ask", "flip"): "LONG'u kapatıp SHORT açıyor",
               ("bid", "open"): "LONG açıyor / büyütüyor",
-              ("bid", "close"): "SHORT'u kapatıyor"}
+              ("bid", "close"): "SHORT'u kapatıyor",
+              ("bid", "flip"): "SHORT'u kapatıp LONG açıyor"}
 
 
 class Registry:
@@ -85,6 +91,8 @@ class Registry:
         self.cands: dict[tuple[str, str], dict] = {}
         self.last_check: dict[str, int] = {}
         self.eat_ts: dict[int, int] = {}      # wall_id -> yenen hesabının imleci
+        self.misses: dict[int, list] = {}     # wall_id -> [ilk kaçırma ts, ardışık kaçırma]
+        self.counted: set[tuple] = set()      # (wall_id, sebep): gönderilemedi bir kez sayılsın
         self.names: dict[str, str] = {}       # vault adı önbelleği ('' = vault değil)
         self.cursor = 0
         self.started = now()
@@ -186,11 +194,12 @@ def find_sticky(bids: list[dict], asks: list[dict], day_vol: float | None,
 
 
 def maker_fills(rows, side: str, since: int, px_lo: float | None = None,
-                px_hi: float | None = None, maker: str | None = None) -> dict[str, list]:
-    """maker -> [toplam $, dolum sayısı] (yan + zaman + isteğe bağlı fiyat bandı)."""
+                px_hi: float | None = None, maker: str | None = None,
+                until: int | None = None) -> dict[str, list]:
+    """maker -> [toplam $, dolum sayısı] (yan + [since, until] + isteğe bağlı fiyat bandı)."""
     agg: dict[str, list] = {}
     for ts, mk, s, ntl, px in rows or ():
-        if s != side or ts < since:
+        if s != side or ts < since or (until is not None and ts > until):
             continue
         if maker is not None and mk != maker:
             continue
@@ -213,9 +222,11 @@ def dominant_maker(rows, side: str, since: int, px_lo: float | None = None,
     return {"address": addr, "ntl": ntl, "n": n, "share": ntl / total, "total": total}
 
 
-def outcome(last_ntl: float | None, filled_after: float | None, has_owner: bool) -> str:
-    """Bitişte ne oldu: son görülen kalanın ne kadarı sahibin dolumu oldu."""
-    if not has_owner or not last_ntl:
+def outcome(last_ntl: float | None, filled_after: float | None, measured: bool) -> str:
+    """Bitişte ne oldu: son görülen kalanın ne kadarı sahibin dolumu oldu.
+    `measured=False` (sahip yok, dolum geçmişi okunamadı, akış o aralığı görmedi)
+    → 'kayboldu': dolum mu çekilme mi, veriye dayanmadan söylenmez."""
+    if not measured or not last_ts_ok(last_ntl):
         return "kayboldu"
     r = (filled_after or 0.0) / last_ntl
     if r >= EATEN_FULL:
@@ -225,15 +236,26 @@ def outcome(last_ntl: float | None, filled_after: float | None, has_owner: bool)
     return "kısmen"
 
 
-def effect_of(side: str, pos: dict | None, reduce_only) -> str:
-    """'open' (açıyor/büyütüyor) | 'close' (kapatıyor/boşaltıyor)."""
+def last_ts_ok(last_ntl) -> bool:
+    try:
+        return float(last_ntl or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def effect_of(side: str, pos: dict | None, reduce_only, sz: float | None = None) -> str:
+    """'open' (açıyor/büyütüyor) | 'close' (kapatıyor/boşaltıyor) | 'flip' (karşı
+    pozisyondan BÜYÜK, reduce-only olmayan emir: kapatıp ters yönü açar)."""
     if reduce_only:
         return "close"
     if pos is None:
         return "open"
-    if side == "ask":
-        return "close" if pos["side"] == "long" else "open"
-    return "close" if pos["side"] == "short" else "open"
+    against = pos["side"] == ("long" if side == "ask" else "short")
+    if not against:
+        return "open"
+    if sz and abs(float(sz)) > abs(float(pos.get("szi") or 0)):
+        return "flip"
+    return "close"
 
 
 def position_of(state: dict | None, coin: str) -> dict | None:
@@ -289,6 +311,82 @@ def match_order(orders, coin: str, side: str, px: float, ntl: float) -> dict | N
             "oid": best.get("oid")}
 
 
+def owner_order(orders, coin: str, side: str, px_ref: float, reduce_only=None,
+                drift_pct: float = TRACK_DRIFT_PCT) -> dict | None:
+    """Doğrulanmış sahibin açık emirleri içinde DUVAR: o coin+yönde, son fiyata
+    `drift_pct` içinde, aynı reduce-only bayrağında EN BÜYÜK emir. Defterdeki
+    "en büyük seviye" yerine sahibin kendi emri izlenir: yakına başka birinin
+    büyük emri gelse de kimlik kaymaz, taban altına inen kuyruk da görünür kalır."""
+    want = "A" if side == "ask" else "B"
+    best = None
+    for o in orders or []:
+        try:
+            if (o.get("coin") or "") != coin or (o.get("side") or "") != want or o.get("isTrigger"):
+                continue
+            if reduce_only is not None and bool(o.get("reduceOnly")) != bool(reduce_only):
+                continue
+            opx, osz = float(o.get("limitPx") or 0), float(o.get("sz") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if opx <= 0 or osz <= 0 or (px_ref and abs(opx - px_ref) / px_ref * 100 > drift_pct):
+            continue
+        if best is None or opx * osz > best["ntl"]:
+            best = {"px": opx, "sz": osz, "ntl": opx * osz, "cloid": o.get("cloid") or "",
+                    "oid": o.get("oid")}
+    return best
+
+
+def book_level(bids: list[dict], asks: list[dict], side: str, px: float) -> dict:
+    """Defterde o fiyatın sırası, emir sayısı ve karşı derinlik (yoksa level None)."""
+    levels, opp = (asks, bids) if side == "ask" else (bids, asks)
+    out = {"level": None, "n": None, "opp_ntl": sum(lv["px"] * lv["sz"] for lv in opp)}
+    for i, lv in enumerate(levels):
+        if abs(lv["px"] - px) <= px * 1e-9:
+            out.update(level=i, n=lv["n"])
+            break
+    return out
+
+
+def pick_continuation(bids: list[dict], asks: list[dict], side: str, row: dict,
+                      floor: float) -> dict | None:
+    """Sahibi DOĞRULANMAMIŞ duvarın devamı: en büyük seviye değil, son fiyata en
+    yakın tek emirli seviye — ve son boyuttan BÜYÜK olmayan (büyüme doğrulanamaz;
+    başka birinin emri dilim gibi okunmasın)."""
+    levels, opp = (asks, bids) if side == "ask" else (bids, asks)
+    if not levels or not opp:
+        return None
+    best_px = levels[0]["px"]
+    last_px = float(row.get("px_last") or best_px)
+    cap = float(row.get("ntl_last") or 0) * 1.10 + 1.0
+    best = None
+    for i, lv in enumerate(levels[:MAX_LEVELS]):
+        if abs(lv["px"] - best_px) / best_px * 100 > NEAR_PCT:
+            break
+        ntl = lv["px"] * lv["sz"]
+        if not 1 <= lv["n"] <= 2 or ntl < floor or ntl > cap:
+            continue
+        d = abs(lv["px"] - last_px)
+        if best is None or d < best[0]:
+            best = (d, {"px": lv["px"], "sz": lv["sz"], "n": lv["n"], "ntl": ntl, "level": i,
+                        "opp_ntl": sum(x["px"] * x["sz"] for x in opp)})
+    return best[1] if best else None
+
+
+def _flow_covered(since: int) -> bool:
+    """Akış [since, şimdi] aralığını gördü mü? Yeniden başlatma ya da WS kesintisi
+    varsa HAYIR — o zaman "çekildi" demek veriye dayanmaz."""
+    if REG.started > since:
+        return False
+    try:
+        from ..hl import collector as colmod
+        live = colmod.LIVE
+        if live is None:
+            return True                     # kollektörsüz kurulum (test) — akış elle beslenir
+        return bool(live.connected) and float(live.connected_since or 0) <= since
+    except Exception:
+        return False
+
+
 # ---------------- DB ----------------
 
 _COLS = ("coin", "side", "first_ts", "confirm_ts", "last_ts", "alerted_ts", "px_first",
@@ -297,7 +395,7 @@ _COLS = ("coin", "side", "first_ts", "confirm_ts", "last_ts", "alerted_ts", "px_
          "tranches", "owner", "owner_src", "owner_name", "owner_fill", "owner_share",
          "order_tif", "reduce_only", "cloid", "order_ts", "pos_side", "pos_szi", "pos_ntl",
          "pos_entry", "pos_liq", "effect", "eaten_usd", "status", "end_ts", "end_pos_side",
-         "end_pos_szi", "end_pos_ntl", "active")
+         "end_pos_szi", "end_pos_ntl", "active", "offer_id", "seg_peak")
 
 
 async def _insert(row: dict) -> int:
@@ -386,17 +484,32 @@ async def _fallback_cands(coin: str, exclude: str) -> list[str]:
 
 
 async def attribute(client, coin: str, side: str, w: dict, since: int,
-                    px_lo: float, px_hi: float) -> dict:
-    """Duvarın sahibi: önce akıştaki baskın maker (bant içinde), açık emriyle
-    doğrulanır; olmazsa bilinen pozisyon sahipleri denenir. Dönüş alanları DB
-    sütunlarıyla aynı adlıdır."""
+                    px_lo: float, px_hi: float, prefer: str = "", until: int | None = None) -> dict:
+    """Duvarın sahibi: önce `prefer` (bitmiş duvarın sahibi), sonra akıştaki baskın
+    maker (bant + [since, until] içinde), sonra bilinen pozisyon sahipleri — her biri
+    AÇIK EMRİYLE doğrulanır. Doğrulanan adres akış sahibinden farklıysa dolum
+    rakamı o adres için yeniden hesaplanır (başkasının dolumu sahibe yazılmasın).
+    Dönüş alanları DB sütunlarıyla aynı adlıdır."""
     out = {"owner": "", "owner_src": "", "owner_fill": 0.0, "owner_share": None}
     band_lo, band_hi = px_lo * (1 - OWNER_BAND_PCT / 100), px_hi * (1 + OWNER_BAND_PCT / 100)
-    d = dominant_maker(REG.flow.get(coin) or (), side, since, band_lo, band_hi)
+    rows = REG.flow.get(coin) or ()
+    d = None
+    agg = maker_fills(rows, side, since, band_lo, band_hi, until=until)
+    total = sum(v[0] for v in agg.values())
+    if agg and total > 0:
+        addr, (ntl, n) = max(agg.items(), key=lambda kv: kv[1][0])
+        d = {"address": addr, "ntl": ntl, "share": ntl / total}
     flow_owner = d["address"] if d and d["ntl"] >= OWNER_MIN_USD else ""
-    if flow_owner:
-        out.update(owner_fill=d["ntl"], owner_share=d["share"])
-    cands = ([flow_owner] if flow_owner else []) + await _fallback_cands(coin, flow_owner)
+
+    def _fill_of(addr: str) -> tuple[float, float | None]:
+        v = agg.get(addr)
+        return (v[0], v[0] / total) if v and total > 0 else (0.0, None)
+
+    cands: list[str] = []
+    for a in ([prefer] if prefer else []) + ([flow_owner] if flow_owner else []) \
+            + await _fallback_cands(coin, flow_owner):
+        if a and a not in cands:
+            cands.append(a)
     for addr in cands:
         try:
             orders = await client.frontend_open_orders(addr)
@@ -405,11 +518,14 @@ async def attribute(client, coin: str, side: str, w: dict, since: int,
             continue
         m = match_order(orders, coin, side, w["px"], w["ntl"])
         if m:
-            out.update(owner=addr, owner_src="order", order_tif=m["tif"],
-                       reduce_only=m["reduce_only"], cloid=m["cloid"], order_ts=m["order_ts"])
+            fill, share = _fill_of(addr)
+            out.update(owner=addr, owner_src="order", order_tif=m["tif"], owner_fill=fill,
+                       owner_share=share, reduce_only=m["reduce_only"], cloid=m["cloid"],
+                       order_ts=m["order_ts"])
             return out
     if flow_owner:
-        out.update(owner=flow_owner, owner_src="flow")
+        fill, share = _fill_of(flow_owner)
+        out.update(owner=flow_owner, owner_src="flow", owner_fill=fill, owner_share=share)
     return out
 
 
@@ -470,13 +586,15 @@ async def _ctx_map(client) -> dict:
 
 
 async def tick(cfg, client, notifier, ts: int | None = None) -> dict:
-    """Bir adım: tetik → odak + tarama dilimi → defter → durum makinesi → takipçiler."""
+    """Bir adım: tetik → ODAK defterleri (normal öncelik) → takipçi notları →
+    tarama dilimi (düşük öncelik, zaman sınırlı). Sıra önemli: düşük şerit 429
+    sonrası dakikalarca bekleyebilir; izlenen duvarlar ve notlar onu beklemez."""
     ts = ts or now()
     REG.ticks += 1
     out = {"checked": 0, "swept": 0, "focus": 0, "triggers": 0, "cands": 0, "confirmed": 0,
            "alerted": 0, "no_chat": 0, "cooldown": 0, "failed": 0, "ended": 0, "reopened": 0,
            "tranches": 0, "follow_sent": 0, "follow_failed": 0, "book_err": 0,
-           "focus_checked": 0}
+           "focus_checked": 0, "sweep_skipped": 0}
     out["triggers"] = len(_triggers(ts))
     _bump("triggers", out["triggers"])
     actives = await _actives()
@@ -490,25 +608,20 @@ async def tick(cfg, client, notifier, ts: int | None = None) -> dict:
     due = [c for c in sorted(focus) if ts - REG.last_check.get(c, 0) >= FOCUS_SEC]
     out["focus"] = len(focus)
 
-    sweep: list[str] = []
-    poll = int(getattr(cfg, "sticky_poll_sec", 300) or 0)
-    uni = _universe()
-    if poll > 0 and uni:
-        k = max(1, -(-len(uni) * TICK_SEC // poll))      # tavana yuvarla
-        for _ in range(min(k, len(uni))):
-            REG.cursor %= len(uni)
-            c = uni[REG.cursor]
-            REG.cursor += 1
-            if c not in focus:
-                sweep.append(c)
-    for coin, low in [(c, False) for c in due] + [(c, True) for c in sweep]:
+    async def _check(coin: str, low: bool) -> None:
         try:
-            book = await _book(client, coin, low)
+            if low:
+                book = await asyncio.wait_for(_book(client, coin, True), SWEEP_TIMEOUT)
+            else:
+                book = await _book(client, coin, False)
+        except asyncio.TimeoutError:
+            out["sweep_skipped"] += 1
+            return
         except Exception as e:
             out["book_err"] += 1
             _bump("book_err")
             log.debug("l2Book %s: %s", coin, e)
-            continue
+            return
         REG.last_check[coin] = ts
         out["checked"] += 1
         out["swept" if low else "focus_checked"] += 1
@@ -518,14 +631,35 @@ async def tick(cfg, client, notifier, ts: int | None = None) -> dict:
         except Exception:
             REG.errors += 1
             log.exception("yapışkan duvar işleme %s", coin)
+
+    for coin in due:
+        await _check(coin, False)
     try:
         await follow_tick(cfg, notifier, ts, out)
     except Exception:
         REG.errors += 1
         log.exception("yapışkan duvar takipçileri")
+
+    poll = int(getattr(cfg, "sticky_poll_sec", 300) or 0)
+    uni = _universe()
+    paused = 0.0
+    try:
+        paused = float(client.low_paused()) if hasattr(client, "low_paused") else 0.0
+    except Exception:
+        paused = 0.0
+    if poll > 0 and uni and paused <= 0:
+        k = max(1, -(-len(uni) * TICK_SEC // poll))      # tavana yuvarla
+        for _ in range(min(k, len(uni))):
+            REG.cursor %= len(uni)
+            c = uni[REG.cursor]
+            REG.cursor += 1
+            if c not in focus:
+                await _check(c, True)
+    elif poll > 0 and uni:
+        out["sweep_skipped"] += 1           # 429 sonrası düşük şerit susuyor — bu tur atla
     out["cands"] = len(REG.cands)
     for k in ("confirmed", "alerted", "ended", "reopened", "tranches", "follow_sent", "checked",
-              "no_chat", "failed", "follow_failed"):
+              "no_chat", "failed", "follow_failed", "sweep_skipped"):
         _bump(k, out[k])
     return out
 
@@ -550,9 +684,8 @@ async def _process(cfg, client, notifier, coin: str, book: dict, cinfo: dict,
         key = (coin, side)
         row = actives.get(key)
         if row:
-            cont = {w["side"]: w for w in find_sticky(bids, asks, day_vol, _cont_floor(row), 0, max_n=2)}
             found_any = True
-            await _track(cfg, client, notifier, row, cont.get(side), day_vol, oi_usd, ts, out)
+            await _track(cfg, client, notifier, row, bids, asks, day_vol, oi_usd, ts, out)
             continue
         prev = recent.get(key)
         w = strong.get(side)
@@ -577,28 +710,41 @@ async def _candidate(cfg, client, notifier, coin, side, w, prev, day_vol, oi_usd
             REG.cands.pop(key, None)
         return
     if c is None:
-        REG.cands[key] = {"first_ts": ts, "last_ts": ts, "n": 1, "w": w,
-                          "px_min": w["px"], "px_max": w["px"], "moves": 0}
+        REG.cands[key] = {"first_ts": ts, "last_ts": ts, "n": 1, "w": w, "first_w": w,
+                          "max_ntl": w["ntl"], "px_min": w["px"], "px_max": w["px"], "moves": 0}
         return
     if w["px"] != c["w"]["px"]:
         c["moves"] += 1
     c.update(last_ts=ts, n=c["n"] + 1, w=w, px_min=min(c["px_min"], w["px"]),
-             px_max=max(c["px_max"], w["px"]))
+             px_max=max(c["px_max"], w["px"]), max_ntl=max(c["max_ntl"], w["ntl"]))
     if ts - c["first_ts"] < CONFIRM_SEC:
         return
     REG.cands.pop(key, None)
-    own = await attribute(client, coin, side, w, c["first_ts"] - TRIGGER_WIN,
-                          c["px_min"], c["px_max"])
-    # Bitmiş duvarın sahibi döndü → aynı satır yeniden açılır (kanal tekrar yok).
-    if prev is not None and own["owner"] and own["owner"] == prev.get("owner"):
+    since = c["first_ts"] - TRIGGER_WIN
+    if prev is not None and prev.get("end_ts"):
+        since = max(since, int(prev["end_ts"]) + 1)   # bitmiş duvarın dolumları yeni sahibe sayılmaz
+    until = max(ts, now())
+    own = await attribute(client, coin, side, w, since, c["px_min"], c["px_max"],
+                          prefer=(prev or {}).get("owner") or "", until=until)
+    # Bitmiş duvarın sahibi döndü → aynı satır yeniden açılır (kanal tekrar yok). Yalnız
+    # AÇIK EMRİYLE doğrulanmış aynı sahip: akış tek başına kimlik kanıtı değildir.
+    if (prev is not None and own["owner"] and own["owner_src"] == "order"
+            and own["owner"] == prev.get("owner")):
+        back = _eaten_since(prev, int(prev.get("end_ts") or ts), until)
         await _update(prev["id"], active=1, status="aktif", end_ts=None, last_ts=ts,
                       px_last=w["px"], ntl_last=w["ntl"], sz_last=w["sz"], level_last=w["level"],
-                      n_last=w["n"], peak_ntl=max(float(prev.get("peak_ntl") or 0), w["ntl"]),
+                      n_last=w["n"], peak_ntl=max(float(prev.get("peak_ntl") or 0), c["max_ntl"]),
+                      seg_peak=c["max_ntl"],
                       px_min=min(float(prev.get("px_min") or w["px"]), c["px_min"]),
                       px_max=max(float(prev.get("px_max") or w["px"]), c["px_max"]),
                       tranches=int(prev.get("tranches") or 0) + 1,
-                      n_moves=int(prev.get("n_moves") or 0) + c["moves"])
-        REG.eat_ts[prev["id"]] = ts
+                      n_moves=int(prev.get("n_moves") or 0) + c["moves"],
+                      eaten_usd=float(prev.get("eaten_usd") or 0) + back,
+                      owner_src="order", order_tif=own.get("order_tif"),
+                      reduce_only=own.get("reduce_only"), order_ts=own.get("order_ts"),
+                      cloid=own.get("cloid") or prev.get("cloid"))
+        REG.eat_ts[prev["id"]] = until
+        REG.misses.pop(prev["id"], None)
         out["reopened"] += 1
         log.info("🧲 yeniden geldi: %s %s %s", coin, side, _usd(w["ntl"]))
         return
@@ -606,9 +752,11 @@ async def _candidate(cfg, client, notifier, coin, side, w, prev, day_vol, oi_usd
     min_pct = float(getattr(cfg, "sticky_min_vol_pct", 2.0) or 0)
     if w["ntl"] < min_usd or (min_pct > 0 and (w.get("vol_pct") or 0) < min_pct):
         return                              # dönüş adayıydı ama sahibi farklı ve kapı altı
+    fw = c["first_w"]
     row = {"coin": coin, "side": side, "first_ts": c["first_ts"], "confirm_ts": ts, "last_ts": ts,
-           "px_first": c["w"]["px"], "px_last": w["px"], "px_min": c["px_min"], "px_max": c["px_max"],
-           "ntl_first": w["ntl"], "ntl_last": w["ntl"], "peak_ntl": w["ntl"], "sz_last": w["sz"],
+           "px_first": fw["px"], "px_last": w["px"], "px_min": c["px_min"], "px_max": c["px_max"],
+           "ntl_first": fw["ntl"], "ntl_last": w["ntl"], "peak_ntl": c["max_ntl"],
+           "seg_peak": c["max_ntl"], "sz_last": w["sz"],
            "level_last": w["level"], "n_last": w["n"], "day_vol": day_vol, "oi_usd": oi_usd,
            "opp_ntl": w["opp_ntl"], "n_seen": c["n"], "n_moves": c["moves"], "tranches": 0,
            "eaten_usd": 0.0, "status": "aktif", "active": 1, **own}
@@ -619,10 +767,10 @@ async def _candidate(cfg, client, notifier, coin, side, w, prev, day_vol, oi_usd
             row.update(pos_side=pos["side"] if pos else "", pos_szi=pos["szi"] if pos else 0.0,
                        pos_ntl=pos["ntl"] if pos else 0.0, pos_entry=(pos or {}).get("entry"),
                        pos_liq=(pos or {}).get("liq"),
-                       effect=effect_of(side, pos, row.get("reduce_only")))
+                       effect=effect_of(side, pos, row.get("reduce_only"), w["sz"]))
         row["eaten_usd"] = own.get("owner_fill") or 0.0
     row["id"] = await _insert(row)
-    REG.eat_ts[row["id"]] = ts
+    REG.eat_ts[row["id"]] = until
     out["confirmed"] += 1
     log.info("🧲 yapışkan duvar: %s %s %s (%s) sahibi %s", coin, side, _usd(w["ntl"]),
              f"%{w['vol_pct']:.1f}" if w.get("vol_pct") else "?", (own["owner"] or "?")[:10])
@@ -634,23 +782,40 @@ def _usd(n) -> str:
     return fmt.usd(n)
 
 
+def _count_once(row: dict, reason: str, out: dict) -> None:
+    """Gönderilemeyen alarm duvar başına BİR kez sayılır (her 30 sn'lik deneme değil)."""
+    k = (int(row["id"]), reason)
+    if k not in REG.counted:
+        REG.counted.add(k)
+        out[reason] += 1
+
+
 async def _alert(cfg, notifier, row: dict, out: dict) -> None:
-    """Kanal alarmı (kripto kanalı) + `/takip_N`. İşaret yalnız başarılı gönderimden sonra."""
+    """Kanal alarmı (kripto kanalı) + `/takip_N`. İşaret yalnız başarılı gönderimden sonra.
+    Tür kapalıysa denenmez; teklif duvar başına bir kez yazılır."""
+    from ..notify import kind_enabled
     from ..telegram import format as fmt
     from .twaplive import chat_for
-    if notifier is None:
+    if notifier is None or not kind_enabled(cfg, "sticky"):
         return
     chat, can = chat_for(cfg, row["coin"])
     if not can:
-        out["no_chat"] += 1
+        _count_once(row, "no_chat", out)
         return
     key = f"{row['coin']}:{row['side']}"
     if await alert_recent("sticky", key, COOLDOWN_SEC):
         out["cooldown"] += 1
         return
-    offer = await _offer(row)
+    offer = row.get("offer_id")
+    if not offer:
+        offer = await _offer(row)
+        if offer:
+            await _update(row["id"], offer_id=offer)
+            row["offer_id"] = offer
     text = fmt.sticky_alert(row, offer)
-    ok = await notifier.send("sticky", text, priority="high", key=f"sticky:{key}",
+    # Anahtar duvar kimliğiyle: satılabilir botun 12 sa tekilleştirmesi aynı coin+yöndeki
+    # SONRAKİ duvarı (6 sa kanal soğumasından sonra) yutmasın.
+    ok = await notifier.send("sticky", text, priority="high", key=f"sticky:{row['id']}",
                              chat_id=chat, coin=row["coin"])
     if ok:
         await _update(row["id"], alerted_ts=now())
@@ -658,7 +823,7 @@ async def _alert(cfg, notifier, row: dict, out: dict) -> None:
         await alert_log("sticky", key, text)
         out["alerted"] += 1
     else:
-        out["failed"] += 1
+        _count_once(row, "failed", out)
 
 
 async def _offer(row: dict) -> int | None:
@@ -677,52 +842,94 @@ async def _offer(row: dict) -> int | None:
 
 
 def _eaten_since(row: dict, since: int, until: int) -> float:
+    """Sahibin (since, until] aralığında bu duvarın bandında aldığı maker dolumu (akıştan)."""
     owner = row.get("owner") or ""
     if not owner:
         return 0.0
     lo = float(row.get("px_min") or 0) * (1 - NEAR_PCT / 100)
     hi = float(row.get("px_max") or 0) * (1 + NEAR_PCT / 100)
-    agg = maker_fills(REG.flow.get(row["coin"]) or (), row["side"], since + 1, lo, hi, maker=owner)
-    return sum(v[0] for k, v in agg.items()) if agg else 0.0
+    agg = maker_fills(REG.flow.get(row["coin"]) or (), row["side"], since + 1, lo, hi,
+                      maker=owner, until=until)
+    return sum(v[0] for v in agg.values()) if agg else 0.0
 
 
-async def _track(cfg, client, notifier, row: dict, w: dict | None, day_vol, oi_usd, ts, out) -> None:
+async def _owner_fills_after(client, row: dict, since: int, until: int) -> float | None:
+    """Sahibin GERÇEK dolum geçmişinden (userFillsByTime) bu coin+yönde, [since, until]
+    aralığındaki maker dolumu. Yeniden başlatmaya ve WS kesintisine dayanıklı;
+    okunamazsa None (akışa düşülür, o da kapsanmıyorsa sonuç 'kayboldu')."""
+    want = "A" if row["side"] == "ask" else "B"
+    try:
+        fills = await client.user_fills_by_time(row["owner"], int(since) * 1000, int(until) * 1000)
+    except Exception:
+        log.debug("dolum geçmişi alınamadı %s", (row.get("owner") or "")[:10], exc_info=True)
+        return None
+    if not isinstance(fills, list):
+        return None
+    tot = 0.0
+    for f in fills:
+        try:
+            if f.get("coin") != row["coin"] or f.get("side") != want or f.get("crossed"):
+                continue
+            tot += float(f.get("px") or 0) * float(f.get("sz") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return tot
+
+
+async def _track(cfg, client, notifier, row: dict, bids, asks, day_vol, oi_usd, ts, out) -> None:
+    """İzlenen duvarın bu bakışı. Sahibi AÇIK EMRİYLE doğrulanmışsa duvar o emrin
+    kendisidir (defterdeki en büyük seviye değil); değilse son fiyata en yakın,
+    büyümeyen tek emirli seviye. Bitiş: ardışık kaçırmalar GONE_SEC'i doldurunca."""
     wid = int(row["id"])
-    cur = REG.eat_ts.get(wid, ts)
-    last = float(row.get("ntl_last") or 0)
-    if (w is not None and row.get("owner_src") == "order" and last
-            and w["ntl"] >= last * TRANCHE_UP and w["ntl"] - last >= TRANCHE_MIN_USD):
-        # Büyüyen seviye başka birinin emri olabilir: sahibin açık emriyle doğrula.
-        # Eşleşmezse bu duvar görünmüyor sayılır (süre dolunca biter, yeni seviye
-        # kendi adaylığından geçer). Emirler okunamazsa dilim kabul edilir.
+    verified = row.get("owner_src") == "order" and row.get("owner")
+    w = None
+    if verified:
         try:
             orders = await client.frontend_open_orders(row["owner"])
-            if match_order(orders, row["coin"], row["side"], w["px"], w["ntl"]) is None:
-                w = None
         except Exception:
-            log.debug("dilim doğrulaması: açık emirler alınamadı", exc_info=True)
+            # Sahibin emirleri okunamadı: bu bakış ne görüş ne kaçırmadır — defterdeki
+            # başka bir seviyeyi duvar sanmaktansa bir sonraki bakışı bekle.
+            log.debug("izleme: açık emirler alınamadı", exc_info=True)
+            return
+        o = owner_order(orders, row["coin"], row["side"], float(row.get("px_last") or 0),
+                        row.get("reduce_only"))
+        if o is not None:
+            bl = book_level(bids, asks, row["side"], o["px"])
+            w = {**o, "level": bl["level"], "n": bl["n"], "opp_ntl": bl["opp_ntl"]}
+    else:
+        w = pick_continuation(bids, asks, row["side"], row, _cont_floor(row))
+    until = max(ts, now())
     if w is not None:
-        eaten = float(row.get("eaten_usd") or 0) + _eaten_since(row, cur, ts)
-        REG.eat_ts[wid] = ts
+        REG.misses.pop(wid, None)
+        cur = REG.eat_ts.get(wid, until)
+        eaten = float(row.get("eaten_usd") or 0) + _eaten_since(row, cur, until)
+        REG.eat_ts[wid] = until
+        last = float(row.get("ntl_last") or 0)
         fields = {"last_ts": ts, "px_last": w["px"], "ntl_last": w["ntl"], "sz_last": w["sz"],
-                  "level_last": w["level"], "n_last": w["n"], "n_seen": int(row.get("n_seen") or 0) + 1,
+                  "level_last": w.get("level"), "n_last": w.get("n"),
+                  "n_seen": int(row.get("n_seen") or 0) + 1,
                   "px_min": min(float(row.get("px_min") or w["px"]), w["px"]),
                   "px_max": max(float(row.get("px_max") or w["px"]), w["px"]),
                   "peak_ntl": max(float(row.get("peak_ntl") or 0), w["ntl"]),
-                  "eaten_usd": eaten, "opp_ntl": w["opp_ntl"]}
+                  "seg_peak": max(float(row.get("seg_peak") or 0), w["ntl"]),
+                  "eaten_usd": eaten, "opp_ntl": w.get("opp_ntl")}
+        if w.get("cloid"):
+            fields["cloid"] = w["cloid"]
         if day_vol:
             fields["day_vol"] = day_vol
         if oi_usd:
             fields["oi_usd"] = oi_usd
         if w["px"] != row.get("px_last"):
             fields["n_moves"] = int(row.get("n_moves") or 0) + 1
-        if last and w["ntl"] >= last * TRANCHE_UP and w["ntl"] - last >= TRANCHE_MIN_USD:
+        # Dilim yalnız DOĞRULANMIŞ sahibin kendi emri büyüyünce (başka emir dilim sayılmaz).
+        if verified and last and w["ntl"] >= last * TRANCHE_UP and w["ntl"] - last >= TRANCHE_MIN_USD:
             fields["tranches"] = int(row.get("tranches") or 0) + 1
+            fields["seg_peak"] = w["ntl"]
             out["tranches"] += 1
             log.info("🧲 yeni dilim: %s %s %s → %s", row["coin"], row["side"], _usd(last), _usd(w["ntl"]))
         await _update(wid, **fields)
         row.update(fields)
-        # Kanal alarmı daha önce gidemediyse (sohbet hatası) ve hâlâ kapıdaysa yeniden dene.
+        # Kanal alarmı daha önce gidemediyse ve hâlâ kapıdaysa yeniden dene.
         if not row.get("alerted_ts"):
             min_usd = float(getattr(cfg, "sticky_min_usd", 1_000_000) or 0)
             min_pct = float(getattr(cfg, "sticky_min_vol_pct", 2.0) or 0)
@@ -730,11 +937,21 @@ async def _track(cfg, client, notifier, row: dict, w: dict | None, day_vol, oi_u
             if w["ntl"] >= min_usd and (min_pct <= 0 or (vp or 0) >= min_pct):
                 await _alert(cfg, notifier, row, out)
         return
-    if ts - int(row.get("last_ts") or ts) < GONE_SEC:
-        return                              # iptal-yeniden-koy boşluğu olabilir — sabret
-    after = _eaten_since(row, int(row.get("last_ts") or ts) - 1, ts)
-    eaten = float(row.get("eaten_usd") or 0) + _eaten_since(row, cur, ts)
-    status = outcome(row.get("ntl_last"), after, bool(row.get("owner")))
+    # Kaçırma: tek bakış (iptal-yeniden-koy boşluğu, yeniden başlatma sonrası ilk tur)
+    # ASLA bitirmez — ardışık en az MISS_MIN kaçırma ve GONE_SEC dolmalı.
+    m = REG.misses.setdefault(wid, [ts, 0])
+    m[1] += 1
+    if m[1] < MISS_MIN or ts - m[0] < GONE_SEC - FOCUS_SEC:
+        return
+    last_ts = int(row.get("last_ts") or ts)
+    cur = REG.eat_ts.get(wid, until)
+    eaten = float(row.get("eaten_usd") or 0) + _eaten_since(row, cur, until)
+    after = None
+    if verified:
+        after = await _owner_fills_after(client, row, last_ts, until)
+    if after is None and row.get("owner") and _flow_covered(last_ts):
+        after = _eaten_since(row, last_ts, until)
+    status = outcome(row.get("ntl_last"), after, after is not None)
     fields = {"active": 0, "status": status, "end_ts": ts, "eaten_usd": eaten}
     if row.get("owner"):
         ok, pos = await _position(client, row["owner"], row["coin"])
@@ -744,6 +961,7 @@ async def _track(cfg, client, notifier, row: dict, w: dict | None, day_vol, oi_u
                           end_pos_ntl=pos["ntl"] if pos else 0.0)
     await _update(wid, **fields)
     REG.eat_ts.pop(wid, None)
+    REG.misses.pop(wid, None)
     out["ended"] += 1
     log.info("🧲 bitti: %s %s %s (tepe %s, yenen %s)", row["coin"], row["side"], status,
              _usd(row.get("peak_ntl")), _usd(eaten))
@@ -764,8 +982,12 @@ async def follow_start(cfg, wall_id: int, chat_id: str = "") -> tuple[int | None
                                  (int(wall_id), chat_id or ""))
         r = await cur.fetchone()
         if r:
-            await conn.execute("UPDATE sticky_follows SET active=1, expires_ts=?, end_note=NULL"
-                               " WHERE id=?", (ts + FOLLOW_DAYS * 86400, r["id"]))
+            # Yeniden basış: işaretler de BUGÜNE çekilir (aradaki eski dilim/bitiş yeni not olmasın).
+            await conn.execute(
+                "UPDATE sticky_follows SET active=1, expires_ts=?, end_note=NULL, tranche_seen=?,"
+                " half_ts=NULL, end_seen_ts=? WHERE id=?",
+                (ts + FOLLOW_DAYS * 86400, int(w.get("tranches") or 0),
+                 None if w["active"] else w.get("end_ts"), r["id"]))
             return int(r["id"]), w
         cur = await conn.execute(
             """INSERT INTO sticky_follows(wall_id,chat_id,created_ts,expires_ts,active,tranche_seen,
@@ -819,13 +1041,18 @@ async def follow_tick(cfg, notifier, ts: int, out: dict) -> None:
         elif int(r.get("tranches") or 0) > int(r.get("tranche_seen") or 0):
             stage = "reopen" if r.get("end_seen_ts") else "tranche"
             fields = {"tranche_seen": int(r["tranches"]), "end_seen_ts": None, "half_ts": None}
-        elif (not r.get("half_ts") and r.get("peak_ntl")
-              and float(r.get("ntl_last") or 0) <= HALF_SHARE * float(r["peak_ntl"])):
+        elif (not r.get("half_ts") and (r.get("seg_peak") or r.get("peak_ntl"))
+              and float(r.get("ntl_last") or 0)
+              <= HALF_SHARE * float(r.get("seg_peak") or r["peak_ntl"])):
+            # Kıyas bu DİLİMİN tepesiyle (seg_peak): eski tepenin yarısı altında dönen
+            # duvar "yeniden geldi"nin hemen ardından "yarılandı" demesin.
             stage, fields = "half", {"half_ts": ts}
         if not stage:
             continue
         text = fmt.sticky_end(r) if stage == "end" else fmt.sticky_note(r, stage)
-        ok = await notifier.send("track", text, priority="high",
+        # 'critical': kişi bunu bilerek istedi — sessiz saatte ertelenip her 15 sn'de
+        # sabah özetine yeniden yazılmasın (twapfollow bitiş notuyla aynı).
+        ok = await notifier.send("track", text, priority="critical",
                                  key=f"sticky:{fid}:{stage}:{r.get('tranches') or 0}",
                                  chat_id=r["chat_id"] or "")
         if not ok:
