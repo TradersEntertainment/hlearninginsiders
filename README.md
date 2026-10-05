@@ -58,7 +58,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
 | `/takipler` · `/birak_N` | Aktif pozisyon takipleri · takibi bırak |
 | `/duvartakipler` · `/birak_duvar_N` | İzlenen 🧲 yapışkan duvarlar · takibi bırak |
-| `/hesaplar` | 👤 İzlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
+| `/hesaplar` | 🔂 Dilimli alım-satım durumu (süren dizi / son dizi) + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
@@ -437,6 +437,11 @@ tabanının (`twap_lookup_min_usd`, $50K) altında kalan küçük emirler ve dil
 kayıt tabanının altında kalan çok sabırlı emirler burada **görünmez — ve
 görünmediklerini de bilemeyiz**. Sayfa bunu yazar, kapalı olduğunu ima etmez.
 
+**TWAP emri olmayan dilimler:** canlı radar bir koşuyu ancak HL'de gerçek bir TWAP emri
+bulursa bildirir (`userTwapHistory`); kendi botuyla her ~30 sn'de IOC atan hesap
+`no_order` ile düşer. Böyle bir hesap izlenecekse → 🔂 Dilimli alım-satım (hesap + coin
+listesi, hesap grubu).
+
 ## 🧲 Yapışkan duvar: `/yapiskan`
 
 **Soru (02.10, SAND ekranı):** "Büyük bir emir sürekli oralarda bekliyor, market buy
@@ -601,6 +606,76 @@ kesildiği görüldü) eksik dönebildiği için 100'e ulaşınca sınırsız `o
 emirler doğrulanır: görünmeyen emir "kalktı" sayılmaz. `/hesaplar` son yoklamanın
 kaydını ve son 1 saatin dolumlarını gösterir (hesap başına 1–3 `userFillsByTime`, 60 sn
 önbellekli; pozisyon/emir için HL'ye istek atmaz). Kör nokta: yalnız ana dex.
+
+## 🔂 Dilimli alım-satım: TWAP emri olmadan dilim dilim (`ACCOUNT_CHAT_ID`)
+
+**İstek (05.10):** "Hisse tarafında adam TWAP emri vermeden TWAP atıyor, nasıl yapıyor
+bilmiyorum; almaya başladığında ve bitirdiğinde bildirim istiyorum — sadece CBRS"
+(`0x30afce2f6842bf183c7e3fe7162e279ff0b6393e`). Kararlar: hesap takip grubuna
+(`ACCOUNT_CHAT_ID`), **alış + satış** dizileri, mesajda aynı dakikalardaki diğer hisse
+işlemleri tek satır — bildirim yalnız listedeki coin için.
+
+**Nasıl yapıyor — ölçüldü (HL info API, 03–05.10):**
+- CBRS = HIP-3 `xyz:CBRS`. Hesap xyz'de ~$10.7M; CBRS LONG ~146K adet (~$26M, 4x izole).
+- Her dilim **tek bir Limit IOC emri** (`orderStatus`: Limit, Ioc, cloid yok; dolumlarda
+  `twapId` boş, builder ücreti yok). Limit fiyat dolum ortalamasının **~%0.28 üstünde** →
+  market emri gibi 3–4 seviye süpürür, ~5–7 dolum, tam dolar, %100 taker. HL'nin TWAP emri
+  değil: kendi botu. Bir emrin bütün dolumları aynı milisaniyede (4,217 emirde istisna yok).
+- Ritim: emirler arası **21.4–50.3 sn** (medyan 32), dilim medyanı ~$8K (p10 ~$4K, p90
+  ~$11–13K). Diziler saatlerce sürüyor (03.10 18:00 → 04.10 06:30 UTC $10.8M, 1,373 emir;
+  04.10 14:30 → 19:07 $4.0M; 05.10 00:08'den beri…), aralarında ≥5.5 saat.
+- **Aynı bot, aynı dakikalar:** DRAM/INTC/MU'da aynı başlangıç-bitiş ve ritimle Close Long
+  **satış** (dilim ~$3.4K/$3.4K/$2.7K) — CBRS'e rotasyon. 04.10 15–16 UTC'de CBRS
+  hacminin **%16.9**'u bu hesaptı.
+- 🧭 Mevcut TWAP radarı (`twaplive`) bu düzenli dilimleri WS'ten görüyor ama HL'de TWAP
+  emri olmadığı için `no_order` diyerek bırakıyordu — bu takip o boşluğu hesap bazında kapatır.
+
+**Kurallar** (Ayarlar → 🔂 Dilimli alım-satım; liste `adres:SEMBOL[:isim]`, sembol dex'siz):
+- `userFillsByTime` ile **30 sn'de bir** (REST: kesin emir sayısı/oid, yön, taker, `twapId`,
+  `startPosition`; kesintide kaçan dolumlar geçmişten yeniden okunur). Tek istek hesabın
+  tüm coinlerini getirir; diziler tam coin + yönle (`xyz:CBRS|B`) izlenir.
+- **Dizi:** aynı coin ve yönde emirler, aralar ≤ **300 sn** (`slice_quiet_sec`; ölçülen
+  en uzun ara 50 sn). Alış ve satış dizileri **ayrı** — tek ters emir alımı bitirmez.
+- **Başladı:** aynı yönde ≥ **3 emir** ve ≥ **$10K** (ilk dilimden ~1–1.5 dk sonra).
+  Eşiğe varmayan kısa seri (elle tek işlem) sessizce düşer.
+- **Bitti:** aynı yönde 300 sn dilim gelmedi **ve** o tur dolumlar TAM okundu — okuma
+  hatası, yetişme turu ya da gecikmeli HL düğümü "bitti" dedirtmez (veri yok ≠ sessizlik).
+  Karşı yönde dizi yerleşir ve eskisinin ondan sonra emri yoksa hemen biter ("ardından
+  SATIŞ dizisi başladı").
+- **Süreklilik:** imleç milisaniyesindeki dolumlar (HL'de başlangıç dahil) sonraki okumada
+  yeniden gelmeli; sayfa boş gelirse düğüm gecikmeli → o tur belirsiz; dolu ama onlar yoksa
+  HL'nin kayan geçmişi imleci aşmış → "izleme yeniden başladı". Sayfa sınırındaki son
+  milisaniye sonraki tura bırakılır (bir IOC'nin dolumları bölünmez).
+- **İlk tur / yeniden başlatma:** son 6 saat okunur (gerekirse birkaç tura yayılır, düşük
+  öncelik) → **"izleme başladı"** özeti: süren dizi "…TSİ'den beri" ya da son dizi. ≤2 sa
+  kesintide kaçan dolumlar yeniden oynatılır (geç fark edilen bitiş "⏱ N dk geç" notuyla);
+  daha uzun kesintide "aradaki diziler yazılmadı" + "kesintiden önce ALIM sürüyordu".
+
+**Mesajlar** (hesap grubu, saatler TSİ; tahmin yok):
+- 🔂🟢 **BAŞLADI:** ilk dilim saati, emir/adet/$, ortalama, ritim, dilim büyüklüğü,
+  **yöntem** ("HL TWAP emri değil — her dilim tek Limit IOC emri: limit … = dolum
+  ortalamasının %0.28 üstünde · 5 dolum / 3 fiyat seviyesi · tam doldu"), pozisyon önce →
+  sonra (dolumların `startPosition`'ı) + şimdi (giriş, kaldıraç, liq), "🔄 Aynı dakikalarda:
+  DRAM kapatma (Close Long) …".
+- 🔂🏁 **BİTTİ:** başlangıç → bitiş, süre, toplam emir · adet · $, ortalama, ilk → son dilim
+  fiyatı, ritim/dilim dağılımı, **coinin hacmindeki payı** (aynı dakikaların 1 dk mumları,
+  adet), pozisyon önce → sonra, diğer coinler $ ve emir sayısıyla. "Aynı dakikalarda"
+  yalnız dizinin içinde kalan işlemleri sayar (son dilimden sonrakini değil).
+- `/hesaplar` en üstte 🔂 durum: "CBRS: ALIM SÜRÜYOR — 03:08 TSİ'den beri 412 emir ·
+  $3.3M · son dilim 12 sn önce" ya da son dizi (kv'den, HL isteği yok). `/tani` satırı:
+  adres sayısı, yeni dolum, süren dizi, toplamlar, hata / belirsiz tur / geri çekilme,
+  ACCOUNT_CHAT_ID yoksa uyarı.
+
+**Bütçe:** adres başına 30 sn'de bir `userFillsByTime` (ağırlık 20 + 20 dolumda 1; tur
+başına medyan 13 dolum) ≈ dakikada ~45; başladı: + `clearinghouseState` + `orderStatus`;
+bitti: + `clearinghouseState` + `candleSnapshot`; ilk tur en çok 8 sayfa bir kez.
+`ACCOUNT_CHAT_ID` boşsa ya da `notify_slice` kapalıysa **hiç istek yok**. Gönderilemeyen
+mesajın durumu yazılmaz, yeniden deneme aralığı katlanarak açılır (en çok 15 dk).
+
+**Kör noktalar, açıkça:** hiç dolmayan IOC dolum geçmişinde görünmez (ritim dolan
+dilimlerden ölçülür); "bitti" son dilimden ~5 dk sonra gelir (300 sn sessizlik şartı);
+HL dolum geçmişi kayan pencere (05.10'da ~35 saat) — 2 saatten uzun kesintide aradaki
+diziler yazılmaz; yalnız listedeki adres + coin izlenir.
 
 ## Liq attack radarı: `/saldiri`
 

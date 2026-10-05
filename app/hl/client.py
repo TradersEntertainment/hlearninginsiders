@@ -249,6 +249,12 @@ class HLClient:
             p["endTime"] = end_ms
         return await self.info(p)
 
+    async def order_status(self, user: str, oid: int):
+        """Tek emrin durumu (ağırlık 2). Yanıt: {"status": "order", "order": {"order":
+        {coin, side, limitPx, sz, oid, timestamp, orderType, origSz, tif, cloid, …},
+        "status": "filled", "statusTimestamp": ms}}; bilinmeyen oid → {"status": "unknownOid"}."""
+        return await self.info({"type": "orderStatus", "user": user, "oid": int(oid)})
+
     async def ledger_updates(self, user: str, start_ms: int):
         return await self.info({"type": "userNonFundingLedgerUpdates",
                                 "user": user, "startTime": start_ms})

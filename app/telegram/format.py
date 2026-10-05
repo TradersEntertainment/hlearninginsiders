@@ -394,7 +394,7 @@ TASK_TR = {
     "digest": "günlük özet", "collector": "canlı işlem akışı (WS)",
     "telegram": "telegram botu", "watchdog": "bekçi", "ai": "AI analist",
     "channel": "kanal yayını", "twap": "TWAP radarı (arşiv)", "twaplive": "canlı TWAP radarı", "paywatch": "ödeme izleyici", "billing": "faturalama", "fanout": "bildirim dağıtımı", "public_digest": "ücretsiz sabah özeti",
-    "sim": "liq simülasyonu",
+    "sim": "liq simülasyonu", "slicewatch": "dilimli alım-satım izleyici",
 }
 
 
@@ -968,6 +968,269 @@ def acct_events(addr: str, st: dict, events: list[dict], marks: dict) -> str:
                          f" {int(L.get('n') or 0)} emir, {usd(L.get('ntl'))}) — doldu mu iptal mi,"
                          f" pozisyondan okunur{pos_txt}")
     lines.append(_acct_foot(st))
+    return "\n".join(lines)
+
+
+# ---------------- 🔂 dilimli alım-satım (hesap grubu) ----------------
+# Hepsi ÖLÇÜLEN: dolumlar (oid, dir, crossed, twapId, startPosition), orderStatus, 1 dk mumlar.
+# 🔂 bilerek: 🔁 aynı gruptaki hesap özetinin "gerçekleşen dolumlar" satırında.
+
+def tsi_hm(ms, ref_ms=None) -> str:
+    """Milisaniye → 'SS:DD' (TSİ); referansla aynı gün değilse 'GG.AA SS:DD'."""
+    t = datetime.fromtimestamp(int(ms) / 1000, TR)
+    if ref_ms is not None and datetime.fromtimestamp(int(ref_ms) / 1000, TR).date() != t.date():
+        return t.strftime("%d.%m %H:%M")
+    return t.strftime("%H:%M")
+
+
+def _slice_sym(coin: str) -> str:
+    return esc(assets.label(coin or "")).upper()
+
+
+def _slice_who(addr: str, name: str | None) -> str:
+    return f"{esc(name)} · {alink(addr)}" if name else alink(addr)
+
+
+def _slice_side(side: str) -> str:
+    return "ALIM" if side == "B" else "SATIŞ"
+
+
+def _ago_txt(sec) -> str:
+    sec = max(0, int(sec or 0))
+    return f"{sec} sn" if sec < 60 else dur_txt(sec)
+
+
+def _slice_method(m: dict | None, s: dict, run: dict) -> str:
+    """Nasıl yapıyor — dolumlardan (twapId, taker, dolum/seviye) ve son dilimin emrinden."""
+    if int(run.get("twap") or 0) > 0:
+        return f"🛠 HL TWAP emri (dolumlarda twapId {esc(run.get('twap_id'))})"
+    base = "🛠 HL TWAP emri değil (dolumlarda twapId yok)"
+    if m:
+        tif = m.get("tif") or ""
+        kind = " ".join(x for x in (m.get("order_type"), "IOC" if tif.lower() == "ioc" else tif) if x)
+        head = f"{base} — her dilim tek <b>{esc(kind)}</b> emri"
+        parts = []
+        if m.get("off_pct") is not None:
+            way = "üstünde" if run.get("side") == "B" else "altında"
+            parts.append(f"limit {px5(m.get('limit'))} = dolum ortalamasının %{m['off_pct']:.2f} {way}")
+        if m.get("fills"):
+            parts.append(f"{m['fills']} dolum / {m.get('levels') or '?'} fiyat seviyesi")
+        fp = m.get("filled_pct")
+        if fp is not None:
+            parts.append("tam doldu" if fp >= 99.95 else f"%{fp:.0f} doldu")
+        return head + (": " + " · ".join(parts) if parts else "")
+    tk = s.get("taker")
+    return (f"{base} · dilim başına ~{s.get('fills_med') or '?'} dolum / {s.get('lv_med') or '?'}"
+            f" fiyat seviyesi" + (f" · %{tk:.0f} taker" if tk is not None else ""))
+
+
+def _slice_pos_tail(posd: dict | None) -> str:
+    """' · şimdi $26.2M · giriş 180.67 · 4x izole · liq 142.73' (canlı clearinghouse)."""
+    if not posd or not posd.get("ok"):
+        return ""
+    p = posd.get("pos")
+    if not p:
+        return " · şimdi pozisyon yok"
+    out = f" · şimdi {usd(p.get('notional'))} · giriş {px5(p.get('entry_px'))}"
+    lev = float(p.get("leverage") or 0)
+    if lev:
+        lt = {"isolated": " izole", "cross": " çapraz"}.get(p.get("lev_type") or "", "")
+        out += f" · {lev:g}x{lt}"
+    if p.get("liq_px"):
+        out += f" · liq {px5(p['liq_px'])}"
+    return out
+
+
+def _slice_others(others: list, limit: int = 4) -> str | None:
+    if not others:
+        return None
+    parts = [f"<b>{_slice_sym(o['coin'])}</b> {_DIR_TXT.get(o['dir'], esc(o['dir']))}"
+             f" {usd(o['usd'])} ({o['n']} emir)" for o in others[:limit]]
+    more = f" · … ve {len(others) - limit} daha" if len(others) > limit else ""
+    return "🔄 Aynı dakikalarda: " + " · ".join(parts) + more
+
+
+def _slice_late(late, ctx: dict, what: str) -> str | None:
+    if int(late or 0) <= int(ctx.get("late_sec") or 120):
+        return None
+    return f"⏱ {what}{dur_txt(late)} geç fark edildi (izleyici kapalıydı ya da yetişiyordu)"
+
+
+def _slice_start_block(addr: str, ent: dict, e: dict, ctx: dict) -> list[str]:
+    r, s, now_ms = e["run"], e["stats"], ctx["now_ms"]
+    sym = _slice_sym(r["coin"])
+    lines = [f"🔂🟢 <b>{sym} · DİLİMLİ {_slice_side(r['side'])} BAŞLADI</b>"
+             f" · 👤 {_slice_who(addr, ent.get('name'))}",
+             f"İlk dilim <b>{tsi_hm(r['first'], now_ms)} TSİ</b> · şimdiye {s['n']} emir ·"
+             f" {qty_txt(s['sz'])} {sym} ≈ <b>{usd(s['usd'])}</b> · ort. {px5(s['vwap'])}"]
+    if s.get("gap_med") is not None:
+        lines.append(f"⏱ dilimler arası ~{s['gap_med']:.0f} sn ({s['gap_min']:.0f}–{s['gap_max']:.0f} sn)"
+                     f" · dilim ~{usd(s['sl_med'])}"
+                     + (f" · %{s['taker']:.0f} taker" if s.get("taker") is not None else ""))
+    lines.append(_slice_method(e.get("method"), s, r))
+    lines.append(f"📊 Pozisyon {_signed_pos(r.get('pos0'), sym)} → <b>{_signed_pos(r.get('pos1'), sym)}</b>"
+                 + _slice_pos_tail((ctx.get("pos") or {}).get(r["coin"])))
+    for x in (_slice_others(s.get("others")), _slice_late(e.get("late"), ctx, "")):
+        if x:
+            lines.append(x)
+    lines.append(f"<i>Bitti mesajı: aynı yönde {int(ctx.get('quiet_s') or 300) // 60} dk dilim gelmezse.</i>")
+    return lines
+
+
+def _slice_end_block(addr: str, ent: dict, e: dict, ctx: dict) -> list[str]:
+    r, s, now_ms = e["run"], e["stats"], ctx["now_ms"]
+    sym = _slice_sym(r["coin"])
+    side = _slice_side(r["side"])
+    title = f"DİLİMLİ {side} BAŞLADI VE BİTTİ" if e.get("also_start") else f"DİLİMLİ {side} BİTTİ"
+    why = (f"ardından {_slice_side('A' if r['side'] == 'B' else 'B')} dizisi başladı"
+           if e.get("reason") == "flip" else
+           f"son dilimden sonra {int(ctx.get('quiet_s') or 300) // 60} dk aynı yönde dilim gelmedi")
+    lines = [f"🔂🏁 <b>{sym} · {title}</b> · 👤 {_slice_who(addr, ent.get('name'))}",
+             f"<b>{tsi_hm(r['first'], now_ms)} → {tsi_hm(r['last'], now_ms)} TSİ</b>"
+             f" ({dur_txt(s['dur'])}) · {why}",
+             f"Toplam <b>{s['n']} emir · {qty_txt(s['sz'])} {sym} ≈ {usd(s['usd'])}</b> ·"
+             f" ort. {px5(s['vwap'])}" + (f" · %{s['taker']:.0f} taker" if s.get("taker") is not None else "")]
+    if s.get("chg") is not None:
+        lines.append(f"Fiyat: ilk dilim {px5(s['px0'])} → son dilim {px5(s['px1'])} ({s['chg']:+.2f}%)")
+    if s.get("gap_med") is not None:
+        lines.append(f"⏱ dilimler arası medyan {s['gap_med']:.0f} sn ({s['gap_min']:.0f}–{s['gap_max']:.0f} sn)"
+                     f" · dilim medyan {usd(s['sl_med'])} (p10 {usd(s['sl_p10'])} – p90 {usd(s['sl_p90'])})")
+    sh = e.get("share")
+    if sh:
+        lines.append(f"📈 {sym} hacmindeki payı: <b>%{sh['share']:.1f}</b> ({qty_txt(sh['his'])} /"
+                     f" {qty_txt(sh['vol'])} {sym}, aynı dakikaların"
+                     f" {'1 dk' if sh.get('interval') == '1m' else '15 dk'} mumları)")
+    lines.append(f"📊 Pozisyon {_signed_pos(r.get('pos0'), sym)} → <b>{_signed_pos(r.get('pos1'), sym)}</b>"
+                 + _slice_pos_tail((ctx.get("pos") or {}).get(r["coin"])))
+    o = _slice_others(s.get("others"))
+    if o:
+        lines.append(o)
+    if r.get("pre") and ctx.get("window"):
+        lines.append(f"⚠️ Başlangıç ölçülmedi: dizi, izlemenin geriye baktığı pencerenin başında"
+                     f" ({tsi_hm(ctx['window'], now_ms)} TSİ) zaten sürüyordu — sayılar o andan itibaren")
+    late = _slice_late(e.get("late"), ctx, "Bitiş ")
+    if late:
+        lines.append(late)
+    return lines
+
+
+def slice_events(addr: str, ent: dict, events: list[dict], st: dict, ctx: dict) -> str:
+    """Bir turun olayları TEK mesajda (yön dönüşünde önce biten, sonra başlayan)."""
+    blocks = []
+    for e in events:
+        blocks.append("\n".join(_slice_start_block(addr, ent, e, ctx) if e["t"] == "start"
+                                else _slice_end_block(addr, ent, e, ctx)))
+    return "\n\n".join(blocks)
+
+
+def _slice_run_line(sym: str, r: dict, s: dict, now_ms: int) -> str:
+    since = f"{tsi_hm(r['first'], now_ms)} TSİ'den beri"
+    if r.get("pre"):
+        since += " (daha öncesi bakılan pencerenin dışında)"
+    gap = f" · dilimler arası ~{s['gap_med']:.0f} sn" if s.get("gap_med") is not None else ""
+    return (f"<b>{sym}</b>: şu an <b>{_slice_side(r['side'])} SÜRÜYOR</b> — {since} {s['n']} emir ·"
+            f" {qty_txt(s['sz'])} {sym} ≈ {usd(s['usd'])}{gap} · dilim ~{usd(s['sl_med'])}")
+
+
+def _slice_hist_line(sym: str, h: dict, now_ms: int, short_: bool = False) -> str:
+    lead = "şu an yok · son" if short_ else "şu an dilimli alım/satım yok · son dizi"
+    return (f"<b>{sym}</b>: {lead}: {_slice_side(h['side'])} {tsi_hm(h['first'], now_ms)} →"
+            f" {tsi_hm(h['last'], now_ms)} TSİ ({dur_txt((int(h['last']) - int(h['first'])) / 1000)}"
+            f" · {h['n']} emir · {usd(h['usd'])})")
+
+
+def slice_summary(addr: str, ent: dict, st: dict, ctx: dict) -> str:
+    """İzleme (yeniden) başladı: şu an süren dizi ya da son dizi, pozisyon, kural cümlesi."""
+    from ..hl.universe import symbol_of
+    now_ms = ctx["now_ms"]
+    reason = st.get("reason") or "first"
+    if reason == "stale":
+        title = (f"izleme yeniden başladı (son yoklama {dur_txt(st.get('prev_gap'))} önce —"
+                 " aradaki diziler yazılmadı)")
+    elif reason == "gap":
+        title = ("izleme yeniden başladı (kesintideki dolumlar HL geçmişinde artık yok —"
+                 " aradaki diziler yazılmadı)")
+    elif reason == "version":
+        title = "izleme yeniden başladı (durum biçimi değişti)"
+    elif reason == "list":
+        title = "izleme yeniden başladı (liste değişti)"
+    else:
+        title = "izleme başladı"
+    lines = [f"🔂 <b>Dilimli alım-satım — {esc(title)}</b> · 👤 {_slice_who(addr, ent.get('name'))}"]
+    runs = st.get("runs") or {}
+    syms = st.get("syms") or []
+    for sym in syms:
+        live = sorted(((k, r) for k, r in runs.items()
+                       if symbol_of(r["coin"]) == sym and r.get("alerted")), key=lambda kv: kv[1]["first"])
+        if live:
+            for k, r in live:
+                s = (ctx.get("stats") or {}).get(k) or {}
+                lines.append(_slice_run_line(esc(sym), r, s, now_ms))
+                lines.append(_slice_method((ctx.get("method") or {}).get(k), s, r))
+                o = _slice_others(s.get("others"))
+                if o:
+                    lines.append(o)
+        else:
+            last = [h for h in (st.get("hist") or []) if symbol_of(h.get("coin") or "") == sym]
+            lines.append(_slice_hist_line(esc(sym), last[-1], now_ms) if last else
+                         f"<b>{esc(sym)}</b>: son {int(ctx.get('lookback_s') or 21600) // 3600} saatte"
+                         " dilimli alım/satım yok")
+        coin = (ctx.get("coins") or {}).get(sym)
+        posd = (ctx.get("pos") or {}).get(coin) if coin else None
+        if posd and posd.get("ok"):
+            p = posd.get("pos")
+            lines.append(f"📊 Pozisyon: <b>{_signed_pos(p.get('szi'), esc(sym))}</b>{_slice_pos_tail(posd)}"
+                         if p else f"📊 {esc(sym)} pozisyonu yok")
+    for v in st.get("prev_open") or []:
+        # Bakılan pencere aynı diziyi zaten gösteriyorsa (süren ya da biten) tekrar yazılmaz.
+        if any(r["coin"] == v["coin"] and r["side"] == v["side"] and int(r["first"]) <= int(v["last"])
+               for r in runs.values()) or any(
+                h.get("coin") == v["coin"] and h.get("side") == v["side"]
+                and int(h["first"]) <= int(v["last"]) <= int(h["last"]) for h in st.get("hist") or []):
+            continue
+        lines.append(f"Kesintiden önce: <b>{_slice_sym(v['coin'])}</b> {_slice_side(v['side'])} sürüyordu"
+                     f" ({tsi_hm(v['first'], now_ms)} TSİ'den beri, o ana kadar {v['n']} emir ·"
+                     f" {usd(v['usd'])}) — kesintideki seyri yazılmadı")
+    lines.append(f"Bu gruba: {esc(', '.join(syms))} için dilimli ALIM ya da SATIŞ başlayınca (aynı yönde"
+                 f" ≥{ctx.get('start_n', 3)} emir ve ≥{usd(ctx.get('start_usd', 10_000))}) ve bitince"
+                 f" (aynı yönde {int(ctx.get('quiet_s') or 300) // 60} dk dilim gelmezse). Diğer coinler"
+                 " yalnız bağlam satırında.")
+    if st.get("window"):
+        lines.append(f"<i>bakılan pencere: son {int(ctx.get('lookback_s') or 21600) // 3600} saat"
+                     f" ({tsi_hm(st['window'], now_ms)} TSİ'den beri)</i>")
+    return "\n".join(lines)
+
+
+def slice_status(snap: dict, ctx: dict) -> str:
+    """/hesaplar: dilimli alım-satım durumu — kv'den, HL'ye istek yok."""
+    from ..hl.universe import symbol_of
+    st = snap.get("state") or {}
+    now_ms = ctx["now_ms"]
+    syms = snap.get("syms") or []
+    lines = [f"🔂 <b>Dilimli alım-satım</b> · 👤 {_slice_who(snap['address'], snap.get('name'))}"]
+    if not st:
+        why = ("ACCOUNT_CHAT_ID tanımsız — yoklanmıyor" if not ctx.get("chat_ok") else
+               "kapalı" if not ctx.get("enabled") else "henüz yoklanmadı")
+        lines.append(f"• {esc(', '.join(syms))}: {why}")
+        return "\n".join(lines)
+    if st.get("warm"):
+        lines.append(f"• {esc(', '.join(syms))}: ısınıyor — son {int(ctx.get('lookback_s') or 21600) // 3600}"
+                     " saatin dolumları okunuyor")
+    else:
+        runs = st.get("runs") or {}
+        for sym in syms:
+            live = sorted((r for r in runs.values() if symbol_of(r["coin"]) == sym and r.get("alerted")),
+                          key=lambda r: r["first"])
+            for r in live:
+                lines.append(f"• <b>{esc(sym)}</b>: <b>{_slice_side(r['side'])} SÜRÜYOR</b> —"
+                             f" {tsi_hm(r['first'], now_ms)} TSİ'den beri {r['n']} emir · {usd(r['usd'])}"
+                             f" · son dilim {_ago_txt((now_ms - int(r['last'])) / 1000)} önce")
+            if not live:
+                last = [h for h in (st.get("hist") or []) if symbol_of(h.get("coin") or "") == sym]
+                lines.append("• " + (_slice_hist_line(esc(sym), last[-1], now_ms, short_=True) if last else
+                                     f"<b>{esc(sym)}</b>: şu an yok · bakılan pencerede dizi yok"))
+    if st.get("ts"):
+        lines.append(f"<i>son yoklama {_ago_txt(now_ms / 1000 - int(st['ts']))} önce</i>")
     return "\n".join(lines)
 
 
@@ -1894,6 +2157,7 @@ DIGEST_LABELS = {
     "earnings": "📊 earnings",
     "eval": "🏁 sonuç", "track": "👣 pozisyon takibi", "lowvol": "🐘 sessiz su devi",
     "wall": "🧱 emir duvarı", "sticky": "🧲 yapışkan duvar", "acct": "👤 izlenen hesap",
+    "slice": "🔂 dilimli alım-satım",
     "health": "⚕️ sağlık",
 }
 

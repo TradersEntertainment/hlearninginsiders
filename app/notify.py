@@ -30,6 +30,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "sticky":    ("notify_sticky",    "🧲 Yapışkan duvar (kripto kanalı)",    "high"),
     "acct":      ("notify_acct",      "👤 İzlenen hesaplar (hesap grubu)",     "high"),
+    "slice":     ("notify_slice",     "🔂 Dilimli alım-satım (hesap grubu)",   "high"),
     "offhours":  ("notify_offhours",  "🌙 Kapalı seans hareketi",             "high"),
     "cryptovol": ("notify_cryptovol", "🚀 Kripto hacim patlaması",            "high"),
     "cryptoliq": ("notify_cryptoliq", "💥 Kripto liq yakını (kripto kanalı)", "high"),

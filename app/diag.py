@@ -692,6 +692,34 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + f" · {_dur(now() - int(aw['ts']))} önce")
     else:
         out.append("  izlenen hesaplar: tur HENÜZ ÇALIŞMADI")
+    # 🔂 Dilimli alım-satım: aynı grup. Kanal yoksa / tür kapalıysa yoklama da yok — söyle.
+    sl = await kv_get("slicewatch_stats") or {}
+    if sl.get("disabled"):
+        out.append("  dilimli alım-satım: kapalı (slice_watch_enabled=0)")
+    elif sl.get("ts"):
+        tot = sl.get("tot") or {}
+        act = sl.get("active") or []
+        live = ", ".join(f"{(a.get('coin') or '').split(':')[-1]} {'ALIM' if a.get('side') == 'B' else 'SATIŞ'}"
+                         f" ({int(a.get('n') or 0)} emir, ${float(a.get('usd') or 0) / 1e6:.2f}M)"
+                         for a in act)
+        out.append("  dilimli alım-satım: "
+                   + (f"⚠️ ACCOUNT_CHAT_ID TANIMSIZ — {sl.get('accounts', 0)} adres yoklanmıyor"
+                      if sl.get("no_chat") else
+                      f"bildirim kapalı (notify_slice=0) — {sl.get('accounts', 0)} adres yoklanmıyor"
+                      if sl.get("muted") else
+                      f"{sl.get('accounts', 0)} adres · bu tur {sl.get('polled', 0)} yoklandı,"
+                      f" {sl.get('fills', 0)} yeni dolum"
+                      + (f" · şu an: {live}" if live else " · şu an süren dizi yok")
+                      + (" · ısınıyor (son 6 saat okunuyor)" if sl.get("warm") else "")
+                      + f" · toplam {tot.get('started', 0)} başladı / {tot.get('ended', 0)} bitti,"
+                        f" {tot.get('sent', 0)} mesaj"
+                      + (f" · ⚠️ {tot['failed']} gönderilemedi" if tot.get("failed") else "")
+                      + (f" · ⚠️ {tot['errors']} okuma hatası" if tot.get("errors") else "")
+                      + (f" · {tot['unsure']} belirsiz tur (HL düğümü gecikmeli)" if tot.get("unsure") else "")
+                      + (f" · {sl['backoff']} adres geri çekilmede" if sl.get("backoff") else ""))
+                   + f" · {_dur(now() - int(sl['ts']))} önce")
+    else:
+        out.append("  dilimli alım-satım: tur HENÜZ ÇALIŞMADI")
     # ---- satılabilir bot: kullanıcılar, ödeme kanalları, fan-out
     try:
         from . import users as _users

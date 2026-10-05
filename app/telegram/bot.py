@@ -1041,14 +1041,25 @@ class TelegramBot:
             f" /birak_twap_{fid}", chat_id)
 
     async def _cmd_accounts(self, chat_id: str) -> None:
-        """/hesaplar — izlenen hesapların son anlık durumu (pozisyon + duvar + bekleyen
-        kapatma/stop emirleri) son yoklamanın kaydından; ayrıca son 1 saatin GERÇEKLEŞEN
-        dolumları (hesap başına bir istek grubu, 60 sn önbellekli)."""
+        """/hesaplar — önce 🔂 dilimli alım-satım durumu (kv'den), sonra izlenen hesapların son
+        anlık durumu (pozisyon + duvar + bekleyen kapatma/stop emirleri) son yoklamanın
+        kaydından; ayrıca son 1 saatin GERÇEKLEŞEN dolumları (hesap başına bir istek grubu,
+        60 sn önbellekli)."""
         from ..hl.universe import main_dex_ctx
-        from ..radar import acctwatch
+        from ..radar import acctwatch, slicewatch
         snaps = await acctwatch.snapshots(self.cfg)
+        slices = await slicewatch.snapshots(self.cfg)
+        if not snaps and not slices:
+            await self.send("👤 İzlenen hesap yok. Ayarlar → 👤 İzlenen hesaplar → 'adres:isim'"
+                            " (dilimli alım-satım: 🔂 → 'adres:SEMBOL').", chat_id)
+            return
+        # 🔂 dilimli alım-satım durumu ÖNCE (kv'den, HL'ye istek yok); hesap özetleri ardından.
+        sctx = {"now_ms": now() * 1000, "lookback_s": slicewatch.LOOKBACK_SEC,
+                "chat_ok": bool((getattr(self.cfg, "account_chat_id", "") or "").strip()),
+                "enabled": bool(getattr(self.cfg, "slice_watch_enabled", True))}
+        for sn in slices:
+            await self.send(fmt.slice_status(sn, sctx), chat_id)
         if not snaps:
-            await self.send("👤 İzlenen hesap yok. Ayarlar → 👤 İzlenen hesaplar → 'adres:isim'.", chat_id)
             return
         try:
             marks = {c: v.get("m") for c, v in ((await main_dex_ctx(None, fetch=False)).get("c") or {}).items()}

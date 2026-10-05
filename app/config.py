@@ -86,6 +86,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                     "desc": "Deftere fiyatın hemen yanına konan dev bekleyen emir duvarları (ve çekilirse/dolarsa haberi)"},
     "notify_acct": {"type": "bool", "label": "👤 İzlenen hesaplar", "group": "Bildirimler",
                     "desc": "Listedeki hesapların (ör. drkmttr) pozisyon ve emir olayları — AYRI gruba gider (ACCOUNT_CHAT_ID, env)"},
+    "notify_slice": {"type": "bool", "label": "🔂 Dilimli alım-satım", "group": "Bildirimler",
+                     "desc": "Listedeki hesabın (ör. 0x30af… CBRS) TWAP emri vermeden dilim dilim alım / satım dizisi başlayınca ve bitince — hesap grubuna gider (ACCOUNT_CHAT_ID, env)"},
     "notify_sticky": {"type": "bool", "label": "🧲 Yapışkan duvar", "group": "Bildirimler",
                       "desc": "Ana dex kriptoda en iyi fiyata yapışan dev TEK emir ($ ve 24s hacim oranı kapısını geçerse) — ayrı kanala gider (CRYPTO_CHAT_ID). Kanal yalnız ilk alarmı alır; yarılanma, yeni dilim ve bitiş (yenildi/çekildi) yalnız /takip_N'e basana gider"},
     "wall_window_pct": {"type": "float", "label": "Duvar penceresi (%)", "group": "Emir defteri radarı",
@@ -378,6 +380,18 @@ EDITABLE_FIELDS: dict[str, dict] = {
                           "desc": "Adım hem yüzde hem $ olarak geçmeli: küçük pozisyondaki %25 gürültü olmasın"},
     "acct_wall_min_usd": {"type": "float", "label": "Duvar tabanı ($)", "group": "👤 İzlenen hesaplar",
                           "desc": "Fiyatın %1 yakınındaki tek emir bu boyutu geçerse 'yeni duvar' (iki yoklama üst üste). Genel yapışkan duvar radarının $1M ve %2 hacim kapısı burada aranmaz"},
+    "slice_watch_enabled": {"type": "bool", "label": "🔂 Dilimli alım-satım takibi", "group": "🔂 Dilimli alım-satım",
+                            "desc": "Listedeki hesabın seçili coinde TWAP emri OLMADAN dilim dilim (her ~30 sn'de bir IOC) alım ya da satım dizisini izler: başlayınca ve bitince hesap grubuna (ACCOUNT_CHAT_ID) yazar. HL'nin TWAP radarı bu dizileri 'TWAP emri yok' diye bırakıyordu"},
+    "slice_watch_list": {"type": "str", "label": "İzlenen hesap:coin (adres:SEMBOL:isim)", "group": "🔂 Dilimli alım-satım",
+                         "desc": "Virgülle: 0xADRES:SEMBOL ya da 0xADRES:SEMBOL:isim — sembol dex'siz (CBRS → xyz:CBRS dolumları). Yalnız listedeki coin bildirim üretir; diğer coinler mesajda 'aynı dakikalarda' satırında görünür. Başlangıç: 0x30af… CBRS"},
+    "slice_poll_sec": {"type": "int", "label": "Yoklama aralığı (sn)", "group": "🔂 Dilimli alım-satım",
+                       "desc": "Hesap başına bu aralıkla bir dolum isteği (tek istek tüm coinleri getirir). 30 sn'de 'başladı' ilk dilimden ~1–1.5 dk sonra gelir"},
+    "slice_quiet_sec": {"type": "int", "label": "Bitti sayılması için sessizlik (sn)", "group": "🔂 Dilimli alım-satım",
+                        "desc": "Aynı yönde bu kadar dilim gelmezse dizi bitti (en az 90). Ölçülen: dilimler arası 21–50 sn, diziler arası saatler — 300 sn güvenli pay"},
+    "slice_start_orders": {"type": "int", "label": "Başladı için en az emir", "group": "🔂 Dilimli alım-satım",
+                           "desc": "Aynı yönde bu kadar emir (ve aşağıdaki $) olunca 'başladı' (en az 2). Tek seferlik elle işlem dizi sayılmaz"},
+    "slice_start_usd": {"type": "float", "label": "Başladı için en az ($)", "group": "🔂 Dilimli alım-satım",
+                        "desc": "Dizi bu tutarı geçmeden 'başladı' denmez (ölçülen dilim medyanı ~$8K, p10 ~$4K)"},
     "sticky_enabled": {"type": "bool", "label": "🧲 Yapışkan duvar radarı", "group": "🧲 Yapışkan duvar",
                        "desc": "Ana dex kriptoda en iyi fiyata yapışan dev TEK emri (n=1) izler: kendini her birkaç saniyede en iyi fiyata yeniden koyan post-only emir — fiyatla aşağı da yukarı da gider. Likidasyon değildir (HL likidasyonu piyasa emridir, defterde beklemez). Kapatınca tarama ve takip notları durur"},
     "sticky_min_usd": {"type": "float", "label": "Alarm: tek emir en az ($)", "group": "🧲 Yapışkan duvar",
@@ -738,6 +752,14 @@ class Config:
         self.acct_step_pct = float(os.getenv("ACCT_STEP_PCT", "25"))
         self.acct_step_min_usd = float(os.getenv("ACCT_STEP_MIN_USD", "500000"))
         self.acct_wall_min_usd = float(os.getenv("ACCT_WALL_MIN_USD", "250000"))
+        self.slice_watch_enabled = True
+        self.notify_slice = True
+        self.slice_watch_list = os.getenv(
+            "SLICE_WATCH_LIST", "0x30afce2f6842bf183c7e3fe7162e279ff0b6393e:CBRS")
+        self.slice_poll_sec = int(os.getenv("SLICE_POLL_SEC", "30"))
+        self.slice_quiet_sec = int(os.getenv("SLICE_QUIET_SEC", "300"))
+        self.slice_start_orders = int(os.getenv("SLICE_START_ORDERS", "3"))
+        self.slice_start_usd = float(os.getenv("SLICE_START_USD", "10000"))
         self.sticky_enabled = True
         self.notify_sticky = True
         self.sticky_min_usd = float(os.getenv("STICKY_MIN_USD", "1000000"))

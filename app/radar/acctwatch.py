@@ -556,34 +556,39 @@ def _flow_add(agg: dict, f: dict) -> None:
         a["maker_usd"] += usd
 
 
-async def fill_flow(client, addr: str, since: int, until: int | None = None,
-                    max_pages: int = FLOW_PAGES) -> dict:
-    """Hesabın [since, until] aralığında GERÇEKLEŞEN dolumları, coin → yön → {$, dolum,
-    maker $}. "Geri alıyor mu?" sorusunu ölçerek cevaplar (emir listesi bekleyeni
-    söyler, bu olanı). Sayfalama HL'nin önerdiği gibi: sonraki sayfa son dolumun
-    zamanından (dahil) başlar, aynı milisaniyedeki tekrarlar `tid` ile atılır — tek
+FILL_PAGE = 2000                 # userFillsByTime sayfa boyu
+
+
+def fill_key(f: dict):
+    """Dolum kimliği: tid; yoksa (hash, oid, zaman, fiyat, adet, yön)."""
+    return f.get("tid") or (f.get("hash"), f.get("oid"), f.get("time"), f.get("px"),
+                            f.get("sz"), f.get("side"))
+
+
+async def fills_between(client, addr: str, start_ms: int, end_ms: int | None = None,
+                        max_pages: int = FLOW_PAGES) -> tuple[list[dict], bool]:
+    """[start_ms, end_ms] dolumları (HL'de iki uç da DAHİL; end_ms None → HL'nin "şimdi"si),
+    zamana göre artan, tekil + tam mı. Sayfalama HL'nin önerdiği gibi: sonraki sayfa son
+    dolumun zamanından (dahil) başlar, aynı milisaniyedeki tekrarlar `tid` ile atılır — tek
     taker'ın süpürdüğü birden çok dolum sayfa sınırında kaybolmasın. Sayfa sınırına
-    takılırsa `complete=False` — mesaj eksik der."""
-    end = int(until or now())
-    start = int(since) * 1000
-    agg: dict = {}
+    takılırsa ya da tek milisaniyede 2000+ dolum varsa `complete=False`."""
+    start = int(start_ms)
+    out: list[dict] = []
     seen: set = set()
-    n, complete = 0, True
+    complete = True
     for _ in range(max_pages):
-        fills = await client.user_fills_by_time(addr, start, end * 1000)
+        fills = await client.user_fills_by_time(addr, start, int(end_ms) if end_ms else None)
         if not isinstance(fills, list) or not fills:
             break
         for f in fills:
             if not isinstance(f, dict):
                 continue
-            key = f.get("tid") or (f.get("hash"), f.get("oid"), f.get("time"), f.get("px"),
-                                   f.get("sz"), f.get("side"))
+            key = fill_key(f)
             if key in seen:
                 continue
             seen.add(key)
-            _flow_add(agg, f)
-            n += 1
-        if len(fills) < 2000:
+            out.append(f)
+        if len(fills) < FILL_PAGE:
             break
         last = int(fills[-1].get("time") or 0)
         if last <= start:                    # tek milisaniyede 2000+ dolum: ilerlenemez
@@ -592,7 +597,21 @@ async def fill_flow(client, addr: str, since: int, until: int | None = None,
         start = last
     else:
         complete = False
-    return {"coins": agg, "n": n, "complete": complete, "since": int(since), "until": end}
+    return out, complete
+
+
+async def fill_flow(client, addr: str, since: int, until: int | None = None,
+                    max_pages: int = FLOW_PAGES) -> dict:
+    """Hesabın [since, until] aralığında GERÇEKLEŞEN dolumları, coin → yön → {$, dolum,
+    maker $}. "Geri alıyor mu?" sorusunu ölçerek cevaplar (emir listesi bekleyeni
+    söyler, bu olanı). Sayfalama `fills_between`'de; sayfa sınırına takılırsa
+    `complete=False` — mesaj eksik der."""
+    end = int(until or now())
+    fills, complete = await fills_between(client, addr, int(since) * 1000, end * 1000, max_pages)
+    agg: dict = {}
+    for f in fills:
+        _flow_add(agg, f)
+    return {"coins": agg, "n": len(fills), "complete": complete, "since": int(since), "until": end}
 
 
 _FLOW_CACHE: dict[str, tuple[int, dict]] = {}

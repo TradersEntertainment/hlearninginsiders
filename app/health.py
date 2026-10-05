@@ -74,6 +74,7 @@ def limits(cfg: Config) -> dict[str, int]:
         "bookwall": cfg.wall_poll_sec * 4 + 120,
         "stickywall": 15 * 20 + 300,       # 15 sn adım; kapalıyken de nabız atar
         "acctwatch": int(getattr(cfg, "acct_poll_sec", 60) or 60) * 5 + 300,
+        "slicewatch": int(getattr(cfg, "slice_poll_sec", 30) or 30) * 5 + 600,   # ısınma sayfaları payı
         "sweeper": cfg.sweep_interval_sec * 5 + 120,
         "hourstats": 7200,
         "digest": 2400,
@@ -125,6 +126,7 @@ def periods(cfg: Config) -> dict[str, int]:
         "bookwall": cfg.wall_poll_sec,
         "stickywall": 15,
         "acctwatch": int(getattr(cfg, "acct_poll_sec", 60) or 60),
+        "slicewatch": int(getattr(cfg, "slice_poll_sec", 30) or 30),
         "sweeper": cfg.sweep_interval_sec,
         "hourstats": 600,
         "digest": 600,

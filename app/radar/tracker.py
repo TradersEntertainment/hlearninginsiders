@@ -59,6 +59,7 @@ async def live_position(client: HLClient, address: str, coin: str) -> dict | Non
             "upnl": float(p.get("unrealizedPnl") or 0),
             "liq_px": float(liq) if liq else None,
             "leverage": lev,
+            "lev_type": str((p.get("leverage") or {}).get("type") or ""),
         }
     return None
 
