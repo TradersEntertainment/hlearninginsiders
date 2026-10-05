@@ -1201,11 +1201,24 @@ def slice_summary(addr: str, ent: dict, st: dict, ctx: dict) -> str:
     return "\n".join(lines)
 
 
+def _for_txt(sec) -> str:
+    """Ne kadar süredir: '45 sn'dir' · '14 dk'dır' · '6 s 51 dk'dır' · '1 g 3 s'tir'."""
+    sec = max(0, int(sec or 0))
+    if sec < 60:
+        return f"{sec} sn'dir"
+    t = dur_txt(sec)
+    return t + ("'tir" if t.endswith(" s") else "'dır")
+
+
 def slice_status(snap: dict, ctx: dict) -> str:
-    """/hesaplar: dilimli alım-satım durumu — kv'den, HL'ye istek yok."""
+    """/balina ve /hesaplar: dilimli alım-satımın ŞU ANKİ durumu — kaç saattir alıyor /
+    satıyor, toplamlar, son dilim, fiyat, pozisyon, aynı dakikalardaki diğer coinler.
+    Son yoklamanın kaydından (kv, en çok bir yoklama aralığı eski; HL'ye istek yok)."""
     from ..hl.universe import symbol_of
+    from ..radar.slicewatch import run_stats
     st = snap.get("state") or {}
     now_ms = ctx["now_ms"]
+    quiet_s = int(ctx.get("quiet_s") or 300)
     syms = snap.get("syms") or []
     lines = [f"🔂 <b>Dilimli alım-satım</b> · 👤 {_slice_who(snap['address'], snap.get('name'))}"]
     if not st:
@@ -1219,18 +1232,60 @@ def slice_status(snap: dict, ctx: dict) -> str:
     else:
         runs = st.get("runs") or {}
         for sym in syms:
-            live = sorted((r for r in runs.values() if symbol_of(r["coin"]) == sym and r.get("alerted")),
-                          key=lambda r: r["first"])
+            ssym = esc(sym)
+            mine = sorted((r for r in runs.values() if symbol_of(r["coin"]) == sym), key=lambda r: r["first"])
+            live = [r for r in mine if r.get("alerted")]
             for r in live:
-                lines.append(f"• <b>{esc(sym)}</b>: <b>{_slice_side(r['side'])} SÜRÜYOR</b> —"
-                             f" {tsi_hm(r['first'], now_ms)} TSİ'den beri {r['n']} emir · {usd(r['usd'])}"
-                             f" · son dilim {_ago_txt((now_ms - int(r['last'])) / 1000)} önce")
+                s = run_stats(r)
+                age = (now_ms - int(r["first"])) / 1000
+                quiet_for = (now_ms - int(r["last"])) / 1000
+                side = _slice_side(r["side"])
+                if quiet_for > quiet_s:
+                    # Yoklama aksadıysa (hata / gecikmeli düğüm) "sürüyor" denmez — ölçülen söylenir.
+                    lines.append(f"<b>{ssym}</b>: 🟡 <b>{side} — son dilim {_ago_txt(quiet_for)} önce</b>"
+                                 " (bitişi henüz teyit edilmedi; aşağıdaki son yoklama saatine bak)")
+                elif r.get("pre"):
+                    lines.append(f"<b>{ssym}</b>: 🟢 <b>{side} SÜRÜYOR — en az {_for_txt(age)}</b>"
+                                 f" ({tsi_hm(r['first'], now_ms)} TSİ'den önce başlamış — başlangıç ölçülmedi)")
+                else:
+                    lines.append(f"<b>{ssym}</b>: 🟢 <b>{side} SÜRÜYOR — {_for_txt(age)}</b>"
+                                 f" ({tsi_hm(r['first'], now_ms)} TSİ'den beri)")
+                lines.append(f"• {s['n']} emir · {qty_txt(s['sz'])} {ssym} ≈ <b>{usd(s['usd'])}</b>"
+                             f" · ort. {px5(s['vwap'])}")
+                lines.append(f"• son dilim {_ago_txt(quiet_for)} önce"
+                             + (f" · dilimler arası ~{s['gap_med']:.0f} sn" if s.get("gap_med") is not None else "")
+                             + f" · dilim ~{usd(s['sl_med'])}")
+                if s.get("chg") is not None:
+                    lines.append(f"• fiyat: ilk dilim {px5(s['px0'])} → son dilim {px5(s['px1'])}"
+                                 f" ({s['chg']:+.2f}%)")
+                lines.append(f"• 📊 Pozisyon {_signed_pos(r.get('pos0'), ssym)} →"
+                             f" <b>{_signed_pos(r.get('pos1'), ssym)}</b>")
+                o = _slice_others(s.get("others"))
+                if o:
+                    lines.append("• " + o)
+            for r in mine:
+                # Eşiğe varmamış taze seri: "şu an ne yapıyor" sorusunun cevabının parçası.
+                if r.get("alerted") or (now_ms - int(r["last"])) / 1000 > quiet_s:
+                    continue
+                lines.append(f"<b>{ssym}</b>: yeni {'alış' if r['side'] == 'B' else 'satış'} serisi —"
+                             f" {r['n']} emir · {usd(r['usd'])} ({tsi_hm(r['first'], now_ms)} TSİ'den beri)"
+                             f" · dizi sayılması için aynı yönde ≥{ctx.get('start_n', 3)} emir ve"
+                             f" ≥{usd(ctx.get('start_usd', 10_000))}")
             if not live:
                 last = [h for h in (st.get("hist") or []) if symbol_of(h.get("coin") or "") == sym]
-                lines.append("• " + (_slice_hist_line(esc(sym), last[-1], now_ms, short_=True) if last else
-                                     f"<b>{esc(sym)}</b>: şu an yok · bakılan pencerede dizi yok"))
+                if last:
+                    h = last[-1]
+                    lines.append(f"<b>{ssym}</b>: ⏸ şu an dilimli alım/satım yok · son dizi"
+                                 f" {_slice_side(h['side'])} {tsi_hm(h['first'], now_ms)} →"
+                                 f" {tsi_hm(h['last'], now_ms)} TSİ"
+                                 f" ({dur_txt((int(h['last']) - int(h['first'])) / 1000)} · {h['n']} emir ·"
+                                 f" {usd(h['usd'])}) · {_ago_txt((now_ms - int(h['last'])) / 1000)} önce bitti")
+                else:
+                    lines.append(f"<b>{ssym}</b>: ⏸ şu an dilimli alım/satım yok · bakılan pencerede dizi yok")
     if st.get("ts"):
-        lines.append(f"<i>son yoklama {_ago_txt(now_ms / 1000 - int(st['ts']))} önce</i>")
+        lines.append(f"<i>son yoklama {_ago_txt(now_ms / 1000 - int(st['ts']))} önce · her"
+                     f" {int(ctx.get('poll_s') or 30)} sn'de güncellenir · bitti sayılması: aynı yönde"
+                     f" {quiet_s // 60} dk dilim gelmezse</i>")
     return "\n".join(lines)
 
 
@@ -2259,6 +2314,8 @@ def help_text() -> str:
         "/unignore 0x… — elemeyi kaldır\n"
         "/forget 0x… — adresin sicilini sıfırla + watchlist'ten çıkar\n"
         "/watchlist — sicilli adresler\n"
+        "/balina — 🔂 dilimli alım-satım: şu an ne yapıyor, kaç saattir alıyor/satıyor, ne kadar aldı\n"
+        "/hesaplar — 👤 izlenen hesaplar (pozisyon, duvar, emirler) + 🔂 durum\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için /birak_N)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
         "/sim — liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar (sayfa /sim)\n"

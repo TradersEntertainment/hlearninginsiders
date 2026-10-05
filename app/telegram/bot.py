@@ -495,6 +495,8 @@ class TelegramBot:
             await self._cmd_sticky_follow_list(chat_id)
         elif cmd in ("hesaplar", "hesap"):
             await self._cmd_accounts(chat_id)
+        elif cmd in ("balina", "dilim", "dilimli", "dilimler"):
+            await self._cmd_slices(chat_id)
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
             await self._cmd_sim(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
@@ -569,6 +571,8 @@ class TelegramBot:
             await self._cmd_sticky_follow_list(chat_id)
         elif cmd in ("hesaplar", "hesap"):
             await self._cmd_accounts(chat_id)
+        elif cmd in ("balina", "dilim", "dilimli", "dilimler"):
+            await self._cmd_slices(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -600,7 +604,7 @@ class TelegramBot:
             self.cfg.telegram_chat_id, getattr(self.cfg, "crypto_chat_id", ""),
             getattr(self.cfg, "crypto_stocks_id", ""), getattr(self.cfg, "liq_attack_chat_id", ""),
             getattr(self.cfg, "pattern_chat_id", ""), getattr(self.cfg, "telegram_channel_id", ""),
-            getattr(self.cfg, "sim_chat_id", ""))
+            getattr(self.cfg, "sim_chat_id", ""), getattr(self.cfg, "account_chat_id", ""))
             if v and str(v).strip()}
 
     def _owner_user_id(self) -> str:
@@ -1054,9 +1058,7 @@ class TelegramBot:
                             " (dilimli alım-satım: 🔂 → 'adres:SEMBOL').", chat_id)
             return
         # 🔂 dilimli alım-satım durumu ÖNCE (kv'den, HL'ye istek yok); hesap özetleri ardından.
-        sctx = {"now_ms": now() * 1000, "lookback_s": slicewatch.LOOKBACK_SEC,
-                "chat_ok": bool((getattr(self.cfg, "account_chat_id", "") or "").strip()),
-                "enabled": bool(getattr(self.cfg, "slice_watch_enabled", True))}
+        sctx = self._slice_ctx()
         for sn in slices:
             await self.send(fmt.slice_status(sn, sctx), chat_id)
         if not snaps:
@@ -1078,6 +1080,28 @@ class TelegramBot:
             await self.send(fmt.acct_started(s["address"], st, marks,
                                              title=f"anlık durum ({fmt.age_str(st.get('ts'))} önce)",
                                              tail=False, flow=flow), chat_id)
+
+    def _slice_ctx(self) -> dict:
+        from ..radar import slicewatch
+        quiet_ms, start_n, start_usd = slicewatch.rules(self.cfg)
+        return {"now_ms": now() * 1000, "lookback_s": slicewatch.LOOKBACK_SEC,
+                "chat_ok": bool((getattr(self.cfg, "account_chat_id", "") or "").strip()),
+                "enabled": bool(getattr(self.cfg, "slice_watch_enabled", True)),
+                "quiet_s": quiet_ms // 1000, "start_n": start_n, "start_usd": start_usd,
+                "poll_s": max(10, int(getattr(self.cfg, "slice_poll_sec", 30) or 30))}
+
+    async def _cmd_slices(self, chat_id: str) -> None:
+        """/balina — 🔂 dilimli alım-satımın şu anki durumu: kaç saattir alıyor/satıyor, ne
+        kadar, son dilim, fiyat, pozisyon. Son yoklamanın kaydından (kv; HL'ye istek yok)."""
+        from ..radar import slicewatch
+        slices = await slicewatch.snapshots(self.cfg)
+        if not slices:
+            await self.send("🔂 Dilimli alım-satım listesi boş. Ayarlar → 🔂 Dilimli alım-satım →"
+                            " 'adres:SEMBOL' (ör. 0x30af…:CBRS).", chat_id)
+            return
+        sctx = self._slice_ctx()
+        for sn in slices:
+            await self.send(fmt.slice_status(sn, sctx), chat_id)
 
     async def _cmd_sticky_follow_list(self, chat_id: str) -> None:
         """/duvartakipler — izlenen yapışkan duvarlar."""

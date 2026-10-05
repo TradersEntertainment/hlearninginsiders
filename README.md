@@ -58,7 +58,8 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
 | `/takipler` · `/birak_N` | Aktif pozisyon takipleri · takibi bırak |
 | `/duvartakipler` · `/birak_duvar_N` | İzlenen 🧲 yapışkan duvarlar · takibi bırak |
-| `/hesaplar` | 🔂 Dilimli alım-satım durumu (süren dizi / son dizi) + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
+| `/balina` (`/dilim`) | 🔂 Dilimli alım-satım şu an: kaç saattir alıyor/satıyor, kaç emir, ne kadar ($ ve adet), ortalama, son dilim kaç sn önce, fiyat ve pozisyon değişimi, aynı dakikalardaki diğer coinler; yoksa son dizi ve ne zaman bittiği |
+| `/hesaplar` | 🔂 Dilimli alım-satım durumu + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
@@ -646,8 +647,9 @@ işlemleri tek satır — bildirim yalnız listedeki coin için.
   yeniden gelmeli; sayfa boş gelirse düğüm gecikmeli → o tur belirsiz; dolu ama onlar yoksa
   HL'nin kayan geçmişi imleci aşmış → "izleme yeniden başladı". Sayfa sınırındaki son
   milisaniye sonraki tura bırakılır (bir IOC'nin dolumları bölünmez).
-- **İlk tur / yeniden başlatma:** son 6 saat okunur (gerekirse birkaç tura yayılır, düşük
-  öncelik) → **"izleme başladı"** özeti: süren dizi "…TSİ'den beri" ya da son dizi. ≤2 sa
+- **İlk tur / yeniden başlatma:** son **12 saat** okunur (ölçülen en uzun dizi 12.5 sa —
+  süren dizinin başı da ölçülsün; tur başına ≤4 sayfa, düşük öncelik, ~1.5 dk'da biter) →
+  **"izleme başladı"** özeti: süren dizi "…TSİ'den beri" ya da son dizi. ≤2 sa
   kesintide kaçan dolumlar yeniden oynatılır (geç fark edilen bitiş "⏱ N dk geç" notuyla);
   daha uzun kesintide "aradaki diziler yazılmadı" + "kesintiden önce ALIM sürüyordu".
 
@@ -661,14 +663,19 @@ işlemleri tek satır — bildirim yalnız listedeki coin için.
   fiyatı, ritim/dilim dağılımı, **coinin hacmindeki payı** (aynı dakikaların 1 dk mumları,
   adet), pozisyon önce → sonra, diğer coinler $ ve emir sayısıyla. "Aynı dakikalarda"
   yalnız dizinin içinde kalan işlemleri sayar (son dilimden sonrakini değil).
-- `/hesaplar` en üstte 🔂 durum: "CBRS: ALIM SÜRÜYOR — 03:08 TSİ'den beri 412 emir ·
-  $3.3M · son dilim 12 sn önce" ya da son dizi (kv'den, HL isteği yok). `/tani` satırı:
-  adres sayısı, yeni dolum, süren dizi, toplamlar, hata / belirsiz tur / geri çekilme,
-  ACCOUNT_CHAT_ID yoksa uyarı.
+- **Şu an ne yapıyor → `/balina`** (`/dilim`; `/hesaplar` da en üstte gösterir): "CBRS: 🟢
+  ALIM SÜRÜYOR — 6 s 51 dk'dır (03:08 TSİ'den beri) · 790 emir · 35.2K CBRS ≈ $6.3M · ort.
+  179.40 · son dilim 12 sn önce · dilimler arası ~32 sn · fiyat ilk → son dilim · pozisyon
+  önce → şimdi · aynı dakikalarda DRAM/INTC/MU"; dizi yoksa "⏸ son dizi … · 2 s önce bitti",
+  eşiğe varmamış taze seri de yazılır. Son yoklamanın kaydından (en çok ~30 sn eski, HL
+  isteği yok); yoklama aksadıysa "sürüyor" demez, son dilimin yaşını yazar. Hesap grubunda
+  herkes kullanabilir (grup botun kendi sohbetleri arasında). `/tani` satırı: adres sayısı,
+  yeni dolum, süren dizi, toplamlar, hata / belirsiz tur / geri çekilme, ACCOUNT_CHAT_ID
+  yoksa uyarı.
 
 **Bütçe:** adres başına 30 sn'de bir `userFillsByTime` (ağırlık 20 + 20 dolumda 1; tur
 başına medyan 13 dolum) ≈ dakikada ~45; başladı: + `clearinghouseState` + `orderStatus`;
-bitti: + `clearinghouseState` + `candleSnapshot`; ilk tur en çok 8 sayfa bir kez.
+bitti: + `clearinghouseState` + `candleSnapshot`; ilk tur 12 saatlik geçmiş bir kez (tur başına ≤4 sayfa).
 `ACCOUNT_CHAT_ID` boşsa ya da `notify_slice` kapalıysa **hiç istek yok**. Gönderilemeyen
 mesajın durumu yazılmaz, yeniden deneme aralığı katlanarak açılır (en çok 15 dk).
 

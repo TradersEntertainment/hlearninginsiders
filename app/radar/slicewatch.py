@@ -32,8 +32,10 @@ Kurallar (hepsi ÖLÇÜLEN; tahmin yok):
   • süreklilik: imleç ms'indeki tid'ler (edge) sonraki okumada yeniden gelmeli (HL'de
     başlangıç dahil); gelmezse HL geçmişi kaymış (gap) → yeniden başla; boş gelirse
     gecikmeli düğüm → belirsiz (UNSURE_MAX tur sonra boşluk kabul edilir)
-  • ilk tur / >2 sa kesinti / gap: son 6 saat okunur (gerekirse birkaç tura yayılır, düşük
-    öncelik), "izleme (yeniden) başladı" özeti; ≤2 sa kesintide geçmiş yeniden oynatılır
+  • ilk tur / >2 sa kesinti / gap: son 12 saat okunur (tur başına ≤4 sayfa, birkaç tura
+    yayılır, düşük öncelik), "izleme (yeniden) başladı" özeti; ≤2 sa kesintide geçmiş yeniden
+    oynatılır. 12 saat: ölçülen en uzun dizi 12.5 sa — süren dizinin başı da ölçülsün
+    ("kaç saattir alıyor?" sorusu)
 Bütçe: hesap başına 30 sn'de bir userFillsByTime (ağırlık 20 + 20 dolumda 1; medyan 13
 dolum/tur) ≈ 45/dk; başladı: +clearinghouseState +orderStatus; bitti: +clearinghouseState
 +candleSnapshot. ACCOUNT_CHAT_ID boşsa ya da tür kapalıysa hiç istek yok.
@@ -56,8 +58,8 @@ STATE_KV = "slicewatch:"         # + adres
 STATS_KV = "slicewatch_stats"
 ADDRS_KV = "slicewatch_addrs"    # son turdaki liste (çıkarılan adresin durumu silinsin)
 STATE_V = 1
-LOOKBACK_SEC = 6 * 3600          # ilk tur / yeniden başlatma: süren diziyi bulmak için geriye
-LOOKBACK_PAGES = 8               # 6 sa ≈ 8.7–10.8K dolum (1,450–1,800/sa); kalanı sonraki tura
+LOOKBACK_SEC = 12 * 3600         # ilk tur / yeniden başlatma: süren dizinin başını bulmak için geriye
+LOOKBACK_PAGES = 4               # tur başına (≤480 ağırlık); 12 sa ≈ 17–22K dolum → 3 tur (~1.5 dk)
 CATCHUP_PAGES = 4                # canlı turda en çok (8K dolum ≈ 4.4 sa > REPLAY_MAX)
 REPLAY_MAX_SEC = 2 * 3600        # bundan uzun kesinti yeniden oynatılmaz (HL geçmişi kayan pencere)
 LATE_SEC = 120                   # olay bundan geç fark edildiyse mesaj söyler (normal ≤ ~35 sn)
@@ -393,7 +395,7 @@ def fresh(prev: dict, reason: str, ts: int, chat: str, ent: dict, now_ms: int) -
                           if r.get("alerted")] if cut else []}
 
 
-def _rules(cfg) -> tuple[int, int, float]:
+def rules(cfg) -> tuple[int, int, float]:
     quiet = max(QUIET_MIN_SEC, int(getattr(cfg, "slice_quiet_sec", 300) or 300))
     start_n = max(2, int(getattr(cfg, "slice_start_orders", 3) or 3))
     start_usd = max(0.0, float(getattr(cfg, "slice_start_usd", 10_000) or 0))
@@ -411,7 +413,7 @@ async def poll_address(cfg, client, addr: str, ent: dict, ts: int, chat: str) ->
         return {"kind": "summary", "state": st, "events": [], "fills": 0}
     if (st.get("name") or "") != (ent.get("name") or ""):
         st["name"] = ent.get("name") or ""
-    quiet_ms, start_n, start_usd = _rules(cfg)
+    quiet_ms, start_n, start_usd = rules(cfg)
     r: dict = {}
     for attempt in (0, 1):
         warm = bool(st.get("warm"))
@@ -515,7 +517,7 @@ async def _coin_for(st: dict, sym: str) -> str | None:
         return None
 
 
-async def _summary_text(client, addr: str, ent: dict, st: dict, ts: int, rules: tuple) -> str:
+async def _summary_text(client, addr: str, ent: dict, st: dict, ts: int, rl: tuple) -> str:
     from ..telegram import format as fmt
     coins = {}
     pos = {}
@@ -531,13 +533,13 @@ async def _summary_text(client, addr: str, ent: dict, st: dict, ts: int, rules: 
         if r.get("alerted"):
             meth[k] = await _method(client, addr, r)
     ctx = {"now_ms": ts * 1000, "coins": coins, "pos": pos, "method": meth, "stats": stats,
-           "quiet_s": rules[0] // 1000, "start_n": rules[1], "start_usd": rules[2],
+           "quiet_s": rl[0] // 1000, "start_n": rl[1], "start_usd": rl[2],
            "lookback_s": LOOKBACK_SEC}
     return fmt.slice_summary(addr, ent, st, ctx)
 
 
 async def _events_text(client, addr: str, ent: dict, st: dict, ev: list[dict], ts: int,
-                       rules: tuple) -> str:
+                       rl: tuple) -> str:
     from ..telegram import format as fmt
     pos = {}
     for e in ev:
@@ -549,7 +551,7 @@ async def _events_text(client, addr: str, ent: dict, st: dict, ev: list[dict], t
             e["method"] = await _method(client, addr, r)
         else:
             e["share"] = await _share(client, r)
-    ctx = {"now_ms": ts * 1000, "pos": pos, "quiet_s": rules[0] // 1000, "late_sec": LATE_SEC,
+    ctx = {"now_ms": ts * 1000, "pos": pos, "quiet_s": rl[0] // 1000, "late_sec": LATE_SEC,
            "window": st.get("window")}
     return fmt.slice_events(addr, ent, ev, st, ctx)
 
@@ -586,7 +588,7 @@ async def run_once(cfg, client, notifier, ts: int | None = None) -> dict:
     if notifier is None or not kind_enabled(cfg, "slice"):
         out["muted"] = len(watches)            # bildirim kapalı → yoklama yok
         return out
-    rules = _rules(cfg)
+    rl = rules(cfg)
     poll = max(10, int(getattr(cfg, "slice_poll_sec", 30) or 30))
     for addr, ent in watches.items():
         b = _BACKOFF.get(addr)
@@ -609,14 +611,14 @@ async def run_once(cfg, client, notifier, ts: int | None = None) -> dict:
             continue
         if kind == "summary":
             await kv_set(STATE_KV + addr, st)      # ısınma emeği korunur; bayrak gönderimde iner
-            text = await _summary_text(client, addr, ent, st, ts, rules)
+            text = await _summary_text(client, addr, ent, st, ts, rl)
         else:
             ev = r["events"]
             if not ev:
                 await kv_set(STATE_KV + addr, st)
                 out["active"] += _active(st)
                 continue
-            text = await _events_text(client, addr, ent, st, ev, ts, rules)
+            text = await _events_text(client, addr, ent, st, ev, ts, rl)
         ok = await notifier.send("slice", text, priority="high", key=f"slice:{addr}:{ts}",
                                  chat_id=chat, public=False)
         if ok:

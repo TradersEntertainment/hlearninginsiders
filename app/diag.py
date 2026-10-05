@@ -710,7 +710,7 @@ async def _subsystems(cfg, state=None) -> list[str]:
                       f"{sl.get('accounts', 0)} adres · bu tur {sl.get('polled', 0)} yoklandı,"
                       f" {sl.get('fills', 0)} yeni dolum"
                       + (f" · şu an: {live}" if live else " · şu an süren dizi yok")
-                      + (" · ısınıyor (son 6 saat okunuyor)" if sl.get("warm") else "")
+                      + (" · ısınıyor (geçmiş dolumlar okunuyor)" if sl.get("warm") else "")
                       + f" · toplam {tot.get('started', 0)} başladı / {tot.get('ended', 0)} bitti,"
                         f" {tot.get('sent', 0)} mesaj"
                       + (f" · ⚠️ {tot['failed']} gönderilemedi" if tot.get("failed") else "")

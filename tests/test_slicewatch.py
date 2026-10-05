@@ -192,12 +192,12 @@ def test_buy_campaign_start_end():
         cl, nt = Client(), Notifier()
         cl.fills = campaign("xyz:CBRS", "B", T0, 20)
         end_t = last_t(cl.fills)
-        # ilk tur: dizi henüz yok → "izleme başladı", son 6 saatte yok, pozisyon
+        # ilk tur: dizi henüz yok → "izleme başladı", son 12 saatte yok, pozisyon
         await _tick(cfg, cl, nt, T0 - 60_000)
         assert len(nt.sent) == 1
         kind, chat, text, public = nt.sent[0]
         assert kind == "slice" and chat == "-500" and public is False, "hesap grubu, satılmaz"
-        for s in ("Dilimli alım-satım — izleme başladı", "son 6 saatte dilimli alım/satım yok",
+        for s in ("Dilimli alım-satım — izleme başladı", "son 12 saatte dilimli alım/satım yok",
                   "📊 Pozisyon: <b>LONG 146.3K CBRS</b>", "4x izole", "liq 142.73",
                   "aynı yönde ≥3 emir ve ≥$10K", "Diğer coinler yalnız bağlam satırında"):
             assert s in text, (s, text)
@@ -383,10 +383,10 @@ def test_first_run_ongoing_pre_and_warm():
         # pencereden önce başlamış dizi → "daha öncesi bakılan pencerenin dışında" + bitişte uyarı
         cfg = await _fresh()
         cl, nt = Client(), Notifier()
-        start = T0 - 7 * 3600_000
-        cl.fills = campaign("xyz:CBRS", "B", start, 900, others=False)
+        start = T0 - 13 * 3600_000                         # 12 saatlik pencereden önce başlamış
+        cl.fills = campaign("xyz:CBRS", "B", start, 1500, others=False)
         end_t = last_t(cl.fills)
-        now_ms = start + 7 * 3600_000 + 60_000
+        now_ms = start + 13 * 3600_000 + 60_000
         assert end_t > now_ms - 60_000, "fikstür: dizi hâlâ sürüyor"
         await _tick(cfg, cl, nt, now_ms)
         assert "pencerenin dışında" in nt.sent[-1][2], nt.sent[-1][2]
@@ -406,7 +406,7 @@ def test_first_run_ongoing_pre_and_warm():
                 if nt.sent:
                     break
         finally:
-            sw.LOOKBACK_PAGES = 8
+            sw.LOOKBACK_PAGES = 4
         assert len(nt.sent) == 1 and "izleme başladı" in nt.sent[0][2]
         assert "son dizi: ALIM 03:08 →" in nt.sent[0][2], nt.sent[0][2]
         print("✅ ilk tur) süren dizi '…'den beri' (ayrıca BAŞLADI yok, bitişi gelir); pencere öncesi"
@@ -441,9 +441,9 @@ def test_replay_late_end_collapse_and_restart():
         await _tick(cfg, cl, nt, T0 - 60_000)
         await _tick(cfg, cl, nt, T0 + 120_000)
         n = len(nt.sent)
-        await _tick(cfg, cl, nt, T0 + 7 * 3600_000)
+        await _tick(cfg, cl, nt, T0 + 13 * 3600_000)          # 12 saatlik pencerenin de dışında
         text = nt.sent[-1][2]
-        assert len(nt.sent) == n + 1 and "izleme yeniden başladı (son yoklama 6 s 58 dk önce" in text, text
+        assert len(nt.sent) == n + 1 and "izleme yeniden başladı (son yoklama 12 s 58 dk önce" in text, text
         assert "Kesintiden önce: <b>CBRS</b> ALIM sürüyordu" in text and "BİTTİ" not in text
 
         # gap: imleç dolumları HL geçmişinden düşmüş → yeniden başla
@@ -525,7 +525,8 @@ def test_wiring_and_status_command():
         finally:
             botmod.now = real_now
         assert sent and "🔂 <b>Dilimli alım-satım</b>" in sent[0], sent
-        assert "<b>CBRS</b>: <b>ALIM SÜRÜYOR</b> — 03:08 TSİ'den beri" in sent[0] and "son dilim" in sent[0]
+        assert "<b>CBRS</b>: 🟢 <b>ALIM SÜRÜYOR — 2 dk'dır</b> (03:08 TSİ'den beri)" in sent[0], sent[0]
+        assert "son dilim 33 sn önce" in sent[0]
         assert len(sent) >= 2 and "🔂" not in sent[-1], "hesap özeti en sonda (🔁 testi sent[-1]'e bakar)"
         rd = lambda *p: open(os.path.join(ROOT, *p), encoding="utf-8").read()  # noqa: E731
         assert "slicewatch.loop(" in rd("app", "main.py")
@@ -545,4 +546,85 @@ def test_wiring_and_status_command():
             assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
         print("✅ kablo) /hesaplar en üstte 🔂 durum (kv'den), spawn, sağlık, tür satılmaz, env-only kanal,"
               " 7 ayar künyeli, order_status, README/.env, /tani")
+    asyncio.run(run())
+
+
+def test_balina_command_and_group_access():
+    """Kullanıcı (05.10): "güncel durumu nasıl soracağım — şu an balina ne yaptı, kaç saattir
+    kaç dakikadır alıyor". → /balina: süre ("…'dır"), toplamlar, son dilim, fiyat, pozisyon;
+    hesap grubunda sahip olmayan üye de sorabilir."""
+    async def run():
+        from app.telegram import format as fmt
+        assert fmt._for_txt(45) == "45 sn'dir" and fmt._for_txt(14 * 60) == "14 dk'dır"
+        assert fmt._for_txt(6 * 3600 + 51 * 60) == "6 s 51 dk'dır" and fmt._for_txt(86400 + 3 * 3600) == "1 g 3 s'tir"
+        cfg = await _fresh()
+        cfg.telegram_chat_id, cfg.telegram_owner_id = "111", ""
+        cl, nt = Client(), Notifier()
+        cl.fills = campaign("xyz:CBRS", "B", T0, 12)
+        await _tick(cfg, cl, nt, T0 - 60_000)
+        await _tick(cfg, cl, nt, T0 + 120_000)
+        from app.telegram.bot import TelegramBot
+        import app.telegram.bot as botmod
+        bot = TelegramBot(cfg, None, None, {})
+        sent = []
+
+        async def fake_send(text, chat_id=None):
+            sent.append((chat_id, text))
+            return True
+        bot.send = fake_send
+        real_now = botmod.now
+        try:
+            botmod.now = lambda: (T0 + 130_000) // 1000
+            # hesap grubundan, sahip OLMAYAN üye /balina yazar → durum o gruba
+            await bot._handle_update({"message": {"chat": {"id": -500, "type": "group"},
+                                                  "from": {"id": 42}, "text": "/balina"}})
+            assert len(sent) == 1 and sent[0][0] == "-500", sent
+            text = sent[0][1]
+            for x in ("🟢 <b>ALIM SÜRÜYOR — 2 dk'dır</b> (03:08 TSİ'den beri)",
+                      "• 4 emir · ", "≈ <b>$32K</b> · ort. 179.03",
+                      "• son dilim 33 sn önce · dilimler arası ~32 sn · dilim ~$8K",
+                      "• 📊 Pozisyon LONG 119.4K CBRS → <b>LONG 119.6K CBRS</b>",
+                      "• 🔄 Aynı dakikalarda: ", "son yoklama 10 sn önce · her 30 sn'de güncellenir"):
+                assert x in text, (x, text)
+            assert sum(cl.calls.values()) == cl.calls["fills"] + cl.calls["ch"] + cl.calls["os"], "komut HL'ye gitmez"
+            # yabancı gruptan → sessiz (yalnız /id)
+            await bot._handle_update({"message": {"chat": {"id": -999, "type": "group"},
+                                                  "from": {"id": 42}, "text": "/balina"}})
+            assert len(sent) == 1
+            # /dilim eş anlamlı; yoklama aksadıysa (6 dk dilim yok, tur yok) "sürüyor" denmez
+            seen_last = max(f["time"] for f in cl.fills if f["coin"] == "xyz:CBRS" and f["time"] <= T0 + 120_000)
+            botmod.now = lambda: (seen_last + 360_000) // 1000
+            await bot._handle_update({"message": {"chat": {"id": -500, "type": "group"},
+                                                  "from": {"id": 42}, "text": "/dilim"}})
+            assert "🟡 <b>ALIM — son dilim 6 dk önce</b>" in sent[-1][1] and "SÜRÜYOR" not in sent[-1][1], sent[-1][1]
+        finally:
+            botmod.now = real_now
+        # bitti → "⏸ şu an yok · son dizi … · N önce bitti"
+        end_t = last_t(cl.fills)
+        t = T0 + 150_000
+        while t <= end_t:
+            await _tick(cfg, cl, nt, t)
+            t += 30_000
+        await _tick(cfg, cl, nt, end_t + 301_000)
+        assert "ALIM BİTTİ" in nt.sent[-1][2]
+        snap = (await sw.snapshots(cfg))[0]
+        ctx = {**bot._slice_ctx(), "now_ms": end_t + 20 * 60_000}
+        text = fmt.slice_status(snap, ctx)
+        assert "⏸ şu an dilimli alım/satım yok · son dizi ALIM 03:08 →" in text and "20 dk önce bitti" in text, text
+        # eşiğe varmamış taze seri de yazılır
+        cfg2 = await _fresh()
+        cl2, nt2 = Client(), Notifier()
+        cl2.fills = campaign("xyz:CBRS", "B", T0, 2)
+        await _tick(cfg2, cl2, nt2, T0 - 60_000)
+        await _tick(cfg2, cl2, nt2, T0 + 30_000)
+        snap = (await sw.snapshots(cfg2))[0]
+        text = fmt.slice_status(snap, {**ctx, "now_ms": T0 + 40_000})
+        assert "yeni alış serisi — 2 emir · $16K (03:08 TSİ'den beri)" in text, text
+        assert "dizi sayılması için aynı yönde ≥3 emir ve ≥$10K" in text
+        assert "⏸ şu an dilimli alım/satım yok · bakılan pencerede dizi yok" in text
+        from app.telegram.format import help_text
+        assert "/balina" in help_text() and "/hesaplar" in help_text()
+        print("✅ /balina) 'kaç saattir' (…'dır), emir/$/ortalama, son dilim, pozisyon, diğer coinler;"
+              " hesap grubunda sahip olmayan üye de sorar, yabancı grup sessiz; yoklama aksarsa 'sürüyor'"
+              " denmez; biten dizi 'N önce bitti'; eşiğe varmamış seri; yardımda listeli")
     asyncio.run(run())
