@@ -74,6 +74,7 @@ class TelegramBot:
         self.blocked_chats: set[str] = set()       # 403 / silinmiş hesap görülen sohbetler
         self.on_blocked = self._default_on_blocked
         self.username = getattr(cfg, "bot_username", "") or ""   # /bot sayfası ve tanıtım linki (getMe ile dolar)
+        self._admin_cache: dict[tuple[str, str], tuple[float, bool]] = {}   # (kanal, kullanıcı) → yönetici mi
 
     # ---------- gönderim ----------
 
@@ -394,7 +395,12 @@ class TelegramBot:
                 err_wait = min(err_wait * 2, 120)
 
     async def _handle_update(self, upd: dict) -> None:
-        # Düğme (callback) ve ödeme olayları yalnız herkese açık DM akışında anlamlı
+        # 🛑 takip tuşu (sahibin sohbetleri) — herkese açık akıştan ÖNCE, kendi öneki var
+        cq = upd.get("callback_query")
+        if cq and str(cq.get("data") or "").startswith(fmt.TRACK_CB + ":"):
+            await self._track_callback(cq)
+            return
+        # Diğer düğmeler (callback) ve ödeme olayları yalnız herkese açık DM akışında anlamlı
         if "callback_query" in upd or "pre_checkout_query" in upd:
             if self._public_on():
                 from . import public
@@ -557,6 +563,95 @@ class TelegramBot:
             await self.send(
                 f"❓ <code>/{fmt.esc(cmd)}</code> diye bir komut yok.\n\n"
                 + fmt.help_text(), chat_id)
+
+    # ---------- 🛑 takip tuşu ----------
+
+    async def _ack(self, cq_id, text: str = "") -> None:
+        try:
+            await self.answer_callback(cq_id, text)
+        except Exception:
+            log.debug("answerCallbackQuery", exc_info=True)
+
+    async def _chat_admin(self, chat_id: str, uid: str) -> bool:
+        """Kanal yöneticisi mi (getChatMember) — başarılı okuma 10 dk önbellekte; okunamazsa hayır."""
+        key, t = (chat_id, uid), time.monotonic()
+        hit = self._admin_cache.get(key)
+        if hit and t - hit[0] < 600:
+            return hit[1]
+        if not uid.lstrip("-").isdigit():
+            return False
+        st, data = await self.call("getChatMember", {"chat_id": chat_id, "user_id": int(uid)}, timeout=10)
+        if st != 200 or not data.get("ok"):
+            return False
+        ok = (data.get("result") or {}).get("status") in ("creator", "administrator")
+        self._admin_cache[key] = (t, ok)
+        return ok
+
+    async def _may_press(self, chat: dict, frm: dict) -> bool:
+        """Tuşa kim basabilir — komutlarla aynı kural, kanalda daha sıkı: kanalda tuşa her abone
+        basabilir (komutu ise yalnız yönetici yazabilir) → sahip id'si ya da kanal yöneticisi.
+        Özel sohbet / grup: botun kendi sohbetleri (grupta üyeler /birak_N'i zaten yazabiliyor)."""
+        chat_id, uid = str(chat.get("id") or ""), str(frm.get("id") or "")
+        if not chat_id or not uid or frm.get("is_bot"):
+            return False
+        oid = self._owner_user_id()
+        if oid and uid == oid:
+            return True
+        if chat_id not in self._own_chats():
+            return False
+        if chat.get("type") == "channel":
+            return await self._chat_admin(chat_id, uid)
+        return True
+
+    async def _track_callback(self, cq: dict) -> None:
+        """🛑 tek dokunuş bırakır, ↩️ geri alır. Klavye DURUMDAN çizilir (basılan tuştan değil):
+        aynı takibin eski mesajlarındaki tuşlar da basılınca doğru hâle döner; biten takipte kalkar."""
+        from ..radar import trackctl
+        cq_id = cq.get("id")
+        msg = cq.get("message") or {}
+        chat = msg.get("chat") or {}
+        parts = str(cq.get("data") or "").split(":")
+        if len(parts) != 4 or parts[1] not in ("stop", "undo") or parts[2] not in trackctl.KINDS \
+                or not parts[3].isdigit():
+            await self._ack(cq_id)
+            return
+        _, act, kind, fid = parts[0], parts[1], parts[2], int(parts[3])
+        if not await self._may_press(chat, cq.get("from") or {}):
+            await self._ack(cq_id, "Bu tuşu yalnız sahibi ya da kanal yöneticisi kullanabilir")
+            return
+        if act == "stop":
+            done = await trackctl.stop(kind, fid)
+            st = await trackctl.state(kind, fid)
+            label = (st or {}).get("label") or f"#{fid}"
+            if done:
+                note = f"🛑 {label} bırakıldı — yanlışlıkla mı? ↩️ Geri al"
+            elif st is None:
+                note = f"#{fid} bulunamadı"
+            elif st["active"]:
+                note = f"{label} hâlâ açık — yeniden dene"
+            elif st.get("end_note") == trackctl.MANUAL:
+                note = f"{label} zaten bırakılmış"
+            else:
+                note = f"{label} bitmiş: {st.get('end_note') or 'kapandı'}"
+        else:
+            ok, why = await trackctl.resume(kind, fid)
+            st = await trackctl.state(kind, fid)
+            label = (st or {}).get("label") or f"#{fid}"
+            note = f"↩️ {label} yeniden açık — kaldığı yerden sürüyor" if ok else f"{label}: {why}"
+        if st and st["active"]:
+            kb = fmt.stop_kb(kind, fid)
+        elif st and st.get("end_note") == trackctl.MANUAL:
+            kb = fmt.undo_kb(kind, fid)
+        else:
+            kb = None                                    # takip bitti → tuş kalkar
+        await self._ack(cq_id, note)
+        cur = msg.get("reply_markup") or {}
+        cur = cur if cur.get("inline_keyboard") else None
+        if kb != cur and msg.get("message_id") and chat.get("id") is not None:
+            try:
+                await self.edit_reply_markup(str(chat["id"]), msg["message_id"], kb)
+            except Exception:
+                log.debug("takip tuşu güncellenemedi", exc_info=True)
 
     async def _admin(self, cmd: str, args: list[str], chat_id: str) -> bool:
         """Satış tarafı sahip komutları (app/telegram/admin.py)."""
@@ -1046,7 +1141,7 @@ class TelegramBot:
             f"👁 <b>{sym}</b> TWAP emri takipte (#{fid}) · {fmt.alink(offer['address'])}\n"
             f"İptal edilirse <b>⛔</b>, bitince <b>🏁</b> haber vereceğim{half}."
             f" Takip {days} gün sonra kendiliğinden kapanır · bırakmak için"
-            f" /birak_twap_{fid}", chat_id)
+            f" /birak_twap_{fid}", chat_id, reply_markup=fmt.stop_kb("twap", fid))
 
     async def _cmd_accounts(self, chat_id: str) -> None:
         """/hesaplar — önce 🔂 dilimli alım-satım durumu (kv'den), sonra izlenen hesapların son
@@ -1161,7 +1256,7 @@ class TelegramBot:
             f"👁 <b>{sym}</b> yapışkan duvarı takipte (#{fid}) · {now_txt}\n"
             "Yarılanınca, yeni dilim gelince ve bitince (<b>yenildi</b> / <b>çekildi</b>) haber"
             f" vereceğim. Takip {stickywall.FOLLOW_DAYS} gün sonra kendiliğinden kapanır ·"
-            f" bırakmak için /birak_duvar_{fid}", chat_id)
+            f" bırakmak için /birak_duvar_{fid}", chat_id, reply_markup=fmt.stop_kb("wall", fid))
 
     async def _cmd_track_start(self, cmd: str, chat_id: str) -> None:
         """Teklif mesajındaki /takip_N — balina çıkış takibini başlat."""
@@ -1212,7 +1307,7 @@ class TelegramBot:
         tid = await start_tracker(self.cfg, offer["address"], offer["coin"],
                                   offer["symbol"], live, chat_id=self._track_chat(chat_id))
         await self.send(fmt.track_started(tid, offer["symbol"], offer["address"],
-                                          live, self.cfg), chat_id)
+                                          live, self.cfg), chat_id, reply_markup=fmt.stop_kb("pos", tid))
 
     async def _cmd_track_manual(self, args: list[str], chat_id: str) -> None:
         """/takip 0xADRES SEMBOL — teklif beklemeden elle takip başlat."""
@@ -1253,7 +1348,8 @@ class TelegramBot:
             return
         tid = await start_tracker(self.cfg, addr, t["coin"], sym, live,
                                   chat_id=self._track_chat(chat_id))
-        await self.send(fmt.track_started(tid, sym, addr, live, self.cfg), chat_id)
+        await self.send(fmt.track_started(tid, sym, addr, live, self.cfg), chat_id,
+                        reply_markup=fmt.stop_kb("pos", tid))
 
     async def _cmd_track_list(self, chat_id: str) -> None:
         async with db() as conn:
@@ -1263,48 +1359,31 @@ class TelegramBot:
         await self.send(fmt.track_list(rows), chat_id)
 
     async def _cmd_track_stop(self, cmd: str, chat_id: str) -> None:
-        # /birak_twap_N → TWAP EMRİ takibi; /birak_N → pozisyon takibi
+        """/birak_N (pozisyon), /birak_duvar_N (🧲), /birak_twap_N (👁) — bildirimdeki 🛑 tuşuyla
+        aynı yol (trackctl); onayda ↩️ geri al tuşu."""
+        from ..radar import trackctl
         rest = cmd.split("_", 1)[1] if "_" in cmd else ""
+        kind, usage = "pos", "Kullanım: /takipler listesindeki /birak_N komutuna bas."
         if rest.startswith("duvar_"):
-            from ..radar import stickywall
-            try:
-                fid = int(rest.split("_", 1)[1])
-            except (ValueError, IndexError):
-                await self.send("Kullanım: /duvartakipler listesindeki /birak_duvar_N komutuna bas.", chat_id)
-                return
-            ok = await stickywall.follow_stop(fid, "elle bırakıldı")
-            await self.send(f"🧲 Yapışkan duvar takibi #{fid} bırakıldı." if ok
-                            else f"#{fid} numaralı aktif duvar takibi yok.", chat_id)
-            return
-        if rest.startswith("twap_"):
-            from ..radar import twapfollow
-            try:
-                fid = int(rest.split("_", 1)[1])
-            except (ValueError, IndexError):
-                await self.send("Kullanım: /twaptakipler listesindeki /birak_twap_N komutuna bas.", chat_id)
-                return
-            ok = await twapfollow.stop(fid, "elle bırakıldı")
-            await self.send(f"👁 TWAP emri takibi #{fid} bırakıldı." if ok
-                            else f"#{fid} numaralı aktif TWAP takibi yok.", chat_id)
-            return
+            kind, usage = "wall", "Kullanım: /duvartakipler listesindeki /birak_duvar_N komutuna bas."
+        elif rest.startswith("twap_"):
+            kind, usage = "twap", "Kullanım: /twaptakipler listesindeki /birak_twap_N komutuna bas."
         try:
-            tid = int(cmd.split("_", 1)[1])
-        except (ValueError, IndexError):
-            await self.send("Kullanım: /takipler listesindeki /birak_N komutuna bas.", chat_id)
+            fid = int(rest.rsplit("_", 1)[-1] if kind != "pos" else rest)
+        except ValueError:
+            await self.send(usage, chat_id)
             return
-        async with db() as conn:
-            cur = await conn.execute(
-                "SELECT * FROM trackers WHERE id=? AND active=1", (tid,))
-            row = await cur.fetchone()
-            if row:
-                await conn.execute(
-                    "UPDATE trackers SET active=0, end_note='elle bırakıldı' WHERE id=?",
-                    (tid,))
-        if row:
-            await self.send(f"👣 Takip #{tid} (<b>{row['symbol']}</b>"
-                            f" {fmt.short(row['address'])}) bırakıldı.", chat_id)
-        else:
-            await self.send(f"#{tid} numaralı aktif takip yok. /takipler ile listeye bak.", chat_id)
+        if await trackctl.stop(kind, fid):
+            st = await trackctl.state(kind, fid) or {}
+            text = {"pos": f"👣 Takip #{fid} (<b>{fmt.esc(st.get('symbol') or '')}</b>"
+                           f" {fmt.short(st.get('address') or '')}) bırakıldı.",
+                    "wall": f"🧲 Yapışkan duvar takibi #{fid} bırakıldı.",
+                    "twap": f"👁 TWAP emri takibi #{fid} bırakıldı."}[kind]
+            await self.send(text, chat_id, reply_markup=fmt.undo_kb(kind, fid))
+            return
+        await self.send({"pos": f"#{fid} numaralı aktif takip yok. /takipler ile listeye bak.",
+                         "wall": f"#{fid} numaralı aktif duvar takibi yok.",
+                         "twap": f"#{fid} numaralı aktif TWAP takibi yok."}[kind], chat_id)
 
     async def _cmd_watchlist(self, chat_id: str) -> None:
         async with db() as conn:

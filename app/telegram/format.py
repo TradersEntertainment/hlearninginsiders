@@ -1944,6 +1944,22 @@ def lowvol_alert(p: dict) -> str:
     return "\n".join(lines)
 
 
+# ---- 🛑 takip tuşları: tek dokunuş bırakır, ↩️ geri alır (bot._track_callback) ----
+# Önek public.py'nin k: / q: / m: / pay: ad alanından ayrı; callback_data ≤ 64 bayt.
+TRACK_CB = "trk"
+
+
+def stop_kb(kind: str, fid: int) -> dict:
+    """Takip bildirimlerinin altındaki tuş — kind: pos (👣 #N) | wall (🧲) | twap (👁)."""
+    return {"inline_keyboard": [[{"text": f"🛑 Takibi bırak (#{int(fid)})",
+                                  "callback_data": f"{TRACK_CB}:stop:{kind}:{int(fid)}"}]]}
+
+
+def undo_kb(kind: str, fid: int) -> dict:
+    return {"inline_keyboard": [[{"text": f"↩️ Geri al — takip #{int(fid)} bırakıldı",
+                                  "callback_data": f"{TRACK_CB}:undo:{kind}:{int(fid)}"}]]}
+
+
 def track_offer(symbol: str, offers: list[dict], already_closed: list[dict], cfg) -> str:
     """Earnings geçti — "çıkışı takip edelim mi?" teklifi (tıklanabilir /takip_N)."""
     lines = [f"👣 <b>{symbol} earnings geçti — balina çıkışını takip edelim mi?</b>",
@@ -2481,7 +2497,7 @@ def help_text() -> str:
         "/balina — 🔂 dilimli alım-satım: şu an ne yapıyor, kaç saattir alıyor/satıyor, ne kadar aldı\n"
         "/hesaplar — 👤 izlenen hesaplar (pozisyon, duvar, emirler) + 🔂 durum\n"
         "/seans — 🕰 ABD seans karnesi (XYZ100 + SP500): Asya → Londra → New York, bugün + geçmiş ölçüm · /seans NVDA tek hisse\n"
-        "/takipler — aktif pozisyon takipleri (bırakmak için /birak_N)\n"
+        "/takipler — aktif pozisyon takipleri (bırakmak için bildirimdeki 🛑 tuşu ya da /birak_N; ↩️ geri alınabilir)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
         "/sim — liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar (sayfa /sim)\n"
         "/takip 0x… SNDK — herhangi bir balinayı ELLE takibe al (teklif beklemeden)\n"

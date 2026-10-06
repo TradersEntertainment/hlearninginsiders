@@ -1096,11 +1096,16 @@ async def follow_tick(cfg, notifier, ts: int, out: dict) -> None:
         if not stage:
             continue
         text = fmt.sticky_end(r) if stage == "end" else fmt.sticky_note(r, stage)
+        # Tur başında okundu; bu arada 🛑 tuş / komutla bırakıldıysa not gitmesin.
+        from .trackctl import still_active
+        if not await still_active("wall", fid):
+            continue
         # 'critical': kişi bunu bilerek istedi — sessiz saatte ertelenip her 15 sn'de
-        # sabah özetine yeniden yazılmasın (twapfollow bitiş notuyla aynı).
+        # sabah özetine yeniden yazılmasın (twapfollow bitiş notuyla aynı). Bitiş notunda da
+        # tuş var: takip 15 dk dönüş penceresinde hâlâ açık.
         ok = await notifier.send("track", text, priority="critical",
                                  key=f"sticky:{fid}:{stage}:{r.get('tranches') or 0}",
-                                 chat_id=r["chat_id"] or "")
+                                 chat_id=r["chat_id"] or "", reply_markup=fmt.stop_kb("wall", fid))
         if not ok:
             out["follow_failed"] += 1
             continue

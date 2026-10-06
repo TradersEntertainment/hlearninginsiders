@@ -56,11 +56,12 @@ class Client:
 
 class Bot:
     def __init__(self, ok=True):
-        self.ok, self.sent = ok, []
+        self.ok, self.sent, self.kbs = ok, [], []
 
-    async def send(self, text, chat_id=None):
+    async def send(self, text, chat_id=None, reply_markup=None):
         if self.ok:
             self.sent.append((chat_id, text))
+            self.kbs.append(reply_markup)
         return self.ok
 
 
@@ -227,7 +228,7 @@ def test_bot_channel_commands():
         bot = TelegramBot(cfg, None, cli, {})
         sent = []
 
-        async def fake_send(text, chat_id=None):
+        async def fake_send(text, chat_id=None, reply_markup=None):
             sent.append((chat_id, text))
             return True
         bot.send = fake_send

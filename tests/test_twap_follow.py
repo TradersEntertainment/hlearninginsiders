@@ -113,7 +113,7 @@ def test_button_opens_follow_not_tracker():
         bot = TelegramBot.__new__(TelegramBot)
         bot.cfg, bot.client = cfg, None
         sent = []
-        async def _send(t, chat=""):
+        async def _send(t, chat="", reply_markup=None):
             sent.append((chat, t))
             return True
         bot.send = _send

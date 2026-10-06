@@ -143,6 +143,9 @@ async def _one(cfg, f: dict, hist: list, ts: int, notifier, fmt, twaplive, out: 
         # Başlık `twap_end`'in kendisinde (⛔ / 🏁) — burada yalnız "neden bu mesajı
         # aldın" satırı. İkisini birden yazmak başlığı çiftliyordu.
         text = "👁 <b>takip ettiğin emir</b>\n" + fmt.twap_end(m, ctx)
+        from .trackctl import still_active
+        if not await still_active("twap", f["id"]):
+            return                      # bu arada bırakıldı: bitiş haberi de gitmez (geri alınırsa gider)
         ok = await notifier.send("track", text, priority="critical",
                                  key=f"twapfollow:{f['id']}:{status}", chat_id=f["chat_id"] or "")
         if not ok:
@@ -156,8 +159,12 @@ async def _one(cfg, f: dict, hist: list, ts: int, notifier, fmt, twaplive, out: 
             and filled >= HALF_PCT and status == "activated"):
         ctx = {"order": o, "day_vol": m.get("day_volume"), "klass": twaplive.klass_of(f["coin"])}
         text = "👁 <b>takip ettiğin emir</b>\n" + fmt.twap_progress(m, ctx)
+        from .trackctl import still_active
+        if not await still_active("twap", f["id"]):
+            return                      # tur başında okundu, bu arada 🛑 tuş / komutla bırakıldı
         if await notifier.send("track", text, priority="high",
-                               key=f"twapfollow:{f['id']}:half", chat_id=f["chat_id"] or ""):
+                               key=f"twapfollow:{f['id']}:half", chat_id=f["chat_id"] or "",
+                               reply_markup=fmt.stop_kb("twap", f["id"])):
             await _mark(half_ts=ts, last_status=status)
             out["progress"] += 1
         else:

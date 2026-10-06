@@ -107,7 +107,9 @@ class Notifier:
 
     async def send(self, kind: str, text: str, *, priority: str = "",
                    key: str = "", chat_id: str = "", coin: str = "", png: bytes | None = None,
-                   public: bool = True) -> bool:
+                   public: bool = True, reply_markup: dict | None = None) -> bool:
+        """`reply_markup` (ör. 🛑 takibi bırak tuşu) YALNIZ sahibin sohbetine gider — fan-out'a
+        ve sessiz saatte sabah özetine düşen kayda gitmez (orada basılacak tuş anlamsız)."""
         if public:
             self._publish(kind, coin, text, png, key)
         if not self.bot:
@@ -136,7 +138,10 @@ class Notifier:
                 log.info("sessiz saat — %s bildirimi sabah özetine bırakıldı", kind)
                 return False
 
-        ok = await self.bot.send(text, chat_id or None)
+        if reply_markup:
+            ok = await self.bot.send(text, chat_id or None, reply_markup=reply_markup)
+        else:
+            ok = await self.bot.send(text, chat_id or None)
         if ok:
             await alert_log(f"sent:{kind}", key or kind, text)
         return ok

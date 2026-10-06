@@ -305,8 +305,12 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     step = base * step_pct / 100 if base > 0 else 0
 
     async with db() as conn:
-        await conn.execute(
-            "UPDATE trackers SET last_check_ts=? WHERE id=?", (ts, t["id"]))
+        cur = await conn.execute(
+            "UPDATE trackers SET last_check_ts=? WHERE id=? AND active=1", (ts, t["id"]))
+        still = bool(cur.rowcount)
+    if not still:
+        return              # tur başında okundu, bu arada 🛑 tuş / komutla bırakıldı → bayat mesaj yok
+    kb = fmt.stop_kb("pos", t["id"])
 
     # NOT: state (active=0 / yön / last_szi) YALNIZ başarılı gönderimden SONRA
     # yazılır. Eskiden önce yazılıp send sonucu yok sayılıyordu: Telegram anlık
@@ -340,7 +344,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     # 2) Yön değişimi (long→short / short→long) → kritik, takip yeni yönle sürer
     if live["side"] != t["side"]:
         ok = await notifier.send("track", fmt.track_flip(t, live), priority="critical",
-                                 key=f"flip:{t['id']}:{live['side']}", chat_id=chat)
+                                 key=f"flip:{t['id']}:{live['side']}", chat_id=chat, reply_markup=kb)
         if ok:
             async with db() as conn:
                 await conn.execute(
@@ -353,7 +357,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     #    Spam önleyici — her transaction değil, birikmiş anlamlı fark bildirir.
     if step > 0 and abs(cur_szi - last) >= step:
         ok = await notifier.send("track", fmt.track_step(t, live, base, last, cur_szi),
-                                 key=f"step:{t['id']}:{cur_szi:.4f}", chat_id=chat)
+                                 key=f"step:{t['id']}:{cur_szi:.4f}", chat_id=chat, reply_markup=kb)
         if ok:  # last_szi yalnız gönderilince ilerler (kaçan adım tekrar denenir)
             async with db() as conn:
                 await conn.execute(
@@ -368,7 +372,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     if liq_step > 0 and prev_liq and cur_liq and \
             abs(cur_liq - prev_liq) / prev_liq * 100 >= liq_step:
         ok = await notifier.send("track", fmt.track_liq_move(t, live, prev_liq, cur_liq),
-                                 key=f"liq:{t['id']}:{cur_liq:.6g}", chat_id=chat)
+                                 key=f"liq:{t['id']}:{cur_liq:.6g}", chat_id=chat, reply_markup=kb)
         if ok:
             async with db() as conn:
                 await conn.execute("UPDATE trackers SET liq_px=? WHERE id=?", (cur_liq, t["id"]))
@@ -399,7 +403,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
                                (new_exp, t["id"]))
         await notifier.send("track", fmt.track_checkin(t, live, base),
                             priority="normal",
-                            key=f"checkin:{t['id']}:{t['expires_ts']}", chat_id=chat)
+                            key=f"checkin:{t['id']}:{t['expires_ts']}", chat_id=chat, reply_markup=kb)
 
 
 async def _auto_stop(cfg: Config, notifier, t: dict, live: dict,

@@ -56,7 +56,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/upcoming` | Yaklaşan HL-eşleşen earnings'ler |
 | `/whale 0x…` | Adres karnesi + canlı pozisyonları |
 | `/watch 0x…` / `/unwatch 0x…` | Watchlist'e ekle/çıkar |
-| `/takipler` · `/birak_N` | Aktif pozisyon takipleri · takibi bırak |
+| `/takipler` · `/birak_N` | Aktif pozisyon takipleri · takibi bırak (ya da takip bildirimindeki **🛑 Takibi bırak** tuşu; yanlışlıkla basılırsa **↩️ Geri al**) |
 | `/duvartakipler` · `/birak_duvar_N` | İzlenen 🧲 yapışkan duvarlar · takibi bırak |
 | `/balina` (`/dilim`) | 🔂 Dilimli alım-satım şu an: kaç saattir alıyor/satıyor, kaç emir, ne kadar ($ ve adet), ortalama, son dilim kaç sn önce, fiyat ve pozisyon değişimi, aynı dakikalardaki diğer coinler; yoksa son dizi ve ne zaman bittiği |
 | `/hesaplar` | 🔂 Dilimli alım-satım durumu + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
@@ -393,7 +393,7 @@ sorgulanmaz, spot çiftlerinin coin sayfası yoktur (onlar `/twaplar`'da).
 **👁 Takip düğmesi ve iptal bildirimi.** TWAP alarmının sonunda
 `👁 emri takip et → /takip_N` satırı var. Basınca **o emir** izlenir ve **iptal
 edilirse ⛔, bitince 🏁** haber gelir — yalnız basana, komutun geldiği sohbete;
-kanal sessiz kalır (`/twaptakipler` listeler, `/birak_twap_N` bırakır).
+kanal sessiz kalır (`/twaptakipler` listeler, `/birak_twap_N` ya da mesajdaki 🛑 tuşu bırakır).
 
 Bu, balina **pozisyonu** takibinden (`tracker`) ayrı bir hattır ve olmak zorunda:
 o `live_position` ile canlı perp defterine bakar, oysa TWAP'ta izlenecek şey
@@ -518,7 +518,8 @@ yenen. Aynı coin+yön için 6 saatte bir. Alarmdaki **`/takip_N`**'e basan, yal
   bilinmiyorsa, dolum geçmişi okunamadıysa ve canlı akış o aralığı görmediyse **kayboldu**
   — dolum mu çekilme mi, veri olmadan söylenmez. Bitişte sahibin pozisyonu bir kez daha okunur.
 
-`/duvartakipler` listeler, `/birak_duvar_N` bırakır; takip 2 gün sonra kendiliğinden kapanır.
+`/duvartakipler` listeler, `/birak_duvar_N` ya da nottaki 🛑 tuşu bırakır; takip 2 gün sonra
+kendiliğinden kapanır.
 Gönderilemeyen not işaretlenmez, sonraki adım (15 sn) yeniden dener.
 
 **Kör noktalar, açıkça:** HIP-3 hisse defterleri burada yok (onlar çok seviyeli 🧱 duvar
@@ -1007,6 +1008,14 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   Eşikler ⚙️ Ayarlar → Bildirimler (`track_step_pct`, `track_liq_step_pct`);
   `/takipler` listeler, `/birak_N` bırakır; `/takip 0xADRES HYPE` elle başlatır
   (hisse önce, sonra ana dex kripto).
+- **🛑 Takibi bırak tuşu.** Takip bildirimlerinin (👣 başladı / adım / 🛡 liq kaydı / 🔁 yön /
+  ⏳ süre notu, 🧲 duvar notları, 👁 TWAP yarılandı) altında tek dokunuşla bırakma tuşu var;
+  basınca tuş **↩️ Geri al — takip #N bırakıldı** olur, geri alınca takip **kaldığı yerden**
+  sürer (başlangıç boyutu korunur). Takibin bittiği mesajlarda (kapandı, likide oldu, emir
+  bitti) tuş yok. Tuşun yazısı takibin O ANKİ durumundan çizilir: aynı takibin eski
+  mesajlarındaki tuşlar da basılınca doğru hâle döner. Kim basabilir: komutlarla aynı —
+  botun kendi sohbetleri; kanalda yalnız sahip ya da kanal yöneticisi (kanalda tuşa her abone
+  basabildiği için). `/birak_N` onay mesajında da geri al tuşu var.
 - **💣 Zincir simülasyonu.** Mesajın en yakın pozisyonu için: patlarsa zorunlu
   emir (short → alış, long → satış) emir defterini liq fiyatından itibaren
   nereye kadar süpürür; o fiyata kadar liq'i olan aynı yönlü pozisyonlar da
