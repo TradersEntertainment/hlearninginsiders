@@ -415,6 +415,25 @@ async def _subsystems(cfg, state=None) -> list[str]:
                       if bs.get("n_empty") else "")
                    + (f" · ⚠️ {bs['err']} hata: {bs.get('err_msg', '')}"
                       if bs.get("err") else ""))
+    # 🕰 ABD seans karnesi: arka plan arşivi + sembol başına mum / gün
+    ss = await kv_get("seans_stats") or {}
+    try:
+        async with db() as conn:
+            cur = await conn.execute("SELECT coin, COUNT(*) n, MIN(ts) t0, MAX(ts) t1 FROM seans_bars"
+                                     " GROUP BY coin ORDER BY coin")
+            sb = [dict(r) for r in await cur.fetchall()]
+    except Exception as e:                         # noqa: BLE001 — döküm yarım kalmasın
+        sb = []
+        out.append(f"  seans karnesi: arşiv okunamadı ({type(e).__name__})")
+    if ss or sb:
+        per = ", ".join(f"{r['coin'].split(':')[-1]} {_num(r['n'])} mum/{(int(r['t1']) - int(r['t0'])) // 86400 + 1} g"
+                        for r in sb[:14]) or "arşiv boş"
+        out.append("  seans karnesi: " + ("kapalı (seans_enabled=0) · " if ss.get("disabled") else "") + per
+                   + (f" · tur {_dur(now() - int(ss['ts']))} önce" if ss.get("ts") else "")
+                   + (f" · uygun değil: {', '.join(ss['skipped'])}" if ss.get("skipped") else "")
+                   + (f" · ⚠️ {ss['err']} hata: {ss.get('err_msg', '')}" if ss.get("err") else ""))
+    else:
+        out.append("  seans karnesi: tur HENÜZ ÇALIŞMADI")
     ps = await kv_get("patterns_stats") or {}
     if ps:
         best = ps.get("best") or {}

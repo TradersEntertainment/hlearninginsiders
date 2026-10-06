@@ -318,6 +318,17 @@ CREATE TABLE IF NOT EXISTS bars(
   PRIMARY KEY(coin, tf, ts)
 ) WITHOUT ROWID;
 
+-- 🕰 ABD seans karnesi (radar/seans.py): HAM 30 dk mumlar. HL her aralıkta yalnız son
+-- 5000 mumu veriyor (≈104 gün) — arşivlemezsek geçmiş büyümez. Seans özeti SAKLANMAZ,
+-- her okumada hamdan hesaplanır (DST/sınır hatası bulunursa eski günler de düzelsin;
+-- dip/tepe karıştırma sınaması gün içi yolu ister). n = işlem sayısı: HL işlemsiz
+-- yarım saatte de (son fiyatla düz) mum üretir — seyrek işlemi yalnız bu gösterir.
+CREATE TABLE IF NOT EXISTS seans_bars(
+  coin TEXT, ts INTEGER,              -- mum AÇILIŞ anı (UTC sn, :00/:30 hizalı)
+  o REAL, h REAL, l REAL, c REAL, v REAL, n INTEGER,
+  PRIMARY KEY(coin, ts)
+) WITHOUT ROWID;
+
 -- Örüntü sinyali VE sonucu aynı satırda (ai_hypotheses deseni): tahmini
 -- kaydetmeden "bu araç tutuyor mu" sorusunun cevabı olmaz.
 CREATE TABLE IF NOT EXISTS pattern_signals(

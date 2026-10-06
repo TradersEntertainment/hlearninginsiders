@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}🕰 Seans · {{ v.sym }} · HL Radar{% endblock %}
+{% block bodyattrs %} data-refresh="120"{% endblock %}
+{% block content %}
+{% set qk = ('&key=' + k[5:]) if k else '' %}
+
+{# İşaretli yüzde (getiri) — sayı yoksa uydurma, "—" #}
+{% macro sg(x, d=2) -%}
+{% if x is none %}—{% else %}{{ ('%+.' ~ d ~ 'f')|format(x) }}%{% endif %}
+{%- endmacro %}
+{# Pay (oran) — Türkçe yazımla "%55" #}
+{% macro pc(x) -%}
+{% if x is none %}—{% else %}%{{ '%.0f'|format(x) }}{% endif %}
+{%- endmacro %}
+{% macro rg(x) -%}
+{% if x is none %}—{% else %}%{{ '%.2f'|format(x) }}{% endif %}
+{%- endmacro %}
+{% macro zz(z) -%}
+{% if z is none %}—{% else %}{{ '%+.2f'|format(z) }}{% endif %}
+{%- endmacro %}
+{% macro dur(s) -%}
+{% set mn = (s // 60)|int %}{% if mn >= 60 %}{{ mn // 60 }} sa {{ '%02d'|format(mn % 60) }} dk{% else %}{{ mn }} dk{% endif %}
+{%- endmacro %}
+{# Karar: /orintu ile aynı eşik ve sözler. "kayda değer (tek test)" sarı, Bonferroni'den de geçen yeşil. #}
+{% macro verd(vd) -%}
+{% if vd.label == 'kayda değer' %}<span class="pill {{ 'ok' if vd.survives else 'warn' }}">{{ vd.note }}</span>
+{%- else %}<span class="dim">{{ vd.note }}</span>{% endif %}
+{%- endmacro %}
+
+<div class="panel">
+  <h2>🕰 ABD seans karnesi <span class="st">· Asya → Londra → New York · <b>{{ v.sym }}</b>
+    · {{ v.today_label }} işlem günü</span></h2>
+  <p class="sub">ICT'nin <b>"Power of 3" / AMD</b> algısı: Asya <b>birikim</b> (accumulation),
+  Londra <b>tuzak</b> (manipulation — Asya'nın tepesi ya da dibi süpürülür), New York <b>asıl
+  hareket</b> (distribution) — "Asya'da şu, Londra'da şu olduysa ABD'de şu olur". Bu sayfa o
+  iddiayı <b>ölçer</b>: her ABD işlem günü üç seansa bölünür, geçmişte ne olduğu sayılır ve
+  <b>şansla</b> karşılaştırılır. Her satırda örnek sayısı, taban oran ve z var.
+  <span class="warn">Geçmiş ölçüm, tahmin değil · yatırım tavsiyesi değildir.</span></p>
+
+  <div class="chips">
+    {% for t in tabs %}<a href="/seans?sym={{ t }}{{ qk }}" class="{{ 'on' if v.sym == t else '' }}">{{ t }}</a>{% endfor %}
+    {% if v.sym and v.sym not in tabs %}<a href="/seans?sym={{ v.sym }}{{ qk }}" class="on">{{ v.sym }}</a>{% endif %}
+  </div>
+  <form method="get" action="/seans" class="btnrow">
+    <input type="text" name="sym" class="sq" size="18" placeholder="ABD hissesi sor: NVDA">
+    {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
+    <button type="submit" class="btn sm">Göster</button>
+    <span class="hint">ABD'de işlem gören hisse/endeks perp'leri — kripto, emtia, döviz ve
+      Asya borsası hisseleri bu karneye girmez (seansları başka).</span>
+  </form>
+
+  <div class="tscroll"><div class="tscroll-x">
+  <table class="compact">
+    <tr><th class="l">Seans</th><th>TSİ</th><th>ET (New York)</th><th>Süre</th>
+        <th title="30 dakikalık mum sayısı — yaz/kış geçiş haftalarında değişir">Mum</th></tr>
+    {% for r in v.times %}
+    <tr{% if v.phase == r.key %} class="ihit"{% endif %}>
+      <td class="l"><b>{{ r.label }}</b>{% if r.prev_day %} <span class="dim">(önceki akşam başlar)</span>{% endif %}
+        {%- if v.phase == r.key %} <span class="pill acc">şu an</span>{% endif %}</td>
+      <td>{{ r.tsi0 }}–{{ r.tsi1 }}</td>
+      <td class="dim">{{ r.et0 }}–{{ r.et1 }}</td>
+      <td>{{ '%g'|format(r.hours) }} sa</td>
+      <td class="dim">{{ r.nb }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+
+  {% if v.mismatch %}
+  <p class="alert info">🕐 Bu hafta ABD yaz saatinde, İngiltere kış saatinde: Londra 08:00 =
+    TSİ {{ v.times[1].tsi0 }} → Londra seansı {{ v.times[1].nb }} mum, Asya {{ v.times[0].nb }} mum.
+    Saat konumuna dayanan karşılaştırmalar bu günleri ayrı tutar.</p>
+  {% endif %}
+  {% if v.change %}
+  <p class="kunye">⏰ <b>{{ v.change.label }}</b> işlem gününden itibaren saatler değişiyor:
+    {{ v.change.text }} (TSİ).</p>
+  {% endif %}
+  {% if v.holiday_warn %}
+  <p class="alert warn">📅 NYSE tatil listesi {{ v.holidays_until.strftime('%d.%m.%Y') }}'e kadar
+    girili — sonrası için takvim güncellenmeli (tatiller şu an işlem günü sayılıyor).</p>
+  {% endif %}
+  {% if v.caveat %}<p class="alert warn">⚠️ {{ v.sym }}: {{ v.caveat }}.</p>{% endif %}
+  {% if v.ok and v.thin and v.thin.level == 'warn' %}
+  <p class="alert warn">⚠️ {{ v.sym }}: 30 dk'lık mumların <b>%{{ '%.0f'|format(v.thin.share * 100) }}</b>'ında
+    hiç işlem yok — o yarım saatlerin fiyatı bir önceki işlemdir. Seans tepe/dip ve aralıkları
+    kısmen bayat fiyatı ölçer; endekslerden daha az güven.</p>
+  {% endif %}
+  {% if v.live and not v.live.ok %}
+  <p class="alert warn">📡 Canlı mum alınamadı ({{ v.live.err }}) — arşivle gösteriliyor
+    {%- if v.span and v.span.last_t %}; son mum {{ v.span.last_t|dt }}{% endif %}.</p>
+  {% elif v.span and v.span.stale %}
+  <p class="alert warn">📡 Arşivin son mumu {{ v.span.last_t|dt }} — bugünkü seans durumu bayat olabilir.</p>
+  {% endif %}
+
+  {% if not v.ok %}
+  <p class="alert bad">✗ <b>{{ v.sym or '—' }}</b>: {{ v.reason }}.
+    {%- if v.similar %} Benzerler:
+      {% for s in v.similar %}<a href="/seans?sym={{ s }}{{ qk }}">{{ s }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
+  {% endif %}
+</div>
+
+{% if v.ok %}
+{% set t = v.today %}
+{% set kk = v.k %}
+
+{# ---------------- 📍 Bugün ---------------- #}
+<div class="panel">
+  <h2>📍 Bugün <span class="st">· {{ t.label }} işlem günü ·
+    {%- if t.phase == 'bekleniyor' %} ABD seansı yok{% else %} şu an <b>{{ {'asya': 'Asya', 'londra': 'Londra', 'ny': 'New York'}[t.phase] }}</b>{% endif %}</span></h2>
+  {% if t.phase == 'bekleniyor' %}
+  <p class="alert info">🌙 ABD seansı yok{% if t.holiday %} — <b>{{ t.holiday }}</b> (NYSE kapalı){% endif %}.
+    Sıradaki Asya seansı <b>{{ t.next.dow }} {{ t.next.tsi }}</b> TSİ ({{ t.next.et }} ET) başlıyor —
+    {{ t.next.day }} işlem günü.</p>
+  {% else %}
+    {% if t.early %}<p class="alert warn">⏱ {{ t.early }} — yarım gün, karneye girmez.</p>{% endif %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Seans</th><th>TSİ</th><th class="l">Durum</th>
+        <th title="Önceki seansın kapanışından bu seansın (şimdiki) kapanışına">Getiri</th>
+        <th title="(tepe − dip) / seansın başlangıç fiyatı">Aralık</th>
+        <th title="Biten seansın aralığı arşivdeki günlerin yüzde kaçında bundan dar ya da eşitti">Geçmişte yeri</th></tr>
+    {% for s in t.sessions %}
+    <tr{% if s.state == 'başlamadı' %} class="dimrow"{% endif %}>
+      <td class="l"><b>{{ s.label }}</b></td>
+      <td class="dim">{{ s.tsi0 }}–{{ s.tsi1 }}</td>
+      <td class="l">{% if s.state == 'bitti' %}✓ bitti
+        {%- elif s.state == 'sürüyor' %}▶ sürüyor · {{ dur(s.left_s) }} kaldı{% if s.upto_tsi %} <span class="dim">(veri {{ s.upto_tsi }}'e kadar)</span>{% endif %}
+        {%- else %}⏳ başlamadı{% endif %}
+        {%- if s.missing %} <span class="warn" title="Bu aralıkta eksik mum var — yarım veriyle ölçüm yapılmaz">· veri eksik</span>{% endif %}</td>
+      <td class="{{ 'long' if (s.r or 0) > 0 else 'short' if (s.r or 0) < 0 else '' }}">{% if s.r is defined %}<b>{{ sg(s.r) }}</b>{% else %}—{% endif %}</td>
+      <td>{% if s.rng is defined %}{{ rg(s.rng) }}{% else %}—{% endif %}</td>
+      <td class="dim">{% if s.pct is defined and s.pct is not none %}{% if s.pct <= 0 %}arşivin en darı{% elif s.pct >= 100 %}arşivin en genişi{% else %}%{{ '%.0f'|format(s.pct) }} yüzdelik{% endif %}{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+
+    {% if t.sweep %}
+  <p class="mt10"><b>Londra → Asya aralığı:</b>
+      {%- if t.sweep.hi_tsi and t.sweep.lo_tsi %} Asya tepesini {{ t.sweep.hi_tsi }}'te aştı, dibini {{ t.sweep.lo_tsi }}'te kırdı
+      {%- elif t.sweep.hi_tsi %} Asya tepesini <b>{{ t.sweep.hi_tsi }}</b>'te aştı (dip sağlam)
+      {%- elif t.sweep.lo_tsi %} Asya dibini <b>{{ t.sweep.lo_tsi }}</b>'te kırdı (tepe sağlam)
+      {%- else %} Asya aralığının içinde{% endif %}
+      {%- if not t.sweep.final %} <span class="warn">— Londra sürüyor, kesinleşmedi</span>{% endif %}.</p>
+    {% endif %}
+
+    {% if t.vol %}
+  <p class="mt6"><b>📐 Oynaklık:</b> bugünkü Asya aralığı {{ rg(t.vol.rng) }}
+    {%- if t.vol.pct is not none %} ({% if t.vol.pct <= 0 %}arşivin en darı{% elif t.vol.pct >= 100 %}arşivin en genişi{% else %}arşivde %{{ '%.0f'|format(t.vol.pct) }} yüzdelik{% endif %}){% endif %} →
+    <b>{{ t.vol.terc.name }}</b> üçte birlik dilim. Geçmişte bu dilimde NY aralığı medyan
+    <b>{{ rg(t.vol.terc.ny_med) }}</b> (çeyrekler {{ rg(t.vol.terc.ny_q1) }}–{{ rg(t.vol.terc.ny_q3) }};
+    tüm günler medyan {{ rg(t.vol.all.ny_med) }}).
+    <span class="dim">Geçmiş dağılım — büyüklük söyler, yön söylemez; tahmin değil.</span></p>
+    {% endif %}
+
+    {% if t.rules %}
+  <p class="mt10 h3">🧭 Bugünün Asya + Londra şekli geçmişte</p>
+  <div class="tscroll"><div class="tscroll-x">
+  <table class="compact">
+    <tr><th class="l">Durum</th><th>Gün</th><th>NY ↑</th><th>Taban</th><th>z</th><th class="l">Karar</th></tr>
+    {% for r in t.rules %}
+    <tr><td class="l">{{ r.label }}</td><td class="dim">{{ r.n }}</td>
+      <td>{{ pc(r.p) }}</td><td class="dim">{{ pc(kk.rules.base.p) }}</td>
+      <td class="dim">{{ zz(r.z) }}</td><td class="l">{{ verd(r.v) }}</td></tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="hint">"Ayırt edilemiyor" = bu şekil geçmişte NY'nin yönü hakkında taban orandan fazla bilgi taşımamış.</p>
+    {% elif t.phase in ('asya', 'londra') %}
+  <p class="hint mt6">Londra kapanınca (TSİ {{ v.times[1].tsi1 }}) bugünün Asya + Londra şekline uyan kurallar burada geçmiş karneleriyle listelenir.</p>
+    {% endif %}
+  {% endif %}
+
+  {% if t.last %}
+  <p class="kunye">🗓 Son tam gün <b>{{ t.last.label }}</b>:
+    Asya <span class="{{ 'long' if t.last.r.asya > 0 else 'short' }}">{{ sg(t.last.r.asya) }}</span> ·
+    Londra <span class="{{ 'long' if t.last.r.londra > 0 else 'short' }}">{{ sg(t.last.r.londra) }}</span> ·
+    New York <span class="{{ 'long' if t.last.r.ny > 0 else 'short' }}">{{ sg(t.last.r.ny) }}</span>
+    {%- if t.last.labels %} · {{ t.last.labels|join(' · ') }}{% endif %}</p>
+  {% endif %}
+</div>
+
+{% if not kk %}
+<div class="panel">
+  {{ m.empty(["Henüz tam işlem günü yok.", "Karne için bir işlem gününün 48 yarım saatinin tamamı (ve önceki mum) arşivde olmalı; arşiv saatte bir dolar."]) }}
+</div>
+{% else %}
+
+{# ---------------- 💰 Getiri ---------------- #}
+<div class="panel">
+  <h2>💰 Getiri hangi seansta birikti <span class="st">· {{ kk.n_days }} işlem günü</span></h2>
+  <p class="sub">Seanslar <b>zincirlenir</b>: Asya, kendinden önceki mumun kapanışından; Londra,
+  Asya'nın kapanışından; New York, Londra'nın kapanışından ölçülür — üçünün toplamı günün
+  getirisidir. Hafta sonu ve tatil kayması ayrı <b>Boşluk</b> satırında. <b>t</b> = ortalama /
+  standart hata; |t| &lt; 2 ise ortalama sıfırdan ayırt edilemiyor — betimleme, kanıt değil.</p>
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Seans</th><th>Gün</th>
+        <th title="Günlük log getirilerin toplamı, bileşik yüzdeye çevrilmiş">Toplam</th>
+        <th>Ort./gün</th><th title="Ortalama günlük getiri / seansın saat sayısı">Saat başı</th>
+        <th>Yükselen gün</th><th>t</th><th class="l">Karar</th></tr>
+    {% for r in kk.accrual %}
+    {% if r.n %}
+    <tr{% if r.key in ('gun', 'bosluk') %} class="dimrow"{% endif %}>
+      <td class="l"><b>{{ r.label }}</b></td><td class="dim">{{ r.n }}</td>
+      <td class="{{ 'long' if r.total > 0 else 'short' }}"><b>{{ sg(r.total) }}</b></td>
+      <td>{{ sg(r.mean, 3) }}</td>
+      <td class="dim">{% if r.per_hour is not none %}{{ sg(r.per_hour, 3) }}{% else %}—{% endif %}</td>
+      <td>{{ pc(r.up) }}</td>
+      <td class="dim">{{ zz(r.t) }}</td>
+      <td class="l">{{ verd(r.v) }}</td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+  </div></div>
+</div>
+
+{# ---------------- 🧭 Kurallar ---------------- #}
+{% set rt = kk.rules %}
+<div class="panel">
+  <h2>🧭 Londra / Asya → New York <span class="st">· NY açılışında bilinen {{ rt.K }} sabit durum</span></h2>
+  <p class="sub"><b>Taban:</b> New York seansı {{ rt.base.n }} günün {{ rt.base.k }}'inde yükseldi
+  (<b>{{ pc(rt.base.p) }}</b>). Bir durumun NY'yi "bildiğini" söylemek için NY ↑ oranı bu tabandan
+  şansın açıklayamayacağı kadar uzak olmalı. <b>z</b>, alt küme aynı günlerden çekildiği için
+  sonlu-örneklem düzeltmeli. {{ rt.K }} satırda şansla ~<b>{{ '%.1f'|format(rt.exp_fp) }}</b> tane
+  |z| ≥ 2 beklenir; Bonferroni eşiği |z| ≥ <b>{{ '%.2f'|format(rt.z_bonf) }}</b> ("düzeltme
+  sonrası da"). Kurallar önceden sabit — ayarlanabilir eşik yok (eşik oynatmak sonuç uydurmaktır).</p>
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Durum (Londra kapanışında)</th><th>Gün</th><th>NY ↑</th>
+        <th title="NY ↑ oranı − taban oran (yüzde puanı)">Fark</th><th>z</th>
+        <th title="Bu durumdaki günlerde NY getirisinin medyanı">NY medyan</th><th class="l">Karar</th></tr>
+    {% for r in rt.rows %}
+    <tr{% if r.n < min_n %} class="dimrow"{% endif %}>
+      <td class="l">{{ r.label }}</td><td class="dim">{{ r.n }}</td>
+      <td>{{ pc(r.p) }}</td>
+      {% set dd = '%+.0f'|format(r.diff) if r.diff is not none else '—' %}{% set dd = '0' if dd in ('-0', '+0') else dd %}
+      <td class="{{ 'long' if dd.startswith('+') else 'short' if dd.startswith('-') else '' }}">{{ dd }}{% if r.diff is not none %} puan{% endif %}</td>
+      <td class="dim">{{ zz(r.z) }}</td>
+      <td class="{{ 'long' if (r.med_ny or 0) > 0 else 'short' }}">{{ sg(r.med_ny) }}</td>
+      <td class="l">{{ verd(r.v) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="hint">İlk dört satır günleri bölüşür (her gün tam birine düşer); sahte kırılım
+    satırları ve Asya × Londra yön dörtlüsü aynı günlere başka açıdan bakar.</p>
+</div>
+
+{# ---------------- 📐 Oynaklık ---------------- #}
+{% set vt = kk.vol %}
+<div class="panel">
+  <h2>📐 Oynaklık: sıkışık Asya → ? <span class="st">· büyüklük özeti, yön söylemez</span></h2>
+  <p class="sub">Asya aralığı (tepe − dip) üç eşit gruba bölünür; her grupta aynı günün New York
+  aralığına bakılır. AMD "dar Asya = birikim → NY'de patlama" der; ölçülen ilişki <b>Spearman ρ</b>
+  ile (sıra korelasyonu, aykırı güne dayanıklı).</p>
+  {% if vt.terc %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Asya aralığı</th><th>Aralık (min–maks)</th><th>Gün</th>
+        <th>NY aralığı medyan</th><th title="Alt çeyrek – üst çeyrek">NY çeyrekler</th></tr>
+    {% for r in vt.terc %}
+    <tr><td class="l"><b>{{ r.name }}</b> üçte bir</td>
+      <td class="dim">{{ rg(r.asia_lo) }}–{{ rg(r.asia_hi) }}</td><td class="dim">{{ r.n }}</td>
+      <td><b>{{ rg(r.ny_med) }}</b></td><td class="dim">{{ rg(r.ny_q1) }}–{{ rg(r.ny_q3) }}</td></tr>
+    {% endfor %}
+    <tr class="dimrow"><td class="l">Tüm günler</td><td></td><td class="dim">{{ vt.all.n }}</td>
+      <td>{{ rg(vt.all.ny_med) }}</td><td class="dim">{{ rg(vt.all.ny_q1) }}–{{ rg(vt.all.ny_q3) }}</td></tr>
+  </table>
+  </div></div>
+  {% for key, lbl in (('asya', 'Asya aralığı → NY aralığı'), ('londra', 'Londra aralığı → NY aralığı')) %}
+  {% set rr = vt[key] %}
+  <p class="mt6">{{ lbl }}: ρ = <b>{% if rr.rho is not none %}{{ '%+.2f'|format(rr.rho) }}{% else %}—{% endif %}</b>
+    <span class="dim">(n={{ rr.n }}, z={{ zz(rr.z) }})</span> · {{ verd(rr.v) }}</p>
+  {% endfor %}
+  <p class="hint">Pozitif ρ = geniş seansı geniş NY izlemiş (oynaklık kümelenmesi). AMD'nin
+    "dar Asya → büyük NY" beklentisi ρ'nun negatif olmasını gerektirir.</p>
+  {% else %}
+  {{ m.empty(["Oynaklık tablosu için gün yok."]) }}
+  {% endif %}
+</div>
+
+{# ---------------- 🎯 Dip / tepe ---------------- #}
+{% set ex = kk.ext %}
+<div class="panel">
+  <h2>🎯 Günün dibi / tepesi hangi seansta <span class="st">· gözlenen / boş model</span></h2>
+  <p class="sub">"Yükselen günün dibi Asya'da yapılır" gibi oranlar <b>tek başına bir şey
+  söylemez</b>: rastgele bir yolda bile uç noktalar başa ve sona yığılır, NY de en oynak seanstır.
+  Bu yüzden her oran bir <b>boş modelle</b> yan yana: her yarım saat, aynı saat düzenindeki
+  <b>başka bir günün aynı yarım saatinden</b> çekilerek {{ reps }}× sentetik gün kurulur — saat
+  başına oynaklık korunur, seanslar arası yapı (Londra tuzağı → NY ters yön) bozulur. Gözlenen,
+  boş modelden ayırt edilemiyorsa oran saat başı oynaklıkla açıklanır — ek bir seans yapısı
+  göstermez.</p>
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Gün türü</th><th>Gün</th><th>Asya</th><th>Londra</th><th>New York</th>
+        <th title="Üç hücrenin en büyük |z|'si">|z| en büyük</th><th class="l">Karar</th></tr>
+    {% for r in ex.rows %}
+    <tr{% if r.n < min_n %} class="dimrow"{% endif %}>
+      <td class="l">{{ r.label }}</td><td class="dim">{{ r.n }}</td>
+      {% for s in ('asya', 'londra', 'ny') %}
+      {% set c = r.per[s] %}
+      <td title="gözlenen / boş model{% if c.z is not none %} · z={{ '%+.2f'|format(c.z) }}{% endif %}">
+        {%- if c.obs is not none %}<b>{{ pc(c.obs) }}</b> <span class="dim">/ {{ pc(c.null) }}</span>{% else %}—{% endif %}</td>
+      {% endfor %}
+      <td class="dim">{% if r.zmax is not none %}{{ '%.2f'|format(r.zmax) }}{% else %}—{% endif %}</td>
+      <td class="l">{{ verd(r.v) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="hint">12 hücre → Bonferroni eşiği |z| ≥ {{ '%.2f'|format(ex.z_bonf) }}.
+    {%- if ex.skipped %} {{ ex.skipped }} gün (yaz/kış uyumsuz haftalar — saat düzeni farklı, 10 günden az) karşılaştırmaya girmedi.{% endif %}</p>
+</div>
+{% endif %}
+{% endif %}
+
+{# ---------------- ℹ️ Yöntem ---------------- #}
+<div class="panel">
+  <h2>ℹ️ Yöntem ve kör noktalar</h2>
+  <ul class="sub">
+    <li><b>Seanslar</b> piyasa saatleriyle, yaz/kış uyumlu: Asya = önceki takvim günü 16:00 ET →
+      08:00 Londra (Pazartesi'nin Asya'sı Pazar akşamı başlar) · Londra = 08:00 Londra → 09:30 ET ·
+      New York = 09:30 → 16:00 ET. 24 saat tam üçe bölünür, gün her zaman 48 yarım saattir.</li>
+    <li><b>Veri:</b> Hyperliquid 30 dakikalık mumları (09:30 sınırını saatlik mum bölemez). HL yalnız
+      son 5000 mumu (~104 gün) verir; mumlar arşivlenir, karne her gün bir gün uzar. Seans özeti
+      saklanmaz — her açılışta ham mumdan yeniden hesaplanır.</li>
+    <li><b>Perp, nakit borsa değil:</b> HL'deki XYZ100/SP500 ve hisse perp'leri 7/24 işlem görür;
+      Asya ve Londra fiyatı perp'in kendi fiyatıdır (vadeli/kaldıraçlı akış), NYSE açılış müzayedesi değil.
+      İşlemsiz yarım saatte HL son fiyatla düz mum üretir; bunların payı ölçülür, çok seyrek sembolde
+      karne üretilmez.</li>
+    <li><b>Günler:</b> yalnız 48 mumu tam olan günler; NYSE tatilleri ve yarım günler girmez
+      (liste {{ v.holidays_until.strftime('%Y') if v.holidays_until else '' }} sonuna kadar).</li>
+    <li><b>Çoklu test:</b> sayfadaki her karşılaştırma ayrı bir zar atışıdır; |z| ≥ 2 ~%5 şansla da
+      çıkar. "Düzeltme sonrası da" yalnız Bonferroni eşiğini geçene yazılır.</li>
+  </ul>
+  {% if v.ok %}
+  <p class="kunye">📦 {{ v.sym }} arşivi: {{ v.span.since }}'ten beri {{ '{:,}'.format(v.span.n_bars)|replace(',', '.') }} mum ·
+    {% if v.span.n_days %}{{ v.span.n_days }} tam işlem günü ({{ v.span.first }} – {{ v.span.last }}){% else %}henüz tam gün yok{% endif %}
+    {%- set dr = v.span.drops %}
+    {%- if dr.eksik or dr.tatil or dr.yarim %} · dışarıda:
+      {%- if dr.eksik %} {{ dr.eksik }} eksik mumlu{% endif %}
+      {%- if dr.tatil %} {{ dr.tatil }} tatil{% endif %}
+      {%- if dr.yarim %} {{ dr.yarim }} yarım gün{% endif %}{% endif %}
+    {%- if v.k %} · sayfada {{ v.k.n_tests }} karşılaştırma, şansla beklenen |z| ≥ 2: ~{{ '%.1f'|format(v.k.exp_fp) }}{% endif %}</p>
+  {% endif %}
+  <p class="kunye">🧾 Arşiv turu:
+    {%- if st.disabled %} <span class="bad">⏸ kapalı</span> (Ayarlar → ABD seans karnesi)
+    {%- elif st.ts %} {{ st.ts|dt }} · {{ (st.coins or [])|join(', ') or '—' }}
+      {%- if st.skipped %} · uygun değil: {{ st.skipped|join(', ') }}{% endif %}
+      {%- if st.err %} · <span class="bad">{{ st.err }} hata</span>{% if st.err_msg %} ({{ st.err_msg }}){% endif %}{% endif %}
+    {%- else %} henüz çalışmadı (açılıştan ~2 dk sonra, sonra saatte bir){% endif %}
+    · Telegram: <code>/seans</code> · <code>/seans NVDA</code></p>
+</div>
+{% endblock %}

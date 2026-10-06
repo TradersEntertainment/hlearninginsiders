@@ -392,6 +392,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                            "desc": "Aynı yönde bu kadar emir (ve aşağıdaki $) olunca 'başladı' (en az 2). Tek seferlik elle işlem dizi sayılmaz"},
     "slice_start_usd": {"type": "float", "label": "Başladı için en az ($)", "group": "🔂 Dilimli alım-satım",
                         "desc": "Dizi bu tutarı geçmeden 'başladı' denmez (ölçülen dilim medyanı ~$8K, p10 ~$4K)"},
+    "seans_enabled": {"type": "bool", "label": "🕰 ABD seans karnesi arşivi", "group": "🕰 ABD seans karnesi",
+                      "desc": "Asya → Londra → New York karnesi (/seans sayfası ve /seans komutu) için 30 dk mumları saatte bir arşivler. HL yalnız son ~104 günü veriyor; arşiv her gün büyür. Kapatınca sayfa yine açılır ama arşiv yalnız sayfa/komut açıldıkça güncellenir. Bildirim YOK — sayfa + komut"},
+    "seans_coins": {"type": "csv", "label": "Sekmeler (semboller)", "group": "🕰 ABD seans karnesi",
+                    "desc": "Virgülle, dex'siz: XYZ100,SP500. Sayfa sekmeleri ve /seans komutu bunlar. Yalnız ABD'de işlem gören hisse/endeks perp'leri (kripto, emtia, döviz ve Asya borsası hisseleri reddedilir). Sekme dışı sorulan hisse 30 gün arşivlenir (en çok 12). Kural eşiği ayarı BİLEREK yok — eşik oynatmak sonuç uydurmaktır"},
+    "seans_refresh_sec": {"type": "int", "label": "Arşiv turu aralığı (sn)", "group": "🕰 ABD seans karnesi",
+                          "desc": "Arka plan arşivinin ne sıklıkla döneceği (en az 600). Sembol başına tek istek; sayfa açıkken canlı kuyruk ayrıca 2 dk'da bir"},
     "sticky_enabled": {"type": "bool", "label": "🧲 Yapışkan duvar radarı", "group": "🧲 Yapışkan duvar",
                        "desc": "Ana dex kriptoda en iyi fiyata yapışan dev TEK emri (n=1) izler: kendini her birkaç saniyede en iyi fiyata yeniden koyan post-only emir — fiyatla aşağı da yukarı da gider. Likidasyon değildir (HL likidasyonu piyasa emridir, defterde beklemez). Kapatınca tarama ve takip notları durur"},
     "sticky_min_usd": {"type": "float", "label": "Alarm: tek emir en az ($)", "group": "🧲 Yapışkan duvar",
@@ -760,6 +766,9 @@ class Config:
         self.slice_quiet_sec = int(os.getenv("SLICE_QUIET_SEC", "300"))
         self.slice_start_orders = int(os.getenv("SLICE_START_ORDERS", "3"))
         self.slice_start_usd = float(os.getenv("SLICE_START_USD", "10000"))
+        self.seans_enabled = True
+        self.seans_coins = _csv(os.getenv("SEANS_COINS", "XYZ100,SP500"))
+        self.seans_refresh_sec = int(os.getenv("SEANS_REFRESH_SEC", "3600"))
         self.sticky_enabled = True
         self.notify_sticky = True
         self.sticky_min_usd = float(os.getenv("STICKY_MIN_USD", "1000000"))

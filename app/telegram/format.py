@@ -395,6 +395,7 @@ TASK_TR = {
     "telegram": "telegram botu", "watchdog": "bekçi", "ai": "AI analist",
     "channel": "kanal yayını", "twap": "TWAP radarı (arşiv)", "twaplive": "canlı TWAP radarı", "paywatch": "ödeme izleyici", "billing": "faturalama", "fanout": "bildirim dağıtımı", "public_digest": "ücretsiz sabah özeti",
     "sim": "liq simülasyonu", "slicewatch": "dilimli alım-satım izleyici",
+    "seans": "ABD seans karnesi (mum arşivi)",
 }
 
 
@@ -2296,6 +2297,169 @@ def big_positions(rows: list[dict], st: dict, tiers: list) -> str:
     return "\n".join(lines)
 
 
+# ---------------- 🕰 ABD seans karnesi ----------------
+
+SEANS_TR = {"asya": "Asya", "londra": "Londra", "ny": "New York"}
+SEANS_FOOT = "<i>geçmiş ölçüm, tahmin değil · yatırım tavsiyesi değildir</i>"
+
+
+def _ssg(x, d: int = 2) -> str:
+    return "—" if x is None else f"{x:+.{d}f}%"
+
+
+def _srg(x) -> str:
+    return "—" if x is None else f"%{x:.2f}"
+
+
+def _sz(z) -> str:
+    return "—" if z is None else f"{z:+.1f}"
+
+
+def _pct_place(p) -> str:
+    """Biten seansın aralığı arşivde nerede: uçlarda '%0 yüzdelik' yerine düz söz."""
+    if p is None:
+        return ""
+    if p <= 0:
+        return ", arşivin en darı"
+    if p >= 100:
+        return ", arşivin en genişi"
+    return f", %{p:.0f} yüzdelik"
+
+
+def _seans_today(t: dict) -> list[str]:
+    """Bugünün seansları: bitti / sürüyor (kalan) / başlamadı + süpürme + oynaklık + kurallar."""
+    out = []
+    for r in t["sessions"]:
+        if r["state"] == "başlamadı":
+            out.append(f"⏳ {r['label']} {r['tsi0']}'da başlıyor")
+            continue
+        val = (f"<b>{_ssg(r['r'])}</b> (aralık {_srg(r['rng'])}{_pct_place(r.get('pct'))})" if "r" in r
+               else "veri eksik")
+        if r["state"] == "bitti":
+            out.append(f"✓ {r['label']} {val}")
+        else:
+            out.append(f"▶ {r['label']} {val} · {dur_txt(r.get('left_s'))} kaldı")
+    sw = t.get("sweep")
+    if sw:
+        if sw.get("hi_tsi") and sw.get("lo_tsi"):
+            txt = f"Londra Asya tepesini {sw['hi_tsi']}'te aştı, dibini {sw['lo_tsi']}'te kırdı"
+        elif sw.get("hi_tsi"):
+            txt = f"Londra Asya tepesini {sw['hi_tsi']}'te aştı (dip sağlam)"
+        elif sw.get("lo_tsi"):
+            txt = f"Londra Asya dibini {sw['lo_tsi']}'te kırdı (tepe sağlam)"
+        else:
+            txt = "Londra Asya aralığının içinde"
+        out.append("↔️ " + txt + ("" if sw.get("final") else " — <i>kesinleşmedi</i>"))
+    v = t.get("vol")
+    if v:
+        out.append(f"📐 Asya aralığı {_srg(v['rng'])} → {v['terc']['name']} üçte bir; geçmişte bu dilimde"
+                   f" NY aralığı medyan {_srg(v['terc']['ny_med'])} (tüm günler {_srg(v['all']['ny_med'])})"
+                   " — büyüklük, yön değil")
+    for r in t.get("rules") or []:
+        out.append(f"🧭 «{esc(r['label'])}» → geçmişte NY ↑ %{r['p']:.0f} (n={r['n']}, z {_sz(r['z'])})"
+                   f" · {esc(r['v']['note'])}" if r.get("p") is not None else
+                   f"🧭 «{esc(r['label'])}» → örnek yok")
+    return out
+
+
+def _seans_karne(k: dict) -> list[str]:
+    """Karnenin özeti: kayda değer olanlar adıyla, gerisi tek satırda sayıyla."""
+    out = []
+    rt = k["rules"]
+    base = rt["base"]
+    hits = [r for r in rt["rows"] if r["v"]["label"] == "kayda değer"]
+    thin = sum(1 for r in rt["rows"] if r["v"]["label"] == "yetersiz")
+    head = (f"🧭 Londra/Asya → NY ({rt['K']} sabit kural; taban NY ↑ %{base['p']:.0f}, {base['n']} gün): "
+            if base.get("p") is not None else f"🧭 Londra/Asya → NY ({rt['K']} kural): ")
+    if hits:
+        out.append(head + "; ".join(f"«{esc(r['label'])}» NY ↑ %{r['p']:.0f} (n={r['n']}, z {_sz(r['z'])},"
+                                    f" {esc(r['v']['note'])})" for r in hits)
+                   + f" — şansla ~{rt['exp_fp']:.1f} beklenir")
+    else:
+        out.append(head + "hiçbiri taban orandan ayırt edilemiyor"
+                   + (f"; {thin} kuralda örnek yetersiz" if thin else ""))
+    acc = {r["key"]: r for r in k["accrual"] if r.get("n")}
+    parts = [f"{SEANS_TR[s]} {_ssg(acc[s]['total'])}" for s in ("asya", "londra", "ny") if s in acc]
+    if parts:
+        sig = [SEANS_TR[s] for s in ("asya", "londra", "ny") if s in acc and acc[s]["v"]["label"] == "kayda değer"]
+        out.append("💰 Getiri (toplam): " + " · ".join(parts)
+                   + (f" — {', '.join(sig)} sıfırdan ayırt edilebiliyor (|t| ≥ 2)" if sig
+                      else " — hiçbiri sıfırdan ayırt edilemiyor (|t| &lt; 2)"))
+    vt = k["vol"]
+    a = vt.get("asya") if vt else None
+    if a and a.get("rho") is not None:
+        out.append(f"📐 Oynaklık: Asya aralığı → NY aralığı ρ {a['rho']:+.2f} (z {_sz(a['z'])}) · {esc(a['v']['note'])}")
+    ex = k["ext"]["rows"]
+    ex_hits = [r for r in ex if r["v"]["label"] == "kayda değer"]
+    if ex_hits:
+        for r in ex_hits:
+            best = max(("asya", "londra", "ny"), key=lambda s: abs(r["per"][s]["z"] or 0))
+            c = r["per"][best]
+            out.append(f"🎯 {esc(r['label'])}: {SEANS_TR[best]} %{c['obs']:.0f} (boş model %{c['null']:.0f},"
+                       f" z {_sz(c['z'])}) · {esc(r['v']['note'])}")
+    elif any(r["n"] for r in ex):
+        out.append("🎯 Dip/tepe hangi seansta: hiçbiri boş modelden ayırt edilemiyor — oranlar saat başı"
+                   " oynaklıkla açıklanıyor, ek bir seans yapısı görülmüyor")
+    return out
+
+
+def seans_card(views: list[dict], base_url: str = "") -> str:
+    """/seans: 🕰 ABD seans karnesi — bugünün durumu + karnenin özeti, sembol başına blok.
+    Bağlantıda anahtar YOK (Telegram'a ?key= sızmaz); ayrıntı sayfada."""
+    if not views:
+        return "🕰 Sembol yok."
+    v0 = views[0]
+    lines = [f"🕰 <b>ABD seans karnesi</b> · {esc(v0.get('today_label') or '')} işlem günü",
+             f"<i>{esc(v0.get('times_text') or '')} (TSİ)</i>"]
+    if v0.get("mismatch"):
+        lines.append("🕐 <i>ABD yaz saatinde, İngiltere kışta — Londra bu hafta kısa, Asya uzun</i>")
+    if v0.get("change"):
+        lines.append(f"⏰ <i>{esc(v0['change']['label'])} işlem gününden itibaren: {esc(v0['change']['text'])}</i>")
+    t0 = next((v["today"] for v in views if v.get("ok") and v.get("today")), None)
+    if t0 and t0["phase"] == "bekleniyor":
+        nx = t0["next"]
+        lines.append(f"🌙 ABD seansı yok{(' — ' + esc(t0['holiday'])) if t0.get('holiday') else ''} ·"
+                     f" sıradaki Asya <b>{nx['dow']} {nx['tsi']}</b> TSİ ({esc(nx['day'])} işlem günü)")
+    n_tests = exp_fp = 0
+    for v in views:
+        sym = esc(v.get("sym") or "?")
+        lines.append("")
+        if not v.get("ok"):
+            sim = v.get("similar") or []
+            lines.append(f"<b>{sym}</b>: {esc(v.get('reason') or 'karne yok')}"
+                         + (f" · benzer: {esc(', '.join(sim[:5]))}" if sim else ""))
+            continue
+        t, k = v["today"], v.get("k")
+        ph = t["phase"]
+        lines.append(f"<b>{sym}</b>" + ("" if ph == "bekleniyor" else f" — şu an {SEANS_TR[ph]}"))
+        if v.get("caveat"):
+            lines.append(f"⚠️ <i>{esc(v['caveat'])}</i>")
+        if (v.get("thin") or {}).get("level") == "warn":
+            lines.append(f"⚠️ <i>mumların %{v['thin']['share'] * 100:.0f}'ında işlem yok — fiyatlar kısmen bayat</i>")
+        if not (v.get("live") or {}).get("ok"):
+            lines.append("📡 <i>canlı mum alınamadı — arşivle</i>")
+        if ph != "bekleniyor":
+            lines += _seans_today(t)
+        if t.get("last"):
+            la = t["last"]
+            lines.append(f"🗓 Son tam gün {esc(la['label'])}: Asya {_ssg(la['r']['asya'])} · Londra"
+                         f" {_ssg(la['r']['londra'])} · NY {_ssg(la['r']['ny'])}")
+        if k:
+            lines.append(f"<i>Karne: {k['n_days']} işlem günü ({esc(v['span']['first'])} – {esc(v['span']['last'])})</i>")
+            lines += _seans_karne(k)
+            n_tests += k["n_tests"]
+            exp_fp += k["exp_fp"]
+        else:
+            lines.append("<i>Henüz tam işlem günü yok — arşiv doldukça karne çıkar</i>")
+        if base_url:
+            lines.append(f"🔗 {esc(base_url)}/seans?sym={sym}")
+    lines.append("")
+    if n_tests:
+        lines.append(f"<i>{n_tests} karşılaştırma — şansla ~{exp_fp:.1f} tanesinin |z| ≥ 2 çıkması beklenir</i>")
+    lines.append(SEANS_FOOT + ("" if base_url else " · <i>ayrıntı: sayfada 🕰 seans</i>"))
+    return "\n".join(lines)
+
+
 def help_text() -> str:
     return (
         "🕵️ <b>HL Insider Radar</b>\n"
@@ -2316,6 +2480,7 @@ def help_text() -> str:
         "/watchlist — sicilli adresler\n"
         "/balina — 🔂 dilimli alım-satım: şu an ne yapıyor, kaç saattir alıyor/satıyor, ne kadar aldı\n"
         "/hesaplar — 👤 izlenen hesaplar (pozisyon, duvar, emirler) + 🔂 durum\n"
+        "/seans — 🕰 ABD seans karnesi (XYZ100 + SP500): Asya → Londra → New York, bugün + geçmiş ölçüm · /seans NVDA tek hisse\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için /birak_N)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
         "/sim — liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar (sayfa /sim)\n"

@@ -497,6 +497,8 @@ class TelegramBot:
             await self._cmd_accounts(chat_id)
         elif cmd in ("balina", "dilim", "dilimli", "dilimler"):
             await self._cmd_slices(chat_id)
+        elif cmd in ("seans", "seanslar"):
+            await self._cmd_seans(args, chat_id)
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
             await self._cmd_sim(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
@@ -573,6 +575,8 @@ class TelegramBot:
             await self._cmd_accounts(chat_id)
         elif cmd in ("balina", "dilim", "dilimli", "dilimler"):
             await self._cmd_slices(chat_id)
+        elif cmd in ("seans", "seanslar"):
+            await self._cmd_seans(args, chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -1102,6 +1106,20 @@ class TelegramBot:
         sctx = self._slice_ctx()
         for sn in slices:
             await self.send(fmt.slice_status(sn, sctx), chat_id)
+
+    async def _cmd_seans(self, args: list[str], chat_id: str) -> None:
+        """/seans — 🕰 ABD seans karnesi: ayardaki semboller (XYZ100 + SP500) TEK mesajda;
+        /seans NVDA tek sembol. Bugünün seans durumu + karnenin özeti; ayrıntı sayfada."""
+        from ..radar import seans
+        syms = [a.strip().upper().split(":")[-1][:24] for a in args[:1] if a.strip()]
+        views = []
+        for sym in (syms or seans.default_symbols(self.cfg))[:4]:
+            try:
+                views.append(await seans.view(self.cfg, self.client, sym))
+            except Exception as e:                   # noqa: BLE001 — sembol başına
+                log.exception("/seans %s", sym)
+                views.append({"ok": False, "sym": sym, "reason": f"hesaplanamadı — {type(e).__name__}: {e}"[:160]})
+        await self.send(fmt.seans_card(views, base_url=getattr(self.cfg, "public_base_url", "") or ""), chat_id)
 
     async def _cmd_sticky_follow_list(self, chat_id: str) -> None:
         """/duvartakipler — izlenen yapışkan duvarlar."""

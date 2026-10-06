@@ -391,6 +391,8 @@ async def lifespan(app: FastAPI):
     _spawn("equityvol", lambda: equityvol_loop(cfg, client, notifier), notifier)
     from .radar.bars import loop as bars_loop
     _spawn("bars", lambda: bars_loop(cfg, client), notifier)
+    from .radar.seans import loop as seans_loop
+    _spawn("seans", lambda: seans_loop(cfg, client), notifier)
     from .radar.patterns import loop as patterns_loop
     _spawn("patterns", lambda: patterns_loop(cfg, notifier), notifier)
     from .radar.twap import loop as twap_loop

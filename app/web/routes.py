@@ -22,7 +22,7 @@ from ..propr import is_listed as propr_listed
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bars, bigpos, clusters, cryptoliq, cryptovol, equityvol, liqattack, liqmap, movers,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
-                     patterns, pricechart, sim, stickywall, twap)
+                     patterns, pricechart, seans, sim, stickywall, twap)
 
 log = logging.getLogger("web.routes")
 
@@ -1613,6 +1613,30 @@ async def hot_hours_send(request: Request):
     text = fmt.hot_hours_channel(entries, datetime.now(TR).hour)
     ok = await bot.send(text, cfg.telegram_channel_id)
     return back("ok" if ok else "err")
+
+
+@router.get("/seans")
+async def seans_page(request: Request):
+    """🕰 ABD seans karnesi — Asya → Londra → New York (ICT "Power of 3" / AMD iddiasının ölçümü).
+
+    Sekmeler ayardaki semboller (XYZ100, SP500); `?sym=NVDA` ile ABD hisse perp'i. Tahmin yok:
+    her satırda n, taban, z; dip/tepe saat konumunu koruyan boş modelle; çoklu test notu.
+    Sayfa canlı mumla açılır, HL'ye ulaşılamazsa arşivle (uyarıyla)."""
+    _guard(request)
+    cfg = request.app.state.cfg
+    tabs = seans.default_symbols(cfg)
+    sym = (request.query_params.get("sym") or "").strip().upper().split(":")[-1][:24]
+    sym = sym or (tabs[0] if tabs else "XYZ100")
+    try:
+        v = await seans.view(cfg, request.app.state.client, sym)
+    except Exception as e:                     # noqa: BLE001 — sayfa açılsın, sebebi yazsın
+        log.exception("seans sayfası kurulamadı: %s", sym)
+        v = {**seans.calendar_info(now()), "ok": False, "sym": sym,
+             "reason": f"hesaplanamadı — {type(e).__name__}: {e}"[:200]}
+    return _render(request, "seans.html", {
+        "v": v, "sym": sym, "tabs": tabs, "st": await kv_get(seans.STATS_KV) or {},
+        "min_n": seans.MIN_N, "reps": seans.NULL_REPS,
+    })
 
 
 @router.get("/ai")

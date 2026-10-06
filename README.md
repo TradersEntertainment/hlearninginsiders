@@ -60,6 +60,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/duvartakipler` · `/birak_duvar_N` | İzlenen 🧲 yapışkan duvarlar · takibi bırak |
 | `/balina` (`/dilim`) | 🔂 Dilimli alım-satım şu an: kaç saattir alıyor/satıyor, kaç emir, ne kadar ($ ve adet), ortalama, son dilim kaç sn önce, fiyat ve pozisyon değişimi, aynı dakikalardaki diğer coinler; yoksa son dizi ve ne zaman bittiği |
 | `/hesaplar` | 🔂 Dilimli alım-satım durumu + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
+| `/seans` · `/seans NVDA` | 🕰 ABD seans karnesi (XYZ100 + SP500 tek mesaj; ya da tek ABD hissesi): bugün Asya / Londra / New York ne yaptı, Londra Asya tepesini/dibini süpürdü mü, geçmişte bu şekilde NY ne yaptı (taban oran ve z ile), getiri hangi seansta birikti, oynaklık ilişkisi — sayfa `/seans` |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
@@ -1689,6 +1690,64 @@ gönderir. Zayıf sinyali sayfada sıralı göstermek başka, kanaldan yayınlam
 
 Ana sayfadaki "🕐 Şu saatte beklenenler" paneli ilk 5 yükseliş adayını gösterir
 ve tam listeye bağlanır.
+
+## ABD Seans Karnesi: `/seans`
+
+Kullanıcı sorusu: "24 saat 3'e ayrılır — accumulation, pump, dump… Londra session'da şu, Asya
+session'da şuysa ABD'de şu olur gibi çıkarımlar ve eskiye bakıp örüntü kurmalar." Bu ICT'nin
+**"Power of 3" / AMD** algısı: Asya birikim, Londra tuzak (Asya'nın tepesi ya da dibi
+süpürülür), New York asıl hareket. Sayfa bu iddiayı **ölçer** — tahmin üretmez, bildirim atmaz
+(yalnız sayfa + komut).
+
+**Seanslar** piyasa saatleriyle, yaz/kış uyumlu; 24 saat tam üçe bölünür, gün her zaman 48
+yarım saattir:
+
+| Seans | Tanım | TSİ (yaz) | TSİ (kış) |
+|---|---|---|---|
+| Asya | önceki takvim günü 16:00 ET → 08:00 Londra | 23:00 → 10:00 | 00:00 → 11:00 |
+| Londra | 08:00 Londra → 09:30 ET | 10:00 → 16:30 | 11:00 → 17:30 |
+| New York | 09:30 → 16:00 ET | 16:30 → 23:00 | 17:30 → 00:00 |
+
+ABD yaz saatindeyken İngiltere'nin kışta olduğu haftalarda (Mart ve Ekim sonu; 2026'da 9–27
+Mart, 26–30 Ekim) Londra 11:00 TSİ'de açılır: Londra 11, Asya 24 mum. Pazartesi'nin Asya'sı
+Pazar akşamı başlar. NYSE tatilleri ve yarım günler (2026–2027 statik liste) karneye girmez.
+
+**Sekmeler** `SEANS_COINS` (varsayılan XYZ100, SP500); `?sym=NVDA` ya da `/seans NVDA` ile ABD'de
+işlem gören herhangi bir hisse/endeks perp'i. Kripto (7/24), emtia/döviz/ABD dışı endeks ve
+dayanağı Asya borsasında işlem gören hisseler (HYUNDAI, KIOXIA, SKHX, SKHY, SMSN, SOFTBANK)
+gerekçesiyle reddedilir; pre-IPO uyarıyla kabul. İşlemsiz yarım saat payı ≥%10 uyarı, ≥%33
+karne yok (HL işlemsiz yarım saatte de son fiyatla düz mum üretir).
+
+**Veri:** HL 30 dk mumları (09:30 sınırını saatlik mum bölemez). HL aralık başına yalnız son 5000
+mumu (~104 gün) verir → ham mumlar `seans_bars` tablosuna yazılır, arşiv her gün büyür (budanmaz,
+~1 MB/sembol/yıl). Arka plan görevi (`seans`) saatte bir sekmeleri + son 30 günde sorulan en çok
+12 hisseyi arşivler; sayfa/komut açıkken canlı kuyruk 2 dk önbellekli. Seans özeti SAKLANMAZ — her
+açılışta ham mumdan hesaplanır (tanım düzelirse eski günler de düzelir). Getiriler kapanıştan
+zincirlenir: Asya + Londra + NY = günün getirisi; hafta sonu/tatil kayması ayrı **Boşluk** satırı.
+
+**Paneller (tahmin yok — her satırda n, taban, z):**
+- 📍 **Bugün:** seans başına bitti / sürüyor (kalan süre) / başlamadı, şimdiye kadarki getiri ve
+  aralık, biten seansın arşivdeki yüzdeliği; Londra sürerken süpürme "kesinleşmedi"; Londra
+  bitince bugünkü şekle uyan kurallar geçmiş karneleriyle; Asya bitince oynaklık satırı.
+- 💰 **Getiri hangi seansta birikti:** toplam, ort./gün, saat başı, yükselen gün %, t.
+- 🧭 **Londra/Asya → NY:** NY açılışında bilinen 10 SABİT durum (yalnız tepe / yalnız dip / ikisi /
+  içeride / sahte kırılım ↑↓ / Asya × Londra yön dörtlüsü) → NY ↑ oranı tabana karşı;
+  sonlu-örneklem düzeltmeli z, `/orintu` ile aynı karar sözleri, Bonferroni (|z| ≥ 2.81 "düzeltme
+  sonrası da"), şansla beklenen ~0.5 "anlamlı". Eşik ayarı BİLEREK yok — eşik oynatmak sonuç uydurmaktır.
+- 📐 **Oynaklık:** Asya aralığı üç dilim → NY aralığı medyan/çeyrekler; Spearman ρ (Asya→NY, Londra→NY).
+- 🎯 **Dip/tepe hangi seansta:** gözlenen oran **saat konumunu koruyan boş modelle** yan yana (her
+  yarım saat, aynı saat düzenindeki başka bir günün aynı yarım saatinden; 200× sabit tohum). Gün
+  içi karıştırma YANILTIR: NY'nin büyük hareketlerini her saate dağıttığı için "uç nokta NY'de"
+  oranını yapı gibi gösteriyordu (SP500 düşen gün tepesi |z| 5.1 → konum korununca 1.0).
+
+**Ölçüm (06.10, 71 işlem günü, 25.06–05.10):** yön kurallarının hiçbiri taban orandan ayırt
+edilemiyor (XYZ100, SP500, NVDA; çoğunda n < 20). Dip/tepe oranları boş modelle aynı — "yükselen
+günün dibi Asya'da" rastgele yürüyüşün + oynaklık profilinin sonucu (tek istisna XYZ100 "yükselen
+günün tepesi Londra'da" %27 vs %13, z 2.6 — tek test, düzeltme sonrası değil; sayfada 29
+karşılaştırmada şansla ~1.3 beklenir). Tutarlı olan **oynaklık**, AMD'nin tersi yönde: geniş Asya →
+geniş NY (Asya→NY ρ: XYZ100 +0.42 z 3.5, SP500 +0.33 z 2.7, NVDA +0.45 z 3.8 — düzeltme sonrası
+da), Londra→NY ilişki yok. Getiri gece birikmiş (XYZ100 Asya +%3.6, Londra −%0.6, NY −%0.3; SP500
++%3.9 / +%1.6 / −%1.1) ama |t| < 2 — betimleme, kanıt değil.
 
 ## Bir Şey Ters Gittiğinde: `/tani`
 
