@@ -912,6 +912,49 @@ def _f_or_none(x):
         return None
 
 
+def _fill_pct(m: dict) -> str:
+    """'dolan %97' — sayıya ek getirmeden (Türkçe ek uyumu sayıya göre değişir)."""
+    return f"dolan %{min(999.0, (m.get('ratio') or 0) * 100):.0f}"
+
+
+def _wall_end_head(sym: str, side: str, w: dict, m: dict | None) -> str:
+    """Biten duvar: hesabın GERÇEK dolumlarından (acctwatch.annotate_ends) — doldu / çekildi /
+    kısmen; okunamadıysa "bilinmiyor" (eskiden hep "kalktı" deniyordu)."""
+    base = f"son görülen kalan {qty_txt(w.get('sz'))} {sym}"
+    st = (m or {}).get("status")
+    if st == "doldu":
+        return f"🧲✅ <b>{sym}</b> {side} duvarı <b>DOLDU</b> — {base}, {_fill_pct(m)} (maker)"
+    if st == "çekildi":
+        return f"🧲❌ <b>{sym}</b> {side} duvarı <b>ÇEKİLDİ</b> (dolmadan) — {base}, {_fill_pct(m)}"
+    if st == "kısmen":
+        return f"🧲◐ <b>{sym}</b> {side} duvarı <b>KISMEN doldu</b> — {base}, {_fill_pct(m)}, gerisi çekildi"
+    return (f"🧲❔ <b>{sym}</b> {side} duvarı defterden çıktı — dolum geçmişi okunamadı, doldu mu"
+            " çekildi mi bilinmiyor")
+
+
+def _wall_life(sym: str, m: dict | None) -> str:
+    if not m or not m.get("life_sz"):
+        return ""
+    least = "" if m.get("life_complete", True) else "en az "
+    return f" · ömrü boyunca duvardan dolan {least}{qty_txt(m['life_sz'])} {sym} ({usd(m.get('life_usd'))})"
+
+
+def _ladder_end_txt(sym: str, L: dict, m: dict | None) -> str:
+    """Biten emir grubu: doldu / iptal / kısmen — dolumlardan; okunamadıysa eski açık cümle."""
+    kind = _ladder_kind(L)
+    seen = f"son görülen {int(L.get('n') or 0)} emir, {qty_txt(L.get('sz'))} {sym}, {usd(L.get('ntl'))}"
+    st = (m or {}).get("status")
+    if st == "doldu":
+        return f"🎯✅ <b>{sym}</b> {kind} <b>DOLDU</b> ({seen}) — {_fill_pct(m)}"
+    if st == "çekildi":
+        return f"🎯❌ <b>{sym}</b> {kind} <b>İPTAL</b> edildi (dolmadan; {seen})"
+    if st == "kısmen":
+        return (f"🎯◐ <b>{sym}</b> {kind} <b>kısmen doldu</b> — {_fill_pct(m)}"
+                f" ({qty_txt(m.get('after_sz'))} {sym}, {usd(m.get('after_usd'))}), gerisi iptal ({seen})")
+    return (f"🎯❔ <b>{sym}</b> {kind} defterden çıktı ({seen}) — dolum geçmişi okunamadı, doldu mu"
+            " iptal mi bilinmiyor")
+
+
 def acct_events(addr: str, st: dict, events: list[dict], marks: dict) -> str:
     """Bir yoklamanın olayları TEK mesajda."""
     lines = [_acct_head(addr, st)]
@@ -950,8 +993,8 @@ def acct_events(addr: str, st: dict, events: list[dict], marks: dict) -> str:
             a, b = float(w.get("start_szi") or 0), float(e.get("end_szi") or 0)
             chg = (f" · bu sürede pozisyon {_signed_pos(a, sym)} → {_signed_pos(b, sym)}"
                    if (a or b) else "")
-            lines.append(f"🧲❌ <b>{sym}</b> {side} duvarı kalktı · en az {dur_txt(life)} sürdü ·"
-                         f" tepe {usd(w.get('ntl_max'))}{chg}")
+            lines.append(f"{_wall_end_head(sym, side, w, e.get('fill'))} · en az {dur_txt(life)} sürdü ·"
+                         f" tepe {usd(w.get('ntl_max'))}{_wall_life(sym, e.get('fill'))}{chg}")
         elif t == "ladder_new":
             lines.append("🎯 Kurdu: " + _ladder_txt(e["L"], _f_or_none(marks.get(coin)), live.get(coin)))
         elif t == "ladder_change":
@@ -965,9 +1008,7 @@ def acct_events(addr: str, st: dict, events: list[dict], marks: dict) -> str:
             L = e["L"]
             now_p = live.get(coin)
             pos_txt = f" · pozisyon şimdi {_pos_txt(coin, now_p)}" if now_p else f" · {sym} pozisyonu yok"
-            lines.append(f"🎯❌ <b>{sym}</b> {_ladder_kind(L)} kalktı (son görülen:"
-                         f" {int(L.get('n') or 0)} emir, {usd(L.get('ntl'))}) — doldu mu iptal mi,"
-                         f" pozisyondan okunur{pos_txt}")
+            lines.append(_ladder_end_txt(sym, L, e.get("fill")) + pos_txt)
     lines.append(_acct_foot(st))
     return "\n".join(lines)
 

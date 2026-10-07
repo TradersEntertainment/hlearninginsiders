@@ -208,13 +208,15 @@ def test_started_then_events_in_one_message():
         cl.st = state(**{**BASE, "SAND": -100_000_000.0})
         await aw.run_once(cfg, cl, nt, ts=t0 + 360)
         text = nt.sent[-1][2]
-        assert "📈 <b>SAND</b> SHORT büyüttü" in text and "duvarı kalktı" not in text
+        assert "📈 <b>SAND</b> SHORT büyüttü" in text and "🧲❌" not in text and "🧲✅" not in text
         n = len(nt.sent)
         await aw.run_once(cfg, cl, nt, ts=t0 + 420)
         assert len(nt.sent) == n, "iki kaçırma ama 150 sn dolmadı"
         await aw.run_once(cfg, cl, nt, ts=t0 + 480)
         text = nt.sent[-1][2]
-        assert "🧲❌ <b>SAND</b> satış duvarı kalktı" in text, text
+        # dolum geçmişinde bu duvardan dolum yok → ölçülen sonuç: ÇEKİLDİ (eskiden "kalktı")
+        assert "🧲❌ <b>SAND</b> satış duvarı <b>ÇEKİLDİ</b> (dolmadan) — son görülen kalan" in text, text
+        assert "kalktı" not in text
         assert "pozisyon SHORT 79.00M SAND → SHORT 100.00M SAND" in text, text
 
         # merdiven değişti: yeni emirler, iki yoklama sabit kalınca
@@ -243,7 +245,8 @@ def test_started_then_events_in_one_message():
         assert "DUST" not in text, "taban altı yeni pozisyon 'açtı' sayılmaz"
         await aw.run_once(cfg, cl, nt, ts=t0 + 720)
         text = nt.sent[-1][2]
-        assert "🎯❌ <b>LIT</b> kapatma emirleri kalktı (son görülen" in text and "LIT pozisyonu yok" in text, text
+        assert "🎯❌ <b>LIT</b> kapatma emirleri <b>İPTAL</b> edildi (dolmadan; son görülen 29 emir" in text \
+            and "LIT pozisyonu yok" in text, text
         print("✅ olaylar) takip başladı özeti (+ gerçekleşen dolumlar); büyüttü (adım son bildirilene"
               " göre); duvar iki yoklama + kalktı (2 kaçırma + 150 sn); merdiven değişti/kalktı,"
               " basamak dolumu sessiz; çoklu olay tek mesaj")
@@ -292,7 +295,7 @@ def test_flapping_wall_never_falsely_ends():
         assert cl.calls - calls == 2 + aw.RECHECK_N, "kaçırma ancak RECHECK_N yeniden bakıştan sonra"
         for dt in (2600, 2660):
             await aw.run_once(cfg, cl, nt, ts=t0 + dt)
-        ends = [x for x in nt.sent[n:] if "duvarı kalktı" in x[2]]
+        ends = [x for x in nt.sent[n:] if "satış duvarı <b>ÇEKİLDİ</b>" in x[2]]
         assert len(ends) == 1, [x[2] for x in nt.sent[n:]]
         calls = cl.calls
         await aw.run_once(cfg, cl, nt, ts=t0 + 2720)
@@ -486,7 +489,7 @@ def test_review_regressions_wall_ladder_tpsl_dust():
         cl.orders = SAND_TP + LIT_TP + [wall(9100, sz=50_000.0)]
         for dt in (360, 420, 480):
             await aw.run_once(cfg, cl, nt, ts=t0 + dt)
-        assert "duvarı kalktı" in nt.sent[-1][2], "küçük yabancı emir duvarı yaşatmaz"
+        assert "duvarı <b>ÇEKİLDİ</b>" in nt.sent[-1][2], "küçük yabancı emir duvarı yaşatmaz"
         # 15 dk içinde dönen duvar → "geri geldi"
         cl.orders = SAND_TP + LIT_TP + [wall(9201)]
         await aw.run_once(cfg, cl, nt, ts=t0 + 540)
@@ -575,4 +578,99 @@ def test_review_regressions_lists_mute_restart_dust():
         assert len(nt.sent) == n, "yalnız fiyatla tabanı geçen toz 'açtı' değil"
         print("✅ inceleme) kesik liste güvenli; bildirim kapalıysa yoklama yok; uzun ara / grup"
               " değişimi / yeniden ekleme → özet; toz fiyatla 'açtı' olmaz")
+    asyncio.run(run())
+
+
+def _vvv_wall(oid, px=29.28, sz=14_800.0):
+    """Ekran görüntüsü (07.10): drkmttr VVV post-only ALIŞ duvarı ~14.8K VVV, kendini yeniden koyuyor."""
+    return {"coin": "VVV", "side": "B", "limitPx": str(px), "sz": str(sz), "oid": oid, "isTrigger": False,
+            "triggerPx": "0.0", "reduceOnly": False, "orderType": "Limit", "tif": "Alo",
+            "cloid": "0x7777000000000000000000000000abcd"}
+
+
+def _buy(ts, sz, px=29.28, oid=0, crossed=False, d="Open Long"):
+    return {"coin": "VVV", "dir": d, "px": str(px), "sz": str(sz), "time": ts * 1000, "crossed": crossed,
+            "side": "B", "oid": oid, "tid": next(_TID)}
+
+
+def test_wall_and_ladder_end_measured_from_fills():
+    """Kullanıcı (07.10): "alış duvarı kalktı diyeceğine doldu demesi gerekmez mi" — 14.8K VVV duvar
+    biterken pozisyon LONG 163.6K → 179.0K VVV. Bitişte hesabın GERÇEK dolumları okunur: son görülen
+    kalanın ≥%70'i maker dolum → DOLDU; ≤%20 → ÇEKİLDİ; arası KISMEN; okunamazsa "bilinmiyor"."""
+    async def run():
+        async def setup():
+            cfg = await _fresh()
+            cl, nt = Client(), Notifier()
+            t0 = dbm.now() - 3600
+            cl.st = state(**{**BASE, "VVV": 163_600.0})
+            await aw.run_once(cfg, cl, nt, ts=t0)
+            for i, dt in enumerate((60, 120, 180)):          # iki yoklama teyit + yeniden konmuş oid
+                cl.orders = SAND_TP + LIT_TP + [_vvv_wall(7000 + i)]
+                await aw.run_once(cfg, cl, nt, ts=t0 + dt)
+            assert "🧲 Yeni duvar: <b>VVV</b> ALIŞ duvarı" in nt.sent[-1][2], nt.sent[-1][2]
+            cl.orders = SAND_TP + LIT_TP
+            return cfg, cl, nt, t0
+
+        async def end(cfg, cl, nt, t0):
+            n = len(nt.sent)
+            for dt in (240, 300, 360):
+                await aw.run_once(cfg, cl, nt, ts=t0 + dt)
+            ends = [x[2] for x in nt.sent[n:] if "VVV</b> alış duvarı" in x[2]]
+            assert len(ends) == 1, [x[2] for x in nt.sent[n:]]
+            return ends[0]
+
+        # 1) DOLDU: son görüşten (t0+180) sonra görülmemiş oid'lerle (yeniden konmuş) maker alışlar
+        cfg, cl, nt, t0 = await setup()
+        cl.st = state(**{**BASE, "VVV": 179_000.0})
+        cl.fills = [_buy(t0 + 100, 600.0, oid=7001),                       # ömür (son görüşten önce)
+                    _buy(t0 + 200, 9_000.0, oid=8001), _buy(t0 + 230, 5_400.0, oid=8002),
+                    _buy(t0 + 210, 3_000.0, crossed=True),                  # taker: duvar değil
+                    _buy(t0 + 215, 2_000.0, px=27.0),                       # bant dışı: duvar değil
+                    {**_buy(t0 + 220, 1_000.0), "side": "A", "dir": "Close Long"}]   # öteki yön
+        text = await end(cfg, cl, nt, t0)
+        assert ("🧲✅ <b>VVV</b> alış duvarı <b>DOLDU</b> — son görülen kalan 14.8K VVV, dolan %97 (maker)"
+                in text), text
+        assert "ömrü boyunca duvardan dolan 15.0K VVV ($439K)" in text, text
+        assert "bu sürede pozisyon LONG 163.6K VVV → LONG 179.0K VVV" in text and "kalktı" not in text
+        # 2) KISMEN: yarısı doldu, gerisi çekildi
+        cfg, cl, nt, t0 = await setup()
+        cl.fills = [_buy(t0 + 200, 7_000.0, oid=8001)]
+        text = await end(cfg, cl, nt, t0)
+        assert "🧲◐ <b>VVV</b> alış duvarı <b>KISMEN doldu</b> — son görülen kalan 14.8K VVV, dolan %47," \
+               " gerisi çekildi" in text, text
+        # 3) dolum okunamadı → bilinmiyor (tahmin yok)
+        cfg, cl, nt, t0 = await setup()
+
+        async def boom(*a, **k):
+            raise RuntimeError("429")
+        cl.user_fills_by_time = boom
+        text = await end(cfg, cl, nt, t0)
+        assert "🧲❔ <b>VVV</b> alış duvarı defterden çıktı — dolum geçmişi okunamadı, doldu mu çekildi mi" \
+               " bilinmiyor" in text, text
+        # 4) emir grubu: kendi oid'leriyle "Close…" dolumu → DOLDU; dolum yok → İPTAL
+        cfg = await _fresh()
+        cl, nt = Client(), Notifier()
+        t0 = dbm.now() - 3600
+        await aw.run_once(cfg, cl, nt, ts=t0)
+        cl.orders = SAND_TP                                   # LIT kapatma emirleri (29 × 41.85K) gitti
+        cl.st = state(**{k: v for k, v in BASE.items() if k != "LIT"})
+        cl.fills = [{"coin": "LIT", "dir": "Close Long", "px": "4.4", "sz": str(41_850.0 * 29 * 0.96),
+                     "time": (t0 + 70) * 1000, "crossed": False, "side": "A", "oid": 2003, "tid": next(_TID)}]
+        n = len(nt.sent)
+        for dt in (60, 120):
+            await aw.run_once(cfg, cl, nt, ts=t0 + dt)
+        text = [x[2] for x in nt.sent[n:] if "LIT</b> kapatma emirleri" in x[2]][0]
+        assert "🎯✅ <b>LIT</b> kapatma emirleri <b>DOLDU</b> (son görülen 29 emir, 1.21M LIT," in text, text
+        assert "— dolan %96" in text and "LIT pozisyonu yok" in text
+        # saf ölçüm: tetik bandı ±%5, "Close…" olmayan yabancı dolum sayılmaz
+        L = {"coin": "HYPE", "side": "ask", "kind": "stop", "lo": 40.0, "hi": 40.0, "sz": 100.0, "oids": [9]}
+        fl = [{"coin": "HYPE", "side": "A", "dir": "Close Long", "px": "38.5", "sz": "60", "time": 1_000_000, "oid": 55},
+              {"coin": "HYPE", "side": "A", "dir": "Open Short", "px": "40", "sz": "30", "time": 1_000_000, "oid": 56},
+              {"coin": "HYPE", "side": "A", "dir": "Close Long", "px": "30", "sz": "30", "time": 1_000_000, "oid": 57}]
+        m = aw.ladder_fills(L, fl, 999, 1001)
+        assert m["after_sz"] == 60.0 and aw.fill_outcome(m["ratio"]) == "kısmen", m
+        assert aw.fill_outcome(0.7) == "doldu" and aw.fill_outcome(0.2) == "çekildi" and aw.fill_outcome(None) is None
+        print("✅ bitiş ölçümü) duvar: yeniden konmuş oid'ler bant + maker ile → DOLDU (taker / bant dışı /"
+              " öteki yön sayılmaz), ömür toplamı; yarısı → KISMEN; okunamadı → bilinmiyor; emir grubu kendi"
+              " oid'leriyle → DOLDU; tetik bandı")
     asyncio.run(run())

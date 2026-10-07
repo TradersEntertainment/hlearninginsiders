@@ -77,6 +77,14 @@ FRONT_CAP = 100                  # frontendOpenOrders bu kadar dönerse openOrde
 STALE_MIN_SEC = 600              # durum bundan (ve 10 yoklamadan) eskiyse takip yeniden başlar
 STATE_V = 2                      # durum sürümü: değişirse takip "yeniden başladı" özetiyle sıfırlanır
 FLOW_WINDOW = 3600               # "son 1 saat gerçekleşen dolumlar" penceresi
+# Bitiş ölçümü (07.10, kullanıcı: "alış duvarı kalktı diyeceğine doldu demesi gerekmez mi" —
+# 14.8K VVV duvar biterken pozisyon +15.4K VVV büyümüştü). Defterden çıkan duvar / emir grubu
+# için hesabın GERÇEK dolumları okunur: son görülen kalanın ne kadarı doldu (eşikler
+# stickywall.EATEN_FULL / PULLED_MAX — yapışkan duvar radarıyla aynı).
+FILL_TOL_WALL = 0.003            # duvar (post-only) kendi fiyatından dolar: görülen aralık ±%0.3
+FILL_TOL_LIMIT = 0.01            # kapatma emri (limit) daha iyi fiyattan da dolabilir
+FILL_TOL_TRIG = 0.05             # tetik (kâr al / stop / giriş): piyasa emri kayar
+LIFE_LEAD = 60                   # duvar ilk görülmeden önce de defterde olabilir (bir yoklama)
 FLOW_PAGES = 3                   # userFillsByTime en çok bu kadar sayfa (2000'er dolum)
 ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
@@ -361,7 +369,8 @@ def material(was: dict | None, cur: dict) -> bool:
     return d >= CHANGE_NTL_USD and d / max(_f(was.get("ntl")), 1.0) * 100 >= CHANGE_NTL_PCT
 
 
-def ladder_events(prev: dict, cur: dict, alive: set | None) -> tuple[list[dict], dict]:
+def ladder_events(prev: dict, cur: dict, alive: set | None,
+                  ts: int | None = None) -> tuple[list[dict], dict]:
     """Emir grubu olayları + yeni durum.
 
     • kuruldu: iki yoklama üst üste (taban: ≥2 emir, ya da ≥$100K, ya da pozisyon TP/SL)
@@ -393,6 +402,8 @@ def ladder_events(prev: dict, cur: dict, alive: set | None) -> tuple[list[dict],
         cur_oids = set(c["oids"])
         s = {k2: v for k2, v in c.items() if k2 != "oids"}
         s["miss"] = 0
+        if ts is not None:
+            s["last_ts"] = int(ts)           # son görüldüğü yoklama: bitişte dolum penceresi buradan
         if p is None:
             if not (c["n"] >= LADDER_MIN_N or c["ntl"] >= LADDER_MIN_USD or c.get("whole")):
                 continue                     # tek küçük emir: grup değil
@@ -474,7 +485,7 @@ async def poll_account(cfg, client, addr: str, name: str, marks: dict, ts: int,
     if truncated and prev:
         lev, lstate = [], dict(prev.get("ladders") or {})
     else:
-        lev, lstate = ladder_events(prev.get("ladders") or {}, groups, alive)
+        lev, lstate = ladder_events(prev.get("ladders") or {}, groups, alive, ts)
     ms = st.get("marginSummary") or {}
     snap = {"v": STATE_V, "ts": ts, "name": name, "chat": chat, "pos": pstate, "walls": wstate,
             "wall_ended": ended, "ladders": lstate, "orders_n": len(orders),
@@ -600,6 +611,140 @@ async def fills_between(client, addr: str, start_ms: int, end_ms: int | None = N
     return out, complete
 
 
+def fill_outcome(ratio: float | None) -> str | None:
+    """Son görülen kalanın dolan payı → doldu | çekildi | kısmen; ölçülemediyse None (uydurma yok)."""
+    from .stickywall import EATEN_FULL, PULLED_MAX
+    if ratio is None:
+        return None
+    if ratio >= EATEN_FULL:
+        return "doldu"
+    if ratio <= PULLED_MAX:
+        return "çekildi"
+    return "kısmen"
+
+
+def _fill_tpx(f: dict) -> tuple[int, float, float] | None:
+    try:
+        return int(f.get("time") or 0) // 1000, float(f.get("px") or 0), float(f.get("sz") or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def wall_fills(w: dict, fills: list[dict], end_ts: int) -> dict:
+    """Biten duvarın dolumları: aynı coin + yön, MAKER (crossed değil), emir numarası duvarın
+    görülen oid'lerinden biri YA DA fiyat görülen aralıkta (±FILL_TOL_WALL — duvar kendini
+    yeniden koyar, yoklamalar arasındaki oid'ler görünmez). `after` = son görüldüğü yoklamadan
+    sonra (son kalan), `life` = ömrü boyunca. ratio = after / son görülen adet."""
+    side = "B" if w.get("side") == "bid" else "A"
+    oids = set(w.get("oids") or [])
+    lo = _f(w.get("px_min") or w.get("px")) * (1 - FILL_TOL_WALL)
+    hi = _f(w.get("px_max") or w.get("px")) * (1 + FILL_TOL_WALL)
+    first, last = int(w.get("first_ts") or 0) - LIFE_LEAD, int(w.get("last_ts") or 0)
+    out = {"after_sz": 0.0, "after_usd": 0.0, "life_sz": 0.0, "life_usd": 0.0, "n": 0}
+    for f in fills or []:
+        if not isinstance(f, dict) or f.get("coin") != w.get("coin") or f.get("side") != side \
+                or f.get("crossed"):
+            continue
+        tp = _fill_tpx(f)
+        if tp is None or tp[0] > end_ts:
+            continue
+        t, px, sz = tp
+        if f.get("oid") not in oids and not lo <= px <= hi:
+            continue
+        if t >= first:
+            out["life_sz"] += sz
+            out["life_usd"] += px * sz
+            out["n"] += 1
+        if t >= last:
+            out["after_sz"] += sz
+            out["after_usd"] += px * sz
+    base = _f(w.get("sz"))
+    out["base_sz"] = base
+    out["ratio"] = out["after_sz"] / base if base > 0 else None
+    return out
+
+
+def ladder_fills(L: dict, fills: list[dict], start_ts: int, end_ts: int) -> dict:
+    """Biten emir grubunun [start_ts, end_ts] dolumları: emir numarası grubun oid'lerinden biri
+    YA DA aynı coin + yön + fiyat bandında (limit ±%1, tetik ±%5) ve kapatma türlerinde
+    "Close…" yönlü dolum (reduce-only). ratio = dolan / son görülen adet."""
+    side = "B" if L.get("side") == "bid" else "A"
+    oids = set(L.get("oids") or [])
+    tol = FILL_TOL_TRIG if L.get("kind") in ("tptrig", "stop", "entry") else FILL_TOL_LIMIT
+    lo, hi = _f(L.get("lo")) * (1 - tol), _f(L.get("hi")) * (1 + tol)
+    closing = L.get("kind") != "entry"
+    out = {"after_sz": 0.0, "after_usd": 0.0, "n": 0}
+    for f in fills or []:
+        if not isinstance(f, dict) or f.get("coin") != L.get("coin") or f.get("side") != side:
+            continue
+        tp = _fill_tpx(f)
+        if tp is None or not start_ts <= tp[0] <= end_ts:
+            continue
+        t, px, sz = tp
+        if f.get("oid") not in oids:
+            if not lo <= px <= hi:
+                continue
+            if closing and not str(f.get("dir") or "").startswith("Close"):
+                continue
+        out["after_sz"] += sz
+        out["after_usd"] += px * sz
+        out["n"] += 1
+    base = _f(L.get("sz"))
+    out["base_sz"] = base
+    out["ratio"] = out["after_sz"] / base if base > 0 else None
+    return out
+
+
+async def annotate_ends(cfg, client, addr: str, events: list[dict], ts: int) -> None:
+    """Bitiş olaylarına (duvar / emir grubu) ölçülen sonucu ekler: e["fill"] = {status, ratio,
+    after_sz/usd, life_sz/usd …} ya da okunamadıysa None. İstek yalnız bitişte: son kalan
+    penceresi (kısa, tam) + duvar ömrü (ayrı; tam değilse 'en az')."""
+    ends = [e for e in events if e.get("t") in ("wall_end", "ladder_gone")]
+    if not ends:
+        return
+    poll = max(20, int(getattr(cfg, "acct_poll_sec", 60) or 60))
+
+    def start_of(e: dict) -> int:
+        if e["t"] == "wall_end":
+            return int(e["w"].get("last_ts") or ts)
+        L = e["L"]
+        return int(L.get("last_ts") or ts - (int(L.get("miss") or 2) + 1) * poll)
+    s0 = min(start_of(e) for e in ends)
+    try:
+        fills, complete = await fills_between(client, addr, s0 * 1000, ts * 1000)
+    except Exception:
+        log.debug("bitiş dolumları okunamadı %s", addr[:10], exc_info=True)
+        for e in ends:
+            e["fill"] = None
+        return
+    life, life_ok = fills, complete
+    walls = [e for e in ends if e["t"] == "wall_end"]
+    if walls:
+        f0 = min(int(e["w"].get("first_ts") or ts) for e in walls) - LIFE_LEAD
+        if f0 < s0:
+            try:
+                life, life_ok = await fills_between(client, addr, f0 * 1000, ts * 1000)
+            except Exception:
+                log.debug("duvar ömrü dolumları okunamadı %s", addr[:10], exc_info=True)
+                life, life_ok = None, False
+    for e in ends:
+        if e["t"] == "wall_end":
+            m = wall_fills(e["w"], fills, ts)
+            if life is None:
+                m["life_sz"] = m["life_usd"] = None
+            elif life is not fills:
+                lm = wall_fills(e["w"], life, ts)
+                m["life_sz"], m["life_usd"] = lm["life_sz"], lm["life_usd"]
+            m["life_complete"] = bool(life_ok)
+        else:
+            m = ladder_fills(e["L"], fills, start_of(e), ts)
+        st = fill_outcome(m["ratio"])
+        if not complete and st != "doldu":
+            st = None                        # sayfa sınırı: eksik dolumla "çekildi" denmez
+        m["status"] = st
+        e["fill"] = m
+
+
 async def fill_flow(client, addr: str, since: int, until: int | None = None,
                     max_pages: int = FLOW_PAGES) -> dict:
     """Hesabın [since, until] aralığında GERÇEKLEŞEN dolumları, coin → yön → {$, dolum,
@@ -713,6 +858,7 @@ async def run_once(cfg, client, notifier, ts: int | None = None) -> dict:
         if not ev:
             await kv_set(STATE_KV + addr, st)
             continue
+        await annotate_ends(cfg, client, addr, ev, ts)   # kalktı mı, doldu mu: gerçek dolumlardan
         text = fmt.acct_events(addr, st, ev, marks)
         ok = await notifier.send("acct", text, priority="high", key=f"acct:{addr}:{ts}",
                                  chat_id=chat, public=False)

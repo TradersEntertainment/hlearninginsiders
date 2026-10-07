@@ -566,13 +566,21 @@ görünür: özet ve `/hesaplar` son 1 saatin **gerçekleşen dolumlarını** g�
 - 🧲 yeni duvar — fiyatın %1 yakınında ≥$250K tek emir, iki yoklama üst üste (post-only mi,
   reduce-only mi, pozisyona etkisi, kaç farklı emir numarasıyla yeniden kondu). Pozisyonu
   aynı yapışkan yolla **kapatan** post-only reduce-only duvar da sayılır ("SHORT'u
-  kapatıyor"); 🧲❌ kalktı — süresi, tepesi, o sürede pozisyon değişimi
+  kapatıyor"). Bitince **ölçülen sonuç** (07.10 — kullanıcı: "alış duvarı kalktı diyeceğine doldu
+  demesi gerekmez mi"; 14.8K VVV duvar biterken pozisyon +15.4K VVV büyümüştü): hesabın gerçek
+  dolumları okunur — son görüldüğü yoklamadan sonra aynı coin + yönde **maker** dolum (emir
+  numarası duvarınki ya da görülen fiyat ±%0.3; duvar kendini yeniden koyduğu için yoklamalar
+  arasındaki numaralar görünmez). Son görülen kalanın ≥%70'i → 🧲✅ **DOLDU**, ≤%20 → 🧲❌
+  **ÇEKİLDİ**, arası 🧲◐ **KISMEN**; dolum okunamazsa 🧲❔ "bilinmiyor" (tahmin yok). Ayrıca
+  süresi, tepesi, ömrü boyunca duvardan dolan adet/$ ve o sürede pozisyon değişimi
 - 🎯 emir grupları — her biri ayrı: **kapatma emirleri** (Gtc reduce-only limit),
   **kâr al (tetik)** (HL'nin kendi emir türü adı), **stop**, **tetikli giriş** (reduce-only
   olmayan tetik); pozisyona bağlı TP/SL (HL arayüzünün pozisyon satırından konan, `sz 0`)
   "tüm pozisyon" olarak. $ tetik fiyatıyla. Kurdu · **önemli** değişiklik (yeni emirler iki
   yoklama sabit VE emir sayısı ≥3, aralık >%1 ya da $ ≥%25 ve ≥$100K değişti; "önceki" =
-  değişiklikten hemen önceki canlı hal) · kalktı. **Basamak dolumu ve aynı yere yeniden
+  değişiklikten hemen önceki canlı hal) · bitti: 🎯✅ **DOLDU** / 🎯❌ **İPTAL** / 🎯◐ kısmen —
+  duvarla aynı ölçüm (kendi emir numaralarıyla ya da aynı fiyat bandında "Close…" yönlü dolum;
+  tetikte ±%5). **Basamak dolumu ve aynı yere yeniden
   koyma mesaj üretmez** — dolum, pozisyonun küçülmesi olarak (≥%25 adımda) görünür.
 - **Post-only kapatma kotasyonu** (tabanın altındaki post-only reduce-only limitler)
   **olay üretmez**: fiyatla birlikte sürekli yeniden konur, her kayışta "değişti" yazmak
