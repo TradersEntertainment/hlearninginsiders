@@ -400,6 +400,9 @@ class TelegramBot:
         if cq and str(cq.get("data") or "").startswith(fmt.TRACK_CB + ":"):
             await self._track_callback(cq)
             return
+        if cq and str(cq.get("data") or "").startswith(fmt.WAKE_CB + ":"):
+            await self._wake_callback(cq)                # 🚨 uyandırma: ✅ Uyandım / 🗑 alarm
+            return
         # Diğer düğmeler (callback) ve ödeme olayları yalnız herkese açık DM akışında anlamlı
         if "callback_query" in upd or "pre_checkout_query" in upd:
             if self._public_on():
@@ -505,6 +508,8 @@ class TelegramBot:
             await self._cmd_slices(chat_id)
         elif cmd in ("seans", "seanslar"):
             await self._cmd_seans(args, chat_id)
+        elif cmd in ("alarm", "alarmlar", "alarm_test", "alarmtest", "uyandim", "uyandım"):
+            await self._cmd_alarm(cmd, args, chat_id)   # 🚨 yalnız sahip: gece telefonu çaldırır
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
             await self._cmd_sim(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
@@ -587,6 +592,15 @@ class TelegramBot:
         self._admin_cache[key] = (t, ok)
         return ok
 
+    def _owner_press(self, chat: dict, frm: dict) -> bool:
+        """Sahibe özel tuşlar (uyandırma: gece telefonu çaldırır / susturur): sahibin kullanıcı
+        id'si, ya da ana sohbet (kanal değilse — kanalda tuşa her abone basabilir)."""
+        uid, oid = str(frm.get("id") or ""), self._owner_user_id()
+        if oid and uid == oid:
+            return True
+        return chat.get("type") != "channel" and bool(self.cfg.telegram_chat_id) \
+            and str(chat.get("id") or "") == str(self.cfg.telegram_chat_id)
+
     async def _may_press(self, chat: dict, frm: dict) -> bool:
         """Tuşa kim basabilir — komutlarla aynı kural, kanalda daha sıkı: kanalda tuşa her abone
         basabilir (komutu ise yalnız yönetici yazabilir) → sahip id'si ya da kanal yöneticisi.
@@ -611,15 +625,35 @@ class TelegramBot:
         msg = cq.get("message") or {}
         chat = msg.get("chat") or {}
         parts = str(cq.get("data") or "").split(":")
-        if len(parts) != 4 or parts[1] not in ("stop", "undo") or parts[2] not in trackctl.KINDS \
-                or not parts[3].isdigit():
+        if len(parts) != 4 or parts[1] not in ("stop", "undo", "wake", "nowake") \
+                or parts[2] not in trackctl.KINDS or not parts[3].isdigit() \
+                or (parts[1] in ("wake", "nowake") and parts[2] != "pos"):
             await self._ack(cq_id)
             return
         _, act, kind, fid = parts[0], parts[1], parts[2], int(parts[3])
-        if not await self._may_press(chat, cq.get("from") or {}):
+        frm = cq.get("from") or {}
+        if act in ("wake", "nowake"):
+            # ⏰ gece telefonu çaldırır: grupta başkası açıp kapatamasın — yalnız sahip
+            if not self._owner_press(chat, frm):
+                await self._ack(cq_id, "⏰ Uyandırmayı yalnız sahibi açıp kapatabilir")
+                return
+        elif not await self._may_press(chat, frm):
             await self._ack(cq_id, "Bu tuşu yalnız sahibi ya da kanal yöneticisi kullanabilir")
             return
-        if act == "stop":
+        if act in ("wake", "nowake"):
+            from ..radar import wake
+            done = await trackctl.set_wake(fid, act == "wake")
+            st = await trackctl.state(kind, fid)
+            label = (st or {}).get("label") or f"#{fid}"
+            if not done:
+                note = f"{label} açık değil — uyandırma ayarlanamadı"
+            elif act == "nowake":
+                note = f"🔕 {label}: uyandırma kapandı (bildirimler sürer)"
+            elif wake.tg_user(self.cfg):
+                note = f"⏰ {label}: balina kapatırsa / yön değiştirirse seni Telegram'dan arayacağım"
+            else:
+                note = f"⏰ {label}: açık ama WAKE_TELEGRAM_USER yok — yalnız mesaj gelir (/alarm)"
+        elif act == "stop":
             done = await trackctl.stop(kind, fid)
             st = await trackctl.state(kind, fid)
             label = (st or {}).get("label") or f"#{fid}"
@@ -639,7 +673,7 @@ class TelegramBot:
             label = (st or {}).get("label") or f"#{fid}"
             note = f"↩️ {label} yeniden açık — kaldığı yerden sürüyor" if ok else f"{label}: {why}"
         if st and st["active"]:
-            kb = fmt.stop_kb(kind, fid)
+            kb = fmt.stop_kb(kind, fid, wake=bool(st.get("wake")))
         elif st and st.get("end_note") == trackctl.MANUAL:
             kb = fmt.undo_kb(kind, fid)
         else:
@@ -652,6 +686,109 @@ class TelegramBot:
                 await self.edit_reply_markup(str(chat["id"]), msg["message_id"], kb)
             except Exception:
                 log.debug("takip tuşu güncellenemedi", exc_info=True)
+
+    # ---------- 🚨 uyandırma alarmı ----------
+
+    async def _cmd_alarm(self, cmd: str, args: list[str], chat_id: str) -> None:
+        """/alarm [SEMBOL seviye [seviye] | SEMBOL %X | 0xADRES [%X]], /alarmlar, /alarm_test,
+        /uyandim — yalnız SAHİP zincirinde (gece telefonu çaldırır)."""
+        from ..radar import wake
+        user, pl = wake.tg_user(self.cfg), wake.plan(self.cfg)
+        if cmd in ("uyandim", "uyandım"):
+            acked = await wake.ack(None, "komut")
+            for ev in acked:
+                await self._wake_mark(ev)
+            await self.send(f"✅ Aramalar durdu ({len(acked)} uyandırma)." if acked
+                            else "Açık uyandırma yok.", chat_id)
+            return
+        if cmd in ("alarm_test", "alarmtest"):
+            eid = await wake.fire(self.cfg, "🧪 Deneme araması",
+                                  "🧪 <b>Deneme araması</b> — Rahatsız Etme açıkken telefonun çalıyor mu?",
+                                  "Bu bir deneme araması. Telefonun Rahatsız Etme açıkken çaldıysa kurulum tamam."
+                                  " Telegram'da uyandım tuşuna bas.", f"test:{now()}", source="test")
+            await self.send("🧪 Deneme başladı — birkaç saniye içinde mesaj ve Telegram araması gelir"
+                            f" (2 arama, ~{pl['gap']} sn arayla)." if eid and user else
+                            "🧪 Deneme mesajı geliyor — ama arama YOK:\n" + fmt._wake_call_line(user, pl), chat_id)
+            return
+        if cmd == "alarmlar" or not args:
+            alarms = await wake.active_alarms()
+            if cmd == "alarm" and not args and not alarms:
+                await self.send(fmt.wake_help(user, pl), chat_id)
+                return
+            prices: dict = {}
+            from ..radar.report import coin_dex
+            for dex in {coin_dex(a["coin"]) for a in alarms if a.get("coin")}:
+                try:
+                    prices.update(await wake.mids(self.client, dex))
+                except Exception:
+                    log.debug("alarm listesi fiyatı", exc_info=True)
+            text = fmt.wake_list(alarms, prices, user, pl)
+            if cmd == "alarm":
+                text = fmt.wake_help(user, pl) + "\n\n" + text
+            await self.send(text, chat_id, reply_markup=fmt.wake_del_kb(alarms))
+            return
+        res = await wake.arm(self.cfg, self.client, wake.parse_args(args), chat_id=chat_id)
+        if not res["ok"]:
+            await self.send(f"⏰✗ Alarm kurulamadı: {fmt.esc(res['reason'])}\n\n" + fmt.wake_help(user, pl),
+                            chat_id)
+            return
+        hours = max(1, int(getattr(self.cfg, "wake_alarm_hours", 18) or 18))
+        await self.send(fmt.wake_armed(res, user, pl, hours), chat_id,
+                        reply_markup=fmt.wake_del_kb([res["alarm"]]))
+
+    async def _wake_mark(self, ev: dict) -> None:
+        """Onaylanan uyandırmanın mesajındaki tuş → "✅ Uyandın 03:12"."""
+        if ev.get("msg_id") and ev.get("msg_chat"):
+            try:
+                await self.edit_reply_markup(str(ev["msg_chat"]), ev["msg_id"], fmt.wake_acked_kb(ev))
+            except Exception:
+                log.debug("uyandırma tuşu güncellenemedi", exc_info=True)
+
+    async def _wake_callback(self, cq: dict) -> None:
+        """✅ Uyandım (aramaları durdurur) · 🗑 alarm kaldır · bilgi. Yalnız sahip."""
+        from ..radar import wake
+        cq_id = cq.get("id")
+        msg = cq.get("message") or {}
+        chat = msg.get("chat") or {}
+        parts = str(cq.get("data") or "").split(":")
+        if len(parts) != 3 or parts[1] not in ("ack", "del", "noop") or not parts[2].isdigit():
+            await self._ack(cq_id)
+            return
+        act, xid = parts[1], int(parts[2])
+        if not self._owner_press(chat, cq.get("from") or {}):
+            await self._ack(cq_id, "🚨 Bu tuşu yalnız sahibi kullanabilir")
+            return
+        if act == "del":
+            ok = await wake.cancel(xid, "kaldırıldı")
+            await self._ack(cq_id, f"🗑 Alarm #{xid} kaldırıldı" if ok else f"Alarm #{xid} zaten aktif değil")
+            kb = fmt.wake_del_kb([a for a in await wake.active_alarms()
+                                  if any(f"{fmt.WAKE_CB}:del:{a['id']}" == b.get("callback_data")
+                                         for row in (msg.get("reply_markup") or {}).get("inline_keyboard") or []
+                                         for b in row)])
+            if msg.get("message_id") and chat.get("id") is not None:
+                try:
+                    await self.edit_reply_markup(str(chat["id"]), msg["message_id"], kb)
+                except Exception:
+                    log.debug("alarm tuşları güncellenemedi", exc_info=True)
+            return
+        ev = await wake.event(xid)
+        if ev is None:
+            await self._ack(cq_id, "Uyandırma kaydı yok")
+            return
+        if act == "ack" and not ev.get("ack_ts"):
+            acked = await wake.ack(xid, "tuş")
+            ev = acked[0] if acked else await wake.event(xid)
+            await self._ack(cq_id, "✅ Günaydın — aramalar durdu")
+        else:
+            await self._ack(cq_id, f"✅ Zaten onaylandı ({fmt.tr_time(int(ev['ack_ts']))})" if ev.get("ack_ts")
+                            else "Henüz onaylanmadı — ✅ Uyandım'a bas")
+        if ev.get("ack_ts") and msg.get("message_id") and chat.get("id") is not None:
+            kb = fmt.wake_acked_kb(ev)
+            if (msg.get("reply_markup") or {}) != kb:
+                try:
+                    await self.edit_reply_markup(str(chat["id"]), msg["message_id"], kb)
+                except Exception:
+                    log.debug("uyandırma tuşu güncellenemedi", exc_info=True)
 
     async def _admin(self, cmd: str, args: list[str], chat_id: str) -> bool:
         """Satış tarafı sahip komutları (app/telegram/admin.py)."""

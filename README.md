@@ -60,6 +60,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/duvartakipler` · `/birak_duvar_N` | İzlenen 🧲 yapışkan duvarlar · takibi bırak |
 | `/balina` (`/dilim`) | 🔂 Dilimli alım-satım şu an: kaç saattir alıyor/satıyor, kaç emir, ne kadar ($ ve adet), ortalama, son dilim kaç sn önce, fiyat ve pozisyon değişimi, aynı dakikalardaki diğer coinler; yoksa son dizi ve ne zaman bittiği |
 | `/hesaplar` | 🔂 Dilimli alım-satım durumu + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
+| `/alarm SNDK 480` · `/alarm SNDK %3` · `/alarm 0x…` | 🚨 Uyandırma alarmı: fiyat seviyesine gelince / ±%X oynayınca / hesabın pozisyonu liq'e %2 kalınca ya da kapanınca seni **Telegram'dan arar** (Rahatsız Etme'de bildirim gelmez, arama gelir). `/alarmlar` (🗑 ile kaldır) · `/alarm_test` · `/uyandim` |
 | `/seans` · `/seans NVDA` | 🕰 ABD seans karnesi (XYZ100 + SP500 tek mesaj; ya da tek ABD hissesi): bugün Asya / Londra / New York ne yaptı, Londra Asya tepesini/dibini süpürdü mü, geçmişte bu şekilde NY ne yaptı (taban oran ve z ile), getiri hangi seansta birikti, oynaklık ilişkisi — sayfa `/seans` |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
@@ -1757,6 +1758,45 @@ karşılaştırmada şansla ~1.3 beklenir). Tutarlı olan **oynaklık**, AMD'nin
 geniş NY (Asya→NY ρ: XYZ100 +0.42 z 3.5, SP500 +0.33 z 2.7, NVDA +0.45 z 3.8 — düzeltme sonrası
 da), Londra→NY ilişki yok. Getiri gece birikmiş (XYZ100 Asya +%3.6, Londra −%0.6, NY −%0.3; SP500
 +%3.9 / +%1.6 / −%1.1) ama |t| < 2 — betimleme, kanıt değil.
+
+## 🚨 Uyandırma Alarmı: `/alarm`
+
+Kullanıcı sorusu: "Bazen uyumadan önce pozum açık oluyor, bir şey olursa uyanmak istiyorum ama
+telefonum rahatsız etmede; bildirim gelmez, yalnız aramalara uyanırım — o da 2 kez peş peşe."
+Bot o zaman seni **Telegram'dan arar** ve olayı Türkçe okur.
+
+**Neler arar** (yalnız sahip kurar — gece telefonu çaldıran komut grupta başkasına açık değil):
+- `/alarm SNDK 480` — fiyat 480'e gelince (yön kurduğun andaki fiyattan: üstündeysen altına
+  inince, altındaysan üstüne çıkınca). `/alarm SNDK 480 520` iki yön. Pozisyonun propr'da da
+  olsa çalışır — HL fiyatına (allMids orta fiyatı) bakar.
+- `/alarm SNDK %3` — kurduğun andaki fiyattan ±%3.
+- `/alarm 0xADRES` — o HL hesabının tüm pozisyonları: fiyat likidasyona **%2** kalınca
+  (`/alarm 0x… %3` ile değişir) ya da pozisyon **kapanınca / likide olunca**.
+- 👣 Takip bildirimlerindeki **⏰ Kapanırsa beni uyandır** tuşu — balina kapatırsa ya da yön
+  değiştirirse.
+
+Alarmlar tek seferliktir (tetiklenince kalkar) ve 18 saat sonra kendiliğinden düşer (unutulan
+alarm günler sonra öğlen aramasın). `/alarmlar` aktifleri listeler, 🗑 ile kaldırırsın.
+
+**Arama nasıl:** Telegram botları arama yapamaz; ücretsiz **CallMeBot** servisi seni Telegram'dan
+arar ve metni okur ("Dikkat. SNDK 480 altına indi. Şu an 478,5."). Aramalar **ikişer** gelir
+(~70 sn arayla — iOS "Tekrarlanan Aramalar" 3 dk penceresi), onaylamazsan 4 dk sonra yeni tur,
+en çok 3 tur. Aynı anda Telegram'a "✅ Uyandım — aramayı durdur" tuşlu mesaj gelir; tuşa ya da
+`/uyandim`'a basınca aramalar durur. CallMeBot aramanın açıldığını bildirmez — onay yalnız tuşla.
+
+**Kurulum (bir kez):**
+1. Railway → Variables: `WAKE_TELEGRAM_USER=@kullanıcıadın` (ya da Telegram'daki +90… numaran).
+2. Telegram'da **@CallMeBot_txtbot**'a `/start` yaz (arama izni). Ayarlar → Gizlilik → Aramalar
+   seni arayabilsin.
+3. iPhone: Ayarlar → Odak → **Rahatsız Etme** (uyurken Uyku odağını kullanıyorsan onu da) →
+   Uygulamalar → **Telegram**'a izin ver; ya da Kişiler → "Tekrarlanan Aramalar" açık kalsın.
+   Telegram'a izin verirsen öteki Telegram bildirimleri de geçer — sohbetleri sessize alabilirsin.
+4. **`/alarm_test`** — Rahatsız Etme açıkken dene: 2 arama gelir. Çalmazsa 3. adımı değiştir.
+
+Ücretsiz ve üçüncü taraf: CallMeBot kişisel kullanım için ücretsiz, garantisi yok; aramalar ~30 sn
+çalar, metin en çok 256 karakter. Arama yapılamazsa (izin yok, ağ) Telegram'a tek uyarı gelir.
+Fiyat/hesap verisi 5 dk okunamazsa "alarm şu an KÖR" diye tek mesaj gelir (arama yok). `/tani`
+satırı: arama kurulumu, aktif alarm, açık uyandırma, son arama sonucu.
 
 ## Bir Şey Ters Gittiğinde: `/tani`
 

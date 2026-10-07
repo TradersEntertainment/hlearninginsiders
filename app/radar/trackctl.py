@@ -28,7 +28,7 @@ async def state(kind: str, fid: int) -> dict | None:
         return None
     async with db() as conn:
         if kind == "pos":
-            cur = await conn.execute("SELECT id, active, end_note, symbol, coin, address FROM trackers"
+            cur = await conn.execute("SELECT id, active, end_note, symbol, coin, address, wake FROM trackers"
                                      " WHERE id=?", (int(fid),))
         elif kind == "wall":
             cur = await conn.execute(
@@ -90,6 +90,13 @@ async def resume(kind: str, fid: int) -> tuple[bool, str]:
         if not cur.rowcount:
             return False, "takip durumu değişti — yeniden dene"
     return True, ""
+
+
+async def set_wake(fid: int, on: bool) -> bool:
+    """👣 pozisyon takibinde "kapanırsa / yön değiştirirse beni uyandır" (yalnız aktif takipte)."""
+    async with db() as conn:
+        cur = await conn.execute("UPDATE trackers SET wake=? WHERE id=? AND active=1", (1 if on else 0, int(fid)))
+        return bool(cur.rowcount)
 
 
 async def still_active(kind: str, fid: int) -> bool:

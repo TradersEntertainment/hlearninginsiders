@@ -395,7 +395,7 @@ TASK_TR = {
     "telegram": "telegram botu", "watchdog": "bekçi", "ai": "AI analist",
     "channel": "kanal yayını", "twap": "TWAP radarı (arşiv)", "twaplive": "canlı TWAP radarı", "paywatch": "ödeme izleyici", "billing": "faturalama", "fanout": "bildirim dağıtımı", "public_digest": "ücretsiz sabah özeti",
     "sim": "liq simülasyonu", "slicewatch": "dilimli alım-satım izleyici",
-    "seans": "ABD seans karnesi (mum arşivi)",
+    "seans": "ABD seans karnesi (mum arşivi)", "wake": "uyandırma alarmı",
 }
 
 
@@ -1949,15 +1949,126 @@ def lowvol_alert(p: dict) -> str:
 TRACK_CB = "trk"
 
 
-def stop_kb(kind: str, fid: int) -> dict:
-    """Takip bildirimlerinin altındaki tuş — kind: pos (👣 #N) | wall (🧲) | twap (👁)."""
-    return {"inline_keyboard": [[{"text": f"🛑 Takibi bırak (#{int(fid)})",
-                                  "callback_data": f"{TRACK_CB}:stop:{kind}:{int(fid)}"}]]}
+def stop_kb(kind: str, fid: int, wake: bool = False) -> dict:
+    """Takip bildirimlerinin altındaki tuş — kind: pos (👣 #N) | wall (🧲) | twap (👁).
+    Pozisyon takibinde ikinci satır ⏰: balina kapatırsa / yön değiştirirse seni ARA (wake.py)."""
+    rows = [[{"text": f"🛑 Takibi bırak (#{int(fid)})",
+              "callback_data": f"{TRACK_CB}:stop:{kind}:{int(fid)}"}]]
+    if kind == "pos":
+        rows.append([{"text": "⏰ Uyandırma AÇIK — kapat" if wake else "⏰ Kapanırsa beni uyandır",
+                      "callback_data": f"{TRACK_CB}:{'nowake' if wake else 'wake'}:pos:{int(fid)}"}])
+    return {"inline_keyboard": rows}
 
 
 def undo_kb(kind: str, fid: int) -> dict:
     return {"inline_keyboard": [[{"text": f"↩️ Geri al — takip #{int(fid)} bırakıldı",
                                   "callback_data": f"{TRACK_CB}:undo:{kind}:{int(fid)}"}]]}
+
+
+# ---- 🚨 uyandırma alarmı (app/radar/wake.py) ----
+WAKE_CB = "wak"
+
+
+def wake_ack_kb(eid: int) -> dict:
+    return {"inline_keyboard": [[{"text": "✅ Uyandım — aramayı durdur",
+                                  "callback_data": f"{WAKE_CB}:ack:{int(eid)}"}]]}
+
+
+def wake_acked_kb(ev: dict) -> dict:
+    return {"inline_keyboard": [[{"text": f"✅ Uyandın {tr_time(int(ev['ack_ts']))} ({ev.get('ack_by') or 'tuş'})",
+                                  "callback_data": f"{WAKE_CB}:noop:{int(ev['id'])}"}]]}
+
+
+def wake_del_kb(alarms: list[dict]) -> dict | None:
+    rows = [[{"text": f"🗑 Alarm #{int(a['id'])} kaldır", "callback_data": f"{WAKE_CB}:del:{int(a['id'])}"}]
+            for a in alarms[:12]]
+    return {"inline_keyboard": rows} if rows else None
+
+
+def _wake_call_line(user: str, pl: dict) -> str:
+    if not user:
+        return ("⚠️ <b>Arama kapalı</b>: Railway'e <code>WAKE_TELEGRAM_USER=@kullanıcıadın</code> ekle ve"
+                " Telegram'da @CallMeBot_txtbot'a /start yaz — şimdilik yalnız bu mesaj gelir"
+                " (Rahatsız Etme'de uyandırmaz).")
+    return (f"📞 Telegram'dan arama: <b>{esc(user)}</b> · 2'şer arama (~{pl['gap']} sn arayla), turlar"
+            f" {pl['round_gap'] // 60} dk arayla, en çok {pl['max_calls']} — ✅ Uyandım'a basana kadar")
+
+
+def wake_event(ev: dict, user: str, pl: dict) -> str:
+    """Tetiklenen uyandırmanın Telegram mesajı (✅ tuşu ayrı)."""
+    head = "🧪 <b>DENEME — UYANDIRMA</b>" if ev.get("source") == "test" else "🚨 <b>UYANDIRMA</b>"
+    if not user:
+        call = _wake_call_line(user, pl)
+    elif ev.get("source") == "test":
+        call = (f"📞 {esc(user)} hesabını Telegram'dan 2 kez arıyorum (~{pl['gap']} sn arayla). Rahatsız"
+                " Etme açıkken çaldıysa kurulum tamam; çalmadıysa /alarm yardımındaki iPhone ayarına bak.")
+    else:
+        call = _wake_call_line(user, pl)
+    return f"{head}\n{ev.get('body') or esc(ev.get('title') or '')}\n{call}"
+
+
+def wake_armed(res: dict, user: str, pl: dict, hours: int) -> str:
+    """/alarm kurulum onayı."""
+    from ..radar import wake
+    a = res["alarm"]
+    lines = [f"⏰ <b>Alarm #{a['id']} kuruldu</b> — {esc(wake.describe(a))}"]
+    if a["kind"] == "addr":
+        pos = res.get("positions") or {}
+        if pos:
+            parts = []
+            for c, p in list(pos.items())[:8]:
+                dist = (f" · liq'e %{abs(p['px'] - p['liq']) / p['px'] * 100:.1f}"
+                        if p.get("liq") and p.get("px") else "")
+                parts.append(f"{esc(wake.sym_of(c))} {p['side'].upper()} {usd(p['notional'])}{dist}")
+            lines.append(f"izlenen {len(pos)} pozisyon: " + " · ".join(parts))
+        else:
+            lines.append("şu an açık pozisyon yok — açılırsa izlenir")
+    else:
+        px = res.get("px")
+        targets = [v for v in (a.get("lo"), a.get("hi")) if v is not None]
+        far = min(abs(v - px) / px * 100 for v in targets) if px and targets else None
+        lines.append(f"şimdi {wake.fpx(px)}" + (f" · en yakın seviye %{far:.1f} uzakta" if far is not None else ""))
+    lines.append(f"{hours} saat geçerli (sonra kendiliğinden kalkar) · tek seferlik")
+    lines.append(_wake_call_line(user, pl))
+    if user:
+        lines.append("🧪 Yatmadan önce /alarm_test ile Rahatsız Etme açıkken telefonunun çaldığını dene.")
+    return "\n".join(lines)
+
+
+def wake_list(alarms: list[dict], prices: dict, user: str, pl: dict) -> str:
+    from ..radar import wake
+    if not alarms:
+        return "⏰ Aktif alarm yok. /alarm ile kur (/alarm yazınca örnekler gelir)."
+    lines = [f"⏰ <b>Aktif alarmlar</b> ({len(alarms)})"]
+    t = now()
+    for a in alarms[:20]:
+        left = max(0, int(a.get("expires_ts") or t) - t) // 3600
+        extra = ""
+        px = prices.get(a.get("coin") or "")
+        if px and a["kind"] != "addr":
+            targets = [v for v in (a.get("lo"), a.get("hi")) if v is not None]
+            far = min(abs(v - px) / px * 100 for v in targets) if targets else None
+            extra = f" · şimdi {wake.fpx(px)}" + (f" (%{far:.1f} uzakta)" if far is not None else "")
+        lines.append(f"#{a['id']} {esc(wake.describe(a))}{extra} · {left} sa kaldı")
+    lines.append(_wake_call_line(user, pl))
+    return "\n".join(lines)
+
+
+def wake_help(user: str, pl: dict) -> str:
+    return "\n".join([
+        "🚨 <b>Uyandırma alarmı</b> — gece bir şey olursa seni Telegram'dan ARAR (Rahatsız Etme'de"
+        " bildirim gelmez, arama gelir).",
+        "<code>/alarm SNDK 480</code> — fiyat 480'e gelince (yön şimdiki fiyattan anlaşılır)",
+        "<code>/alarm SNDK 480 520</code> — 480 altı ya da 520 üstü",
+        "<code>/alarm SNDK %3</code> — şimdiki fiyattan ±%3",
+        "<code>/alarm 0xADRES</code> — o hesabın pozisyonları: liq'e %2 kala ya da kapanınca"
+        " (<code>/alarm 0x… %3</code>)",
+        "👣 Takip bildirimlerindeki <b>⏰ Kapanırsa beni uyandır</b>: balina kapatırsa / yön değiştirirse",
+        "/alarmlar — aktifler (🗑 ile kaldır) · /alarm_test — deneme araması · /uyandim — aramayı durdur",
+        _wake_call_line(user, pl),
+        "<i>iPhone: Ayarlar → Odak → Rahatsız Etme (ve Uyku) → Uygulamalar → Telegram'a izin ver ya da"
+        " Kişiler → Tekrarlanan Aramalar açık kalsın (aramalar ikişer gelir). /alarm_test ile dene.</i>",
+    ])
 
 
 def track_offer(symbol: str, offers: list[dict], already_closed: list[dict], cfg) -> str:
@@ -2497,6 +2608,7 @@ def help_text() -> str:
         "/balina — 🔂 dilimli alım-satım: şu an ne yapıyor, kaç saattir alıyor/satıyor, ne kadar aldı\n"
         "/hesaplar — 👤 izlenen hesaplar (pozisyon, duvar, emirler) + 🔂 durum\n"
         "/seans — 🕰 ABD seans karnesi (XYZ100 + SP500): Asya → Londra → New York, bugün + geçmiş ölçüm · /seans NVDA tek hisse\n"
+        "/alarm — 🚨 uyandırma: gece bir şey olursa seni Telegram'dan ARAR (/alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES) · /alarmlar · /alarm_test · /uyandim\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için bildirimdeki 🛑 tuşu ya da /birak_N; ↩️ geri alınabilir)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
         "/sim — liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar (sayfa /sim)\n"

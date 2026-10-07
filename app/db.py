@@ -430,6 +430,30 @@ CREATE TABLE IF NOT EXISTS sticky_follows(
   UNIQUE(wall_id, chat_id)
 );
 CREATE INDEX IF NOT EXISTS idx_stickyfollow_active ON sticky_follows(active);
+CREATE TABLE IF NOT EXISTS wake_alarms(       -- 🚨 uyandırma alarmı (tek seferlik)
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT,                             -- price | pct | addr
+  coin TEXT, lo REAL, hi REAL,           -- price/pct: alt ve/veya üst seviye (yoksa NULL)
+  ref_px REAL, pct REAL,                 -- kurulduğu andaki fiyat · pct: yüzde
+  address TEXT, liq_pct REAL,            -- addr: adres + liq'e uzaklık eşiği
+  seen TEXT,                             -- addr: görülen pozisyonlar (json coin → yön)
+  chat_id TEXT,
+  created_ts INTEGER, expires_ts INTEGER, active INTEGER DEFAULT 1,
+  fired_ts INTEGER, end_note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_wake_alarms_active ON wake_alarms(active);
+CREATE TABLE IF NOT EXISTS wake_events(       -- tetiklenen uyandırma: mesaj + arama turları
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT UNIQUE,                       -- aynı olay iki kez çalmaz
+  source TEXT,                           -- alarm | takip | test
+  title TEXT, body TEXT, speech TEXT,
+  created_ts INTEGER,
+  msg_id INTEGER, msg_chat TEXT, msg_ts INTEGER,
+  call_n INTEGER DEFAULT 0, next_call_ts INTEGER, last_call_ts INTEGER,
+  last_call_note TEXT, warned INTEGER DEFAULT 0,
+  ack_ts INTEGER, ack_by TEXT, done_ts INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_wake_events_open ON wake_events(done_ts);
 """
 
 
@@ -466,6 +490,8 @@ async def db():
 
 # Var olan (canlı) DB'lere kolon ekleyen migration'lar — "zaten var" hatası yutulur
 MIGRATIONS = [
+    # 🚨 takip bildiriminden "kapanırsa beni uyandır" (wake.py)
+    "ALTER TABLE trackers ADD COLUMN wake INTEGER DEFAULT 0",
     # Sayım sıcak şeridi: ana dex kripto coininde işlem yapan adresin defteri dakikalar
     # içinde çekilsin. İndeks ALTER'dan SONRA (şema betiği canlı DB'de sütunsuz koşar).
     "ALTER TABLE census_accounts ADD COLUMN hot_ts INTEGER",

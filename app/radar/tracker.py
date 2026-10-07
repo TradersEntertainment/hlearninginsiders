@@ -310,7 +310,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
         still = bool(cur.rowcount)
     if not still:
         return              # tur başında okundu, bu arada 🛑 tuş / komutla bırakıldı → bayat mesaj yok
-    kb = fmt.stop_kb("pos", t["id"])
+    kb = fmt.stop_kb("pos", t["id"], wake=bool(t.get("wake")))
 
     # NOT: state (active=0 / yön / last_szi) YALNIZ başarılı gönderimden SONRA
     # yazılır. Eskiden önce yazılıp send sonucu yok sayılıyordu: Telegram anlık
@@ -337,6 +337,9 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
                     "UPDATE trackers SET active=0, last_szi=0, end_note=? WHERE id=?",
                     (note, t["id"]))
             log.info("takip #%s: %s pozisyonu TAMAMEN kapandı (%s)", t["id"], t["symbol"], note)
+            if t.get("wake"):
+                await _wake(cfg, t, "closed", f"balina {'LİKİDE OLDU' if kind == 'liq' else 'tamamen kapattı'}",
+                            f"takip ettiğin {t['symbol']} balinası {'likide oldu' if kind == 'liq' else 'pozisyonu kapattı'}")
         return
 
     cur_szi = abs(live["szi"])
@@ -351,6 +354,9 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
                     """UPDATE trackers SET side=?, base_szi=?, last_szi=?, base_notional=?,
                        liq_px=? WHERE id=?""",
                     (live["side"], cur_szi, cur_szi, live["notional"], live.get("liq_px"), t["id"]))
+            if t.get("wake"):
+                await _wake(cfg, t, f"flip:{live['side']}", f"balina yön değiştirdi → {live['side'].upper()}",
+                            f"takip ettiğin {t['symbol']} balinası yön değiştirdi, artık {live['side']}")
         return
 
     # 3) Anlamlı adım: son bildirimden beri TOPLAM boyutun %X'i kadar değişim.
@@ -404,6 +410,20 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
         await notifier.send("track", fmt.track_checkin(t, live, base),
                             priority="normal",
                             key=f"checkin:{t['id']}:{t['expires_ts']}", chat_id=chat, reply_markup=kb)
+
+
+async def _wake(cfg: Config, t: dict, what: str, title: str, said: str) -> None:
+    """⏰ açık takipte kapanış / yön değişimi → uyandırma olayı (aramayı wake döngüsü yapar)."""
+    try:
+        from . import wake
+        sym = t["symbol"]
+        await wake.fire(cfg, f"👣 Takip #{t['id']} {sym}: {title}",
+                        f"👣 Takip #{t['id']} <b>{fmt.esc(sym)}</b>: <b>{fmt.esc(title)}</b>\n"
+                        f"<i>{fmt.short(t['address'])} · ⏰ uyandırma bu takip için açıktı</i>",
+                        f"Dikkat. {said}. Uyandıysan Telegram'da uyandım tuşuna bas.",
+                        f"trk:{t['id']}:{what}", source="takip")
+    except Exception:
+        log.exception("takip #%s uyandırma olayı yazılamadı", t.get("id"))
 
 
 async def _auto_stop(cfg: Config, notifier, t: dict, live: dict,

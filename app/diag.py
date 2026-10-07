@@ -434,6 +434,24 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f" · ⚠️ {ss['err']} hata: {ss.get('err_msg', '')}" if ss.get("err") else ""))
     else:
         out.append("  seans karnesi: tur HENÜZ ÇALIŞMADI")
+    # 🚨 uyandırma alarmı: kurulum, aktif alarm, açık olay, son arama
+    try:
+        from .radar import wake
+        ws = await kv_get(wake.STATS_KV) or {}
+        alarms = await wake.active_alarms()
+        async with db() as conn:
+            cur = await conn.execute("SELECT COUNT(*) n FROM wake_events WHERE done_ts IS NULL")
+            n_open = (await cur.fetchone())["n"]
+        user = wake.tg_user(cfg)
+        masked = (user[:3] + "…" + user[-2:]) if len(user) > 6 else ("…" if user else "")   # kişisel: /tani yapıştırılır
+        out.append("  uyandırma: " + ("kapalı (wake_enabled=0) · " if not getattr(cfg, "wake_enabled", True) else "")
+                   + (f"arama {masked} ✓" if user else "⚠️ arama yok (WAKE_TELEGRAM_USER)")
+                   + f" · aktif alarm {len(alarms)} · açık uyandırma {n_open}"
+                   + (f" · son arama {_dur(now() - int(ws['last_call_ts']))} önce: {ws.get('last_call_note', '')}"
+                      if ws.get("last_call_ts") else "")
+                   + (f" · ⚠️ {ws['errors']} denetim hatası" if ws.get("errors") else ""))
+    except Exception as e:                         # noqa: BLE001 — döküm yarım kalmasın
+        out.append(f"  uyandırma: okunamadı ({type(e).__name__})")
     ps = await kv_get("patterns_stats") or {}
     if ps:
         best = ps.get("best") or {}

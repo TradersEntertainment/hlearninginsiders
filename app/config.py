@@ -398,6 +398,22 @@ EDITABLE_FIELDS: dict[str, dict] = {
                     "desc": "Virgülle, dex'siz: XYZ100,SP500. Sayfa sekmeleri ve /seans komutu bunlar. Yalnız ABD'de işlem gören hisse/endeks perp'leri (kripto, emtia, döviz ve Asya borsası hisseleri reddedilir). Sekme dışı sorulan hisse 30 gün arşivlenir (en çok 12). Kural eşiği ayarı BİLEREK yok — eşik oynatmak sonuç uydurmaktır"},
     "seans_refresh_sec": {"type": "int", "label": "Arşiv turu aralığı (sn)", "group": "🕰 ABD seans karnesi",
                           "desc": "Arka plan arşivinin ne sıklıkla döneceği (en az 600). Sembol başına tek istek; sayfa açıkken canlı kuyruk ayrıca 2 dk'da bir"},
+    "wake_enabled": {"type": "bool", "label": "🚨 Uyandırma alarmı", "group": "🚨 Uyandırma alarmı",
+                     "desc": "Gece pozisyon açıkken bir şey olursa seni Telegram'dan ARAR (Rahatsız Etme'de bildirim gelmez, arama gelir). Alarmları Telegram'dan kurarsın: /alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES · takip bildirimindeki ⏰ tuşu. Arama ücretsiz CallMeBot ile — env WAKE_TELEGRAM_USER ve @CallMeBot_txtbot'a /start gerekir. Kapatınca alarmlar denetlenmez"},
+    "wake_call_rounds": {"type": "int", "label": "Arama turu (en çok)", "group": "🚨 Uyandırma alarmı",
+                         "desc": "Her tur 2 arama (iOS 'Tekrarlanan Aramalar': aynı arayan 3 dk içinde ikinci kez ararsa Rahatsız Etme'yi geçer). ✅ Uyandım'a basana kadar en çok bu kadar tur"},
+    "wake_call_gap_sec": {"type": "int", "label": "Turda iki arama arası (sn)", "group": "🚨 Uyandırma alarmı",
+                          "desc": "40–150 arası: ikinci arama 3 dk penceresine düşmeli. Ücretsiz arama ~30 sn çalar"},
+    "wake_round_gap_sec": {"type": "int", "label": "Turlar arası (sn)", "group": "🚨 Uyandırma alarmı",
+                           "desc": "Onay gelmezse sonraki tura kadar bekleme (en az 60)"},
+    "wake_tts_lang": {"type": "str", "label": "Arama sesi (dil)", "group": "🚨 Uyandırma alarmı",
+                      "desc": "Google TTS Standard sesi: tr-TR-Standard-A (kadın), tr-TR-Standard-B (erkek) …"},
+    "wake_liq_pct": {"type": "float", "label": "Adres alarmı: liq'e kalan (%)", "group": "🚨 Uyandırma alarmı",
+                     "desc": "/alarm 0xADRES: fiyat likidasyona bu kadar yaklaşınca arar (komutta /alarm 0x… %3 ile alarm başına değişir). Pozisyon kapanınca / likide olunca da arar"},
+    "wake_alarm_hours": {"type": "int", "label": "Alarm geçerlilik (saat)", "group": "🚨 Uyandırma alarmı",
+                         "desc": "Kurulan alarm bu süre sonra kendiliğinden kalkar (unutulan alarm günler sonra öğlen aramasın). Tetiklenen alarm tek seferlik kapanır"},
+    "wake_poll_sec": {"type": "int", "label": "Denetim aralığı (sn)", "group": "🚨 Uyandırma alarmı",
+                      "desc": "Aktif alarm varken fiyat (allMids, dex başına bir istek) ve adres pozisyonları bu aralıkla okunur; alarm yokken istek yok"},
     "sticky_enabled": {"type": "bool", "label": "🧲 Yapışkan duvar radarı", "group": "🧲 Yapışkan duvar",
                        "desc": "Ana dex kriptoda en iyi fiyata yapışan dev TEK emri (n=1) izler: kendini her birkaç saniyede en iyi fiyata yeniden koyan post-only emir — fiyatla aşağı da yukarı da gider. Likidasyon değildir (HL likidasyonu piyasa emridir, defterde beklemez). Kapatınca tarama ve takip notları durur"},
     "sticky_min_usd": {"type": "float", "label": "Alarm: tek emir en az ($)", "group": "🧲 Yapışkan duvar",
@@ -766,6 +782,15 @@ class Config:
         self.slice_quiet_sec = int(os.getenv("SLICE_QUIET_SEC", "300"))
         self.slice_start_orders = int(os.getenv("SLICE_START_ORDERS", "3"))
         self.slice_start_usd = float(os.getenv("SLICE_START_USD", "10000"))
+        self.wake_enabled = True
+        self.wake_telegram_user = os.getenv("WAKE_TELEGRAM_USER", "").strip()   # env-only: aranacak hesap
+        self.wake_call_rounds = int(os.getenv("WAKE_CALL_ROUNDS", "3"))
+        self.wake_call_gap_sec = int(os.getenv("WAKE_CALL_GAP_SEC", "70"))
+        self.wake_round_gap_sec = int(os.getenv("WAKE_ROUND_GAP_SEC", "240"))
+        self.wake_tts_lang = os.getenv("WAKE_TTS_LANG", "tr-TR-Standard-A")
+        self.wake_liq_pct = float(os.getenv("WAKE_LIQ_PCT", "2.0"))
+        self.wake_alarm_hours = int(os.getenv("WAKE_ALARM_HOURS", "18"))
+        self.wake_poll_sec = int(os.getenv("WAKE_POLL_SEC", "15"))
         self.seans_enabled = True
         self.seans_coins = _csv(os.getenv("SEANS_COINS", "XYZ100,SP500"))
         self.seans_refresh_sec = int(os.getenv("SEANS_REFRESH_SEC", "3600"))
