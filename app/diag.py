@@ -468,6 +468,11 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f" · atlanan: {notes}" if notes else ""))
     except Exception as e:                         # noqa: BLE001
         out.append(f"  açılış hareketlileri: okunamadı ({type(e).__name__})")
+    try:                                           # ⏱ /5dk pencere ölçümü (sohbet id'si yazılmaz)
+        from .radar import movewin
+        out.append("  " + await movewin.diag_line(cfg))
+    except Exception as e:                         # noqa: BLE001
+        out.append(f"  ⏱ pencere ölçümü: okunamadı ({type(e).__name__})")
     ps = await kv_get("patterns_stats") or {}
     if ps:
         best = ps.get("best") or {}

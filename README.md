@@ -62,6 +62,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/hesaplar` | 🔂 Dilimli alım-satım durumu + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
 | `/alarm SNDK 480` · `/alarm SNDK %3` · `/alarm 0x…` | 🚨 Uyandırma alarmı: fiyat seviyesine gelince / ±%X oynayınca / hesabın pozisyonu liq'e %2 kalınca ya da kapanınca seni **Telegram'dan arar** (Rahatsız Etme'de bildirim gelmez, arama gelir). `/alarmlar` (🗑 ile kaldır) · `/alarm_test` · `/uyandim` |
 | `/acilis` | 🔔 Açılışın en hareketlileri: açılış penceresindeyse anlık sıralama, değilse son rapor (raporlar ABD açılışından 5 ve 30 dk sonra hisse kanalına) |
+| `/5dk` · `/15dk` · `/5dk 15:30` | ⏱ Şimdiden (ya da verilen TSİ saatten) N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu ara durumu gösterir (haber saatleri için) |
 | `/seans` · `/seans NVDA` | 🕰 ABD seans karnesi (XYZ100 + SP500 tek mesaj; ya da tek ABD hissesi): bugün Asya / Londra / New York ne yaptı, Londra Asya tepesini/dibini süpürdü mü, geçmişte bu şekilde NY ne yaptı (taban oran ve z ile), getiri hangi seansta birikti, oynaklık ilişkisi — sayfa `/seans` |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
@@ -1791,6 +1792,29 @@ hariç), saat ABD açılışına bağlı.
 - `/acilis`: pencere içinde anlık sıralama, dışında sıradaki saatler + son rapor.
 - Ayarlar → 🔔 Açılışın en hareketlileri (`open_movers_top` 10, `open_movers_min_usd`), Bildirimler →
   `notify_openmove`.
+
+## ⏱ Pencere Ölçümü: `/5dk` · `/15dk` (haber saatleri)
+
+Kullanıcı: "/5dk yazdığımda gelecek 5 dk en çok hangi hissenin oynadığını söylesin, 15dk yazarsam
+15 dk — herhangi bir an; haber saatlerinde kullanacağım."
+
+- **Komut:** `/5dk`, `/15dk`, `/1dk` … `/60dk` (ya da `/5`, `/5 dk`) → şimdiden N dk ölçer; süre
+  bitince en çok oynayan hisseler **komutu yazdığın sohbete** gelir (ana sohbet, hisse kanalı…).
+- **Saat ver:** `/5dk 15:30` → tam 15:30:00 TSİ'de başlar (haberin ilk saniyesi kaçmaz; en çok 12
+  saat ileri). **En çok 3 dk geriye** de gider: 15:30:40'ta `/5dk 15:30` yazarsan ölçüm 15:30:00'dan
+  başlar — o andan beri olan işlemler canlı akış tamponundan alınır. Geçmiş saat sessizce yarına
+  kaymaz, reddedilir.
+- **📊 Şu ana kadar** tuşu (onay mesajında): ölçüm sürerken o ana kadarki ilk 5 açılır pencerede —
+  sohbete mesaj düşmez.
+- **Ölçüm açılış raporuyla aynı** (canlı işlem akışı, HL'ye ek istek yok, PROPR hisseleri):
+  referans başlangıçtan önceki son işlem; değişim, aralık, hacim, 24s ortalamasının katı. Taban
+  `move_window_min_usd` **5 dk başına $10K**, süreyle ölçeklenir (15 dk → $30K); veri: haber anında
+  (02.10 15:30) 60 hissenin 45'i 5 dk'da $10K'yı geçti, sakin saatte ~20. Referansı başlangıçtan
+  5 dk'dan eski satır ° ile işaretli (haber öncesi seyrek işlem).
+- **Dürüst kapsam:** görülmeyen aralıklar raporda saatleriyle; pencerenin yarısından azı
+  görüldüyse rapor yerine açıklama; bot ölçüm sırasında yeniden başlarsa "yarıda kaldı" notu
+  (başlamamış saatli ölçüm geri yüklenir). Aynı anda en çok 5 ölçüm (sohbet başına 2). `/tani`
+  satırı: aktif / tamamlanan / son sonuç.
 
 ## 🚨 Uyandırma Alarmı: `/alarm`
 

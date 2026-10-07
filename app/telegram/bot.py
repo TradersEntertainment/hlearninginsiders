@@ -403,6 +403,9 @@ class TelegramBot:
         if cq and str(cq.get("data") or "").startswith(fmt.WAKE_CB + ":"):
             await self._wake_callback(cq)                # 🚨 uyandırma: ✅ Uyandım / 🗑 alarm
             return
+        if cq and str(cq.get("data") or "").startswith(fmt.MOVEWIN_CB + ":"):
+            await self._movewin_callback(cq)             # ⏱ /5dk: 📊 Şu ana kadar
+            return
         # Diğer düğmeler (callback) ve ödeme olayları yalnız herkese açık DM akışında anlamlı
         if "callback_query" in upd or "pre_checkout_query" in upd:
             if self._public_on():
@@ -560,6 +563,8 @@ class TelegramBot:
                 fmt.big_positions(await bigpos.live_big(15),
                                   await bigpos.stats(self.cfg),
                                   bigpos.tiers(self.cfg)), chat_id)
+        elif await self._cmd_movewin(cmd, args, chat_id):
+            pass                                  # ⏱ /5dk, /15dk, /5dk 15:30
         elif await self._admin(cmd, args, chat_id):
             pass                                  # /kullanicilar, /odemeler, /pro_ver, /duyuru, /iade
         elif not args and await self._cmd_coin_liq(cmd, chat_id):
@@ -800,6 +805,8 @@ class TelegramBot:
 
     async def _dispatch_track(self, cmd: str, args: list[str], chat_id: str) -> bool:
         """Takip komutları (kanaldan da çalışır; haber komutun geldiği sohbete gider)."""
+        if await self._cmd_movewin(cmd, args, chat_id):
+            return True                    # ⏱ /5dk — coin-liq aramasına düşmesin
         if cmd.startswith("takip_"):
             await self._cmd_track_start(cmd, chat_id)
         elif cmd in ("twaptakipler", "twaptakip"):
@@ -1353,6 +1360,41 @@ class TelegramBot:
         except Exception as e:
             log.exception("/acilis")
             await self.send(f"❌ açılış ölçümü okunamadı: {fmt.esc(e)}", chat_id)
+
+    async def _cmd_movewin(self, cmd: str, args: list[str], chat_id: str) -> bool:
+        """⏱ /5dk · /15dk · /5dk 15:30 — şimdiden (ya da verilen TSİ saatten) N dk ölç, bitince en
+        hareketli hisseler BU sohbete. Pencere komutu değilse False (sıradaki komuta geçilir)."""
+        from ..radar import movewin
+        if movewin.parse(cmd, args) is None:
+            return False
+        try:
+            text, kb = await movewin.command(self.cfg, cmd, args, chat_id)
+            await self.send(text, chat_id, reply_markup=kb)
+        except Exception as e:
+            log.exception("/%s", cmd)
+            await self.send(f"❌ ölçüm başlatılamadı: {fmt.esc(e)}", chat_id)
+        return True
+
+    async def _movewin_callback(self, cq: dict) -> None:
+        """📊 Şu ana kadar — o ana kadarki ilk 5 açılır pencerede. Salt okunur: botun kendi
+        sohbetlerinde herkes basabilir (kanalda yönetici şartı yok); yabancı sohbette sessiz."""
+        from ..radar import movewin
+        msg = cq.get("message") or {}
+        chat_id = str((msg.get("chat") or {}).get("id") or "")
+        uid = str((cq.get("from") or {}).get("id") or "")
+        oid = self._owner_user_id()
+        if not chat_id or not (chat_id in self._own_chats() or (oid and uid == oid)):
+            await self._ack(cq.get("id"))
+            return
+        try:
+            text = movewin.peek_data(self.cfg, str(cq.get("data") or ""), chat_id)
+        except Exception:
+            log.exception("📊 ara bakış")
+            text = "Ara durum okunamadı."
+        try:
+            await self.answer_callback(cq.get("id"), text, alert=True)
+        except Exception:
+            log.debug("answerCallbackQuery", exc_info=True)
 
     async def _cmd_seans(self, args: list[str], chat_id: str) -> None:
         """/seans — 🕰 ABD seans karnesi: ayardaki semboller (XYZ100 + SP500) TEK mesajda;

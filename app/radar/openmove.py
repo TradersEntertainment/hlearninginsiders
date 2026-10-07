@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from datetime import date, datetime
 
 from ..db import db, kv_get, kv_set, now
@@ -53,14 +54,22 @@ class _Reg:
         self.pre: dict[str, tuple[int, float]] = {}   # coin → (ts, fiyat) açılıştan önceki son işlem
         self.agg5: dict[str, dict] = {}       # ilk 5 dk
         self.agg30: dict[str, dict] = {}      # ilk 30 dk
-        self.hwm: dict[str, tuple[int, set]] = {}     # coin → (en yeni işlem sn'si, o saniyenin tid'leri)
+        # coin → (en yeni işlem sn'si, o saniyenin tid'leri): akış düzeyinde, gün geçişinde sıfırlanmaz
+        self.hwm: dict[str, tuple[int, set]] = {}
         self.trades = 0
         self.errors = 0
         self.universe_ts = 0
         self.fail_ts: dict[int, int] = {}     # rapor → son başarısız gönderim (yeniden deneme aralığı)
+        # ⏱ /5dk pencereleri (app/radar/movewin.py)
+        self.recent: dict[str, deque] = {}    # coin → son KEEP sn'nin işlemleri (ts, fiyat, adet) + bir çapa
+        self.wins: list[dict] = []            # {chat, t0, t1, mins, ref{coin:(ts,px)}, agg{}}
+        self.obs_since = 0                    # bu süreçte gözlemin başladığı an (ilk evren yüklemesi)
+        self.wins_loaded = False              # kv'deki pencereler bu süreçte geri yüklendi mi
+        self.win_errors = 0
 
 
 REG = _Reg()
+KEEP = 240                       # tampon: 180 sn geriye dönük başlangıç + 60 sn saat kayması payı
 
 
 def _add(book: dict, coin: str, px: float, sz: float, ts: int) -> None:
@@ -81,11 +90,24 @@ def _add(book: dict, coin: str, px: float, sz: float, ts: int) -> None:
     a["n"] += 1
 
 
-def observe(coin: str, px: float, sz: float, ts: int, tid: str = "") -> None:
-    """Collector'ın işlem döngüsünden, HER işlemde: senkron, I/O yok (çağıran try/except'li)."""
-    r = REG
-    if not r.open_ts or coin not in r.coins:
-        return
+def _dup(r: _Reg, coin: str, ts: int, tid: str) -> bool:
+    """HL abonelikte (yeniden bağlanınca da) coinin son 30 işlemini ARTAN sırayla yeniden yollar
+    (07.10 canlı görüldü); akış coin başına sıralı → en yeni andan eskisi zaten görüldü, aynı
+    saniyede tid bakılır. Bellek coin başına tek saniye."""
+    h = r.hwm.get(coin)
+    if h is not None:
+        if ts < h[0]:
+            return True
+        if ts == h[0]:
+            if tid in h[1]:
+                return True
+            h[1].add(tid)
+            return False
+    r.hwm[coin] = (ts, {tid})
+    return False
+
+
+def _open_add(r: _Reg, coin: str, px: float, sz: float, ts: int) -> None:
     if ts < r.open_ts:
         p = r.pre.get(coin)
         if p is None or ts >= p[0]:
@@ -93,22 +115,40 @@ def observe(coin: str, px: float, sz: float, ts: int, tid: str = "") -> None:
         return
     if ts >= r.open_ts + WINDOW:
         return
-    if tid:
-        # HL abonelikte (yeniden bağlanınca da) coinin son 30 işlemini ARTAN sırayla yeniden yollar;
-        # akış coin başına sıralı → en yeni andan eskisi zaten sayıldı, aynı saniyede tid bakılır.
-        h = r.hwm.get(coin)
-        if h is not None and ts < h[0]:
-            return
-        if h is not None and ts == h[0]:
-            if tid in h[1]:
-                return
-            h[1].add(tid)
-        else:
-            r.hwm[coin] = (ts, {tid})
     _add(r.agg30, coin, px, sz, ts)
     if ts < r.open_ts + FIRST:
         _add(r.agg5, coin, px, sz, ts)
     r.trades += 1
+
+
+def observe(coin: str, px: float, sz: float, ts: int, tid: str = "") -> None:
+    """Collector'ın işlem döngüsünden, HER işlemde: senkron, I/O yok (çağıran try/except'li).
+    Sıra: tekrar teslim → tampon (⏱ geriye dönük başlangıç) → açılış penceresi → ⏱ pencereler."""
+    r = REG
+    if coin not in r.coins:
+        return
+    if tid and _dup(r, coin, ts, tid):
+        return
+    dq = r.recent.get(coin)
+    if dq is None:
+        dq = r.recent[coin] = deque()
+    dq.append((ts, px, sz))
+    cut = ts - KEEP
+    while len(dq) > 1 and dq[1][0] < cut:     # dq[0] çapa: kesimden önceki son işlem (referans)
+        dq.popleft()
+    if r.open_ts:
+        _open_add(r, coin, px, sz, ts)
+    if r.wins:
+        try:
+            for w in r.wins:
+                if ts < w["t0"]:
+                    p = w["ref"].get(coin)
+                    if p is None or ts >= p[0]:
+                        w["ref"][coin] = (ts, px)
+                elif ts < w["t1"]:
+                    _add(w["agg"], coin, px, sz, ts)
+        except Exception:                     # bozuk pencere açılış ölçümünü aç bırakmasın
+            r.win_errors += 1
 
 
 # ---------------- takvim ----------------
@@ -135,7 +175,7 @@ def configure(d: date, open_ts: int, ts: int) -> None:
     if REG.day == d.isoformat() and REG.open_ts == open_ts:
         return
     REG.day, REG.open_ts, REG.since = d.isoformat(), open_ts, int(ts)
-    REG.pre, REG.agg5, REG.agg30, REG.hwm = {}, {}, {}, {}
+    REG.pre, REG.agg5, REG.agg30 = {}, {}, {}           # hwm akış düzeyinde: sıfırlanmaz
     REG.trades, REG.fail_ts = 0, {}
 
 
@@ -160,6 +200,19 @@ async def universe(cfg) -> set[str]:
     return set(best.values())
 
 
+async def ensure_universe(cfg, ts: int) -> None:
+    """Evren ~10 dk'da bir tazelenir (açılış raporu kapalıyken de: /5dk aynı evreni kullanır).
+    İlk yüklemede `obs_since` = bu süreçte gözlemin başladığı an."""
+    if ts - REG.universe_ts >= UNIVERSE_TTL or not REG.coins:
+        try:
+            REG.coins = await universe(cfg)
+            REG.universe_ts = int(ts)
+        except Exception:
+            log.warning("açılış evreni okunamadı", exc_info=True)
+    if REG.coins and not REG.obs_since:
+        REG.obs_since = int(ts)
+
+
 async def _day_volumes() -> dict[str, float]:
     from .equityvol import _day_volumes
     try:
@@ -169,16 +222,18 @@ async def _day_volumes() -> dict[str, float]:
         return {}
 
 
-def coverage(open_ts: int, end_ts: int, ts: int | None = None) -> dict:
+def coverage(open_ts: int, end_ts: int, ts: int | None = None, since: int | None = None) -> dict:
     """Pencerenin ne kadarını gördük. Görülmeyen aralıklar: bu gözlemin başlangıcından önce
-    (yeniden başlatma / gün geçişi) ve canlı akışın kopuk olduğu süreler (collector.down_log,
-    şu an kopuksa down_since → şimdi). Referans için açılıştan COVER_LEAD sn öncesi de sayılır.
+    (yeniden başlatma / gün geçişi; ⏱ pencereler `since=obs_since` verir) ve canlı akışın kopuk
+    olduğu süreler (collector.down_log, şu an kopuksa down_since → şimdi). Referans için
+    başlangıçtan COVER_LEAD sn öncesi de sayılır.
     {"frac": pencerenin görülen payı, "full": hiç boşluk yok, "gaps": [(baş, son), …]}."""
     lo, hi = open_ts - COVER_LEAD, end_ts
     ts = int(ts if ts is not None else now())
+    start = int(REG.since if since is None else since)
     raw: list[tuple[int, int]] = []
-    if REG.since > lo:
-        raw.append((lo, int(REG.since)))
+    if start > lo:
+        raw.append((lo, start))
     try:
         from ..hl import collector as col
         live = col.LIVE
@@ -203,6 +258,34 @@ def coverage(open_ts: int, end_ts: int, ts: int | None = None) -> dict:
 
 # ---------------- rapor ----------------
 
+def rank(book: dict, refs: dict, vols: dict, span: int, floor: float, top: int,
+         t0: int = 0, stale: int = 0) -> tuple[list[dict], int]:
+    """SAF sıralama (açılış raporu ve ⏱ pencereler): defter + referanslar → (ilk `top` satır,
+    taban altı sayısı). Referans yoksa pencerenin ilk işlemi (ref_pre False → †). `stale` > 0 ise
+    referansı t0'dan `stale` sn'den eski satır işaretlenir (ref_old → °). Await yok: defter
+    dolaşılırken canlı akış araya giremez."""
+    from .. import assets
+    from ..propr import is_listed
+    rows, below = [], 0
+    for coin, a in book.items():
+        pre = refs.get(coin)
+        ref, ref_pre = (pre[1], True) if pre else (a["first"], False)
+        if not ref or ref <= 0:
+            continue
+        if a["vol"] < floor:
+            below += 1
+            continue
+        normal = float(vols.get(coin) or 0) * span / 86400
+        rows.append({"coin": coin, "symbol": assets.label(coin), "ref": ref, "ref_pre": ref_pre,
+                     "last": a["last"], "chg": (a["last"] - ref) / ref * 100,
+                     "rng": (a["hi"] - a["lo"]) / ref * 100, "vol": a["vol"], "n": a["n"],
+                     "mult": a["vol"] / normal if normal > 0 else None,
+                     "propr": is_listed(assets.label(coin)),
+                     "ref_old": bool(pre and stale and t0 - pre[0] > stale)})
+    rows.sort(key=lambda r: (-abs(r["chg"]), -r["rng"]))
+    return rows[:top], below
+
+
 async def build(cfg, which, ts: int) -> dict:
     """which: 5 | 30 | 'live' (pencere içinde anlık). Saf hesap — REG'den okur."""
     open_ts = REG.open_ts
@@ -216,25 +299,7 @@ async def build(cfg, which, ts: int) -> dict:
     floor = float(getattr(cfg, "open_movers_min_usd", 25_000) or 0)
     top = max(1, int(getattr(cfg, "open_movers_top", 10) or 10))
     vols = await _day_volumes()
-    from .. import assets
-    from ..propr import is_listed
-    rows, below = [], 0
-    for coin, a in book.items():
-        pre = REG.pre.get(coin)
-        ref, ref_pre = (pre[1], True) if pre else (a["first"], False)
-        if not ref or ref <= 0:
-            continue
-        if a["vol"] < floor:
-            below += 1
-            continue
-        normal = float(vols.get(coin) or 0) * span / 86400
-        rows.append({"coin": coin, "symbol": assets.label(coin), "ref": ref, "ref_pre": ref_pre,
-                     "last": a["last"], "chg": (a["last"] - ref) / ref * 100,
-                     "rng": (a["hi"] - a["lo"]) / ref * 100, "vol": a["vol"], "n": a["n"],
-                     "mult": a["vol"] / normal if normal > 0 else None,
-                     "propr": is_listed(assets.label(coin))})
-    rows.sort(key=lambda r: (-abs(r["chg"]), -r["rng"]))
-    rows = rows[:top]
+    rows, below = rank(book, REG.pre, vols, span, floor, top)
     if which == 30:
         for r in rows:
             b = REG.agg5.get(r["coin"])
@@ -247,18 +312,13 @@ async def build(cfg, which, ts: int) -> dict:
 async def tick(cfg, notifier, ts: int) -> dict:
     """Bir adım: günü ayarla, evreni tazele, zamanı gelen raporu gönder (günde birer kez)."""
     out = {"sent": [], "skipped": [], "day": None}
+    await ensure_universe(cfg, ts)                    # kapalıyken de: ⏱ /5dk aynı evreni kullanır
     if not getattr(cfg, "open_movers_enabled", True):
         out["disabled"] = True
         return out
     d, open_ts = session_for(ts)
     configure(d, open_ts, ts)
     out["day"] = REG.day
-    if ts - REG.universe_ts >= UNIVERSE_TTL or not REG.coins:
-        try:
-            REG.coins = await universe(cfg)
-            REG.universe_ts = ts
-        except Exception:
-            log.warning("açılış evreni okunamadı", exc_info=True)
     sent = await kv_get(SENT_KV) or {}
     if sent.get("day") != REG.day:
         sent = {"day": REG.day, "sent": [], "notes": {}}
@@ -319,13 +379,14 @@ async def live_view(cfg, ts: int | None = None) -> str:
 
 async def loop(cfg, notifier) -> None:
     """Denetimli döngü (5 sn). Site ASLA buna bağımlı değil. Durum kv'ye dakikada bir (ya da
-    rapor anında) yazılır — her adımda değil."""
+    rapor anında) yazılır — her adımda değil. ⏱ /5dk pencereleri de bu döngüden (movewin.tick)."""
     from ..health import beat
+    from . import movewin
     await asyncio.sleep(10)
     last_stats = 0
     while True:
+        ts = now()
         try:
-            ts = now()
             out = await tick(cfg, notifier, ts)
             if out.get("sent") or out.get("skipped") or ts - last_stats >= 60:
                 last_stats = ts
@@ -336,4 +397,10 @@ async def loop(cfg, notifier) -> None:
             raise
         except Exception:
             log.exception("açılış hareketlileri turu")
+        try:
+            await movewin.tick(cfg, notifier, ts)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("⏱ pencere ölçümü turu")
         await asyncio.sleep(5)

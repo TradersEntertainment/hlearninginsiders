@@ -406,6 +406,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                         "desc": "Açılış fiyatından |% değişim| sırasıyla en çok bu kadar hisse"},
     "open_movers_min_usd": {"type": "float", "label": "Sıralama tabanı: pencerede en az hacim ($)", "group": "🔔 Açılışın en hareketlileri",
                             "desc": "Pencerede bundan az işlem gören hisse sıralamaya girmez — tek işlemlik oynama 'en hareketli' sayılmasın. Kaç hissenin elendiği raporda yazar"},
+    "move_window_min_usd": {"type": "float", "label": "⏱ /5dk ölçümü: 5 dk başına en az hacim ($)", "group": "🔔 Açılışın en hareketlileri",
+                            "desc": "/5dk · /15dk pencere ölçümünde sıralama tabanı, süreyle ölçeklenir (5 dk $10K → 15 dk $30K). Haber anında (02.10 15:30) 60 hissenin 45'i 5 dk'da $10K'yı geçti, sakin saatte ~20. Kaç hissenin elendiği raporda yazar"},
     "wake_enabled": {"type": "bool", "label": "🚨 Uyandırma alarmı", "group": "🚨 Uyandırma alarmı",
                      "desc": "Gece pozisyon açıkken bir şey olursa seni Telegram'dan ARAR (Rahatsız Etme'de bildirim gelmez, arama gelir). Alarmları Telegram'dan kurarsın: /alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES · takip bildirimindeki ⏰ tuşu. Arama ücretsiz CallMeBot ile — env WAKE_TELEGRAM_USER ve @CallMeBot_txtbot'a /start gerekir. Kapatınca alarmlar denetlenmez"},
     "wake_call_rounds": {"type": "int", "label": "Arama turu (en çok)", "group": "🚨 Uyandırma alarmı",
@@ -794,6 +796,7 @@ class Config:
         self.open_movers_enabled = True
         self.open_movers_top = int(os.getenv("OPEN_MOVERS_TOP", "10"))
         self.open_movers_min_usd = float(os.getenv("OPEN_MOVERS_MIN_USD", "25000"))
+        self.move_window_min_usd = float(os.getenv("MOVE_WINDOW_MIN_USD", "10000"))
         self.wake_enabled = True
         self.wake_telegram_user = os.getenv("WAKE_TELEGRAM_USER", "").strip()   # env-only: aranacak hesap
         self.wake_call_rounds = int(os.getenv("WAKE_CALL_ROUNDS", "3"))

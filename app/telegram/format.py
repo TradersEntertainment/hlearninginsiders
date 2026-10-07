@@ -2637,6 +2637,42 @@ def _x_mult(m) -> str:
     return f" (24s ort. {m:.0f}×)" if m >= 10 else f" (24s ort. {m:.1f}×)"
 
 
+def tr_time_s(ts: int) -> str:
+    return datetime.fromtimestamp(int(ts), TR).strftime("%H:%M:%S")
+
+
+def dur_s(sec) -> str:
+    """Kısa süre (saniyeli): '45 sn' · '4 dk 12 sn' · '2 s 5 dk'."""
+    sec = max(0, int(sec or 0))
+    if sec >= 3600:
+        return f"{sec // 3600} s {sec % 3600 // 60} dk"
+    if sec >= 60:
+        return f"{sec // 60} dk {sec % 60} sn"
+    return f"{sec} sn"
+
+
+def _cover_gaps(gaps) -> str:
+    return ", ".join(f"{tr_time(a)} ({b - a} sn)" if b - a < 60 else f"{tr_time(a)}–{tr_time(b)}"
+                     for a, b in gaps[:4]) + (f" (+{len(gaps) - 4})" if len(gaps) > 4 else "")
+
+
+def _gap_line(gaps) -> str:
+    """Kapsam: canlı akışın görülmediği aralıklar (yeniden başlatma, WS kopukluğu)."""
+    return f"⚠️ <i>canlı akışın görülmediği aralık: {_cover_gaps(gaps)} — o aralığın işlemleri eksik</i>" if gaps else ""
+
+
+def _mover_lines(rows: list[dict]) -> list[str]:
+    """Hareketli satırları (açılış raporu ve ⏱ pencere): † referans yok, ° referans eski."""
+    out = []
+    for i, r in enumerate(rows, 1):
+        arrow = "🟢" if r["chg"] > 0 else "🔴" if r["chg"] < 0 else "⚪"
+        c5 = f" · 5 dk: {r['chg5']:+.2f}%" if r.get("chg5") is not None else ""
+        mark = ("" if r.get("ref_pre") else "†") + ("°" if r.get("ref_old") else "")
+        out.append(f"{i}. <b>{esc(r['symbol'])}</b>{mark} {arrow}"
+                   f" <b>{r['chg']:+.2f}%</b> · aralık %{r['rng']:.2f} · {usd(r['vol'])}{_x_mult(r.get('mult'))}{c5}")
+    return out
+
+
 def openmove_report(rep: dict) -> str:
     """🔔 ilk 5 dk / ilk 30 dk / anlık (/acilis) raporu — açılış fiyatından |%| sırasıyla."""
     from datetime import date as _date
@@ -2645,19 +2681,13 @@ def openmove_report(rep: dict) -> str:
     t0, t1 = tr_time(rep["open_ts"]), tr_time(rep["end_ts"])
     span = f"ilk {w} dk" if w in (5, 30) else f"şu ana kadar, ilk {max(1, (rep['end_ts'] - rep['open_ts']) // 60)} dk"
     lines = [f"🔔 <b>Açılışın en hareketlileri</b> — {span} ({t0}–{t1} TSİ) · {day_label(_date.fromisoformat(rep['day']))}"]
-    gaps = (rep.get("cover") or {}).get("gaps") or []
-    if gaps:
-        txt = ", ".join(f"{tr_time(a)} ({b - a} sn)" if b - a < 60 else f"{tr_time(a)}–{tr_time(b)}"
-                        for a, b in gaps[:4]) + (f" (+{len(gaps) - 4})" if len(gaps) > 4 else "")
-        lines.append(f"⚠️ <i>canlı akışın görülmediği aralık: {txt} — o aralığın işlemleri eksik</i>")
+    gl = _gap_line((rep.get("cover") or {}).get("gaps") or [])
+    if gl:
+        lines.append(gl)
     rows = rep.get("rows") or []
     if not rows:
         lines.append(f"Bu pencerede {usd(rep.get('floor'))} üstü işlem gören hisse yok.")
-    for i, r in enumerate(rows, 1):
-        arrow = "🟢" if r["chg"] > 0 else "🔴" if r["chg"] < 0 else "⚪"
-        c5 = f" · 5 dk: {r['chg5']:+.2f}%" if r.get("chg5") is not None else ""
-        lines.append(f"{i}. <b>{esc(r['symbol'])}</b>{'' if r.get('ref_pre') else '†'} {arrow}"
-                     f" <b>{r['chg']:+.2f}%</b> · aralık %{r['rng']:.2f} · {usd(r['vol'])}{_x_mult(r.get('mult'))}{c5}")
+    lines += _mover_lines(rows)
     dagger = (" († açılıştan önce işlem görülmedi: referans pencerenin ilk işlemi)"
               if any(not r.get("ref_pre") for r in rows) else "")
     lines.append(f"<i>{rep.get('n_universe', 0)} hisse izlendi (PROPR, endeks/emtia hariç) · pencerede işlem"
@@ -2683,6 +2713,102 @@ def openmove_idle(last: dict, d, open_ts: int) -> str:
     return head + f"\n\n<i>Son rapor ({when}):</i>\n" + last["text"]
 
 
+# ---------------- ⏱ /5dk · /15dk pencere ölçümü ----------------
+
+MOVEWIN_CB = "mvw"
+
+
+def movewin_kb(w: dict) -> dict:
+    return {"inline_keyboard": [[{"text": "📊 Şu ana kadar",
+                                  "callback_data": f"{MOVEWIN_CB}:{int(w['t0'])}:{int(w['mins'])}"}]]}
+
+
+def _win_span(t0: int, t1: int, day: bool = True) -> str:
+    from ..radar.seans import day_label
+    d = f"{day_label(datetime.fromtimestamp(int(t0), TR).date())} " if day else ""
+    return f"{d}{tr_time_s(t0)} → {tr_time_s(t1)} TSİ"
+
+
+def movewin_ack(w: dict, now_ts: int, n_coins: int, merged: bool = False, down: bool = False) -> str:
+    """Komut cevabı: başladı / kuruldu (ileri saat) / geriye dönük / zaten açık — gün yazar."""
+    t0, t1, mins = int(w["t0"]), int(w["t1"]), int(w["mins"])
+    span = _win_span(t0, t1)
+    if merged:
+        head = f"⏱ Bu ölçüm zaten açık — {mins} dk, {span}"
+    elif t0 > now_ts:
+        head = f"⏱ <b>{mins} dk ölçüm kuruldu</b> — {span} · başlamasına {dur_s(t0 - now_ts)}"
+    elif t0 < now_ts:
+        head = (f"⏱ <b>{mins} dk ölçüm başladı</b> — {span} (geriye dönük: o andan beri olan işlemler"
+                " canlı akış tamponundan)")
+    else:
+        head = f"⏱ <b>{mins} dk ölçüm başladı</b> — {span}"
+    lines = [f"{head} · {n_coins} hisse (PROPR)",
+             "Rapor bitince bu sohbete · referans: başlangıçtan önceki son işlem · ara durum: 📊 tuşu"]
+    if down:
+        lines.append("⚠️ canlı akış şu an kopuk — bağlanınca ölçüm sürer, kopuk aralık raporda yazar")
+    return "\n".join(lines)
+
+
+def movewin_report(rep: dict) -> str:
+    """⏱ bitmiş pencerenin raporu — başlangıçtan önceki son işleme göre |%| sırasıyla."""
+    from ..radar.seans import day_label
+    t0, t1 = int(rep["t0"]), int(rep["t1"])
+    lines = [f"⏱ <b>En hareketliler</b> — {rep['mins']} dk ölçüm ({tr_time_s(t0)}–{tr_time_s(t1)} TSİ)"
+             f" · {day_label(datetime.fromtimestamp(t0, TR).date())}"]
+    gl = _gap_line((rep.get("cover") or {}).get("gaps") or [])
+    if gl:
+        lines.append(gl)
+    rows = rep.get("rows") or []
+    if not rows:
+        lines.append(f"Bu pencerede {usd(rep.get('floor'))} üstü işlem gören hisse yok.")
+    lines += _mover_lines(rows)
+    notes = ""
+    if any(not r.get("ref_pre") for r in rows):
+        notes += " († başlangıçtan önce işlem görülmedi: referans pencerenin ilk işlemi)"
+    if any(r.get("ref_old") for r in rows):
+        notes += " (° referans işlemi başlangıçtan 5 dk'dan eski)"
+    late = int(rep.get("late") or 0)
+    lines.append(f"<i>{rep.get('n_universe', 0)} hisse izlendi (PROPR, endeks/emtia hariç) · pencerede işlem"
+                 f" gören: {rep.get('n_traded', 0)} · hacmi {usd(rep.get('floor'))} altında kalıp sıralamaya"
+                 f" girmeyen: {rep.get('n_below', 0)} · referans: başlangıçtan önceki son işlem{notes} · canlı"
+                 " işlem akışı · ölçüm, tahmin değil"
+                 + (f" · rapor {dur_s(late)} gecikmeli gönderildi" if late else "") + "</i>")
+    return "\n".join(lines)
+
+
+def movewin_short(rep: dict) -> str:
+    """Pencerenin yarısından azı görüldü (kopukluk): rapor yerine açıklama."""
+    cov = rep.get("cover") or {}
+    t0, t1 = int(rep["t0"]), int(rep["t1"])
+    gaps = cov.get("gaps") or []
+    return (f"⏱ {rep['mins']} dk ölçüm ({tr_time_s(t0)}–{tr_time_s(t1)} TSİ): pencerenin görülen payı"
+            f" %{float(cov.get('frac') or 0) * 100:.0f} (en az %50 gerekir) — rapor yok."
+            + (f" Canlı akışın görülmediği aralık: {_cover_gaps(gaps)}." if gaps else "")
+            + " /5dk ile yeniden ölçebilirsin.")
+
+
+def movewin_cut(t0: int, mins: int) -> str:
+    """Bot ölçüm sırasında (ya da bitişte) yeniden başladı: referans ve veri yeni süreçte yok."""
+    return (f"⏱ {mins} dk ölçüm ({tr_time_s(t0)}–{tr_time_s(int(t0) + int(mins) * 60)} TSİ) yarıda kaldı —"
+            " bot yeniden başladı, ölçüm verisi bu süreçte yok. Rapor yok; /5dk ile yeniden ölçebilirsin.")
+
+
+def movewin_peek(w: dict, rows: list[dict], floor: float, elapsed: int, done: bool = False,
+                 limit: int = 200) -> str:
+    """📊 açılır pencere: DÜZ metin, emojisiz; sığmazsa alttan satır düşer (Telegram ≤ 200)."""
+    head = f"{w['mins']} dk ölçüm " + ("bitti · rapor birazdan" if done else f"· geçen {dur_s(elapsed)}")
+    if not rows:
+        return f"{head}\n{'Bu pencerede' if done else 'Henüz'} {usd(floor)} üstü işlem gören hisse yok."
+    lines = [f"{i}. {r['symbol']}{'' if r.get('ref_pre') else '†'}{'°' if r.get('ref_old') else ''}"
+             f" {r['chg']:+.2f}% {usd(r['vol'])}" for i, r in enumerate(rows, 1)]
+    while lines:
+        text = "\n".join([head] + lines)
+        if visible_len(text) <= limit:
+            return text
+        lines.pop()
+    return head[:limit]
+
+
 def help_text() -> str:
     return (
         "🕵️ <b>HL Insider Radar</b>\n"
@@ -2706,6 +2832,7 @@ def help_text() -> str:
         "/seans — 🕰 ABD seans karnesi (XYZ100 + SP500): Asya → Londra → New York, bugün + geçmiş ölçüm · /seans NVDA tek hisse\n"
         "/alarm — 🚨 uyandırma: gece bir şey olursa seni Telegram'dan ARAR (/alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES) · /alarmlar · /alarm_test · /uyandim\n"
         "/acilis — 🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor (rapor 5 dk ve 30 dk'da hisse kanalına)\n"
+        "/5dk · /15dk — ⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete · /5dk 15:30 haber saatine kur (3 dk geriye de gider) · ölçerken 📊 tuşu\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için bildirimdeki 🛑 tuşu ya da /birak_N; ↩️ geri alınabilir)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
         "/sim — liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar (sayfa /sim)\n"
