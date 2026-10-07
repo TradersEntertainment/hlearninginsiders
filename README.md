@@ -1792,8 +1792,10 @@ en çok 3 tur. Aynı anda Telegram'a "✅ Uyandım — aramayı durdur" tuşlu m
 
 **Kurulum (bir kez):**
 1. Railway → Variables: `WAKE_TELEGRAM_USER=@kullanıcıadın` (ya da Telegram'daki +90… numaran).
-2. Telegram'da **@CallMeBot_txtbot**'a `/start` yaz (arama izni). Ayarlar → Gizlilik → Aramalar
-   seni arayabilsin.
+2. Telegram'da **@CallMeBot_txtbot**'a özelden `/start` yaz (arama izni). Seni arayan hesap
+   **@CallMeBot_API** — Ayarlar → Gizlilik → Aramalar "Kişilerim" ise onu kişilerine ekle ya da
+   istisna ver. CallMeBot'u hiçbir gruba eklemen GEREKMEZ: bot sunucudan CallMeBot'a istek atar,
+   o da seni özelden arar; gruplarda yalnız bizim bot vardır.
 3. iPhone: Ayarlar → Odak → **Rahatsız Etme** (uyurken Uyku odağını kullanıyorsan onu da) →
    Uygulamalar → **Telegram**'a izin ver; ya da Kişiler → "Tekrarlanan Aramalar" açık kalsın.
    Telegram'a izin verirsen öteki Telegram bildirimleri de geçer — sohbetleri sessize alabilirsin.
