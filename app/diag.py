@@ -452,6 +452,22 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f" · ⚠️ {ws['errors']} denetim hatası" if ws.get("errors") else ""))
     except Exception as e:                         # noqa: BLE001 — döküm yarım kalmasın
         out.append(f"  uyandırma: okunamadı ({type(e).__name__})")
+    # 🔔 açılışın en hareketlileri: evren, ölçülen işlem, son raporlar ve atlanma sebepleri
+    try:
+        from .radar import openmove
+        om = await kv_get(openmove.STATS_KV) or {}
+        snt = await kv_get(openmove.SENT_KV) or {}
+        skipped = snt.get("notes") or {}
+        notes = "; ".join(f"{k} dk: {v}" for k, v in skipped.items())
+        done = [x for x in snt.get("sent") or [] if str(x) not in skipped]
+        out.append("  açılış hareketlileri: " + ("kapalı · " if not getattr(cfg, "open_movers_enabled", True) else "")
+                   + f"{om.get('coins', 0)} hisse izleniyor · gün {snt.get('day') or om.get('day') or '—'}"
+                   + f" · gönderilen {', '.join(f'{x} dk' for x in done) or '—'}"
+                   + f" · bu pencerede {om.get('trades', 0)} işlem"
+                   + (f" · ⚠️ kanca hatası {om['errors']}" if om.get("errors") else "")
+                   + (f" · atlanan: {notes}" if notes else ""))
+    except Exception as e:                         # noqa: BLE001
+        out.append(f"  açılış hareketlileri: okunamadı ({type(e).__name__})")
     ps = await kv_get("patterns_stats") or {}
     if ps:
         best = ps.get("best") or {}

@@ -14,7 +14,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
-from ..radar import stickywall, twaplive
+from ..radar import openmove, stickywall, twaplive
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -48,6 +48,10 @@ class Collector:
         # pencere dolmadan "0 hacim" demek yalan olur → None (bilinmiyor).
         self.flow: dict[str, deque] = {}
         self.connected_since: float = 0.0
+        # Kopukluk günlüğü (🔔 açılış ölçümünün kapsamı): (koptu, yeniden abone oldu) çiftleri.
+        # down_since > 0 = şu an akış yok — süreç açılışından ilk aboneliğe kadar da.
+        self.down_since: float = time.time()
+        self.down_log: deque = deque(maxlen=64)
         global LIVE
         LIVE = self
         self.crypto_dex_coins: set[str] = set()  # kripto dex coinleri (para:…) — fill tabanı ayrı
@@ -204,6 +208,9 @@ class Collector:
                 self.subscribed.add(coin)
                 await asyncio.sleep(0.02)
             log.info("WS bağlı, %d coin'e abone", len(coins))
+            if self.down_since:
+                self.down_log.append((self.down_since, time.time()))
+                self.down_since = 0.0
 
             ping_task = asyncio.create_task(self._pinger(ws))
             resub_task = asyncio.create_task(self._resubscriber(ws))
@@ -215,6 +222,8 @@ class Collector:
                         break
             finally:
                 self.connected = False
+                if not self.down_since:
+                    self.down_since = time.time()
                 self._ws = None
                 for fut in self._twap_waiters.values():
                     if not fut.done():
@@ -364,6 +373,12 @@ class Collector:
             notional = px * sz
             self.last_trade[coin] = max(self.last_trade.get(coin, 0), ts)
             self._note_flow(coin, ts, notional)
+            # 🔔 Açılışın en hareketlileri: her işlem (taban yok). Sıcak yol: senkron,
+            # I/O yok; hata akışı durdurmaz (bkz. app/radar/openmove.py).
+            try:
+                openmove.observe(coin, px, sz, ts, tid)
+            except Exception:
+                openmove.REG.errors += 1
             # HL trade'inde `side` AGRESÖRÜ söyler: "B" = alıcı süpürdü, "A" = satıcı.
             # İnsider sinyalinde bilgi taşıyan taraf pasif maker değil, fiyatı
             # süpüren taker'dır — bu yüzden adres perspektifinden kaydediyoruz.

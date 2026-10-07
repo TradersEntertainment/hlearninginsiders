@@ -86,6 +86,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                     "desc": "Deftere fiyatın hemen yanına konan dev bekleyen emir duvarları (ve çekilirse/dolarsa haberi)"},
     "notify_acct": {"type": "bool", "label": "👤 İzlenen hesaplar", "group": "Bildirimler",
                     "desc": "Listedeki hesapların (ör. drkmttr) pozisyon ve emir olayları — AYRI gruba gider (ACCOUNT_CHAT_ID, env)"},
+    "notify_openmove": {"type": "bool", "label": "🔔 Açılışın en hareketlileri", "group": "Bildirimler",
+                        "desc": "ABD açılışının ilk 5 ve ilk 30 dakikasının en çok oynayan hisseleri, hisse kanalına (CRYPTO_STOCKS_ID). Ayarları: 🔔 Açılışın en hareketlileri"},
     "notify_slice": {"type": "bool", "label": "🔂 Dilimli alım-satım", "group": "Bildirimler",
                      "desc": "Listedeki hesabın (ör. 0x30af… CBRS) TWAP emri vermeden dilim dilim alım / satım dizisi başlayınca ve bitince — hesap grubuna gider (ACCOUNT_CHAT_ID, env)"},
     "notify_sticky": {"type": "bool", "label": "🧲 Yapışkan duvar", "group": "Bildirimler",
@@ -398,6 +400,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                     "desc": "Virgülle, dex'siz: XYZ100,SP500. Sayfa sekmeleri ve /seans komutu bunlar. Yalnız ABD'de işlem gören hisse/endeks perp'leri (kripto, emtia, döviz ve Asya borsası hisseleri reddedilir). Sekme dışı sorulan hisse 30 gün arşivlenir (en çok 12). Kural eşiği ayarı BİLEREK yok — eşik oynatmak sonuç uydurmaktır"},
     "seans_refresh_sec": {"type": "int", "label": "Arşiv turu aralığı (sn)", "group": "🕰 ABD seans karnesi",
                           "desc": "Arka plan arşivinin ne sıklıkla döneceği (en az 600). Sembol başına tek istek; sayfa açıkken canlı kuyruk ayrıca 2 dk'da bir"},
+    "open_movers_enabled": {"type": "bool", "label": "🔔 Açılış ölçümü", "group": "🔔 Açılışın en hareketlileri",
+                            "desc": "ABD açılışında (9:30 ET — yazın 16:30, kışın 17:30 TSİ) PROPR'daki hisselerin canlı işlemlerini ölçer: açılıştan 5 dk sonra ve 30 dk sonra en çok oynayanların raporu hisse kanalına. Referans açılıştan önceki son işlem; hafta sonu / NYSE tatilinde yok. HL'ye ek istek yok (canlı akış)"},
+    "open_movers_top": {"type": "int", "label": "Raporda kaç hisse", "group": "🔔 Açılışın en hareketlileri",
+                        "desc": "Açılış fiyatından |% değişim| sırasıyla en çok bu kadar hisse"},
+    "open_movers_min_usd": {"type": "float", "label": "Sıralama tabanı: pencerede en az hacim ($)", "group": "🔔 Açılışın en hareketlileri",
+                            "desc": "Pencerede bundan az işlem gören hisse sıralamaya girmez — tek işlemlik oynama 'en hareketli' sayılmasın. Kaç hissenin elendiği raporda yazar"},
     "wake_enabled": {"type": "bool", "label": "🚨 Uyandırma alarmı", "group": "🚨 Uyandırma alarmı",
                      "desc": "Gece pozisyon açıkken bir şey olursa seni Telegram'dan ARAR (Rahatsız Etme'de bildirim gelmez, arama gelir). Alarmları Telegram'dan kurarsın: /alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES · takip bildirimindeki ⏰ tuşu. Arama ücretsiz CallMeBot ile — env WAKE_TELEGRAM_USER ve @CallMeBot_txtbot'a /start gerekir. Kapatınca alarmlar denetlenmez"},
     "wake_call_rounds": {"type": "int", "label": "Arama turu (en çok)", "group": "🚨 Uyandırma alarmı",
@@ -782,6 +790,10 @@ class Config:
         self.slice_quiet_sec = int(os.getenv("SLICE_QUIET_SEC", "300"))
         self.slice_start_orders = int(os.getenv("SLICE_START_ORDERS", "3"))
         self.slice_start_usd = float(os.getenv("SLICE_START_USD", "10000"))
+        self.notify_openmove = True
+        self.open_movers_enabled = True
+        self.open_movers_top = int(os.getenv("OPEN_MOVERS_TOP", "10"))
+        self.open_movers_min_usd = float(os.getenv("OPEN_MOVERS_MIN_USD", "25000"))
         self.wake_enabled = True
         self.wake_telegram_user = os.getenv("WAKE_TELEGRAM_USER", "").strip()   # env-only: aranacak hesap
         self.wake_call_rounds = int(os.getenv("WAKE_CALL_ROUNDS", "3"))

@@ -396,6 +396,7 @@ TASK_TR = {
     "channel": "kanal yayını", "twap": "TWAP radarı (arşiv)", "twaplive": "canlı TWAP radarı", "paywatch": "ödeme izleyici", "billing": "faturalama", "fanout": "bildirim dağıtımı", "public_digest": "ücretsiz sabah özeti",
     "sim": "liq simülasyonu", "slicewatch": "dilimli alım-satım izleyici",
     "seans": "ABD seans karnesi (mum arşivi)", "wake": "uyandırma alarmı",
+    "openmove": "açılışın en hareketlileri",
 }
 
 
@@ -2628,6 +2629,60 @@ def seans_card(views: list[dict], base_url: str = "") -> str:
     return "\n".join(lines)
 
 
+# ---------------- 🔔 açılışın en hareketlileri (hisse kanalı) ----------------
+
+def _x_mult(m) -> str:
+    if not m:
+        return ""
+    return f" (24s ort. {m:.0f}×)" if m >= 10 else f" (24s ort. {m:.1f}×)"
+
+
+def openmove_report(rep: dict) -> str:
+    """🔔 ilk 5 dk / ilk 30 dk / anlık (/acilis) raporu — açılış fiyatından |%| sırasıyla."""
+    from datetime import date as _date
+    from ..radar.seans import day_label
+    w = rep["which"]
+    t0, t1 = tr_time(rep["open_ts"]), tr_time(rep["end_ts"])
+    span = f"ilk {w} dk" if w in (5, 30) else f"şu ana kadar, ilk {max(1, (rep['end_ts'] - rep['open_ts']) // 60)} dk"
+    lines = [f"🔔 <b>Açılışın en hareketlileri</b> — {span} ({t0}–{t1} TSİ) · {day_label(_date.fromisoformat(rep['day']))}"]
+    gaps = (rep.get("cover") or {}).get("gaps") or []
+    if gaps:
+        txt = ", ".join(f"{tr_time(a)} ({b - a} sn)" if b - a < 60 else f"{tr_time(a)}–{tr_time(b)}"
+                        for a, b in gaps[:4]) + (f" (+{len(gaps) - 4})" if len(gaps) > 4 else "")
+        lines.append(f"⚠️ <i>canlı akışın görülmediği aralık: {txt} — o aralığın işlemleri eksik</i>")
+    rows = rep.get("rows") or []
+    if not rows:
+        lines.append(f"Bu pencerede {usd(rep.get('floor'))} üstü işlem gören hisse yok.")
+    for i, r in enumerate(rows, 1):
+        arrow = "🟢" if r["chg"] > 0 else "🔴" if r["chg"] < 0 else "⚪"
+        c5 = f" · 5 dk: {r['chg5']:+.2f}%" if r.get("chg5") is not None else ""
+        lines.append(f"{i}. <b>{esc(r['symbol'])}</b>{'' if r.get('ref_pre') else '†'} {arrow}"
+                     f" <b>{r['chg']:+.2f}%</b> · aralık %{r['rng']:.2f} · {usd(r['vol'])}{_x_mult(r.get('mult'))}{c5}")
+    dagger = (" († açılıştan önce işlem görülmedi: referans pencerenin ilk işlemi)"
+              if any(not r.get("ref_pre") for r in rows) else "")
+    lines.append(f"<i>{rep.get('n_universe', 0)} hisse izlendi (PROPR, endeks/emtia hariç) · pencerede işlem"
+                 f" gören: {rep.get('n_traded', 0)} · hacmi {usd(rep.get('floor'))} altında kalıp sıralamaya"
+                 f" girmeyen: {rep.get('n_below', 0)} · referans: açılıştan önceki son işlem{dagger} · canlı"
+                 " işlem akışı · ölçüm, tahmin değil</i>")
+    return "\n".join(lines)
+
+
+def openmove_idle(last: dict, d, open_ts: int) -> str:
+    """/acilis pencere dışında: sıradaki ölçüm saatleri + son rapor."""
+    from datetime import date as _date
+    from ..radar.seans import day_label
+    head = (f"🔔 Açılış penceresi dışında. Sıradaki ölçüm <b>{day_label(d)}</b>: {tr_time(open_ts)}–"
+            f"{tr_time(open_ts + 300)} (5 dk raporu) ve {tr_time(open_ts + 1800)} (30 dk raporu) TSİ.")
+    if not last.get("text"):
+        return head
+    when = tr_time(int(last["ts"]))
+    try:
+        when = f"{day_label(_date.fromisoformat(last['day']))} {when}"
+    except (KeyError, TypeError, ValueError):
+        pass
+    return head + f"\n\n<i>Son rapor ({when}):</i>\n" + last["text"]
+
+
 def help_text() -> str:
     return (
         "🕵️ <b>HL Insider Radar</b>\n"
@@ -2650,6 +2705,7 @@ def help_text() -> str:
         "/hesaplar — 👤 izlenen hesaplar (pozisyon, duvar, emirler) + 🔂 durum\n"
         "/seans — 🕰 ABD seans karnesi (XYZ100 + SP500): Asya → Londra → New York, bugün + geçmiş ölçüm · /seans NVDA tek hisse\n"
         "/alarm — 🚨 uyandırma: gece bir şey olursa seni Telegram'dan ARAR (/alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES) · /alarmlar · /alarm_test · /uyandim\n"
+        "/acilis — 🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor (rapor 5 dk ve 30 dk'da hisse kanalına)\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için bildirimdeki 🛑 tuşu ya da /birak_N; ↩️ geri alınabilir)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
         "/sim — liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar (sayfa /sim)\n"

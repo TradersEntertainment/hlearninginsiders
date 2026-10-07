@@ -37,6 +37,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "sim":       ("notify_sim",       "🧪 Liq simülasyonu (SİM kanalı)",       "high"),
     "liqattack": ("notify_liqattack", "🎯 Liq attack adayı (hafta sonu)",     "high"),
     "equityvol": ("notify_equityvol", "📈 Hisse hacim patlaması",             "high"),
+    "openmove":  ("notify_openmove",  "🔔 Açılışın en hareketlileri (hisse kanalı)", "normal"),
     "pattern":   ("notify_pattern",   "🔮 Örüntü sinyali",                    "high"),
     "listing":   ("notify_listing",   "🆕 Yeni hisse listelendi",             "high"),
     "health":    ("notify_health",    "⚕️ Sistem sağlığı",                    "high"),

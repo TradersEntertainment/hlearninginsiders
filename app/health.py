@@ -77,6 +77,7 @@ def limits(cfg: Config) -> dict[str, int]:
         "acctwatch": int(getattr(cfg, "acct_poll_sec", 60) or 60) * 5 + 300,
         "slicewatch": int(getattr(cfg, "slice_poll_sec", 30) or 30) * 5 + 600,   # ısınma sayfaları payı
         "wake": 600,                       # 5 sn adım; alarm yokken de nabız atar
+        "openmove": 600,                   # 5 sn adım; pencere dışında da nabız atar
         "sweeper": cfg.sweep_interval_sec * 5 + 120,
         "hourstats": 7200,
         "digest": 2400,
@@ -131,6 +132,7 @@ def periods(cfg: Config) -> dict[str, int]:
         "acctwatch": int(getattr(cfg, "acct_poll_sec", 60) or 60),
         "slicewatch": int(getattr(cfg, "slice_poll_sec", 30) or 30),
         "wake": 5,
+        "openmove": 5,
         "sweeper": cfg.sweep_interval_sec,
         "hourstats": 600,
         "digest": 600,

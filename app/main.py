@@ -420,6 +420,8 @@ async def lifespan(app: FastAPI):
     _spawn("slicewatch", lambda: slicewatch.loop(cfg, client, notifier), notifier)
     from .radar import wake
     _spawn("wake", lambda: wake.loop(cfg, client, bot, session), notifier)
+    from .radar import openmove
+    _spawn("openmove", lambda: openmove.loop(cfg, notifier), notifier)
     _spawn("sweeper", lambda: sweeper.loop(cfg, client), notifier)
     _spawn("hourstats", lambda: hourstats.refresh_loop(cfg, client), notifier)
     _spawn("digest", lambda: digest_loop(cfg, notifier), notifier)

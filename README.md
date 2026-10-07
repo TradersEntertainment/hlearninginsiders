@@ -61,6 +61,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/balina` (`/dilim`) | 🔂 Dilimli alım-satım şu an: kaç saattir alıyor/satıyor, kaç emir, ne kadar ($ ve adet), ortalama, son dilim kaç sn önce, fiyat ve pozisyon değişimi, aynı dakikalardaki diğer coinler; yoksa son dizi ve ne zaman bittiği |
 | `/hesaplar` | 🔂 Dilimli alım-satım durumu + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
 | `/alarm SNDK 480` · `/alarm SNDK %3` · `/alarm 0x…` | 🚨 Uyandırma alarmı: fiyat seviyesine gelince / ±%X oynayınca / hesabın pozisyonu liq'e %2 kalınca ya da kapanınca seni **Telegram'dan arar** (Rahatsız Etme'de bildirim gelmez, arama gelir). `/alarmlar` (🗑 ile kaldır) · `/alarm_test` · `/uyandim` |
+| `/acilis` | 🔔 Açılışın en hareketlileri: açılış penceresindeyse anlık sıralama, değilse son rapor (raporlar ABD açılışından 5 ve 30 dk sonra hisse kanalına) |
 | `/seans` · `/seans NVDA` | 🕰 ABD seans karnesi (XYZ100 + SP500 tek mesaj; ya da tek ABD hissesi): bugün Asya / Londra / New York ne yaptı, Londra Asya tepesini/dibini süpürdü mü, geçmişte bu şekilde NY ne yaptı (taban oran ve z ile), getiri hangi seansta birikti, oynaklık ilişkisi — sayfa `/seans` |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
@@ -1766,6 +1767,30 @@ karşılaştırmada şansla ~1.3 beklenir). Tutarlı olan **oynaklık**, AMD'nin
 geniş NY (Asya→NY ρ: XYZ100 +0.42 z 3.5, SP500 +0.33 z 2.7, NVDA +0.45 z 3.8 — düzeltme sonrası
 da), Londra→NY ilişki yok. Getiri gece birikmiş (XYZ100 Asya +%3.6, Londra −%0.6, NY −%0.3; SP500
 +%3.9 / +%1.6 / −%1.1) ama |t| < 2 — betimleme, kanıt değil.
+
+## 🔔 Açılışın En Hareketlileri (hisse kanalı)
+
+Kullanıcı: "açılışın en hareketli hissesi diye bir şey yapalım; 16:30–16:35 arası ölçüm yapsın
+rapor yollasın, sonra 17:00'e kadar hep ölçsün, 17'de tekrar rapor." Kararlar: fiyat oynamasıyla
+sırala, hisse kanalı (`CRYPTO_STOCKS_ID`), PROPR'da listeli hisseler (endeks / emtia / döviz
+hariç), saat ABD açılışına bağlı.
+
+- **Zaman:** 9:30 ET açılış → yazın 16:30, kışın (2 Kasım'dan) 17:30 TSİ. Açılıştan **5 dk sonra**
+  ilk rapor (16:35), **30 dk sonra** ikinci rapor (17:00). Hafta sonu ve NYSE tatilinde rapor yok.
+- **Ölçüm canlı işlem akışından** (WS, her işlem; HL'ye ek istek yok): referans açılıştan önceki
+  son işlem (perp 7/24 işler); değişim = son fiyat / referans − 1; aralık = (tepe − dip) / referans;
+  hacim = Σ fiyat × adet; "24s ort. 14×" = penceredeki hacim / 24 saatlik hacmin aynı süreye düşen
+  payı. Sıralama |değişim| büyükten; pencerede hacmi `open_movers_min_usd` ($25K) altında kalan
+  sıralamaya girmez (tek işlemlik oynama), sayısı künyede. 30 dk raporunda satırda "5 dk: +%".
+- **Dürüst kapsam:** akışın görülmediği aralıklar (yeniden başlatma, WS kopukluğu; açılıştan 1 dk
+  öncesi dahil — referans için) rapora saatleriyle yazılır: "⚠️ canlı akışın görülmediği aralık:
+  16:41–16:43 — o aralığın işlemleri eksik"; pencerenin yarısından azı görüldüyse rapor
+  gönderilmez; 10 dk'dan geç kalmış rapor (bot kapalıydı) gitmez. HL abonelikte coinin son 30
+  işlemini yeniden yollar (07.10 canlı denendi) — yeniden bağlanınca bunlar iki kez sayılmaz.
+  `/tani` satırı: izlenen hisse, gönderilen raporlar, atlanma sebebi.
+- `/acilis`: pencere içinde anlık sıralama, dışında sıradaki saatler + son rapor.
+- Ayarlar → 🔔 Açılışın en hareketlileri (`open_movers_top` 10, `open_movers_min_usd`), Bildirimler →
+  `notify_openmove`.
 
 ## 🚨 Uyandırma Alarmı: `/alarm`
 

@@ -508,6 +508,8 @@ class TelegramBot:
             await self._cmd_slices(chat_id)
         elif cmd in ("seans", "seanslar"):
             await self._cmd_seans(args, chat_id)
+        elif cmd in ("acilis", "açılış", "acılıs"):
+            await self._cmd_open_movers(chat_id)
         elif cmd in ("alarm", "alarmlar", "alarm_test", "alarmtest", "uyandim", "uyandım"):
             await self._cmd_alarm(cmd, args, chat_id)   # 🚨 yalnız sahip: gece telefonu çaldırır
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
@@ -810,6 +812,8 @@ class TelegramBot:
             await self._cmd_slices(chat_id)
         elif cmd in ("seans", "seanslar"):
             await self._cmd_seans(args, chat_id)
+        elif cmd in ("acilis", "açılış", "acılıs"):
+            await self._cmd_open_movers(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -1339,6 +1343,16 @@ class TelegramBot:
         sctx = self._slice_ctx()
         for sn in slices:
             await self.send(fmt.slice_status(sn, sctx), chat_id)
+
+    async def _cmd_open_movers(self, chat_id: str) -> None:
+        """/acilis — 🔔 açılış penceresindeyse anlık sıralama (canlı akıştan, HL'ye istek yok),
+        değilse sıradaki ölçüm saatleri + son rapor."""
+        from ..radar import openmove
+        try:
+            await self.send(await openmove.live_view(self.cfg), chat_id)
+        except Exception as e:
+            log.exception("/acilis")
+            await self.send(f"❌ açılış ölçümü okunamadı: {fmt.esc(e)}", chat_id)
 
     async def _cmd_seans(self, args: list[str], chat_id: str) -> None:
         """/seans — 🕰 ABD seans karnesi: ayardaki semboller (XYZ100 + SP500) TEK mesajda;
