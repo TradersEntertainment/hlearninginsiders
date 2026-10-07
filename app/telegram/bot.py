@@ -705,7 +705,8 @@ class TelegramBot:
             eid = await wake.fire(self.cfg, "🧪 Deneme araması",
                                   "🧪 <b>Deneme araması</b> — Rahatsız Etme açıkken telefonun çalıyor mu?",
                                   "Bu bir deneme araması. Telefonun Rahatsız Etme açıkken çaldıysa kurulum tamam."
-                                  " Telegram'da uyandım tuşuna bas.", f"test:{now()}", source="test")
+                                  " Telegram'da uyandım tuşuna bas.", f"test:{now()}", source="test",
+                                  chat_id=chat_id)
             await self.send("🧪 Deneme başladı — birkaç saniye içinde mesaj ve Telegram araması gelir"
                             f" (2 arama, ~{pl['gap']} sn arayla)." if eid and user else
                             "🧪 Deneme mesajı geliyor — ama arama YOK:\n" + fmt._wake_call_line(user, pl), chat_id)

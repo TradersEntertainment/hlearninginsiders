@@ -421,7 +421,7 @@ async def _wake(cfg: Config, t: dict, what: str, title: str, said: str) -> None:
                         f"👣 Takip #{t['id']} <b>{fmt.esc(sym)}</b>: <b>{fmt.esc(title)}</b>\n"
                         f"<i>{fmt.short(t['address'])} · ⏰ uyandırma bu takip için açıktı</i>",
                         f"Dikkat. {said}. Uyandıysan Telegram'da uyandım tuşuna bas.",
-                        f"trk:{t['id']}:{what}", source="takip")
+                        f"trk:{t['id']}:{what}", source="takip", chat_id=t.get("chat_id") or "")
     except Exception:
         log.exception("takip #%s uyandırma olayı yazılamadı", t.get("id"))
 

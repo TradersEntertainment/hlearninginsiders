@@ -451,7 +451,8 @@ CREATE TABLE IF NOT EXISTS wake_events(       -- tetiklenen uyandırma: mesaj + 
   msg_id INTEGER, msg_chat TEXT, msg_ts INTEGER,
   call_n INTEGER DEFAULT 0, next_call_ts INTEGER, last_call_ts INTEGER,
   last_call_note TEXT, warned INTEGER DEFAULT 0,
-  ack_ts INTEGER, ack_by TEXT, done_ts INTEGER
+  ack_ts INTEGER, ack_by TEXT, done_ts INTEGER,
+  chat_id TEXT                           -- mesaj nereye: alarmın kurulduğu sohbet (boş = ana sohbet)
 );
 CREATE INDEX IF NOT EXISTS idx_wake_events_open ON wake_events(done_ts);
 """
@@ -492,6 +493,7 @@ async def db():
 MIGRATIONS = [
     # 🚨 takip bildiriminden "kapanırsa beni uyandır" (wake.py)
     "ALTER TABLE trackers ADD COLUMN wake INTEGER DEFAULT 0",
+    "ALTER TABLE wake_events ADD COLUMN chat_id TEXT",
     # Sayım sıcak şeridi: ana dex kripto coininde işlem yapan adresin defteri dakikalar
     # içinde çekilsin. İndeks ALTER'dan SONRA (şema betiği canlı DB'de sütunsuz koşar).
     "ALTER TABLE census_accounts ADD COLUMN hot_ts INTEGER",

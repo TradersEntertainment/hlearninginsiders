@@ -1765,6 +1765,12 @@ Kullanıcı sorusu: "Bazen uyumadan önce pozum açık oluyor, bir şey olursa u
 telefonum rahatsız etmede; bildirim gelmez, yalnız aramalara uyanırım — o da 2 kez peş peşe."
 Bot o zaman seni **Telegram'dan arar** ve olayı Türkçe okur.
 
+**Nereden yazılır:** botun herhangi bir sohbetinden (ana sohbet, kripto, hisse, hesap grubu) — ama
+bot yalnız SAHİBİ dinler: ana sohbette (`TELEGRAM_CHAT_ID`) her zaman; diğer gruplarda seni
+`TELEGRAM_OWNER_ID` (kullanıcı id'n — bota özelden `/id` yaz, çıkan sayı) ile tanır. Tanımazsa
+grupta sessiz kalır. Kanalda (mesaj kanal adına gidiyorsa) gönderen bilinmediği için çalışmaz.
+Alarm çalınca "✅ Uyandım" mesajı **alarmı kurduğun sohbete** gelir.
+
 **Neler arar** (yalnız sahip kurar — gece telefonu çaldıran komut grupta başkasına açık değil):
 - `/alarm SNDK 480` — fiyat 480'e gelince (yön kurduğun andaki fiyattan: üstündeysen altına
   inince, altındaysan üstüne çıkınca). `/alarm SNDK 480 520` iki yön. Pozisyonun propr'da da

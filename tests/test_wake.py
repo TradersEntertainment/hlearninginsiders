@@ -551,6 +551,56 @@ def test_commands_and_wake_buttons():
     asyncio.run(run())
 
 
+def test_alarm_from_any_own_group():
+    """Kullanıcı (07.10): "3 gruba da yazsam olur dimi — kripto, hisse ve genel". Sahip (kullanıcı id'si
+    tanınıyorsa) her kendi grubunda kurar; alarm çalınca ✅ mesajı KURDUĞU gruba döner; başkası
+    kuramaz / susturamaz; sahip tanınmıyorsa (TELEGRAM_OWNER_ID yok, ana sohbet grup) grupta sessiz."""
+    async def run():
+        cfg = await _fresh()
+        hl = HL()
+        bot, calls, sent = _bot(cfg, hl)
+        calls_made = Calls()
+        real = _patch_calls(calls_made)
+        try:
+            for chat in (-100, -500):                       # kripto ve hisse/hesap grubu
+                await bot._handle_update({"message": {"chat": {"id": chat, "type": "supergroup"},
+                                                      "from": {"id": 7}, "text": "/alarm SNDK 480"}})
+                assert sent[-1][0] == str(chat) and "kuruldu" in sent[-1][1], sent[-1]
+            alarms = await wake.active_alarms()
+            assert [a["chat_id"] for a in alarms] == ["-100", "-500"]
+            hl.mids["xyz"]["SNDK"] = "479"
+
+            async def notify(text):
+                pass
+            await wake.check_alarms(cfg, hl, dbm.now(), notify)
+            tb = TBot()
+            await wake.drive(cfg, tb, None, dbm.now())
+            chats = sorted(p["chat_id"] for m, p in tb.calls if m == "sendMessage")
+            assert chats == ["-100", "-500"], chats
+            # ✅: grupta sahip basar → susar; başka üye basamaz
+            ev = (await _events())[0]
+            await bot._handle_update(_cq(f"wak:ack:{ev['id']}", -100, "supergroup", 42))
+            assert not (await wake.event(ev["id"]))["ack_ts"]
+            await bot._handle_update(_cq(f"wak:ack:{ev['id']}", -100, "supergroup", 7))
+            assert (await wake.event(ev["id"]))["ack_ts"]
+            # /alarm_test grupta → deneme mesajı o gruba
+            await bot._handle_update({"message": {"chat": {"id": -500, "type": "supergroup"},
+                                                  "from": {"id": 7}, "text": "/alarm_test"}})
+            await wake.drive(cfg, tb, None, dbm.now())
+            assert [p["chat_id"] for m, p in tb.calls if m == "sendMessage"][-1] == "-500"
+            # sahip tanınmıyorsa (owner id yok, ana sohbet bir grup) grupta /alarm sessiz
+            cfg.telegram_owner_id, cfg.telegram_chat_id = "", "-999"
+            n = len(sent)
+            await bot._handle_update({"message": {"chat": {"id": -100, "type": "supergroup"},
+                                                  "from": {"id": 7}, "text": "/alarm SNDK 470"}})
+            assert len(sent) == n and len(await wake.active_alarms()) == 0
+        finally:
+            wake.callmebot_call = real
+        print("✅ gruplar) sahip id'si tanınınca kripto / hisse grubunda kurulur; ✅ mesajı kurulduğu gruba;"
+              " başka üye susturamaz; /alarm_test o gruba; sahip tanınmıyorsa sessiz")
+    asyncio.run(run())
+
+
 # ---------------- kablolama ----------------
 
 def test_wiring():

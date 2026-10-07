@@ -274,15 +274,18 @@ def describe(a: dict) -> str:
 
 # ---------------- olaylar ----------------
 
-async def fire(cfg, title: str, body: str, speech: str, key: str, source: str = "alarm") -> int | None:
-    """Uyandırma olayı yaz (teslimatı döngü yapar). Aynı key ikinci kez yazılmaz → None."""
+async def fire(cfg, title: str, body: str, speech: str, key: str, source: str = "alarm",
+               chat_id: str = "") -> int | None:
+    """Uyandırma olayı yaz (teslimatı döngü yapar). Aynı key ikinci kez yazılmaz → None.
+    `chat_id`: mesaj (✅ tuşuyla) alarmın kurulduğu sohbete gider; boş = ana sohbet."""
     if not getattr(cfg, "wake_enabled", True) and source != "test":
         return None
     ts = now()
     async with db() as conn:
         cur = await conn.execute(
-            "INSERT OR IGNORE INTO wake_events(key, source, title, body, speech, created_ts, next_call_ts)"
-            " VALUES(?,?,?,?,?,?,?)", (key, source, title, body, (speech or title)[:SPEECH_MAX], ts, ts))
+            "INSERT OR IGNORE INTO wake_events(key, source, title, body, speech, created_ts, next_call_ts, chat_id)"
+            " VALUES(?,?,?,?,?,?,?,?)", (key, source, title, body, (speech or title)[:SPEECH_MAX], ts, ts,
+                                        str(chat_id or "")))
         return int(cur.lastrowid) if cur.rowcount else None
 
 
@@ -416,7 +419,8 @@ async def _check_level(cfg, a: dict, px: float, ts: int) -> bool:
                   f"Şu an {say_num(px)}.")
     body = f"⏰ Alarm #{a['id']}: <b>{title}</b>\n<i>{when}</i>"
     await _close_alarm(a, ts)
-    await fire(cfg, title, body, speech + " Uyandıysan Telegram'da uyandım tuşuna bas.", f"alarm:{a['id']}")
+    await fire(cfg, title, body, speech + " Uyandıysan Telegram'da uyandım tuşuna bas.", f"alarm:{a['id']}",
+               chat_id=a.get("chat_id") or "")
     return True
 
 
@@ -458,7 +462,8 @@ async def _check_addr(cfg, client, a: dict, pos: dict, ts: int) -> bool:
     title, detail, speech = hit
     await _close_alarm(a, ts)
     await fire(cfg, title, f"⏰ Alarm #{a['id']}: <b>{title}</b>\n<i>{detail}</i>",
-               speech + " Uyandıysan Telegram'da uyandım tuşuna bas.", f"alarm:{a['id']}")
+               speech + " Uyandıysan Telegram'da uyandım tuşuna bas.", f"alarm:{a['id']}",
+               chat_id=a.get("chat_id") or "")
     return True
 
 
@@ -473,8 +478,9 @@ async def drive(cfg, bot, session, ts: int) -> dict:
         evs = [dict(r) for r in await cur.fetchall()]
     out["open"] = len(evs)
     pl, user = plan(cfg), tg_user(cfg)
-    chat = str(getattr(cfg, "telegram_chat_id", "") or "")
+    main = str(getattr(cfg, "telegram_chat_id", "") or "")
     for ev in evs:
+        chat = str(ev.get("chat_id") or "") or main          # alarmın kurulduğu sohbet
         if not ev.get("msg_ts") and bot is not None and chat:
             mid = await _send(bot, chat, fmt.wake_event(ev, user, pl), fmt.wake_ack_kb(ev["id"]))
             if mid is not False:
