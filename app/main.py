@@ -423,7 +423,7 @@ async def lifespan(app: FastAPI):
     from .radar import openmove
     _spawn("openmove", lambda: openmove.loop(cfg, notifier), notifier)
     from .lab import loop as lab_loop
-    _spawn("lab", lambda: lab_loop.loop(cfg, client), notifier)
+    _spawn("lab", lambda: lab_loop.loop(cfg, client, notifier), notifier)
     _spawn("sweeper", lambda: sweeper.loop(cfg, client), notifier)
     _spawn("hourstats", lambda: hourstats.refresh_loop(cfg, client), notifier)
     _spawn("digest", lambda: digest_loop(cfg, notifier), notifier)

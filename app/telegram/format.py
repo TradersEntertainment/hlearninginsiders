@@ -2366,6 +2366,7 @@ def winners_list(rows: list[dict]) -> str:
 
 
 DIGEST_LABELS = {
+    "strat": "🧪 strateji (onaylı kural)",
     "whale_fill": "🐋 büyük işlem", "new_big": "🆕 yeni büyük pozisyon",
     "anomaly": "📡 anomali", "liq": "💥 likidasyon", "liqmap": "🧲 liq duvarı",
     "earnings": "📊 earnings",
@@ -2601,6 +2602,47 @@ def strat_card(v: dict, base_url: str = "") -> str:
     lines.append("\n/strat KURAL — ayrıntı" + (f" · 🔗 {esc(base_url)}/lab" if base_url else " · sayfada 🧪 lab"))
     lines.append(STRAT_FOOT)
     return "\n".join(lines)[:4000]
+
+
+def _lab_h(h: int) -> str:
+    return "çıkış kuralı" if not h else (f"{h // 3600} sa" if h % 3600 == 0 else f"{h // 60} dk")
+
+
+def strat_pass(rec: dict, spec: dict) -> str:
+    """Kapıyı geçen kural → sahibe onay sorusu. Ölçülü: bakış, küme, ortalama net, p ve eşik."""
+    mean = rec.get("mean")
+    return "\n".join([
+        f"🧪 <b>Kural kapıyı geçti — onay bekliyor</b> · {esc(rec['rule_id'])} v{rec['ver']}",
+        esc(spec.get("title") or ""),
+        f"Bakış {rec['look']} · kayıttan sonra {rec.get('n_ev', 0)} olay / {rec['n_c']} küme · birincil ufuk "
+        f"{_lab_h(int(spec.get('primary_h') or 0))} · ortalama net <b>{_lab_pct(mean)}</b>",
+        f"p {rec['p']:.2g} ≤ bu bakışın eşiği {rec['alpha_k']:.2g} · korumalar tamam",
+        "Onaylarsan bu kuralın yeni olayları buraya ölçülü mesaj olarak gelir (arama yok). Reddedersen"
+        " kural durur. Onaya kadar mesaj gelmez.",
+        STRAT_FOOT])
+
+
+def strat_stop(rec: dict) -> str:
+    return (f"🧪 <b>Canlı kural durduruldu</b> · {esc(rec['rule_id'])} v{rec['ver']}\n"
+            f"Onaydan sonraki {rec['n_c']} kümede ortalama net {_lab_pct(rec.get('mean'))} — sıfırın altında"
+            f" anlamlı (tek yönlü t, 0.05). Yeni olay mesajı gelmeyecek.\n{STRAT_FOOT}")
+
+
+def strat_signal(e: dict, r: dict, spec: dict) -> str:
+    """Canlı (onaylı) kuralın yeni olayı. Tahmin/tavsiye yok: kural, yön, karne, kâğıt üstü durum."""
+    from .. import assets
+    sym = assets.label(e["coin"])
+    yon = "▲ yukarı yön" if e.get("side") == 1 else "▼ aşağı yön"
+    prim = next((h for h in r.get("horizons") or [] if h.get("primary")), None) or {}
+    lines = [f"🧪 <b>{esc(r['rule_id'])}</b> tetiklendi · <b>{esc(sym)}</b> · {yon}",
+             esc(r.get("title") or ""),
+             f"Karar {tr_time_s(int(e['ts_decision']))} TSİ · ölçüm ufku {_lab_h(int(spec.get('primary_h') or 0))}"
+             f" · giriş: karardan {int(spec.get('latency_s') or 0)} sn sonraki ilk işlem"]
+    lines.append("Kural karnesi — " + _lab_line(prim.get("fwd") or {}, "kayıttan sonra"))
+    if is_listed(sym):
+        lines.append(PROPR_NOTE)
+    lines.append(STRAT_FOOT)
+    return "\n".join(lines)
 
 
 def strat_detail(r: dict | None, rid: str, base_url: str = "") -> str:

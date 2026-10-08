@@ -50,6 +50,106 @@ RULES: tuple[dict, ...] = (
 )
 
 
+def _fwd(rid: str, family: str, title: str, src: str, where: list, side: str, unit_s: int,
+         horizons: tuple, primary_h: int, cluster_s: int, n_max: int, latency_s: int = 60,
+         max_day: int = 200) -> dict:
+    """İleri (forward) kural: kayıttan SONRAKİ veride, önceden yazılı iki bakış (%50, %100 n_max);
+    birincil ölçü birincil ufukta maliyet sonrası piyasa düzeltmeli net getiri (> 0)."""
+    return {"id": rid, "ver": 1, "family": family, "title": title, "evidence": "forward", "metric": "net",
+            "src": src, "where": where, "side": side, "unit_s": unit_s,
+            "horizons_s": list(horizons), "primary_h": primary_h, "exit": None, "latency_s": latency_s,
+            "cluster_s": cluster_s, "looks": [0.5, 1.0], "n_max": n_max, "min_g": 20, "bt_alpha_share": 0.0,
+            "max_events_day": max_day, "cfg_keys": []}
+
+
+D = 86400
+# İlk dalga ileri kurallar (08.10, veri görülmeden kaydedildi — akış aileleri aynı gün başladı).
+# Her yön ayrı kural, ayrı yuva (α = LAB_ALPHA / K). Eşikler sabit; radarın ayarlı tabanı
+# eşikten yüksekse olay türemez (taban koşulu) — ayar oynatmak kuralı sessizce değiştirmez.
+_VOL_K = [["piyasa", "==", "crypto"], ["usd", ">=", 1_000_000], ["taban", "<=", 1_000_000]]
+_VOL_H = [["piyasa", "==", "equity"], ["usd", ">=", 1_000_000], ["taban", "<=", 1_000_000],
+          ["kova", "et_not_in", ["09:30", "09:35"]]]
+_OPEN5 = [["dk", "==", 30], ["sira", "<=", 5]]
+RULES = RULES + (
+    _fwd("HAC-KRP-F", "hacim", "Kripto 5 dk hacim rekoru ≥ $1M → kova yönünde, 1 sa", "LOG-VOL", _VOL_K,
+         "follow", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 120),
+    _fwd("HAC-KRP-T", "hacim", "Kripto 5 dk hacim rekoru ≥ $1M → kova tersine, 1 sa", "LOG-VOL", _VOL_K,
+         "fade", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 120),
+    _fwd("HAC-HSS-F", "hacim", "Hisse 5 dk hacim rekoru ≥ $1M (09:30 kovası hariç) → kova yönünde, 1 sa",
+         "LOG-VOL", _VOL_H, "follow", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 80),
+    _fwd("HAC-HSS-T", "hacim", "Hisse 5 dk hacim rekoru ≥ $1M (09:30 kovası hariç) → kova tersine, 1 sa",
+         "LOG-VOL", _VOL_H, "fade", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 80),
+    _fwd("ACI-12-F", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → aynı yönde, 10:01–11:59 ET", "LOG-OPEN",
+         _OPEN5, "follow", D, (7080,), 7080, D, 60),
+    _fwd("ACI-12-T", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → ters yönde, 10:01–11:59 ET", "LOG-OPEN",
+         _OPEN5, "fade", D, (7080,), 7080, D, 60),
+    _fwd("ACI-16-F", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → aynı yönde, 10:01–15:59 ET", "LOG-OPEN",
+         _OPEN5, "follow", D, (21480,), 21480, D, 60),
+    _fwd("ACI-16-T", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → ters yönde, 10:01–15:59 ET", "LOG-OPEN",
+         _OPEN5, "fade", D, (21480,), 21480, D, 60),
+    _fwd("AKI-TWAP-F", "akis", "Kapıdan geçen TWAP emri → emrin yönünde, 4 sa", "LOG-TWAP",
+         [["kapi", "in", ["ok", "big"]]], "follow", D, (H, 4 * H, 24 * H), 4 * H, D, 60),
+    _fwd("AKI-WFILL-F", "akis", "Hissede ≥ $500K balina dolumu → dolum yönünde, 4 sa", "LOG-WFILL",
+         [["kripto", "==", 0], ["usd", ">=", 500_000]], "follow", 4 * H, (H, 4 * H), 4 * H, D, 60),
+    _fwd("AKI-NEWBIG-F", "akis", "≥ $1M yeni büyük pozisyon → pozisyon yönünde, 24 sa", "LOG-NEWBIG",
+         [["usd", ">=", 1_000_000], ["age_s", "<=", 6 * H]], "follow", D, (4 * H, 24 * H), 24 * H, D, 60),
+    _fwd("AKI-STICKY-F", "akis", "Emriyle doğrulanan ≥ $1M yapışkan duvar (açılış) → duvar yönünde, 4 sa",
+         "LOG-STICKY", [["sahip", "==", "order"], ["etki", "==", "open"], ["usd", ">=", 1_000_000],
+                        ["taban", "<=", 1_000_000]], "follow", D, (H, 4 * H), 4 * H, D, 60),
+    _fwd("LIQ-S3-F", "liq", "Kripto liq'e ≤ %0.5 kalan dev pozisyon → liq yönünde, 1 sa", "LOG-CLIQ",
+         [["mesafe", "<=", 0.5], ["usd", ">=", 500_000], ["taban", "<=", 500_000]], "follow", D,
+         (15 * 60, H), H, 4 * H, 120),
+    _fwd("ANO-FUND-T", "anomali", "Funding ≥ %0.05/sa (aşırı) → ödeyen tarafın tersine, 24 sa", "LOG-ANOM",
+         [["fund", "abs>=", 0.0005]], "-sign:fund", D, (4 * H, 24 * H), 24 * H, D, 40),
+)
+
+
+# ---------------- türetilmiş kurallar (akış ailesinden süzgeçle) ----------------
+# Türetilmiş kural: "src" (akış ailesi) + "where" (DONMUŞ eşikler, ham özellik üzerinde) + "side"
+# (follow = olayın yönü, fade = tersi, "-sign:ALAN" = özelliğin işaretinin tersi) + "unit_s" (coin
+# başına zaman birimi: birimde ilk olay). Radarın ayarlı tabanı yerine sabit eşik — ayar değişse de
+# kural değişmez. match/side_of'un kaynağı türetilmiş kuralın hash'ine girer.
+
+def _et_hm(ts: int) -> str:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.fromtimestamp(int(ts), ZoneInfo("America/New_York")).strftime("%H:%M")
+
+
+def match(where, feats: dict, ts: int) -> bool:
+    """Saf süzgeç: her koşul [alan, op, değer]; eksik alan → eşleşmez. Op: == != >= <= > < in abs>=
+    et_not_in ([ss:dd, ss:dd) ET saat aralığı dışında; alan '_ts' = karar anı)."""
+    for f, op, v in where or ():
+        x = ts if f == "_ts" else feats.get(f)
+        if x is None:
+            return False
+        try:
+            ok = {"==": lambda: x == v, "!=": lambda: x != v, ">=": lambda: x >= v, "<=": lambda: x <= v,
+                  ">": lambda: x > v, "<": lambda: x < v, "in": lambda: x in v,
+                  "abs>=": lambda: abs(x) >= v,
+                  "et_not_in": lambda: not (v[0] <= _et_hm(x) < v[1])}[op]()
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not ok:
+            return False
+    return True
+
+
+def side_of(mode: str, side: int, feats: dict) -> int:
+    """follow → olayın yönü; fade → tersi; '+sign:ALAN' / '-sign:ALAN' → özelliğin işareti. 0 = yön yok."""
+    if mode == "follow":
+        return side if side in (1, -1) else 0
+    if mode == "fade":
+        return -side if side in (1, -1) else 0
+    if mode[:6] in ("+sign:", "-sign:"):
+        x = feats.get(mode[6:])
+        if not isinstance(x, (int, float)) or x == 0:
+            return 0
+        s = 1 if x > 0 else -1
+        return s if mode[0] == "+" else -s
+    return 0
+
+
 def validate(spec: dict) -> list[str]:
     """Kayıttan ÖNCE tanım denetimi — hatalı kural yuva harcamaz, 'emekli' (tanım geçersiz) kaydolur."""
     errs: list[str] = []
@@ -79,6 +179,13 @@ def validate(spec: dict) -> list[str]:
             errs.append("barrier metriği TP + SL + birincil ufuk 0 ister")
         if ev == "frozen_backtest" and not 0 < float(spec.get("bt_alpha_share") or 0) < 1:
             errs.append("bt_alpha_share (0, 1) dışında")
+    if spec.get("src"):
+        if spec["src"] not in {r["id"] for r in RULES if r.get("evidence") == "log"}:
+            errs.append(f"kaynak aile yok: {spec['src']}")
+        if spec.get("side") not in ("follow", "fade") and str(spec.get("side"))[:6] not in ("+sign:", "-sign:"):
+            errs.append(f"yön kuralı {spec.get('side')!r}")
+        if not int(spec.get("unit_s") or 0) > 0:
+            errs.append("unit_s yok")
     return errs
 
 

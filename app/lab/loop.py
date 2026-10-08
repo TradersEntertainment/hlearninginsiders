@@ -1,10 +1,11 @@
 """🧪 Laboratuvar döngüsü — TEK görev (düşük öncelik): kayıt, kuyruk boşaltma, çözücü, veri dolumu.
 
   açılış     registry.sync (kurallar kaydolur / hash değişen emekli)
-  30 sn      flush (kuyruk 200'ü geçerse hemen) + nabız
+  30 sn      flush (kuyruk 200'ü geçerse hemen) + canlı (onaylı) kural olaylarının teslimi + nabız
   5 dk       resolver.resolve_due
   60 sn      derin dolum adımı (1h ~208 gün, 1d) — ağırlık bütçesi izin verdikçe
-  saatlik    evren tazeleme, kısa dilim budaması, durum kv'si (/tani)
+  saatlik    planlı bakışlar (looks.run: durum YALNIZ burada değişir), evren tazeleme, kısa dilim
+             budaması, durum kv'si (/tani)
   günlük     1d mum tamamlama (bütçeyle, turlara yayılır)
 HL isteklerinin hepsi lab bütçesinden (dakikada ≤ LAB_WEIGHT_MIN ağırlık) ve düşük şeritten; canlı
 radarlar lab yüzünden 429 yemez. Strateji ASLA aramaz: bu paket wake'i içe aktarmaz.
@@ -15,7 +16,7 @@ import asyncio
 import logging
 
 from ..db import kv_set, now
-from . import data, registry, resolver
+from . import data, deliver, looks, registry, resolver
 
 log = logging.getLogger("lab.loop")
 
@@ -36,9 +37,10 @@ class State:
         self.d1_day = ""
         self.d1_cursor = 0
         self.err = ""
+        self.looks_out: list = []
 
 
-async def step(cfg, client, budget: data.Budget, st: State, t: int | None = None) -> None:
+async def step(cfg, client, budget: data.Budget, st: State, t: int | None = None, notifier=None) -> None:
     """Bir tur (test edilebilir): sırası önemli — önce kuyruk, sonra çözücü, sonra dolum."""
     t = int(t or now())
     if not getattr(cfg, "lab_enabled", True):
@@ -53,10 +55,18 @@ async def step(cfg, client, budget: data.Budget, st: State, t: int | None = None
         if st.sync_out.get("new") or st.sync_out.get("retired"):
             log.info("lab kayıt: yeni %s · emekli %s", st.sync_out["new"], st.sync_out["retired"])
     await registry.flush(ts=t)
+    await deliver.send_live(notifier, cfg, registry.take_live())
     if t - st.last["hour"] >= HOUR:
         st.last["hour"] = t
         await data.lab_coins(cfg, t)
         await data.prune(t)
+
+        async def _pass(rec):
+            await deliver.on_pass(notifier, cfg, rec)
+
+        async def _stop(rec):
+            await deliver.on_stop(notifier, cfg, rec)
+        st.looks_out = await looks.run(t, on_pass=_pass, on_stop=_stop) or st.looks_out
     if t - st.last["resolve"] >= RESOLVE_EVERY:
         st.last["resolve"] = t
         st.resolve_out = await resolver.resolve_due(client, budget, t)
@@ -67,6 +77,7 @@ async def step(cfg, client, budget: data.Budget, st: State, t: int | None = None
         await _daily_1d(client, budget, coins, st, t)
     await kv_set(STATS_KV, {"ts": t, "reg": registry.stats_line(), "sync": st.sync_out,
                             "resolve": st.resolve_out, "deep": st.deep_out, "err": st.err,
+                            "looks": st.looks_out[-5:],
                             "budget": {"spent": budget.spent_total, "denied": budget.denied,
                                        "per_min": budget.per_min}})
 
@@ -92,7 +103,7 @@ async def _deep_done() -> dict:
     return (await kv_get(data.DEEP_KV)) or {}
 
 
-async def loop(cfg, client) -> None:
+async def loop(cfg, client, notifier=None) -> None:
     from ..health import beat
     from ..hl.client import PRIORITY
     PRIORITY.set("low")
@@ -100,7 +111,7 @@ async def loop(cfg, client) -> None:
     st = State()
     while True:
         try:
-            await step(cfg, client, budget, st)
+            await step(cfg, client, budget, st, notifier=notifier)
             st.err = ""
         except asyncio.CancelledError:
             raise

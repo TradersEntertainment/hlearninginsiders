@@ -336,14 +336,20 @@ def test_resolver_waits_and_side_zero():
     print("✅ çözücü) vade gelmeden ölçmez; bütçe yokken bekler; yönsüz olayda birim işlem satırı yok")
 
 
+def stats_ok(n_fwd: int) -> bool:
+    return 0 < n_fwd <= 40
+
+
 def test_loop_step_and_disabled():
     async def run():
         cfg = await _fresh("lab_loop.db")
+        cfg.lab_k_budget = 40                                   # üretim varsayılanı: tüm ilk dalga yuva bulur
         st = lab_loop.State()
         b = data.Budget(per_min=100_000)
         await lab_loop.step(cfg, Client({}), b, st, T)
         assert st.synced and set(registry.ACTIVE) == {r["id"] for r in specs.RULES}
-        assert all(r["evidence"] == "log" for r in specs.RULES), "ilk dalga yalnız kayıt (yuva harcamaz)"
+        n_fwd = sum(1 for r in specs.RULES if r["evidence"] != "log")
+        assert stats_ok(n_fwd), n_fwd
         stats = await dbm.kv_get(lab_loop.STATS_KV)
         assert stats["reg"]["active"] == len(specs.RULES) and stats["ts"] == T
         assert registry.emit("LOG-VOL", "BTC", T, side=1) is True
@@ -375,14 +381,19 @@ def test_every_log_family_has_an_emit_site():
     import glob
     src = {f: open(f, encoding="utf-8").read() for f in glob.glob(os.path.join(ROOT, "app", "**", "*.py"),
                                                                     recursive=True) if "/lab/" not in f}
+    logs = {r["id"] for r in specs.RULES if r["evidence"] == "log"}
     for r in specs.RULES:
+        if r["evidence"] != "log":
+            assert r.get("src") in logs, f"{r['id']}: türetildiği aile yok"   # türetilmiş: kendi kayıt noktası yok
+            continue
         sites = [f for f, s in src.items() if f'"{r["id"]}"' in s]
         assert sites, f"{r['id']} için kayıt noktası yok"
     for name in ("autoscan.py", "collector.py", "twaplive.py", "stickywall.py", "anomaly.py", "cryptovol.py",
                  "openmove.py", "cryptoliq.py"):
         f = next(f for f in src if f.endswith("/" + name))
         assert "lab.registry import emit" in src[f], name
-    assert all(r["ver"] >= 2 and r["latency_s"] <= 60 for r in specs.RULES), "görme anı + tepki süresi"
+    assert all(r["ver"] >= 2 and r["latency_s"] <= 60 for r in specs.RULES if r["evidence"] == "log"), \
+        "görme anı + tepki süresi"
     print("✅ kayıt noktaları) 8 akış ailesinin her biri kodda; v2 gecikme = tepki süresi")
 
 

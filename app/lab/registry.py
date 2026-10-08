@@ -27,7 +27,9 @@ QUEUE_MAX = 5000
 FEATURES_MAX = 512
 
 _Q: deque = deque(maxlen=QUEUE_MAX)
+LIVE_OUT: deque = deque(maxlen=200)          # canlı (onaylı) kuralların YENİ yazılan olayları → teslim
 ACTIVE: dict[str, dict] = {}                 # rule_id → {spec, ver, status, alpha, registered_ts}
+DERIVED: dict[str, list[str]] = {}           # akış ailesi → ondan türetilen etkin kurallar
 STATS = {"emitted": 0, "rejected": 0, "overflow": 0, "cap_drop": 0, "flushed": 0, "dup": 0, "seen": 0}
 CAP_DROPS: dict[str, int] = {}               # rule_id → gün tavanı yüzünden düşen (toplam)
 _DAY: dict[tuple[str, int], int] = {}
@@ -45,8 +47,16 @@ def cfg_snapshot(spec: dict, cfg) -> dict:
     return {k: getattr(cfg, k, None) for k in spec.get("cfg_keys") or []}
 
 
+def _derive_code_sha() -> str:
+    import inspect
+    src = "".join(inspect.getsource(f) for f in (specs.match, specs.side_of, specs._et_hm))
+    return hashlib.sha256(src.encode()).hexdigest()
+
+
 def spec_sha(spec: dict, cfg=None) -> str:
     body = {"spec": spec, "cfg": cfg_snapshot(spec, cfg) if cfg is not None else {}, "costs": COSTS_SHA}
+    if spec.get("src"):
+        body["derive"] = _derive_code_sha()        # süzgeç anlamı değişirse türetilmiş kural emekli
     return hashlib.sha256(canon(body).encode()).hexdigest()
 
 
@@ -135,6 +145,10 @@ async def sync(cfg, ts: int | None = None, rules=None) -> dict:
                                    " WHERE rule_id=? AND ver=?", (ts, note, rid, ver))
                 await _status_row(conn, rid, ver, "emekli", note, ts)
                 out["retired"].append(f"{rid}/v{ver}")
+    DERIVED.clear()
+    for rid, a in ACTIVE.items():
+        if a["spec"].get("src"):
+            DERIVED.setdefault(a["spec"]["src"], []).append(rid)
     out["active"], out["slots_used"] = len(ACTIVE), used
     return out
 
@@ -171,6 +185,16 @@ def emit(rule_id: str, coin: str, ts_decision: int, side: int = 0, px_ref: float
         if sk in _SEEN:
             STATS["seen"] += 1
             return False
+        for did in DERIVED.get(rule_id, ()):          # türetilmiş kurallar: aynı an, donmuş süzgeç
+            d = ACTIVE.get(did)
+            if d is None:
+                continue
+            ds = d["spec"]
+            if specs.match(ds.get("where"), features or {}, ts_d):
+                sd = specs.side_of(ds["side"], int(side or 0), features or {})
+                if sd:
+                    emit(did, coin, ts_d, side=sd, px_ref=px_ref, trig_key=str(ts_d // int(ds["unit_s"])),
+                         features=features, gated=gated, origin=origin)
         day = (rule_id, ts_d // 86400)
         cap = int(a["spec"].get("max_events_day") or 0)
         if cap and _DAY.get(day, 0) >= cap:
@@ -214,27 +238,41 @@ async def flush(limit: int = 2000, ts: int | None = None) -> int:
     items = []
     while _Q and len(items) < limit:
         items.append(_Q.popleft())
-    rows = []
+    rows, live = [], []
     for e in items:
         klass = assets.klass(e["coin"])
-        rows.append((e["rule_id"], e["ver"], e["family"], e["origin"], e["coin"], klass, e["ts_decision"], ts,
-                     e["trig_key"], e["side"], e["px_ref"], e["latency_s"], bench_of(e["coin"], klass),
-                     e["cluster"], e["gated"], e["features"]))
+        row = (e["rule_id"], e["ver"], e["family"], e["origin"], e["coin"], klass, e["ts_decision"], ts,
+               e["trig_key"], e["side"], e["px_ref"], e["latency_s"], bench_of(e["coin"], klass),
+               e["cluster"], e["gated"], e["features"])
+        a = ACTIVE.get(e["rule_id"])
+        (live if (a and a["status"] == "canli" and e["origin"] == "live") else rows).append((row, e))
+    sql = ("INSERT OR IGNORE INTO strat_events(rule_id, rule_ver, family, origin, coin, klass, ts_decision,"
+           " ts_logged, trig_key, side, px_ref, latency_s, bench, cluster, gated, features)"
+           " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     try:
         async with db() as conn:
             before = conn.total_changes
-            await conn.executemany(
-                "INSERT OR IGNORE INTO strat_events(rule_id, rule_ver, family, origin, coin, klass, ts_decision,"
-                " ts_logged, trig_key, side, px_ref, latency_s, bench, cluster, gated, features)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            await conn.executemany(sql, [r for r, _ in rows])
+            fresh = []
+            for row, e in live:                        # canlı kural: yalnız GERÇEKTEN yeni olan teslim edilir
+                cur = await conn.execute(sql, row)
+                if (cur.rowcount or 0) > 0:
+                    fresh.append(dict(e))
             wrote = conn.total_changes - before
     except Exception:
         for e in reversed(items):                  # yazılamadı: geri koy (taşarsa sayılır)
             _Q.appendleft(e)
         raise
+    LIVE_OUT.extend(fresh)                             # yalnız işlem başarıyla kapandıktan sonra
     STATS["flushed"] += wrote
-    STATS["dup"] += len(rows) - wrote
+    STATS["dup"] += len(items) - wrote
     return wrote
+
+
+def take_live() -> list[dict]:
+    out = list(LIVE_OUT)
+    LIVE_OUT.clear()
+    return out
 
 
 def stats_line() -> dict:

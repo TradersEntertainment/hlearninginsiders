@@ -1870,7 +1870,7 @@ neredeyse." Kararlar: tüm tarzlar laboratuvara girer, **veri karar verir**; sin
 mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, testle sabit); her kural
 **kâğıt üstünde** ölçülür; yalnız **dürüst kapıyı geçen ve sahibin onayladığı** kural mesaj atar.
 
-**Şu an ne yapıyor (Faz 2–3):** yalnız kayıt ve ölçüm, mesaj yok.
+**Şu an ne yapıyor:** kayıt ve kâğıt üstü ölçüm. Mesaj yalnız kapıyı geçip onayladığın kuraldan.
 - **Ön kayıt:** kurallar `app/lab/specs.py`'de donar (git commit = kayıt belgesi). Her kural ilk
   görüldüğünde bir **yuva** alır ve α = `LAB_ALPHA / LAB_K_BUDGET` (0.05 / 40) **kayıtta donar** —
   sonradan kural eklemek eskilerin eşiğini değiştirmez, yuva geri dönmez. Tanım, maliyet tablosu ya
@@ -1893,6 +1893,21 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
   08.10 benzetimi: TP 1 / SL 3 şeklinde boş veride t + işaret çevirme α=0.005'te %2.2 geçiriyordu,
   üçü birlikte ≈0. TP/SL kuralları tam binom testiyle (TP < SL ise zaman aşımı başarısız sayılır).
   Tanımı hatalı kural (küme < ufuk, bakış 20 kümeden önce…) yuva harcamadan emekli kaydolur.
+- **İlk dalga kurallar (08.10, veri görülmeden kaydedildi — 14 kural, her biri bir yuva):** akış
+  ailelerinden DONMUŞ süzgeçle türetilir (radarın ayarlı tabanı değil sabit eşik; ayar eşiği aşarsa
+  olay türemez). Her yön ayrı kural: `HAC-KRP-F/T` kripto 5 dk hacim rekoru ≥ $1M → kova yönünde /
+  tersine 1 sa; `HAC-HSS-F/T` aynısı hissede (09:30 kovası hariç); `ACI-12-F/T`, `ACI-16-F/T`
+  açılışın ilk 30 dk en hareketli 5'i → 10:01–11:59 / 15:59 ET aynı / ters yön; `AKI-TWAP-F` kapıdan
+  geçen TWAP; `AKI-WFILL-F` hissede ≥ $500K balina dolumu; `AKI-NEWBIG-F` ≥ $1M yeni pozisyon (24 sa);
+  `AKI-STICKY-F` emriyle doğrulanan ≥ $1M yapışkan duvar; `LIQ-S3-F` liq'e ≤ %0.5 kalan dev kripto
+  pozisyon → liq yönünde; `ANO-FUND-T` funding ≥ %0.05/sa → ödeyenin tersine. Bakış: %50 ve %100
+  `n_max` (40–120 küme) — önce haftalar geçer. Geçmişe dönük Aşama A çalışmaları (örüntü denetimi,
+  kapalı seans, açılış) sonraki adım.
+- **Teslim:** kural kapıyı geçerse sahibe ölçülü özet + **✅ Onayla / 🛑 Reddet** (yalnız sahip, yalnız
+  'kapıyı geçti' durumunda). Onaylanan kuralın YENİ olayı `STRAT_CHAT_ID`'ye (yoksa ana sohbet) ölçülü
+  mesajla gelir: kural, coin, yön, karar anı, kayıttan sonraki karne — "işlem aç" yok, herkese açık
+  akışa asla, **arama asla**. Canlıda onaydan sonraki her 20 kümede düşüş denetimi: ortalama net
+  sıfırın altında anlamlıysa kural durur (tek mesaj). Bildirim anahtarı `notify_strat`.
 - **Görünür:** `/lab` sayfası ve `/strat` komutu — kural, durum, olay sayısı, kayıttan SONRAKİ
   sonuç önce, geçmiş veri "seçim örneği" etiketiyle; kayıt / onay / emeklilik izi. Salt okunur.
 

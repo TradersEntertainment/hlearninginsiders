@@ -39,6 +39,8 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "equityvol": ("notify_equityvol", "📈 Hisse hacim patlaması",             "high"),
     "openmove":  ("notify_openmove",  "🔔 Açılışın en hareketlileri (hisse kanalı)", "normal"),
     "pattern":   ("notify_pattern",   "🔮 Örüntü sinyali",                    "high"),
+    # 🧪 yalnız sahibe (PUBLIC_KINDS'te BİLEREK yok): kapıyı geçip onaylanan kuralların olayları
+    "strat":     ("notify_strat",     "🧪 Strateji laboratuvarı (onaylı kural)", "high"),
     "listing":   ("notify_listing",   "🆕 Yeni hisse listelendi",             "high"),
     "health":    ("notify_health",    "⚕️ Sistem sağlığı",                    "high"),
     "digest":    ("notify_digest",    "🌅 Günlük özet",                       "normal"),

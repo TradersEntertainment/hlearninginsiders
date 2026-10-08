@@ -402,6 +402,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                           "desc": "Arka plan arşivinin ne sıklıkla döneceği (en az 600). Sembol başına tek istek; sayfa açıkken canlı kuyruk ayrıca 2 dk'da bir"},
     "seans_archive_all": {"type": "bool", "label": "🧪 Tüm PROPR ABD hisselerini arşivle", "group": "🕰 ABD seans karnesi",
                           "desc": "Sekmelerden AYRI: PROPR'daki ABD hisselerinin 30 dk mumları da saatte bir arşivlenir (strateji laboratuvarının açılış çalışması için; HL yalnız son ~104 günü veriyor, arşiv her gün büyür). İlk dolum ağırlık bütçeli, yavaş (dakikada en çok 3 tam dolum)"},
+    "notify_strat": {"type": "bool", "label": "🧪 Strateji laboratuvarı (onaylı kural)", "group": "Bildirimler",
+                     "desc": "Kapıyı geçen kural için onay sorusu ve ONAYLADIĞIN kuralların yeni olayları — yalnız sana (STRAT_CHAT_ID ya da ana sohbet), herkese açık akışa asla. Arama YOK"},
     "lab_enabled": {"type": "bool", "label": "🧪 Strateji laboratuvarı", "group": "🧪 Strateji laboratuvarı",
                     "desc": "Önceden kaydedilmiş kuralların olaylarını karar anında yazar ve sonuçlarını ileriye bakışsız ölçer (kâğıt üstü). Mesaj YALNIZ dürüst kapıyı geçip sahibin onayladığı kurallardan; strateji asla aramaz. Kapatınca kayıt ve ölçüm durur, sayfa açılır"},
     "open_movers_enabled": {"type": "bool", "label": "🔔 Açılış ölçümü", "group": "🔔 Açılışın en hareketlileri",
@@ -817,6 +819,8 @@ class Config:
         # 🧪 Strateji laboratuvarı. α ve K bütçesi YALNIZ env: kayıtta kurala dondurulur, sayfadan
         # oynatılamaz (oynatmak kapıyı gevşetmek olurdu). K: önceden ilan edilen kural yuvası sayısı.
         self.lab_enabled = os.getenv("LAB_ENABLED", "1") not in ("0", "false", "no")
+        self.notify_strat = True
+        self.strat_chat_id = os.getenv("STRAT_CHAT_ID", "").strip()     # env-only: boşsa ana sohbet
         self.lab_alpha = float(os.getenv("LAB_ALPHA", "0.05"))
         self.lab_k_budget = int(os.getenv("LAB_K_BUDGET", "40"))
         self.lab_epoch = int(os.getenv("LAB_EPOCH", "1"))

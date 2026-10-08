@@ -406,6 +406,9 @@ class TelegramBot:
         if cq and str(cq.get("data") or "").startswith(fmt.MOVEWIN_CB + ":"):
             await self._movewin_callback(cq)             # ⏱ /5dk: 📊 Şu ana kadar
             return
+        if cq and str(cq.get("data") or "").startswith("lab:"):
+            await self._lab_callback(cq)                 # 🧪 kapıyı geçen kural: onayla / reddet (yalnız sahip)
+            return
         # Diğer düğmeler (callback) ve ödeme olayları yalnız herkese açık DM akışında anlamlı
         if "callback_query" in upd or "pre_checkout_query" in upd:
             if self._public_on():
@@ -1378,6 +1381,41 @@ class TelegramBot:
             log.exception("/%s", cmd)
             await self.send(f"❌ ölçüm başlatılamadı: {fmt.esc(e)}", chat_id)
         return True
+
+    async def _lab_callback(self, cq: dict) -> None:
+        """🧪 lab:ok|no:KURAL:SÜRÜM — yalnız sahip; yalnız 'gecti' durumundaki kural için. Onay → canli
+        (yeni olayları ölçülü mesaj olarak gelir, arama yok); ret → durdu. İz lab_tests'te."""
+        from ..db import db
+        from ..lab import registry
+        cq_id = cq.get("id")
+        msg = cq.get("message") or {}
+        chat = msg.get("chat") or {}
+        frm = cq.get("from") or {}
+        parts = str(cq.get("data") or "").split(":")
+        if len(parts) != 4 or parts[1] not in ("ok", "no") or not parts[3].isdigit():
+            await self._ack(cq_id)
+            return
+        if not self._owner_press(chat, frm):
+            await self._ack(cq_id, "🧪 Kuralı yalnız sahibi onaylayabilir")
+            return
+        rid, ver = parts[2], int(parts[3])
+        async with db() as conn:
+            cur = await conn.execute("SELECT status FROM lab_rules WHERE rule_id=? AND ver=?", (rid, ver))
+            row = await cur.fetchone()
+        st = row["status"] if row else None
+        if st != "gecti":
+            await self._ack(cq_id, f"🧪 {rid}: durum '{st or 'yok'}' — onay yalnız kapıyı geçmiş kural için")
+        else:
+            new = "canli" if parts[1] == "ok" else "durdu"
+            await registry.set_status(rid, ver, new, "sahip onayı" if new == "canli" else "sahip reddetti",
+                                      by=f"tg:{frm.get('id') or '?'}")
+            await self._ack(cq_id, f"🧪 {rid}: " + ("canlı — yeni olayları ölçülü mesajla gelir (arama yok)"
+                                                   if new == "canli" else "durduruldu"))
+        if msg.get("message_id") and chat.get("id"):
+            try:
+                await self.edit_reply_markup(str(chat["id"]), msg["message_id"], None)
+            except Exception:
+                log.debug("lab tuşları kaldırılamadı", exc_info=True)
 
     async def _movewin_callback(self, cq: dict) -> None:
         """📊 Şu ana kadar — o ana kadarki ilk 5 açılır pencerede. Salt okunur: botun kendi
