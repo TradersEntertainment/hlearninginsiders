@@ -191,6 +191,26 @@ async def universe(cfg, client) -> tuple[list[str], dict]:
     return coins, vols
 
 
+LAB_VOL_MIN = 50_000              # 🧪 lab kayıt tabanı (sabit; sayfa/bildirim tabanı ayardan oynar)
+
+
+def lab_record(coin: str, rec: dict, ts: int, page_min: float, market: str) -> bool:
+    """🧪 Hacim rekoru karar anı kaydı (kripto ve hisse ortak): ≥ $50K, kova başına bir kez. Yön =
+    rekor kovasının fiyat değişimi işareti. Ön süzgeç ayarlı tabanı kullandığı için o taban özellik
+    olarak yazılır. Senkron, G/Ç yok."""
+    try:
+        if float(rec.get("notional") or 0) < LAB_VOL_MIN:
+            return False
+        from ..lab.registry import emit
+        chg = rec.get("chg_pct")
+        return emit("LOG-VOL", coin, ts, side=(1 if chg > 0 else -1) if chg else 0, px_ref=rec.get("px"),
+                    trig_key=str(rec["bucket_ts"]),
+                    features={"usd": round(float(rec["notional"])), "kat": rec.get("ratio"), "chg": chg,
+                              "kova": int(rec["bucket_ts"]), "piyasa": market, "taban": page_min})
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
 def prefilter_skip(cfg, coin: str, floor: float) -> bool:
     """WS akış penceresi biliniyor VE sayfa tabanının altında → mum sorma."""
     if not getattr(cfg, "vol_ws_prefilter", True):
@@ -267,6 +287,7 @@ async def scan(cfg, client, notifier=None) -> dict:
         if not rec:
             continue
         out["n_record"] += 1
+        lab_record(coin, rec, ts, min_usd, "crypto")      # 🧪 sayfa/bildirim tabanından ÖNCE kayıt
         if rec["notional"] < min_usd:
             out["below_page"] += 1
             note_miss(out, coin, rec)

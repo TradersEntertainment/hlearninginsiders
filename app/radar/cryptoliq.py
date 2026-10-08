@@ -603,6 +603,40 @@ async def page(cfg, dist_pct: float = 5.0, side: str = "hepsi",
             "n_all": len(out), "cap": limit, "dists": PAGE_DISTS}
 
 
+# 🧪 Laboratuvarın KENDİ aşama durumu: radarın kademesi yalnız başarılı gönderimde ilerliyor (kanal yoksa
+# ya da bildirim kapalıysa hiç), lab örneklemi teslime bağlı olmasın. Uzaklaşınca (d1 dışı) sıfırlanır.
+_LAB_ST: dict[tuple[str, str], int] = {}
+LAB_BUCKET = 6 * 3600                 # yeniden başlamada aynı aşama 6 saatlik dilimde bir kez
+
+
+def _lab_stages(by: dict, ts: int, d1: float, d2: float, d3: float, min_usd: float) -> int:
+    """Aşama geçişi (1 → 2 → 3, DOĞRULANMAMIŞ: sonda gönderim kapısının arkasında) karar anında
+    kaydedilir. Yön = likidasyona yürüyen hareketin yönü (long'un liq'i aşağıda → −1). Ayarlı
+    mesafe/taban özellik olarak yazılır. Senkron, G/Ç yok."""
+    n = 0
+    try:
+        from ..lab.registry import emit
+        live = set()
+        for coin, cands in by.items():
+            for p in cands:
+                key = (coin, p["address"])
+                live.add(key)
+                need = needed_stage(p["dist"], d1, d2, d3)
+                if need <= _LAB_ST.get(key, 0):
+                    continue
+                _LAB_ST[key] = need
+                n += emit("LOG-CLIQ", coin, ts, side=-1 if p.get("side") == "long" else 1, px_ref=p.get("mark"),
+                          trig_key=f"{p['address']}:{need}:{ts // LAB_BUCKET}",
+                          features={"asama": need, "mesafe": round(float(p["dist"]), 3),
+                                    "usd": round(float(p.get("notional") or 0)), "kaldirac": p.get("leverage"),
+                                    "liq_px": p.get("liq_px"), "d": [d1, d2, d3], "taban": min_usd})
+        for key in [k for k in _LAB_ST if k not in live]:
+            _LAB_ST.pop(key, None)
+    except Exception:                                  # noqa: BLE001
+        pass
+    return n
+
+
 async def scan(cfg, client, notifier=None) -> dict:
     out = {"coins": 0, "positions": 0, "candidates": 0, "fresh": 0, "probed": 0,
            "probe_deferred": 0, "probe_err": 0, "dropped_stale": 0, "alerted": 0,
@@ -699,6 +733,7 @@ async def scan(cfg, client, notifier=None) -> dict:
                 await _watch_upsert(coin, p["address"], p, p["dist"], p["mark"])
                 old.setdefault(coin, []).append(p)
     out["fresh"] = sum(len(v) for v in esc.values())
+    _lab_stages(by, ts, d1, d2, d3, min_usd)            # 🧪 gönderim kapısı ve sondadan ÖNCE kayıt
     if gate:
         return await _stats(out)                        # hesap yapıldı; sonda ve gönderim yok
 

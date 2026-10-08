@@ -534,6 +534,22 @@ def chat_for(cfg, coin: str) -> tuple[str, bool]:
 
 # ---------------- değerlendirme turu ----------------
 
+def _lab_twap(run: "Run", order: dict, det: dict, gate: str, ts: int) -> bool:
+    """🧪 Laboratuvar kaydı: HL'de doğrulanmış TWAP emri, kapı sonucu ne olursa olsun (kapıdan kalan
+    = kontrol grubu). Senkron, G/Ç yok, asla fırlatmaz. Bekleme içindeki tekrar emir kayda girmez
+    (emir sorgusu yapılmıyor) — sayfada yazılı sınır."""
+    try:
+        from ..lab.registry import emit
+        return emit("LOG-TWAP", run.coin, ts, side=1 if run.side == "buy" else -1, px_ref=run.px_last,
+                    trig_key=f"{run.address}:{int(run.first_ts)}",
+                    features={"plan": round(det.get("planned") or 0), "left": order.get("remaining_usd"),
+                              "vol_pct": det.get("vol_pct"), "n": run.n, "dur": int(run.last_ts - run.first_ts),
+                              "seen": round(run.total), "kapi": gate, "st": order.get("status")},
+                    gated=gate in ("ok", "big"))
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
 async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     """Bir tur: budama → adaylar → düzenlilik → EMİR SORGUSU → kapı → bildirim;
     bildirilmiş turlar: 10 dk'da bir yeniden sorgu → yarı dolunca ilerleme,
@@ -666,6 +682,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 out["best"] = {"coin": run.coin, "side": run.side, "planned": planned,
                                "left": (order or {}).get("remaining_usd"), "status": order.get("status"),
                                "vol_pct": det["vol_pct"]}
+            if order:
+                _lab_twap(run, order, det, g, ts)          # 🧪 kapıdan ÖNCE: geçen + kalan (kontrol grubu)
             if g not in ("ok", "big"):
                 out[g] = out.get(g, 0) + 1
                 decide(run, "lookup_fail" if (g == "no_order" and out.get("lookup_fail", 0) > lf_before) else g, det)

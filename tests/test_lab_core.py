@@ -359,6 +359,22 @@ def test_loop_step_and_disabled():
     print("✅ döngü) tur: kayıt → boşalt → çöz → dolum → durum kv; kapalıyken emit reddedilir, açınca sürer")
 
 
+def test_every_log_family_has_an_emit_site():
+    """Her akış ailesinin kodda bir kayıt noktası var; kayıt noktaları senkron ve korunaklı (try)."""
+    import glob
+    src = {f: open(f, encoding="utf-8").read() for f in glob.glob(os.path.join(ROOT, "app", "**", "*.py"),
+                                                                    recursive=True) if "/lab/" not in f}
+    for r in specs.RULES:
+        sites = [f for f, s in src.items() if f'"{r["id"]}"' in s]
+        assert sites, f"{r['id']} için kayıt noktası yok"
+    for name in ("autoscan.py", "collector.py", "twaplive.py", "stickywall.py", "anomaly.py", "cryptovol.py",
+                 "openmove.py", "cryptoliq.py"):
+        f = next(f for f in src if f.endswith("/" + name))
+        assert "lab.registry import emit" in src[f], name
+    assert all(r["ver"] >= 2 and r["latency_s"] <= 60 for r in specs.RULES), "görme anı + tepki süresi"
+    print("✅ kayıt noktaları) 8 akış ailesinin her biri kodda; v2 gecikme = tepki süresi")
+
+
 def test_lab_never_imports_wake_and_wiring():
     lab_dir = os.path.join(ROOT, "app", "lab")
     for f in sorted(os.listdir(lab_dir)):

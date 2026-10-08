@@ -28,6 +28,32 @@ WS_RECEIVE_TIMEOUT = 90     # 90 sn hiç mesaj gelmezse (pong dahil) bağlantı 
 MAX_INFLIGHT_PROBES = 24    # aynı anda bekleyen sonda üst sınırı (fırtına freni)
 
 
+
+LAB_FILL_MIN_EQ = 250_000          # 🧪 lab kayıt tabanı: hisse/endeks (radarın en düşük tabanı, sicilli adres)
+LAB_FILL_MIN_CRYPTO = 2_000_000    # kripto akışı çok yoğun: gün tavanını hisselerden çalmasın
+
+
+def _lab_fills(agg: dict, crypto_coins, spot_coins, watch) -> int:
+    """🧪 Balina dolumu karar anı kaydı — ayarlı taban, bekleme ve bot kontrolünden ÖNCE, yalnız
+    laboratuvar evreni (PROPR). Sıcak yol: senkron, G/Ç yok, asla fırlatmaz."""
+    n = 0
+    try:
+        from ..lab.data import in_universe
+        from ..lab.registry import emit
+        for (coin, addr, side), a in agg.items():
+            if coin in spot_coins or not a.get("sz") or not in_universe(coin):
+                continue
+            crypto = coin in crypto_coins
+            if a["ntl"] < (LAB_FILL_MIN_CRYPTO if crypto else LAB_FILL_MIN_EQ):
+                continue
+            n += emit("LOG-WFILL", coin, int(a["ts"]), side=1 if side == "buy" else -1,
+                      px_ref=a["pxsz"] / a["sz"], trig_key=f"{addr}:{min(a['tids'])}",
+                      features={"usd": round(a["ntl"]), "taker": round(a["tk"] / a["known"], 2) if a["known"] else None,
+                                "parts": len(set(a["tids"])), "watch": int(addr in watch), "kripto": int(crypto)})
+    except Exception:                                  # noqa: BLE001
+        pass
+    return n
+
 class Collector:
     def __init__(self, cfg: Config, session: aiohttp.ClientSession, bot=None,
                  notifier=None, client=None):
@@ -454,6 +480,7 @@ class Collector:
             big_coins = await _big_coins(self.cfg)
         except Exception:
             big_coins = set()
+        _lab_fills(agg, self.crypto_coins, self.spot_coins, watch)    # 🧪 kapılardan ÖNCE kayıt
         for (coin, addr, side), a in agg.items():
             if coin in self.crypto_coins or coin in self.spot_coins:
                 continue        # kripto/spot yalnız sonda tetikler, alarm üretmez

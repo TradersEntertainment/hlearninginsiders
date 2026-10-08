@@ -797,10 +797,27 @@ async def _candidate(cfg, client, notifier, coin, side, w, prev, day_vol, oi_usd
         row["eaten_usd"] = own.get("owner_fill") or 0.0
     row["id"] = await _insert(row)
     REG.eat_ts[row["id"]] = until
+    _lab_sticky(row, w, min_usd, min_pct, ts)       # 🧪 bildirim kapısından ÖNCE kayıt
     out["confirmed"] += 1
     log.info("🧲 yapışkan duvar: %s %s %s (%s) sahibi %s", coin, side, _usd(w["ntl"]),
              f"%{w['vol_pct']:.1f}" if w.get("vol_pct") else "?", (own["owner"] or "?")[:10])
     await _alert(cfg, notifier, row, out)
+
+
+def _lab_sticky(row: dict, w: dict, min_usd: float, min_pct: float, ts: int) -> bool:
+    """🧪 Laboratuvar kaydı: onaylanan yapışkan duvar (bildirim ayarı, kanal ve bekleme fark etmez).
+    Aday tabanı ayardan geldiği için o anki taban özellik olarak yazılır — analiz sabit tabanla süzer.
+    Senkron, G/Ç yok."""
+    try:
+        from ..lab.registry import emit
+        return emit("LOG-STICKY", row["coin"], ts, side=1 if row["side"] == "bid" else -1, px_ref=w.get("mid"),
+                    trig_key=str(row["id"]),
+                    features={"usd": round(float(row.get("ntl_last") or 0)), "vol_pct": w.get("vol_pct"),
+                              "duvar_px": row.get("px_last"), "sahip": row.get("owner_src") or "",
+                              "etki": row.get("effect") or "", "ro": row.get("reduce_only"),
+                              "taban": min_usd, "taban_pct": min_pct})
+    except Exception:                                  # noqa: BLE001
+        return False
 
 
 def _usd(n) -> str:

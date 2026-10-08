@@ -25,9 +25,9 @@ STATUS_TR = {"aday": "aday (Aşama A bekliyor)", "kagit": "kâğıt üstünde ö
              "durdu": "durduruldu", "emekli": "emekli"}
 
 
-def _log(rid: str, family: str, title: str, horizons=(15 * 60, H, 4 * H), latency_s: int = 120,
-         max_day: int = 400) -> dict:
-    return {"id": rid, "ver": 1, "family": family, "title": title, "evidence": "log", "metric": "net",
+def _log(rid: str, family: str, title: str, horizons=(15 * 60, H, 4 * H), latency_s: int = 60,
+         max_day: int = 400, ver: int = 2) -> dict:
+    return {"id": rid, "ver": ver, "family": family, "title": title, "evidence": "log", "metric": "net",
             "horizons_s": list(horizons), "primary_h": max(horizons), "exit": None,
             "latency_s": latency_s, "cluster_s": max(86400, max(horizons)), "looks": [], "n_max": 0,
             "min_g": 20, "bt_alpha_share": 0.0, "max_events_day": max_day, "cfg_keys": []}
@@ -35,18 +35,18 @@ def _log(rid: str, family: str, title: str, horizons=(15 * 60, H, 4 * H), latenc
 
 # Akış aileleri: kapılardan ÖNCE ham özellik kaydı (radarın kendi eşiği, bildirim ayarı ve
 # Telegram teslimi örneklemi seçmesin). Yön: olayın kendi yönü (+1 alış / −1 satış), yoksa 0.
+# ts_decision = radarın olayı GÖRDÜĞÜ an (tarama / akış anı); latency_s = tepki süresi (mesaj + el).
+# v2 (08.10): v1 gecikmeyi tarama süresi sanıyordu — kayıt noktaları gerçek görme anını yazıyor.
 RULES: tuple[dict, ...] = (
-    _log("LOG-TWAP", "akis", "TWAP kararı (uyarılan + kapıdan kalan)", latency_s=120),
-    _log("LOG-STICKY", "akis", "Yapışkan duvar (sahibi bilinen emir)", latency_s=60),
-    _log("LOG-NEWBIG", "akis", "Yeni büyük pozisyon (oto tarama)", horizons=(H, 4 * H, 24 * H),
-         latency_s=300),
+    _log("LOG-TWAP", "akis", "TWAP kararı (uyarılan + kapıdan kalan)"),
+    _log("LOG-STICKY", "akis", "Yapışkan duvar (sahibi bilinen emir)"),
+    _log("LOG-NEWBIG", "akis", "Yeni büyük pozisyon (oto tarama)", horizons=(H, 4 * H, 24 * H)),
     _log("LOG-WFILL", "akis", "Balina dolumu (canlı akış)", latency_s=30, max_day=1500),
-    _log("LOG-ANOM", "akis", "OI / funding anomalisi", horizons=(H, 4 * H, 24 * H), latency_s=300),
-    _log("LOG-VOL", "akis", "5 dk hacim rekoru", latency_s=360),
+    _log("LOG-ANOM", "akis", "OI / funding anomalisi", horizons=(H, 4 * H, 24 * H)),
+    _log("LOG-VOL", "akis", "5 dk hacim rekoru"),
     _log("LOG-OPEN", "akis", "Açılışın en hareketlisi (ilk 5 / 30 dk)", horizons=(30 * 60, 2 * H, 6 * H),
-         latency_s=60, max_day=40),
-    _log("LOG-CLIQ", "akis", "Kripto likidasyon aşama geçişi", horizons=(15 * 60, H, 4 * H),
-         latency_s=150),
+         max_day=40),
+    _log("LOG-CLIQ", "akis", "Kripto likidasyon aşama geçişi (doğrulanmamış)", horizons=(15 * 60, H, 4 * H)),
 )
 
 

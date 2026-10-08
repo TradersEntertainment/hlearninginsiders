@@ -34,6 +34,35 @@ POST_EARNINGS_QUIET = 48 * 3600
 METRIC_MAX_GAP = 6 * 3600
 
 
+
+LAB_OI_MIN = 1_000_000           # 🧪 lab kayıt tabanı: 24 saatte OI artışı ($) — sınıf kapısından bağımsız, sabit
+LAB_FUND_MIN = 0.0001            # |funding| ≥ %0.01/sa
+
+
+def _lab_anomaly(coin: str, ts: int, mark: float, oi_ntl: float, prev24, prev4, funding, has_event: bool) -> bool:
+    """🧪 Karar anı kaydı: OI 24 saatte ≥ $1M arttı ya da funding ≥ %0.01/sa — sınıf kapısı, ayarlı
+    taban ve beklemeden ÖNCE. Coin başına günde bir kez (ilk geçiş). Yönsüz (0): analiz yönü fiyat
+    değişimi ya da funding işaretinden kendi tanımlar. Senkron, G/Ç yok."""
+    try:
+        d24 = None
+        if prev24 and prev24.get("oi") is not None and mark:
+            d24 = (oi_ntl / mark - float(prev24["oi"] or 0)) * mark
+        d4 = None
+        if prev4 and prev4.get("oi") is not None and mark:
+            d4 = (oi_ntl / mark - float(prev4["oi"] or 0)) * mark
+        f = float(funding) if funding is not None else None
+        if not ((d24 is not None and d24 >= LAB_OI_MIN) or (f is not None and abs(f) >= LAB_FUND_MIN)):
+            return False
+        p24 = (mark / float(prev24["mark_px"]) - 1) if prev24 and prev24.get("mark_px") else None
+        from ..lab.registry import emit
+        return emit("LOG-ANOM", coin, ts, side=0, px_ref=mark, trig_key=str(int(ts) // 86400),
+                    features={"oi24": round(d24) if d24 is not None else None,
+                              "oi4": round(d4) if d4 is not None else None, "oi": round(oi_ntl),
+                              "fund": f, "px24": round(p24, 5) if p24 is not None else None,
+                              "bilanco": int(has_event)})
+    except Exception:                                  # noqa: BLE001
+        return False
+
 async def _events_within(hours: int) -> tuple[dict[str, dict], dict[str, int]]:
     """(upcoming, quiet_until):
       upcoming[coin] = coin'in en yakın GELECEK earnings eventi (bağlam + düşük eşik)
@@ -108,6 +137,7 @@ async def check_anomalies(cfg: Config, notifier) -> None:
         cats: list[str] = []  # cooldown anahtarı için tetik türleri
         stats["checked"] += 1
 
+        _lab_anomaly(coin, ts, mark, oi_ntl, prev24, prev4, cur_m.get("funding"), has_event)   # 🧪 kapıdan ÖNCE
         # Sınıf kapısı: büyük hisse (NVDA…) ve endeks/emtia bu bildirimi almaz;
         # normal hissede $ artış tabanı (earnings yakınsa düşük)
         floor = alertgate.oi_delta_floor(cfg, coin, big_coins, has_event)

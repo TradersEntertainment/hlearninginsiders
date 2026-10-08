@@ -22,7 +22,7 @@ import logging
 
 from .. import assets
 from ..db import alert_log, alert_recent, db, kv_set, now
-from .cryptovol import (INTERVAL, LOOKBACK_SEC, MIN_BUCKETS, find_record, last_bucket,
+from .cryptovol import (INTERVAL, LOOKBACK_SEC, MIN_BUCKETS, find_record, lab_record, last_bucket,
                         n_closed, note_miss, parse_vol_candles, prefilter_skip, save_movers,
                         unit_sane)
 
@@ -142,6 +142,7 @@ async def scan(cfg, client, notifier=None) -> dict:
         if not rec:
             continue
         out["n_record"] += 1
+        lab_record(coin, rec, ts, min_usd, "equity")      # 🧪 sayfa/bildirim tabanından ÖNCE kayıt
         if rec["notional"] < min_usd:
             out["below_page"] += 1
             note_miss(out, coin, rec)

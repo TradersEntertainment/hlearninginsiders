@@ -253,8 +253,25 @@ def test_tick_reports_once_on_time():
             feed()
             for t in (O + 300, O + 304):                              # canlı akış payı (5 sn)
                 assert not (await om.tick(cfg, sink, t))["sent"]
+            from app.lab import registry
+            registry._Q.clear()
+            registry._SEEN.clear()
+            await registry.sync(cfg, ts=O - 600)
+            cfg.open_movers_min_usd = 10 ** 9                         # rapor tabanı ne olursa olsun lab kaydı sabit
+            out = await om.tick(cfg, sink, O + 305)
+            cfg.open_movers_min_usd = 25_000
+            labs = [e for e in registry._Q if e["rule_id"] == "LOG-OPEN"]
+            assert labs and all(e["trig_key"] == "2026-10-07:5" and e["ts_decision"] == O + 305 for e in labs), labs
+            assert {e["coin"] for e in labs} <= om.REG.coins and labs[0]["side"] in (1, -1)
+            assert len(registry._Q) == len(labs)
+            om.REG.lab_done.clear()
+            om.REG.lab_done.add(("2026-10-07", 5))
+            registry._Q.clear()
+            sink.sent.clear()
+            await dbm.kv_set(om.SENT_KV, {})
             out = await om.tick(cfg, sink, O + 305)
             assert out["sent"] == [5] and len(sink.sent) == 1
+            assert not registry._Q, "gün + pencere başına bir kez"
             kind, text, kw = sink.sent[0]
             assert kind == "openmove" and kw == {"chat_id": "-300", "key": "openmove:2026-10-07:5"}
             assert text == REPORT5, text
@@ -341,12 +358,12 @@ def test_tick_switches_and_retry():
         cfg = await _fresh()
         real = _live(Live())
         try:
-            # ölçüm kapalı → hiçbir şey
-            cfg.open_movers_enabled = False
+            # ölçüm ve laboratuvar kapalı → hiçbir şey (lab açıkken gün kurulur, rapor yine gitmez)
+            cfg.open_movers_enabled, cfg.lab_enabled = False, False
             sink = Sink()
             out = await om.tick(cfg, sink, O + 305)
-            assert out.get("disabled") and not sink.sent and not await _sent_kv()
-            cfg.open_movers_enabled = True
+            assert out.get("disabled") and not sink.sent and not await _sent_kv() and not om.REG.day
+            cfg.open_movers_enabled, cfg.lab_enabled = True, True
             # hisse kanalı yok → 5 dk atlanır; bildirim türü kapalı → 30 dk atlanır
             cfg.crypto_stocks_id = ""
             await om.tick(cfg, sink, O - 600)

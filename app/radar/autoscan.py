@@ -79,12 +79,41 @@ async def _upcoming_event(coin: str) -> dict | None:
         return dict(r) if r else None
 
 
+LAB_NEWBIG_MIN = 500_000          # 🧪 lab kayıt tabanı (sabit; uyarı tabanı ayardan oynar, kayıt oynamaz)
+LAB_NEWBIG_AGE = 24 * 3600
+
+
+def _lab_new_big(coin: str, rows: list[dict], ts: int) -> int:
+    """🧪 Karar anı kaydı — kapılardan (ayarlı taban, bekleme, bildirim) ÖNCE: ≥ $500K, MM/vault değil,
+    24 saat içinde açılmış pozisyon. Aynı pozisyon (adres + açılış) bir kez sayılır. Senkron, G/Ç yok."""
+    n = 0
+    try:
+        from ..lab.registry import emit
+        for p in rows:
+            if p.get("entity") or float(p.get("notional") or 0) < LAB_NEWBIG_MIN:
+                continue
+            opened = p.get("opened_ts")
+            if not opened or ts - int(opened) > LAB_NEWBIG_AGE:
+                continue
+            seen = p.get("first_seen_ts")
+            n += emit("LOG-NEWBIG", coin, ts, side=-1 if p.get("side") == "short" else 1,
+                      px_ref=(float(p["notional"]) / abs(float(p["szi"]))) if p.get("szi") else None,
+                      trig_key=f"{p.get('address')}:{int(opened)}",
+                      features={"usd": round(float(p["notional"])), "score": p.get("score"),
+                                "lev": p.get("leverage"), "age_s": ts - int(opened),
+                                "seen_s": (ts - int(seen)) if seen else None, "entry_px": p.get("entry_px")})
+    except Exception:                                 # noqa: BLE001 — tarama asla lab yüzünden düşmez
+        log.debug("lab kaydı (yeni büyük pozisyon) yazılamadı", exc_info=True)
+    return n
+
+
 async def _alert_new_big(cfg: Config, notifier, coin: str, rows: list[dict]) -> None:
     """Earnings şartı YOK: yeni açılmış büyük pozisyon görülünce anında haber ver.
     (CEO istifası, ele geçirme, dava... insider her zaman ortaya çıkabilir.)"""
+    ts = now()
+    _lab_new_big(coin, rows, ts)                  # bildirim kapalıyken de kayıt
     if not notifier:
         return
-    ts = now()
     floor = alert_floor(cfg, coin, await _big_coins(cfg))
     if floor is None:
         return                              # büyük hisse / endeks: bu sınıftan bildirim yok

@@ -66,6 +66,7 @@ class _Reg:
         self.obs_since = 0                    # bu süreçte gözlemin başladığı an (ilk evren yüklemesi)
         self.wins_loaded = False              # kv'deki pencereler bu süreçte geri yüklendi mi
         self.win_errors = 0
+        self.lab_done: set = set()         # 🧪 (gün, 5|30) — laboratuvar kaydı yapıldı
 
 
 REG = _Reg()
@@ -309,15 +310,54 @@ async def build(cfg, which, ts: int) -> dict:
             "floor": floor, "cover": coverage(open_ts, end, ts)}
 
 
+LAB_FLOOR = 25_000                # 🧪 lab kayıt tabanı ve sırası SABİT (rapor ayarları oynar, kayıt oynamaz)
+LAB_TOP = 10
+
+
+async def _lab_tick(open_ts: int, ts: int) -> int:
+    """🧪 Açılışın ilk 5 / 30 dk'sının en hareketlileri karar anında kaydedilir: sabit taban ve sıra,
+    yön = açılıştan beri değişimin işareti (devam kuralı), pencerenin yarısından azı görüldüyse kayıt
+    yok. Gün + pencere başına bir kez; geç kalınırsa (bot kapalıydı) atlanır."""
+    n = 0
+    for which, at in ((5, open_ts + FIRST), (30, open_ts + WINDOW)):
+        key = (REG.day, which)
+        if key in REG.lab_done or not (at + GRACE <= ts <= at + GRACE + LATE_MAX):
+            continue
+        REG.lab_done.add(key)
+        if len(REG.lab_done) > 64:
+            REG.lab_done = {k for k in REG.lab_done if k[0] == REG.day}
+        try:
+            book = REG.agg5 if which == 5 else REG.agg30
+            cov = coverage(open_ts, at, ts)
+            if cov["frac"] < MIN_COVER:
+                continue
+            rows, _ = rank(book, REG.pre, await _day_volumes(), at - open_ts, LAB_FLOOR, LAB_TOP)
+            from ..lab.registry import emit
+            for i, r in enumerate(rows):
+                n += emit("LOG-OPEN", r["coin"], int(ts), side=1 if r["chg"] > 0 else -1, px_ref=r["last"],
+                          trig_key=f"{REG.day}:{which}",
+                          features={"dk": which, "sira": i + 1, "chg": round(r["chg"], 3), "rng": round(r["rng"], 3),
+                                    "usd": round(r["vol"]), "kat": round(r["mult"], 2) if r["mult"] else None,
+                                    "ref_pre": int(r["ref_pre"]), "kapsama": round(cov["frac"], 2)})
+        except Exception:                             # noqa: BLE001 — rapor asla lab yüzünden düşmez
+            log.debug("açılış lab kaydı", exc_info=True)
+    return n
+
+
 async def tick(cfg, notifier, ts: int) -> dict:
     """Bir adım: günü ayarla, evreni tazele, zamanı gelen raporu gönder (günde birer kez)."""
     out = {"sent": [], "skipped": [], "day": None}
     await ensure_universe(cfg, ts)                    # kapalıyken de: ⏱ /5dk aynı evreni kullanır
-    if not getattr(cfg, "open_movers_enabled", True):
+    enabled = getattr(cfg, "open_movers_enabled", True)
+    if not enabled and not getattr(cfg, "lab_enabled", True):
         out["disabled"] = True
         return out
     d, open_ts = session_for(ts)
     configure(d, open_ts, ts)
+    await _lab_tick(open_ts, ts)                      # 🧪 rapor ayarı / kanal / bildirimden bağımsız kayıt
+    if not enabled:
+        out["disabled"] = True
+        return out
     out["day"] = REG.day
     sent = await kv_get(SENT_KV) or {}
     if sent.get("day") != REG.day:
