@@ -50,5 +50,37 @@ RULES: tuple[dict, ...] = (
 )
 
 
+def validate(spec: dict) -> list[str]:
+    """Kayıttan ÖNCE tanım denetimi — hatalı kural yuva harcamaz, 'emekli' (tanım geçersiz) kaydolur."""
+    errs: list[str] = []
+    ev, metric = spec.get("evidence"), spec.get("metric")
+    if ev not in ("log", "forward", "frozen_backtest"):
+        errs.append(f"evidence {ev!r}")
+    if metric not in ("net", "barrier"):
+        errs.append(f"metric {metric!r}")
+    hs = [int(h) for h in spec.get("horizons_s") or []]
+    ex = spec.get("exit") or None
+    ph = int(spec.get("primary_h") if spec.get("primary_h") is not None else -1)
+    if ph not in hs and not (ph == 0 and ex):
+        errs.append("birincil ufuk listede yok")
+    span = int(ex["timeout"]) if (ph == 0 and ex) else ph
+    if int(spec.get("cluster_s") or 0) < max(span, 1):
+        errs.append("küme genişliği birincil ufuktan kısa (örtüşen olaylar ayrı sayılırdı)")
+    if ex and not int(ex.get("timeout") or 0) > 0:
+        errs.append("çıkış kuralında zaman aşımı yok")
+    if ev in ("forward", "frozen_backtest"):
+        looks = [float(x) for x in spec.get("looks") or []]
+        if not looks or looks != sorted(looks) or looks[0] <= 0 or abs(looks[-1] - 1.0) > 1e-9:
+            errs.append("bakış oranları artan ve 1 ile bitmeli")
+        n_max, min_g = int(spec.get("n_max") or 0), int(spec.get("min_g") or 20)
+        if looks and -(-looks[0] * n_max // 1) < min_g:
+            errs.append(f"ilk bakış {min_g} kümeden önce düşüyor (n_max {n_max})")
+        if metric == "barrier" and not (ex and ex.get("tp") and ex.get("sl") and ph == 0):
+            errs.append("barrier metriği TP + SL + birincil ufuk 0 ister")
+        if ev == "frozen_backtest" and not 0 < float(spec.get("bt_alpha_share") or 0) < 1:
+            errs.append("bt_alpha_share (0, 1) dışında")
+    return errs
+
+
 def by_id() -> dict[str, dict]:
     return {r["id"]: r for r in RULES}

@@ -96,9 +96,13 @@ async def sync(cfg, ts: int | None = None, rules=None) -> dict:
             row = have.get((rid, ver))
             if row is None:
                 slot, alpha, status, note = None, 0.0, "kagit", "kayıt"
-                if spec["evidence"] == "frozen_backtest":
+                errs = specs.validate(spec)
+                if spec.get("evidence") == "frozen_backtest":
                     status = "aday"
-                if spec["evidence"] != "log":
+                if errs:
+                    status, note = "emekli", "tanım geçersiz: " + "; ".join(errs)
+                    log.error("lab kuralı %s/v%d geçersiz: %s", rid, ver, note)
+                elif spec["evidence"] != "log":
                     if used >= k_budget:
                         status, note = "emekli", f"K bütçesi ({k_budget}) dolu — yeni dönem gerekir"
                     else:

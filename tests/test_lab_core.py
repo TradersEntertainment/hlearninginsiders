@@ -359,6 +359,17 @@ def test_loop_step_and_disabled():
     print("✅ döngü) tur: kayıt → boşalt → çöz → dolum → durum kv; kapalıyken emit reddedilir, açınca sürer")
 
 
+def test_beta_grid_and_cost_class():
+    r, rb = resolver.hourly_returns({0: 100.0, 3600: 101.0, 10800: 102.0}, {0: 10.0, 3600: 10.0, 7200: 11.0, 10800: 11.0})
+    assert len(r) == len(rb) == 3 and r[1] == 0.0 and abs(rb[1] - 0.1) < 1e-12, "işlemsiz saat önceki kapanışla"
+    assert resolver.hourly_returns({}, {0: 1.0}) == ([], [])
+    assert resolver.cost_class("para:ANSEM", "kripto") == "hip3_kripto" and resolver.cost_class("BTC", "kripto") == "kripto"
+    from app.lab import costs
+    c = costs.cost(resolver.cost_class("para:ANSEM", "kripto"), False, 600, 1, [])
+    assert abs(c["fee"] - costs.COSTS["hisse"]["fee_rt"]) < 1e-15, "HIP-3 kripto ana dex ücretiyle değil"
+    print("✅ β ızgarası bitişik (işlemsiz saat 0 getiri); HIP-3 kripto HIP-3 yer tutucusuyla ücretlenir")
+
+
 def test_every_log_family_has_an_emit_site():
     """Her akış ailesinin kodda bir kayıt noktası var; kayıt noktaları senkron ve korunaklı (try)."""
     import glob

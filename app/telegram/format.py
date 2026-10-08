@@ -2561,6 +2561,71 @@ def _seans_karne(k: dict) -> list[str]:
     return out
 
 
+# ---------------- 🧪 strateji laboratuvarı ----------------
+
+STRAT_FOOT = ("<i>Betimleme — karar yalnız önceden yazılı bakış noktasında; geçmiş ölçüm, tahmin değil ·"
+              " mesaj yalnız sahibin onayladığı kuraldan, strateji asla aramaz</i>")
+
+
+def _lab_pct(x) -> str:
+    return "—" if x is None else f"{x * 100:+.2f}%"
+
+
+def _lab_line(s: dict, tag: str) -> str:
+    if not s or not s.get("n_ev"):
+        return f"{tag}: henüz sonuç yok"
+    lo, hi = s.get("lo"), s.get("hi")
+    ci = f" (GA %95 {_lab_pct(lo)} … {_lab_pct(hi)})" if lo is not None and hi is not None else ""
+    thin = f" · {s['n_c']} küme — en az 20 gerekir" if s.get("n_c", 0) < 20 else ""
+    return f"{tag}: {s['n_ev']} olay / {s['n_c']} küme · ortalama net <b>{_lab_pct(s.get('mean'))}</b>{ci}{thin}"
+
+
+def strat_card(v: dict, base_url: str = "") -> str:
+    """/strat: kurallar listesi — durum, olay sayısı, birincil ufukta kayıttan sonraki ölçüm.
+    Bağlantıda anahtar YOK (Telegram'a ?key= sızmaz)."""
+    rules = [r for r in v.get("rules") or [] if r.get("status") != "emekli"]
+    lines = [f"🧪 <b>Strateji laboratuvarı</b> · {len(rules)} kural etkin · canlı {v.get('n_live') or 0}"]
+    if not rules:
+        lines.append("Henüz kayıtlı kural yok — lab döngüsü ilk turda kaydeder.")
+    for r in rules[:20]:
+        c = r.get("counts") or {}
+        prim = next((h for h in r.get("horizons") or [] if h.get("primary")), None)
+        lines.append(f"\n<b>{esc(r['rule_id'])}</b> v{r['ver']} · {esc(r['title'])}\n"
+                     f"  {esc(r['status_tr'])} · {c.get('n', 0)} olay"
+                     + (f" ({c.get('unresolvable', 0)} ölçülemedi)" if c.get("unresolvable") else ""))
+        if prim:
+            lines.append("  " + _lab_line(prim.get("fwd") or {}, f"ileri, {prim['label']}"))
+    emekli = sum(1 for r in v.get("rules") or [] if r.get("status") == "emekli")
+    if emekli:
+        lines.append(f"\n<i>{emekli} emekli kural (tanımı değişen / koddan kalkan) — sayfada</i>")
+    lines.append("\n/strat KURAL — ayrıntı" + (f" · 🔗 {esc(base_url)}/lab" if base_url else " · sayfada 🧪 lab"))
+    lines.append(STRAT_FOOT)
+    return "\n".join(lines)[:4000]
+
+
+def strat_detail(r: dict | None, rid: str, base_url: str = "") -> str:
+    if not r:
+        return f"🧪 <b>{esc(rid)}</b> adlı kural yok. /strat — liste"
+    c = r.get("counts") or {}
+    lines = [f"🧪 <b>{esc(r['rule_id'])}</b> v{r['ver']} · {esc(r['title'])}",
+             f"{esc(r['status_tr'])} · {esc(r['evidence_tr'])}",
+             f"Olay {c.get('n', 0)} · ölçülen {c.get('done', 0)} · süren {c.get('open', 0)}"
+             f" · ölçülemeyen {c.get('unresolvable', 0)}"]
+    if r.get("slot"):
+        lines.append(f"Yuva {r['slot']} · α {r['alpha']:.5f} (kayıtta dondu)")
+    if r.get("status_note"):
+        lines.append(f"<i>{esc(r['status_note'])}</i>")
+    for h in r.get("horizons") or []:
+        lines.append(f"\n<b>{esc(h['label'])}</b>{' (birincil)' if h.get('primary') else ''}")
+        lines.append("  " + _lab_line(h.get("fwd") or {}, "kayıttan sonra"))
+        if (h.get("bt") or {}).get("n_ev"):
+            lines.append("  " + _lab_line(h["bt"], "geçmiş — seçim örneği"))
+    if base_url:
+        lines.append(f"\n🔗 {esc(base_url)}/lab?rule={esc(r['rule_id'])}")
+    lines.append(STRAT_FOOT)
+    return "\n".join(lines)[:4000]
+
+
 def seans_card(views: list[dict], base_url: str = "") -> str:
     """/seans: 🕰 ABD seans karnesi — bugünün durumu + karnenin özeti, sembol başına blok.
     Bağlantıda anahtar YOK (Telegram'a ?key= sızmaz); ayrıntı sayfada."""
@@ -2819,6 +2884,7 @@ def help_text() -> str:
         "/balina — 🔂 dilimli alım-satım: şu an ne yapıyor, kaç saattir alıyor/satıyor, ne kadar aldı\n"
         "/hesaplar — 👤 izlenen hesaplar (pozisyon, duvar, emirler) + 🔂 durum\n"
         "/seans — 🕰 ABD seans karnesi (XYZ100 + SP500): Asya → Londra → New York, bugün + geçmiş ölçüm · /seans NVDA tek hisse\n"
+        "/strat — 🧪 strateji laboratuvarı: kayıtlı kurallar, olay sayısı, kayıttan sonraki ölçüm (salt okunur) · /strat KURAL ayrıntı\n"
         "/alarm — 🚨 uyandırma: gece bir şey olursa seni Telegram'dan ARAR (/alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES) · /alarmlar · /alarm_test · /uyandim\n"
         "/acilis — 🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor (rapor 5 dk ve 30 dk'da hisse kanalına)\n"
         "/5dk · /15dk — ⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete · /5dk 15:30 haber saatine kur (3 dk geriye de gider) · ölçerken 📊 tuşu\n"

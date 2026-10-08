@@ -8,7 +8,9 @@
    boşlukta açılıştan, aynı mumda ikisi → stop, tam süre zaman aşımı).
 3) Getiri aritmetik: ret_raw = yön·(çıkış/giriş − 1); ret_adj = ret_raw − yön·β·kıyas getirisi
    (aynı [giriş, çıkış]); net = ret_adj − maliyet (donmuş tablo; funding = geçilen saat sınırlarının
-   metrics_hourly oranı, eksik saat → en kötü sınır). Yönsüz olay (0) long yönünde ölçülür.
+   metrics_hourly oranı, eksik saat → temkinli yer tutucu oran — gerçek tavan DEĞİL, HL %4/sa'e
+   kadar izin verir). Yönsüz olay (0) long yönünde ölçülür. HIP-3 kripto dex'i (para:…) ana dex
+   ücretiyle değil HIP-3 yer tutucusuyla ücretlenir.
 Bütçe yetmezse iş sonraki tura kalır; eksik veriyle sonuç uydurulmaz.
 """
 from __future__ import annotations
@@ -54,7 +56,7 @@ def hour_marks(t0: int, t1: int) -> list[int]:
 
 
 async def funding_list(coin: str, t0: int, t1: int) -> list[float | None]:
-    """Her saat sınırı için ÖNCEKİ saatin ortalama ctx oranı; yoksa None (maliyet en kötü sınırla)."""
+    """Her saat sınırı için ÖNCEKİ saatin ortalama ctx oranı; yoksa None (maliyet temkinli yer tutucu oranla)."""
     marks = hour_marks(t0, t1)
     if not marks:
         return []
@@ -65,24 +67,41 @@ async def funding_list(coin: str, t0: int, t1: int) -> list[float | None]:
     return [got.get(m - 3600) for m in marks]
 
 
+def hourly_returns(a: dict[int, float], b: dict[int, float]) -> tuple[list[float], list[float]]:
+    """Saf: iki seri (saat → kapanış) ortak saat ızgarasında, işlemsiz saat önceki kapanışla doldurulur
+    (getiri 0 — ince kitapta gecikmeli uyum Dimson'un gecikme terimine kalır). Izgara bitişik:
+    gecikme terimi gerçekten bir önceki saati eşler."""
+    if not a or not b:
+        return [], []
+    t0 = max(min(a), min(b))
+    t1 = min(max(a), max(b))
+    r, rb = [], []
+    pa = pb = None
+    for t in range(t0, t1 + 1, 3600):
+        ca, cb = a.get(t, pa), b.get(t, pb)
+        if pa and pb and ca and cb:
+            r.append(ca / pa - 1)
+            rb.append(cb / pb - 1)
+        pa, pb = ca, cb
+    return r, rb
+
+
 async def beta_for(coin: str, bench: str | None, t_dec: int) -> float:
     """Karardan önceki 30 günün 1h getirileri (önbellek) → Dimson β; veri azsa 1.0."""
     if not bench:
         return 0.0
-    try:
-        from .stats import beta_dimson
-    except Exception:                                # noqa: BLE001
-        return 1.0
+    from .stats import beta_dimson
     t0 = int(t_dec) - BETA_DAYS * 86400
     a = {c["t"]: c["c"] for c in await data.candles(coin, 3600, t0, int(t_dec) - 3600)}
     b = {c["t"]: c["c"] for c in await data.candles(bench, 3600, t0, int(t_dec) - 3600)}
-    ts = sorted(set(a) & set(b))
-    r, rb = [], []
-    for p, q in zip(ts, ts[1:]):
-        if q - p == 3600 and a[p] and b[p]:
-            r.append(a[q] / a[p] - 1)
-            rb.append(b[q] / b[p] - 1)
+    r, rb = hourly_returns(a, b)
     return float(beta_dimson(r, rb))
+
+
+def cost_class(coin: str, klass: str | None) -> str:
+    """Maliyet satırı: HIP-3 kripto dex'i (para:ANSEM) ana dex değil — HIP-3 yer tutucusu."""
+    k = klass or "hisse"
+    return "hip3_kripto" if (k == "kripto" and ":" in coin) else k
 
 
 class _Win:
@@ -231,7 +250,8 @@ async def _outcomes(win: _Win, now_ts: int, limit: int) -> dict:
             else:
                 adj = None                           # kıyas yok: net yazılmaz, sayılır
         fl = await funding_list(o["coin"], int(o["entry_ts"]), int(r["exit_ts"]))
-        c = costs.cost(o["klass"] or "hisse", off_hours(o["klass"] or "hisse", int(o["entry_ts"]), int(r["exit_ts"])),
+        c = costs.cost(cost_class(o["coin"], o["klass"]),
+                       off_hours(o["klass"] or "hisse", int(o["entry_ts"]), int(r["exit_ts"])),
                        int(r["exit_ts"]) - int(o["entry_ts"]), side, fl)
         net = costs.net(adj, c) if adj is not None else None
         writes.append(("done", r["exit_ts"], r["exit_px"], r["reason"], tf, r["ret"], rb, adj, c["total"], net,

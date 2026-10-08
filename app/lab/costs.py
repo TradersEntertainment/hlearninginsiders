@@ -5,7 +5,7 @@ Sınıf başına gidiş-dönüş (giriş + çıkış) kesirler:
   • hisse / endeks (HIP-3 xyz): taker %0.09 × 2 = 0.0018 — DOĞRULANMADI: sahip PROPR ücretini
     verene dek temkinli YER TUTUCU; kayma seans içi 5 bp/taraf 0.0010, seans dışı 15 bp/taraf 0.0030
   • emtia / doviz = hisse ile aynı (aynı dex, aynı yer tutucu)
-  • funding_bound_h = 0.00002 (%0.002/sa) hepsinde: funding bilinmezse saatlik en kötü sınır —
+  • funding_bound_h = 0.00002 (%0.002/sa) hepsinde: funding bilinmezse saatlik temkinli oran (tavan değil) —
     YER TUTUCU, doğrulanmadı.
 
 Tablo donmuştur: kanonik JSON'unun sha256'sı (COSTS_SHA) kuralın spec hash'ine girer; tablo

@@ -64,6 +64,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/acilis` | 🔔 Açılışın en hareketlileri: açılış penceresindeyse anlık sıralama, değilse son rapor (raporlar ABD açılışından 5 ve 30 dk sonra hisse kanalına) |
 | `/5dk` · `/15dk` · `/5dk 15:30` | ⏱ Şimdiden (ya da verilen TSİ saatten) N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu ara durumu gösterir (haber saatleri için) |
 | `/seans` · `/seans NVDA` | 🕰 ABD seans karnesi (XYZ100 + SP500 tek mesaj; ya da tek ABD hissesi): bugün Asya / Londra / New York ne yaptı, Londra Asya tepesini/dibini süpürdü mü, geçmişte bu şekilde NY ne yaptı (taban oran ve z ile), getiri hangi seansta birikti, oynaklık ilişkisi — sayfa `/seans` |
+| `/strat` · `/strat KURAL` | 🧪 Strateji laboratuvarı (salt okunur): kayıtlı kurallar, durum, olay sayısı, kayıttan SONRAKİ kâğıt üstü ölçüm (net, %95 GA, küme sayısı) — betimleme, karar yalnız planlı bakışta · sayfa `/lab` |
 | `/sim` | Liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar — sayfa `/sim` |
 | `/watchlist` | Sicilli adresler |
 | `/devler` | Hyperliquid'in en büyük açık pozisyonları |
@@ -1883,11 +1884,17 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
   seviyenin **içinden geçmeli**, stop boşlukta açılıştan dolar, aynı mumda ikisi → stop. Getiri
   aritmetik, **piyasa düzeltmeli** (hisse → XYZ100, kripto → BTC; β karar ÖNCESİ 30 günden) ve
   **maliyet sonrası**: donmuş, temkinli tablo — HIP-3/PROPR ücreti **doğrulanmadı**, yer tutucu
-  (taker %0.09×2, seans dışı kayma 15 bp/taraf); funding = geçilen saat sınırlarının saatlik oranı,
-  yoksa en kötü sınır. İşlem yoksa sonuç **"ölçülemedi"** — asla "tutmadı" sayılmaz.
-- **Kapı (sonraki adım):** Aşama A donmuş geçmişte BİR kez; Aşama B kayıttan SONRAKİ veride önceden
-  yazılı bakış noktalarında grup-ardışık test (O'Brien-Fleming), 20 kümeden önce bakış yok; günlük
-  görünüm yalnız betimleme, durum değiştiremez.
+  (taker %0.09×2, seans dışı kayma 15 bp/taraf; HIP-3 kripto dex'i de bu satırdan); funding =
+  geçilen saat sınırlarının saatlik oranı, yoksa temkinli yer tutucu oran (gerçek tavan değil). İşlem yoksa sonuç **"ölçülemedi"** — asla "tutmadı" sayılmaz.
+- **Kapı:** Aşama A donmuş geçmişte BİR kez; Aşama B kayıttan SONRAKİ veride önceden yazılı bakış
+  noktalarında grup-ardışık test (O'Brien-Fleming), 20 kümeden önce bakış yok; günlük görünüm yalnız
+  betimleme, durum değiştiremez. Net getiri testi üç testin ÜÇÜNÜ de ister (t, işaret çevirme,
+  bootstrap-t); sola çarpık küçük örnek (seyrek büyük kayıp, g1 < −1) 60 kümeden önce geçemez —
+  08.10 benzetimi: TP 1 / SL 3 şeklinde boş veride t + işaret çevirme α=0.005'te %2.2 geçiriyordu,
+  üçü birlikte ≈0. TP/SL kuralları tam binom testiyle (TP < SL ise zaman aşımı başarısız sayılır).
+  Tanımı hatalı kural (küme < ufuk, bakış 20 kümeden önce…) yuva harcamadan emekli kaydolur.
+- **Görünür:** `/lab` sayfası ve `/strat` komutu — kural, durum, olay sayısı, kayıttan SONRAKİ
+  sonuç önce, geçmiş veri "seçim örneği" etiketiyle; kayıt / onay / emeklilik izi. Salt okunur.
 
 **Veri kaybı durdu:** `metrics_hourly` (saatlik mark, **oraclePx, premium**, funding ortalaması, OI$ —
 ham `asset_metrics` 45 günde budanıyordu, oracle/premium hiç saklanmıyordu), `lab_candles` (1h ~208 gün

@@ -1639,6 +1639,32 @@ async def seans_page(request: Request):
     })
 
 
+@router.get("/lab")
+async def lab_page(request: Request):
+    """🧪 Strateji laboratuvarı — önceden kayıtlı kurallar, kayıt sayıları, kâğıt üstü sonuçlar.
+
+    YALNIZ BETİMLEME: sayfadaki hiçbir sayı kuralın durumunu değiştirmez (durum yalnız planlı
+    bakışta ve sahibin onayıyla). Kayıttan sonraki veri önce; geçmiş veri "seçim örneği" etiketiyle.
+    `?rule=ID` son olayları açar. Hata olursa sayfa açılır, sebebi yazar."""
+    _guard(request)
+    from ..lab import ui as lab_ui
+    rid = (request.query_params.get("rule") or "").strip()[:40]
+    err = ""
+    try:
+        v = await lab_ui.overview()
+    except Exception as e:                     # noqa: BLE001 — sayfa açılsın, sebebi yazsın
+        log.exception("lab sayfası kurulamadı")
+        v, err = {"rules": [], "trail": [], "stats": {}, "note": lab_ui.NOTE}, f"{type(e).__name__}: {e}"[:200]
+    evs = []
+    if rid:
+        try:
+            evs = await lab_ui.recent_events(rid)
+        except Exception as e:                 # noqa: BLE001
+            err = err or f"{type(e).__name__}: {e}"[:200]
+    return _render(request, "lab.html", {"v": v, "rid": rid, "evs": evs, "err": err,
+                                         "cfg_lab": bool(getattr(request.app.state.cfg, "lab_enabled", True))})
+
+
 @router.get("/ai")
 async def ai_page(request: Request):
     """AI analist: ürettiği hipotezler ve KENDİ sicili.

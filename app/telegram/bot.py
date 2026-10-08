@@ -511,6 +511,8 @@ class TelegramBot:
             await self._cmd_slices(chat_id)
         elif cmd in ("seans", "seanslar"):
             await self._cmd_seans(args, chat_id)
+        elif cmd in ("strat", "strateji", "stratejiler"):
+            await self._cmd_strat(args, chat_id)          # 🧪 salt okunur: kurallar + kâğıt üstü ölçüm
         elif cmd in ("acilis", "açılış", "acılıs"):
             await self._cmd_open_movers(chat_id)
         elif cmd in ("alarm", "alarmlar", "alarm_test", "alarmtest", "uyandim", "uyandım"):
@@ -819,6 +821,8 @@ class TelegramBot:
             await self._cmd_slices(chat_id)
         elif cmd in ("seans", "seanslar"):
             await self._cmd_seans(args, chat_id)
+        elif cmd in ("strat", "strateji", "stratejiler"):
+            await self._cmd_strat(args, chat_id)          # 🧪 salt okunur: kurallar + kâğıt üstü ölçüm
         elif cmd in ("acilis", "açılış", "acılıs"):
             await self._cmd_open_movers(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
@@ -1395,6 +1399,24 @@ class TelegramBot:
             await self.answer_callback(cq.get("id"), text, alert=True)
         except Exception:
             log.debug("answerCallbackQuery", exc_info=True)
+
+    async def _cmd_strat(self, args: list[str], chat_id: str) -> None:
+        """/strat — 🧪 strateji laboratuvarı: kayıtlı kurallar, durum, olay sayısı, kayıttan sonraki
+        ölçüm (betimleme). /strat KURAL ayrıntı. Salt okunur: hiçbir şeyi değiştirmez."""
+        from ..lab import ui as lab_ui
+        try:
+            v = await lab_ui.overview()
+        except Exception as e:                       # noqa: BLE001
+            log.exception("/strat")
+            await self.send(f"🧪 Laboratuvar okunamadı: {fmt.esc(type(e).__name__)}", chat_id)
+            return
+        base = getattr(self.cfg, "public_base_url", "") or ""
+        rid = (args[0] if args else "").strip().upper()
+        if rid:
+            r = next((x for x in v["rules"] if x["rule_id"].upper() == rid), None)
+            await self.send(fmt.strat_detail(r, rid, base_url=base), chat_id)
+        else:
+            await self.send(fmt.strat_card(v, base_url=base), chat_id)
 
     async def _cmd_seans(self, args: list[str], chat_id: str) -> None:
         """/seans — 🕰 ABD seans karnesi: ayardaki semboller (XYZ100 + SP500) TEK mesajda;

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}🧪 Lab · HL Radar{% endblock %}
+{% block bodyattrs %} data-refresh="300"{% endblock %}
+{% block content %}
+{% set qk = ('&key=' + k[5:]) if k else '' %}
+{% macro pct(x, d=2) -%}
+{% if x is none %}—{% else %}{{ ('%+.' ~ d ~ 'f')|format(x * 100) }}%{% endif %}
+{%- endmacro %}
+{% macro ci(s) -%}
+{% if s.lo is none or s.hi is none %}—{% else %}{{ pct(s.lo) }} … {{ pct(s.hi) }}{% endif %}
+{%- endmacro %}
+{% macro row(s, tag) -%}
+{% if not s or not s.n_ev %}<span class="dim">{{ tag }}: henüz sonuç yok</span>
+{%- else %}<b>{{ tag }}</b>: {{ s.n_ev }} olay / {{ s.n_c }} küme · ortalama net <b>{{ pct(s.mean) }}</b>
+  <span class="dim">(GA %95 {{ ci(s) }}) · maliyet öncesi {{ pct(s.raw) }} · en kötü olay {{ pct(s.worst) }}</span>
+  {%- if s.n_c < 20 %} <span class="pill warn">{{ s.n_c }} küme — en az 20 gerekir</span>{% endif %}
+{%- endif %}
+{%- endmacro %}
+
+<div class="panel">
+  <h2>🧪 Strateji laboratuvarı <span class="st">· {{ v.n_active or 0 }} kural etkin · canlı {{ v.n_live or 0 }}
+    {% if not cfg_lab %}· <span class="pill bad">kapalı</span>{% endif %}</span></h2>
+  <p class="sub">Kurallar <b>önceden kaydedilir</b> (kod commit'i = kayıt belgesi); olaylar radarların
+  kapılarından <b>önce</b> karar anında yazılır; sonuç giriş = karar + tepki süresi sonrası
+  <b>ilk işlemin fiyatıyla</b>, piyasa düzeltmeli ve <b>maliyet sonrası</b> ölçülür. Mesaj yalnız
+  dürüst kapıyı geçen ve <b>sahibin onayladığı</b> kuraldan gelir — <b>strateji asla aramaz</b>.
+  <span class="warn">{{ v.note }} · geçmiş ölçüm, tahmin değil · yatırım tavsiyesi değildir.</span></p>
+  {% if err %}<p class="warn">⚠️ Sayfanın bir kısmı kurulamadı: {{ err }}</p>{% endif %}
+  {% set st = v.stats or {} %}{% set reg = st.reg or {} %}
+  <p class="hint">Döngü: {% if st.ts %}son tur {{ st.ts|dt }} · kuyruk {{ reg.pending or 0 }} · yazılan {{ reg.flushed or 0 }}
+    · gün tavanından düşen {{ reg.cap_drop or 0 }} · taşma {{ reg.overflow or 0 }}
+    · derin dolum {{ (st.deep or {}).done or 0 }} bitti / {{ (st.deep or {}).left or 0 }} kaldı
+    {% if st.err %}· <span class="warn">⚠️ {{ st.err }}</span>{% endif %}{% else %}henüz tur yok{% endif %}</p>
+</div>
+
+{% for r in v.rules %}
+<div class="panel">
+  <h3>{{ r.rule_id }} <span class="dim">v{{ r.ver }}</span> · {{ r.title }}
+    <span class="pill {{ 'ok' if r.status == 'canli' else ('bad' if r.status in ('emekli', 'durdu') else 'acc') }}">{{ r.status_tr }}</span></h3>
+  <p class="hint">{{ r.evidence_tr }} · kayıt {{ r.registered_ts|dt }}
+    {% if r.slot %}· yuva {{ r.slot }} · α {{ '%.5f'|format(r.alpha) }} (kayıtta dondu){% endif %}
+    {% if r.status_note %}· {{ r.status_note }}{% endif %}
+    {% if not r.in_code and r.status != 'emekli' %}· <span class="warn">kod listesinde yok</span>{% endif %}</p>
+  {% set c = r.counts %}
+  <p>Olay: <b>{{ c.n or 0 }}</b>
+    {% if c.n %}<span class="dim">(ölçülen {{ c.done or 0 }} · süren {{ c.open or 0 }} · giriş bekleyen {{ c.pending or 0 }}
+    · ölçülemeyen {{ c.unresolvable or 0 }}) · {{ c.first|dt }} → {{ c.last|dt }}</span>{% endif %}
+    · <a href="/lab?rule={{ r.rule_id }}{{ qk }}">son olaylar</a></p>
+  {% if r.horizons %}
+  <table class="compact">
+    <tr><th class="l">Ufuk</th><th class="l">Kayıttan sonra (ileri veri)</th><th class="l">Geçmiş veri — seçim örneği</th></tr>
+    {% for h in r.horizons %}
+    <tr{% if h.primary %} class="ihit"{% endif %}><td class="l">{{ h.label }}{% if h.primary %} <span class="dim">(birincil)</span>{% endif %}</td>
+      <td class="l">{{ row(h.fwd, 'ileri') }}</td><td class="l">{{ row(h.bt, 'geçmiş') }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% else %}
+<div class="panel"><p class="dim">Henüz kayıtlı kural yok — lab döngüsü ilk turda kuralları kaydeder.</p></div>
+{% endfor %}
+
+{% if rid %}
+<div class="panel">
+  <h3>{{ rid }} · son olaylar</h3>
+  {% if evs %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table class="compact">
+    <tr><th class="l">Karar</th><th class="l">Coin</th><th>Yön</th><th>Giriş</th><th class="l">Sonuçlar (net)</th><th class="l">Özellik</th><th class="l">Durum</th></tr>
+    {% for e in evs %}
+    <tr><td class="l">{{ e.ts_decision|dt }}</td><td class="l">{{ e.coin.split(':')[-1] }}</td>
+      <td>{{ '▲' if e.side == 1 else ('▼' if e.side == -1 else '·') }}</td>
+      <td>{% if e.entry_px %}{{ e.entry_px|px5 }} <span class="dim">{{ e.entry_src }}</span>{% else %}—{% endif %}</td>
+      <td class="l">{% for o in e.outs %}{% if o.status == 'done' and o.net is not none %}{{ (o.h // 60) if o.h else 'çıkış' }}{{ 'dk' if o.h else '' }} {{ pct(o.net) }}{% elif o.status == 'unresolvable' %}<span class="dim">{{ (o.h // 60) if o.h else 'çıkış' }} ölçülemedi</span>{% else %}<span class="dim">{{ (o.h // 60) if o.h else 'çıkış' }} …</span>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+      <td class="l dim">{% for kk, vv in e.feat.items() %}{{ kk }}={{ vv }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td class="l dim">{{ e.status }}{% if e.status_note %} — {{ e.status_note }}{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}<p class="dim">Bu kural için henüz olay yok.</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="panel">
+  <h3>Kayıt izi <span class="st">· kayıt, onay, emeklilik, planlı bakışlar — hiç budanmaz</span></h3>
+  {% if v.trail %}
+  <table class="compact">
+    <tr><th class="l">Zaman</th><th class="l">Kural</th><th class="l">Tür</th><th class="l">Karar</th><th class="l">Not</th></tr>
+    {% for t in v.trail %}
+    <tr><td class="l">{{ t.ts|dt }}</td><td class="l">{{ t.rule_id }} v{{ t.ver }}</td><td class="l">{{ t.kind }}</td>
+      <td class="l">{{ t.decision or '' }}</td><td class="l dim">{{ (t.payload or '')[:160] }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="dim">Henüz kayıt yok.</p>{% endif %}
+  <p class="hint">Nasıl okunur: "ileri" sütunu kural kaydedildikten SONRAKİ olaylardır — kapı yalnız buna
+  önceden yazılı bakış noktalarında bakar (20 kümeden önce bakış yok). "Geçmiş — seçim örneği" kuralı
+  seçerken görülmüş olabilecek veridir; tek başına kanıt sayılmaz. Maliyet tablosu temkinli yer tutucu
+  (HIP-3/PROPR ücreti doğrulanmadı). Küme = takvim bloğu (örtüşen olaylar tek sayılır).</p>
+</div>
+{% endblock %}
