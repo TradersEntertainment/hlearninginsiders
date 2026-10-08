@@ -751,7 +751,35 @@ async def archive_set(cfg) -> list[str]:
     ex = (await kv_get(EXTRA_KV)) or {}
     extra = [s for s, t in sorted(ex.items(), key=lambda kv: -int(kv[1])) if ts - int(t) < EXTRA_DAYS * 86400]
     out = default_symbols(cfg)
-    return out + [s for s in extra if s not in out][:EXTRA_MAX]
+    out = out + [s for s in extra if s not in out][:EXTRA_MAX]
+    if getattr(cfg, "seans_archive_all", False):
+        # 🧪 Sekmelerden AYRI arşiv listesi: PROPR'daki ABD hisseleri (açılış evreni). Uygunsuzları
+        # (Asya borsası, pre-IPO dışı) refresh_all'daki resolve eler. Sekmeler değişmez.
+        try:
+            from . import openmove
+            syms = sorted(c.split(":")[-1].upper() for c in await openmove.universe(cfg))
+            out = out + [s for s in syms if s not in out]
+        except Exception:                            # noqa: BLE001 — arşiv listesi sekmelerle sürer
+            log.warning("seans arşiv evreni okunamadı", exc_info=True)
+    return out
+
+
+FULL_GAP = 20                     # tam dolumlar (~104 ağırlık) arası en az sn → dakikada ≤ 3
+SHARED_MAX = 0.5                  # paylaşılan HL ağırlık penceresinin bu payı doluysa tam dolum bekler
+
+
+async def _pace_full(client) -> None:
+    """Tam dolumdan ÖNCE: düşük şerit 429 sonrası susuyorsa ya da pencere yarıdan doluysa bekle
+    (en çok 2 dk). İstemci istek sayar, ağırlığı saymaz — 60 tam dolum art arda 429 doğururdu."""
+    for _ in range(24):
+        try:
+            u = client.usage()
+            busy = client.low_paused() > 0 or u["weight"] > SHARED_MAX * u["weight_max"]
+        except Exception:                            # noqa: BLE001 — sahte istemci
+            return
+        if not busy:
+            return
+        await asyncio.sleep(5)
 
 
 def calendar_info(now_ts: int) -> dict:
@@ -817,10 +845,12 @@ async def refresh_all(cfg, client) -> dict:
                 out["skipped"].append(sym)
                 continue
             full = await last_ts(r["coin"]) is None
+            if full:
+                await _pace_full(client)
             out["rows"] += await refresh_coin(client, r["coin"])
             out["coins"].append(sym)
             if full:
-                await asyncio.sleep(2)               # tam dolumlar (~104 ağırlık) arası nefes
+                await asyncio.sleep(FULL_GAP)        # tam dolumlar (~104 ağırlık) arası nefes
         except asyncio.CancelledError:
             raise
         except Exception as e:                       # noqa: BLE001 — sembol başına

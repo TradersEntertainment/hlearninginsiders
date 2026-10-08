@@ -94,7 +94,9 @@ async def _fresh():
     await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"BTC": {"m": 60000.0, "oi": 1, "v": 1.0}}, "ts": dbm.now()})
     for cache in (seans._live, seans._karne_cache, seans._locks):
         cache.clear()
-    return Config()
+    cfg = Config()
+    cfg.seans_archive_all = False          # lab arşiv listesi ayrı testte
+    return cfg
 
 
 def days_for(now_ts, start=None, seed=7, step=None, drop=()):
@@ -455,6 +457,42 @@ def test_archive_sync_ttl_and_extras():
     asyncio.run(run())
 
 
+def test_archive_all_separate_from_tabs():
+    """🧪 Lab arşivi: PROPR ABD hisseleri sekmelerden AYRI arşivlenir; sekmeler değişmez; uygunsuz
+    olanı resolve eler; tam dolum öncesi paylaşılan ağırlık penceresi yarıdan doluysa beklenir."""
+    async def run():
+        cfg = await _fresh()
+        cfg.seans_archive_all = True
+        got = await seans.archive_set(cfg)
+        assert got[:2] == ["XYZ100", "SP500"] and seans.default_symbols(cfg) == ["XYZ100", "SP500"]
+        assert {"NVDA", "KIOXIA", "SPCX"} <= set(got) and "GOLD" not in got and "THIN" not in got, got
+        assert len(got) == len(set(got))
+
+        class Busy:
+            n = 0
+
+            def low_paused(self):
+                return 0
+
+            def usage(self):
+                Busy.n += 1
+                return {"weight": 900 if Busy.n < 3 else 100, "weight_max": 1200}
+        real_sleep, waits = asyncio.sleep, []
+
+        async def fake_sleep(sec, *a, **k):
+            waits.append(sec)
+            await real_sleep(0)
+        seans.asyncio.sleep = fake_sleep
+        try:
+            await seans._pace_full(Busy())
+        finally:
+            seans.asyncio.sleep = real_sleep
+        assert waits == [5, 5], waits
+        print("✅ lab arşivi) PROPR ABD hisseleri sekmelerden ayrı; emtia/PROPR dışı yok; tam dolum"
+              " paylaşılan pencere yarıdan doluyken bekler")
+    asyncio.run(run())
+
+
 def test_loop_one_turn():
     """Arka plan turu: ısınma beklemesi → arşiv → kv seans_stats + nabız; kapalıyken yalnız nabız."""
     async def run():
@@ -479,13 +517,13 @@ def test_loop_one_turn():
             finally:
                 seans.asyncio.sleep = real_sleep
             st = await dbm.kv_get(seans.STATS_KV)
-            assert waits == ([120, 2, 2, 3600] if enabled else [120, 3600]), waits   # tam dolumlar arası 2 sn
+            assert waits == ([120, seans.FULL_GAP, seans.FULL_GAP, 3600] if enabled else [120, 3600]), waits
             if enabled:
                 assert st["coins"] == ["XYZ100", "SP500"] and st["rows"] > 1500 and st["err"] == 0, st
             else:
                 assert st.get("disabled") is True, st
         assert await dbm.kv_get("hb:seans"), "nabız"
-        print("✅ döngü) 120 sn ısınma → iki sembol tam dolum (arada 2 sn), seans_stats + nabız → 3600 sn;"
+        print("✅ döngü) 120 sn ısınma → iki sembol tam dolum (arada 20 sn), seans_stats + nabız → 3600 sn;"
               " kapalıyken yalnız durum")
     asyncio.run(run())
 

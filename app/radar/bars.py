@@ -72,6 +72,11 @@ async def refresh(cfg, client, coin: str, tf: str) -> int:
     if have and start >= ts:
         return 0
     raw = await client.candles(coin, tf, start * 1000, ts * 1000)
+    try:                                           # 🧪 lab: aynı yanıttan ham OHLCV (ek istek yok)
+        from ..lab.data import tee_from_bars
+        await tee_from_bars(coin, tf, raw, ts)
+    except Exception:                              # noqa: BLE001 — arşiv asla lab yüzünden düşmez
+        log.debug("lab mum kopyası yazılamadı %s/%s", coin, tf, exc_info=True)
     rows = [(coin, tf, c["t"], c["c"], float(c.get("v") or 0))
             for c in parse_candles(raw)]
     if not rows:

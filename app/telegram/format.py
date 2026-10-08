@@ -397,6 +397,7 @@ TASK_TR = {
     "sim": "liq simülasyonu", "slicewatch": "dilimli alım-satım izleyici",
     "seans": "ABD seans karnesi (mum arşivi)", "wake": "uyandırma alarmı",
     "openmove": "açılışın en hareketlileri",
+    "lab": "strateji laboratuvarı",
 }
 
 

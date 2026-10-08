@@ -1165,6 +1165,9 @@ async def maintenance(cfg: Config) -> None:
     # modelin karnesi kendiliğinden temizlenmiş olurdu.
     n_ai = await _chunked_delete("ai_runs", ts_now - AI_RETENTION_D * 86400)
     n_ai += await _chunked_delete("ai_observations", ts_now - AI_RETENTION_D * 86400)
+    # 🧪 Laboratuvar tabloları BUDANMAZ (lab_rules, strat_events, strat_outcomes, lab_tests,
+    # metrics_hourly, lab_candles 15m+): ön kayıt, onay izi ve sicil — silinirse kapı geriye dönük
+    # temizlenmiş olurdu. Kısa dilim mumlarını (1m/5m) lab döngüsü kendisi budar.
     n_left = await refresh_fills_count()
     try:
         # ayrı try: kv budaması patlarsa satır emekliliği yine de yapılmış olsun

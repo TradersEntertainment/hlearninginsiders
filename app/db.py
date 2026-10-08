@@ -464,6 +464,62 @@ CREATE TABLE IF NOT EXISTS wake_events(       -- tetiklenen uyandırma: mesaj + 
   chat_id TEXT                           -- mesaj nereye: alarmın kurulduğu sohbet (boş = ana sohbet)
 );
 CREATE INDEX IF NOT EXISTS idx_wake_events_open ON wake_events(done_ts);
+-- 🧪 Strateji laboratuvarı (app/lab/, 08.10). Kurallar önceden kaydedilir (spec hash'i), olaylar
+-- KARAR ANINDA yazılır (radarın kapısından önce), sonuçlar ileriye bakışsız ölçülür. Bu tablolar
+-- BUDANMAZ (kanıt defteri) — yalnız lab_candles ince dilim önbelleği budanır.
+CREATE TABLE IF NOT EXISTS lab_rules(
+  rule_id TEXT, ver INTEGER, family TEXT, title TEXT,
+  spec TEXT, spec_sha TEXT,
+  registered_ts INTEGER,                 -- ileri (OOS) saat buradan başlar
+  epoch INTEGER, slot INTEGER, alpha REAL,   -- kayıtta dondurulan tek yönlü α payı (log kuralında 0)
+  evidence TEXT,                         -- forward | frozen_backtest | log
+  status TEXT DEFAULT 'aday',            -- aday|kagit|gecti|canli|durdu|emekli
+  status_ts INTEGER, status_note TEXT, approved_ts INTEGER,
+  PRIMARY KEY(rule_id, ver));
+CREATE TABLE IF NOT EXISTS strat_events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rule_id TEXT NOT NULL, rule_ver INTEGER NOT NULL, family TEXT,
+  origin TEXT,                           -- live | backfill
+  coin TEXT NOT NULL, klass TEXT,
+  ts_decision INTEGER NOT NULL, ts_logged INTEGER, trig_key TEXT,
+  side INTEGER,                          -- +1 / -1 / 0 (yönsüz)
+  px_ref REAL,                           -- karar anında bilinen fiyat; ASLA giriş değil
+  latency_s INTEGER,
+  entry_ts INTEGER, entry_px REAL, entry_src TEXT,
+  bench TEXT, beta REAL, cluster INTEGER,
+  gated INTEGER,                         -- radar mesaj attı mı (yalnız bilgi; analiz kullanmaz)
+  features TEXT,                         -- JSON, ≤ 512 bayt
+  status TEXT DEFAULT 'pending',         -- pending|open|done|unresolvable
+  status_note TEXT, resolved_ts INTEGER,
+  UNIQUE(rule_id, rule_ver, coin, trig_key));
+CREATE INDEX IF NOT EXISTS idx_sev_rule ON strat_events(rule_id, rule_ver, ts_decision);
+CREATE INDEX IF NOT EXISTS idx_sev_due ON strat_events(status, ts_decision);
+CREATE TABLE IF NOT EXISTS strat_outcomes(
+  event_id INTEGER, h INTEGER,           -- ufuk sn; 0 = kuralın çıkış tanımı (TP/SL/zaman aşımı)
+  due_ts INTEGER, status TEXT DEFAULT 'open',   -- open|done|unresolvable
+  exit_ts INTEGER, exit_px REAL, exit_reason TEXT, tf_used INTEGER,
+  ret_raw REAL, ret_bench REAL, ret_adj REAL,    -- yön × aritmetik getiri; adj = raw − β·bench
+  cost REAL, net REAL,                   -- net = ret_adj − cost (kapının ölçtüğü)
+  mfe REAL, mae REAL, resolved_ts INTEGER,
+  PRIMARY KEY(event_id, h)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_sout_due ON strat_outcomes(status, due_ts);
+CREATE TABLE IF NOT EXISTS lab_tests(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, rule_id TEXT, ver INTEGER,
+  kind TEXT,                             -- backtest|look|status|descriptive
+  look_no INTEGER, n_events INTEGER, n_clusters INTEGER,
+  est REAL, p REAL, alpha_k REAL, decision TEXT, payload TEXT);
+CREATE INDEX IF NOT EXISTS idx_labtests_rule ON lab_tests(rule_id, ver, ts);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_labtests_look ON lab_tests(rule_id, ver, look_no)
+  WHERE kind IN ('backtest', 'look');
+CREATE TABLE IF NOT EXISTS lab_candles(
+  coin TEXT, tf INTEGER, ts INTEGER,     -- tf sn; ts = mum AÇILIŞI
+  o REAL, h REAL, l REAL, c REAL, v REAL, n INTEGER, closed INTEGER,
+  PRIMARY KEY(coin, tf, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS metrics_hourly(
+  coin TEXT, ts INTEGER,                 -- saat başı
+  mark_c REAL, oracle_c REAL, premium_avg REAL, funding_avg REAL,   -- funding: ctx anlık oran ortalaması
+  oi_usd_c REAL, day_volume_c REAL, n INTEGER,
+  PRIMARY KEY(coin, ts)) WITHOUT ROWID;
 """
 
 

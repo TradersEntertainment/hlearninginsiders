@@ -297,6 +297,9 @@ LAB_COUNTS = [
     ("değerlendirilen bilanço", "SELECT COUNT(*), MIN(created_ts) FROM earnings_events WHERE evaluated=1"),
     ("geçmiş bilanço (Yahoo)", "SELECT COUNT(*), MIN(date_et) FROM earnings_history"),
     ("pozisyon anlık görüntüsü", "SELECT COUNT(*), MIN(ts) FROM position_snapshots"),
+    ("lab olayı", "SELECT COUNT(*), MIN(ts_decision) FROM strat_events"),
+    ("lab mumu (1h)", "SELECT COUNT(*), MIN(ts) FROM lab_candles WHERE tf=3600"),
+    ("saatlik metrik", "SELECT COUNT(*), MIN(ts) FROM metrics_hourly"),
 ]
 
 
@@ -315,6 +318,25 @@ async def _lab_counts() -> list[str]:
             except Exception as e:                 # noqa: BLE001 — tablo/kolon yoksa satır düşmesin
                 parts.append(f"{label} ? ({type(e).__name__})")
     return ["  🧪 lab sayımı (yalnız sayı, sonuç yok): " + " · ".join(parts)]
+
+
+async def _lab_status() -> list[str]:
+    """🧪 Laboratuvar döngüsünün işletme durumu (sayılar; kural SONUCU yok — o /lab'da)."""
+    st = await kv_get("lab_stats") or {}
+    if not st:
+        return ["  🧪 lab döngüsü: henüz tur yok"]
+    reg, rs, dp, bd = st.get("reg") or {}, st.get("resolve") or {}, st.get("deep") or {}, st.get("budget") or {}
+    en, oc = rs.get("entries") or {}, rs.get("outcomes") or {}
+    age = max(0, int(now()) - int(st.get("ts") or 0))
+    line = (f"  🧪 lab döngüsü ({age} sn önce): {reg.get('active', 0)} kural etkin · kuyruk {reg.get('pending', 0)}"
+            f" · yazılan {reg.get('flushed', 0)} (tekrar {reg.get('dup', 0)}) · taşma {reg.get('overflow', 0)}"
+            f" · gün tavanı {reg.get('cap_drop', 0)} · reddedilen {reg.get('rejected', 0)}"
+            f" · çözücü giriş {en.get('opened', 0)}/ölçülemeyen {en.get('unres', 0)}/bekleyen {en.get('wait', 0)},"
+            f" ufuk {oc.get('done', 0)}/{oc.get('unres', 0)}/{oc.get('wait', 0)}"
+            f" · derin dolum {dp.get('done', 0)} bitti, {dp.get('left', 0)} kaldı"
+            f" · HL ağırlığı {bd.get('spent', 0)} (bütçe {bd.get('per_min', '?')}/dk, {bd.get('denied', 0)} kez bekledi)")
+    err = st.get("err") or dp.get("err")
+    return [line + (f" · ⚠️ {err}" if err else "")]
 
 
 async def _subsystems(cfg, state=None) -> list[str]:
@@ -513,6 +535,7 @@ async def _subsystems(cfg, state=None) -> list[str]:
     except Exception as e:                         # noqa: BLE001
         out.append(f"  ⏱ pencere ölçümü: okunamadı ({type(e).__name__})")
     out += await _lab_counts()
+    out += await _lab_status()
     ps = await kv_get("patterns_stats") or {}
     if ps:
         best = ps.get("best") or {}

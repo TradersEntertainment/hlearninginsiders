@@ -10,6 +10,47 @@ from ..propr import is_listed as propr_listed
 
 log = logging.getLogger("radar.metrics")
 
+# 🧪 Saatlik özet (strateji laboratuvarı): asset_metrics 45 günde budanıyor ve oraclePx / premium
+# hiç saklanmıyordu. Ham tablo BÜYÜMEZ; her coin için o saatin örnekleri bellekte toplanır, saat
+# dolunca metrics_hourly'ye TEK satır yazılır (süresiz). Açılışta yarım kalan saat kaybolur — `n`
+# kaç örnekten kurulduğunu söyler. funding_avg = ctx'teki ANLIK oranın ortalaması (ödenen değil).
+_HOURLY: dict[str, dict] = {}
+
+
+def hour_acc(acc: dict | None, ts: int, mark: float, oracle: float | None, premium: float | None,
+             funding: float, oi_usd: float, day_vol: float) -> tuple[dict, tuple | None]:
+    """Saf toplayıcı: (yeni durum, biten saatin satırı ya da None). Satır = (ts, mark_c, oracle_c,
+    premium_avg, funding_avg, oi_usd_c, day_volume_c, n); `_c` = saatin son örneği."""
+    h = int(ts) // 3600 * 3600
+    done = None
+    if acc is not None and acc["h"] != h:
+        if acc["h"] < h:
+            n = acc["n"]
+            done = (acc["h"], acc["mark"], acc["oracle"],
+                    (acc["prem"] / acc["n_prem"]) if acc["n_prem"] else None,
+                    acc["fund"] / n if n else None, acc["oi"], acc["vol"], n)
+        acc = None
+    if acc is None:
+        acc = {"h": h, "n": 0, "fund": 0.0, "prem": 0.0, "n_prem": 0,
+               "mark": None, "oracle": None, "oi": None, "vol": None}
+    acc["n"] += 1
+    acc["fund"] += funding
+    if premium is not None:
+        acc["prem"] += premium
+        acc["n_prem"] += 1
+    acc["mark"], acc["oi"], acc["vol"] = mark, oi_usd, day_vol
+    if oracle is not None:
+        acc["oracle"] = oracle
+    return acc, done
+
+
+def _opt(ctx: dict, key: str) -> float | None:
+    try:
+        v = ctx.get(key)
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
 
 async def poll_metrics(cfg: Config, client: HLClient) -> int:
     n = 0
@@ -37,6 +78,7 @@ async def poll_metrics(cfg: Config, client: HLClient) -> int:
             except Exception:
                 log.debug("main_dex_ctx yazılamadı", exc_info=True)
         ts = now()
+        hourly: list[tuple] = []
         async with db() as conn:
             for asset, ctx in zip(universe, ctxs):
                 name = asset.get("name") or ""
@@ -59,6 +101,20 @@ async def poll_metrics(cfg: Config, client: HLClient) -> int:
                     "INSERT OR REPLACE INTO asset_metrics(coin,ts,mark_px,oi,funding,day_volume)"
                     " VALUES(?,?,?,?,?,?)", (coin, ts, mark, oi, funding, vol))
                 n += 1
+                try:
+                    _HOURLY[coin], done = hour_acc(_HOURLY.get(coin), ts, mark, _opt(ctx, "oraclePx"),
+                                                   _opt(ctx, "premium"), funding, oi * mark, vol)
+                    if done:
+                        hourly.append((coin, *done))
+                except Exception:                      # noqa: BLE001 — özet asla ana kaydı düşürmez
+                    log.debug("saatlik özet toplanamadı %s", coin, exc_info=True)
+            if hourly:
+                try:
+                    await conn.executemany(
+                        "INSERT OR REPLACE INTO metrics_hourly(coin, ts, mark_c, oracle_c, premium_avg,"
+                        " funding_avg, oi_usd_c, day_volume_c, n) VALUES(?,?,?,?,?,?,?,?,?)", hourly)
+                except Exception:                      # noqa: BLE001
+                    log.warning("metrics_hourly yazılamadı", exc_info=True)
     return n
 
 

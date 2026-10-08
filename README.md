@@ -1862,6 +1862,43 @@ en çok 3 tur. Aynı anda Telegram'a "✅ Uyandım — aramayı durdur" tuşlu m
 Fiyat/hesap verisi 5 dk okunamazsa "alarm şu an KÖR" diye tek mesaj gelir (arama yok). `/tani`
 satırı: arama kurulumu, aktif alarm, açık uyandırma, son arama sonucu.
 
+## 🧪 Strateji Laboratuvarı (kayıt ve ölçüm — mesaj yok)
+
+Kullanıcı (08.10): "sinyal üretimi hariç her şey var; bir de strateji mi üretsek, her data var artık
+neredeyse." Kararlar: tüm tarzlar laboratuvara girer, **veri karar verir**; sinyal **yalnız Telegram
+mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, testle sabit); her kural
+**kâğıt üstünde** ölçülür; yalnız **dürüst kapıyı geçen ve sahibin onayladığı** kural mesaj atar.
+
+**Şu an ne yapıyor (Faz 2–3):** yalnız kayıt ve ölçüm, mesaj yok.
+- **Ön kayıt:** kurallar `app/lab/specs.py`'de donar (git commit = kayıt belgesi). Her kural ilk
+  görüldüğünde bir **yuva** alır ve α = `LAB_ALPHA / LAB_K_BUDGET` (0.05 / 40) **kayıtta donar** —
+  sonradan kural eklemek eskilerin eşiğini değiştirmez, yuva geri dönmez. Tanım, maliyet tablosu ya
+  da bağlı ayar değişirse (hash) kural **emekli** olur; yeni sürüm yeni yuva ister. Kayıt / onay /
+  emeklilik izi `lab_tests` tablosunda, hiç budanmaz.
+- **Karar anı kaydı:** radarlar olayı **kapılarından ÖNCE** kuyruğa atar (senkron, G/Ç yok); bildirim
+  ayarı ve Telegram teslimi örneklemi seçmez. Tekrarlar, gün tavanı ve taşma **sayılır** (`/tani`).
+  İlk dalga yalnız **akış aileleri** ('log': yuva ve α harcamaz) — sayım yetince kendi kuralları kaydolur.
+- **Ölçüm (çözücü, 5 dk):** giriş = karar + gecikme sonrası **ilk işlemli mumun açılışı** (karar
+  anının ortasındaki mum kullanılmaz — ileriye bakış yok); ufuk çıkışı vade sonrası ilk açılış; TP
+  seviyenin **içinden geçmeli**, stop boşlukta açılıştan dolar, aynı mumda ikisi → stop. Getiri
+  aritmetik, **piyasa düzeltmeli** (hisse → XYZ100, kripto → BTC; β karar ÖNCESİ 30 günden) ve
+  **maliyet sonrası**: donmuş, temkinli tablo — HIP-3/PROPR ücreti **doğrulanmadı**, yer tutucu
+  (taker %0.09×2, seans dışı kayma 15 bp/taraf); funding = geçilen saat sınırlarının saatlik oranı,
+  yoksa en kötü sınır. İşlem yoksa sonuç **"ölçülemedi"** — asla "tutmadı" sayılmaz.
+- **Kapı (sonraki adım):** Aşama A donmuş geçmişte BİR kez; Aşama B kayıttan SONRAKİ veride önceden
+  yazılı bakış noktalarında grup-ardışık test (O'Brien-Fleming), 20 kümeden önce bakış yok; günlük
+  görünüm yalnız betimleme, durum değiştiremez.
+
+**Veri kaybı durdu:** `metrics_hourly` (saatlik mark, **oraclePx, premium**, funding ortalaması, OI$ —
+ham `asset_metrics` 45 günde budanıyordu, oracle/premium hiç saklanmıyordu), `lab_candles` (1h ~208 gün
+ve 1d derin dolum; `bars` turunun aynı yanıtından 1h kopya, ek istek yok; 1m/5m pencereler 7/21 gün),
+`SEANS_ARCHIVE_ALL` (PROPR'daki ABD hisselerinin 30 dk arşivi, sekmelerden ayrı). HL istekleri lab'ın
+kendi ağırlık bütçesinden (`LAB_WEIGHT_MIN`, dakikada 150) ve düşük şeritten; paylaşılan pencere
+yarıdan doluysa lab bekler — canlı radarlar lab yüzünden 429 yemez.
+
+**Beklenti dürüst:** kurallar ileri veri biriktikçe kapıdan geçer — haftalar / aylar; hiçbiri
+geçmeyebilir. `/tani` satırları: 🧪 lab sayımı (yalnız sayı) + lab döngüsü (kuyruk, çözücü, dolum, bütçe).
+
 ## Bir Şey Ters Gittiğinde: `/tani`
 
 Telegram'da `/tani`, sitede `/tani` (düz metin, `?full=1` uzun sürüm) tek bir blokta

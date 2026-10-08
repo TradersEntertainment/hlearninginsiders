@@ -400,6 +400,10 @@ EDITABLE_FIELDS: dict[str, dict] = {
                     "desc": "Virgülle, dex'siz: XYZ100,SP500. Sayfa sekmeleri ve /seans komutu bunlar. Yalnız ABD'de işlem gören hisse/endeks perp'leri (kripto, emtia, döviz ve Asya borsası hisseleri reddedilir). Sekme dışı sorulan hisse 30 gün arşivlenir (en çok 12). Kural eşiği ayarı BİLEREK yok — eşik oynatmak sonuç uydurmaktır"},
     "seans_refresh_sec": {"type": "int", "label": "Arşiv turu aralığı (sn)", "group": "🕰 ABD seans karnesi",
                           "desc": "Arka plan arşivinin ne sıklıkla döneceği (en az 600). Sembol başına tek istek; sayfa açıkken canlı kuyruk ayrıca 2 dk'da bir"},
+    "seans_archive_all": {"type": "bool", "label": "🧪 Tüm PROPR ABD hisselerini arşivle", "group": "🕰 ABD seans karnesi",
+                          "desc": "Sekmelerden AYRI: PROPR'daki ABD hisselerinin 30 dk mumları da saatte bir arşivlenir (strateji laboratuvarının açılış çalışması için; HL yalnız son ~104 günü veriyor, arşiv her gün büyür). İlk dolum ağırlık bütçeli, yavaş (dakikada en çok 3 tam dolum)"},
+    "lab_enabled": {"type": "bool", "label": "🧪 Strateji laboratuvarı", "group": "🧪 Strateji laboratuvarı",
+                    "desc": "Önceden kaydedilmiş kuralların olaylarını karar anında yazar ve sonuçlarını ileriye bakışsız ölçer (kâğıt üstü). Mesaj YALNIZ dürüst kapıyı geçip sahibin onayladığı kurallardan; strateji asla aramaz. Kapatınca kayıt ve ölçüm durur, sayfa açılır"},
     "open_movers_enabled": {"type": "bool", "label": "🔔 Açılış ölçümü", "group": "🔔 Açılışın en hareketlileri",
                             "desc": "ABD açılışında (9:30 ET — yazın 16:30, kışın 17:30 TSİ) PROPR'daki hisselerin canlı işlemlerini ölçer: açılıştan 5 dk sonra ve 30 dk sonra en çok oynayanların raporu hisse kanalına. Referans açılıştan önceki son işlem; hafta sonu / NYSE tatilinde yok. HL'ye ek istek yok (canlı akış)"},
     "open_movers_top": {"type": "int", "label": "Raporda kaç hisse", "group": "🔔 Açılışın en hareketlileri",
@@ -809,6 +813,14 @@ class Config:
         self.seans_enabled = True
         self.seans_coins = _csv(os.getenv("SEANS_COINS", "XYZ100,SP500"))
         self.seans_refresh_sec = int(os.getenv("SEANS_REFRESH_SEC", "3600"))
+        self.seans_archive_all = os.getenv("SEANS_ARCHIVE_ALL", "1") not in ("0", "false", "no")
+        # 🧪 Strateji laboratuvarı. α ve K bütçesi YALNIZ env: kayıtta kurala dondurulur, sayfadan
+        # oynatılamaz (oynatmak kapıyı gevşetmek olurdu). K: önceden ilan edilen kural yuvası sayısı.
+        self.lab_enabled = os.getenv("LAB_ENABLED", "1") not in ("0", "false", "no")
+        self.lab_alpha = float(os.getenv("LAB_ALPHA", "0.05"))
+        self.lab_k_budget = int(os.getenv("LAB_K_BUDGET", "40"))
+        self.lab_epoch = int(os.getenv("LAB_EPOCH", "1"))
+        self.lab_weight_min = int(os.getenv("LAB_WEIGHT_MIN", "150"))
         self.sticky_enabled = True
         self.notify_sticky = True
         self.sticky_min_usd = float(os.getenv("STICKY_MIN_USD", "1000000"))
