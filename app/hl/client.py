@@ -41,8 +41,29 @@ CAP_UP_STEP = 25
 CAP_UP_EVERY = 60.0
 
 
+INTERVAL_MS = {"1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+               "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "8h": 28_800_000,
+               "12h": 43_200_000, "1d": 86_400_000, "3d": 259_200_000, "1w": 604_800_000}
+CANDLE_CAP = 5000                 # HL candleSnapshot en çok bu kadar mum döndürür
+
+
 def weight_of(payload: dict) -> int:
-    return WEIGHTS.get(str((payload or {}).get("type") or ""), DEFAULT_WEIGHT)
+    """Belge ağırlığı. candleSnapshot ek olarak dönen her 60 mum için +1 (HL belgesi): 5000 mumluk
+    bir dolum ~104 ağırlıktır, düz 20 saymak strateji laboratuvarının geri doldurmasını gizlerdi."""
+    kind = str((payload or {}).get("type") or "")
+    if kind == "candleSnapshot":
+        req = (payload or {}).get("req") or {}
+        step = INTERVAL_MS.get(str(req.get("interval") or ""))
+        try:
+            start = int(req.get("startTime"))
+            end = int(req.get("endTime") or time.time() * 1000)
+        except (TypeError, ValueError):
+            return DEFAULT_WEIGHT
+        if step and end > start:
+            n = min(CANDLE_CAP, (end - start) // step + 1)
+            return DEFAULT_WEIGHT + -(-n // 60)
+        return DEFAULT_WEIGHT
+    return WEIGHTS.get(kind, DEFAULT_WEIGHT)
 
 
 class HLClient:

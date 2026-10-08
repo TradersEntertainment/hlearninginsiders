@@ -43,9 +43,48 @@ def parse_symbol_map(s: str) -> dict[str, str]:
 
 # ---------------- Yahoo (birincil) ----------------
 
+async def save_history(rows: list[dict], source: str) -> int:
+    """Geçmiş bilanço satırlarını kalıcı tabloya yaz (earnings_history, budanmaz). Aynı
+    (sembol, gün) yeniden gelirse boş olmayan alanlar güncellenir."""
+    if not rows:
+        return 0
+    from ..db import db, now
+    ts = now()
+    async with db() as conn:
+        await conn.executemany(
+            """INSERT INTO earnings_history(symbol, date_et, hour_hint, exact_ts, eps_est, eps_actual,
+                   surprise_pct, source, fetched_ts) VALUES(?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(symbol, date_et) DO UPDATE SET
+                   hour_hint=COALESCE(excluded.hour_hint, hour_hint),
+                   exact_ts=COALESCE(excluded.exact_ts, exact_ts),
+                   eps_est=COALESCE(excluded.eps_est, eps_est),
+                   eps_actual=COALESCE(excluded.eps_actual, eps_actual),
+                   surprise_pct=COALESCE(excluded.surprise_pct, surprise_pct),
+                   fetched_ts=excluded.fetched_ts""",
+            [(r["symbol"], r["date_et"], r.get("hour_hint"), r.get("exact_ts"), r.get("eps_est"),
+              r.get("eps_actual"), r.get("surprise_pct"), source, ts) for r in rows])
+    return len(rows)
+
+
+def _fnum(row, key) -> float | None:
+    try:
+        v = row.get(key)
+        return float(v) if v is not None and v == v else None      # NaN kontrolü
+    except Exception:
+        return None
+
+
+def _hint_of(t: time) -> str:
+    return "bmo" if t <= time(9, 30) else "amc" if t >= time(15, 0) else "unknown"
+
+
 def _fetch_yahoo_sync(symbols: list[str], horizon_days: int,
-                      symbol_map: dict[str, str] | None = None) -> dict[str, dict]:
-    """Senkron — thread'de çalışır. symbol -> {date_et, hour_hint, eps_est}"""
+                      symbol_map: dict[str, str] | None = None,
+                      past: list[dict] | None = None) -> dict[str, dict]:
+    """Senkron — thread'de çalışır. symbol -> {date_et, hour_hint, eps_est}.
+    `past` verilirse aynı yanıttaki GEÇMİŞ satırlar da (tarih, saat, EPS tahmini / gerçekleşen /
+    sürpriz %) oraya eklenir — eskiden atılıyordu; strateji laboratuvarı bilanço günlerini
+    (dışlama ve olay testi) bunlardan kurar (08.10)."""
     import yfinance as yf  # ağır import, sadece burada
 
     # yfinance "No earnings dates found" durumunu ERROR olarak basıyor — susturalım,
@@ -68,6 +107,13 @@ def _fetch_yahoo_sync(symbols: list[str], horizon_days: int,
                 ts_et = ts_idx.tz_convert(ET) if ts_idx.tzinfo else ts_idx.tz_localize(ET)
                 if now_et - timedelta(hours=12) <= ts_et <= horizon:
                     future.append((ts_et, row))
+                elif past is not None and ts_et < now_et - timedelta(hours=12):
+                    t0 = ts_et.time()
+                    past.append({"symbol": sym, "date_et": ts_et.strftime("%Y-%m-%d"),
+                                 "hour_hint": _hint_of(t0),
+                                 "exact_ts": int(ts_et.timestamp()) if (t0.hour or t0.minute) else None,
+                                 "eps_est": _fnum(row, "EPS Estimate"), "eps_actual": _fnum(row, "Reported EPS"),
+                                 "surprise_pct": _fnum(row, "Surprise(%)")})
             if not future:
                 continue
             ts_et, row = min(future, key=lambda x: x[0])
@@ -274,8 +320,13 @@ async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
 
     smap = dict(DEFAULT_SYMBOL_MAP)
     smap.update(parse_symbol_map(getattr(cfg, "yahoo_symbol_map", "")))
+    past: list[dict] = []
     yahoo = await asyncio.to_thread(_fetch_yahoo_sync, symbols,
-                                    cfg.calendar_horizon_days, smap)
+                                    cfg.calendar_horizon_days, smap, past)
+    try:
+        await save_history(past, "yahoo")
+    except Exception:
+        log.warning("geçmiş bilanço satırları yazılamadı", exc_info=True)
     finnhub = {}
     if cfg.finnhub_api_key:
         fh_all = await _fetch_finnhub(session, cfg.finnhub_api_key, cfg.calendar_horizon_days)

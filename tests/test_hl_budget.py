@@ -102,6 +102,12 @@ def test_lanes_and_stats():
         # ağırlık tablosu
         assert weight_of({"type": "clearinghouseState"}) == 2 and weight_of({"type": "candleSnapshot"}) == 20
         assert weight_of({"type": "userRole"}) == 60 and weight_of({"type": "batchClearinghouseStates"}) == 20 and weight_of({}) == 20
+        # candleSnapshot: dönen her 60 mum +1 (5000 mumluk dolum ≈ 104); aralık bozuksa düz 20
+        day = 86_400_000
+        assert weight_of({"type": "candleSnapshot", "req": {"coin": "BTC", "interval": "1h", "startTime": 0, "endTime": day}}) == 21
+        assert weight_of({"type": "candleSnapshot", "req": {"coin": "BTC", "interval": "5m", "startTime": 0, "endTime": 30 * day}}) == 20 + 84
+        assert weight_of({"type": "candleSnapshot", "req": {"coin": "BTC", "interval": "1m", "startTime": 0, "endTime": 30 * day}}) == 20 + 84
+        assert weight_of({"type": "candleSnapshot", "req": {"interval": "1h", "startTime": "x"}}) == 20
         assert hlc.HL_WEIGHT_LIMIT == 1200
         print("✅ bütçe) düşük şerit %70'te bekler, 429 sonrası susar; normal geçer; stats kendi 429'u; bağlam önceliği; ağırlıklar")
     asyncio.run(run())

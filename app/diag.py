@@ -19,8 +19,12 @@ import logging
 import os
 import time
 from collections import deque
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .db import db, kv_get, now
+
+TR = ZoneInfo("Europe/Istanbul")
 
 log = logging.getLogger("diag")
 
@@ -278,6 +282,41 @@ def _budget_line(state) -> str | None:
             + (f"DURAKLI {int(paused)} sn" if paused > 0 else f"açık (kullanım %{int(LOW_SHARE * 100)} üstünde bekler)"))
 
 
+# 🧪 Strateji laboratuvarı planlaması (08.10): her olay tablosunda kaç kayıt var ve en eskisi ne
+# zaman — yalnız SAYI ve tarih, sonuç yok (sonuca bakmak testlerden önce "bakış" sayılırdı).
+LAB_COUNTS = [
+    ("yapışkan duvar (emirle doğrulanan)", "SELECT COUNT(*), MIN(first_ts) FROM sticky_walls WHERE owner_src='order'"),
+    ("TWAP turu (uyarılan)", "SELECT COUNT(*), MIN(first_ts) FROM twap_runs WHERE alerted_ts IS NOT NULL"),
+    ("TWAP turu (kapıdan kalan)", "SELECT COUNT(*), MIN(first_ts) FROM twap_runs WHERE alerted_ts IS NULL"),
+    ("örüntü sinyali (tekil vade)", "SELECT COUNT(*), MIN(t) FROM (SELECT MIN(ts) t FROM pattern_signals"
+                                    " GROUP BY coin, tf, horizon, resolve_ts)"),
+    ("hacim rekoru (kripto)", "SELECT COUNT(*), MIN(ts) FROM vol_events WHERE COALESCE(market,'crypto')='crypto'"),
+    ("hacim rekoru (hisse)", "SELECT COUNT(*), MIN(ts) FROM vol_events WHERE market='equity'"),
+    ("liq saldırı adayı", "SELECT COUNT(*), MIN(ts) FROM liq_attack_candidates"),
+    ("kâğıt işlem (sim)", "SELECT COUNT(*), MIN(entry_ts) FROM sim_trades WHERE status='closed'"),
+    ("değerlendirilen bilanço", "SELECT COUNT(*), MIN(created_ts) FROM earnings_events WHERE evaluated=1"),
+    ("geçmiş bilanço (Yahoo)", "SELECT COUNT(*), MIN(date_et) FROM earnings_history"),
+    ("pozisyon anlık görüntüsü", "SELECT COUNT(*), MIN(ts) FROM position_snapshots"),
+]
+
+
+async def _lab_counts() -> list[str]:
+    parts = []
+    async with db() as conn:
+        for label, sql in LAB_COUNTS:
+            try:
+                cur = await conn.execute(sql)
+                n, first = await cur.fetchone()
+                since = ""
+                if first:
+                    since = (f" (en eski {first})" if isinstance(first, str)
+                             else f" (en eski {datetime.fromtimestamp(int(first), TR):%d.%m})")
+                parts.append(f"{label} {int(n or 0)}{since}")
+            except Exception as e:                 # noqa: BLE001 — tablo/kolon yoksa satır düşmesin
+                parts.append(f"{label} ? ({type(e).__name__})")
+    return ["  🧪 lab sayımı (yalnız sayı, sonuç yok): " + " · ".join(parts)]
+
+
 async def _subsystems(cfg, state=None) -> list[str]:
     out = ["[ALT SİSTEMLER]"]
     bl = _budget_line(state)
@@ -473,6 +512,7 @@ async def _subsystems(cfg, state=None) -> list[str]:
         out.append("  " + await movewin.diag_line(cfg))
     except Exception as e:                         # noqa: BLE001
         out.append(f"  ⏱ pencere ölçümü: okunamadı ({type(e).__name__})")
+    out += await _lab_counts()
     ps = await kv_get("patterns_stats") or {}
     if ps:
         best = ps.get("best") or {}

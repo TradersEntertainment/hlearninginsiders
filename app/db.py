@@ -28,6 +28,15 @@ CREATE TABLE IF NOT EXISTS earnings_events(
   created_ts INTEGER,
   UNIQUE(symbol, date_et)
 );
+-- Geçmiş bilanço günleri (Yahoo'nun geçmiş satırları, eskiden atılıyordu). BUDANMAZ:
+-- strateji laboratuvarı bilanço günlerini dışlama ve olay testi için buradan kurar (08.10).
+CREATE TABLE IF NOT EXISTS earnings_history(
+  symbol TEXT, date_et TEXT,       -- YYYY-MM-DD (New York günü)
+  hour_hint TEXT, exact_ts INTEGER,
+  eps_est REAL, eps_actual REAL, surprise_pct REAL,
+  source TEXT, fetched_ts INTEGER,
+  PRIMARY KEY(symbol, date_et)
+);
 CREATE TABLE IF NOT EXISTS fills(
   coin TEXT, tid TEXT, address TEXT,
   side TEXT,                       -- buy / sell (adres perspektifi)
