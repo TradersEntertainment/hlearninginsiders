@@ -108,6 +108,11 @@ async def overview(ts: int | None = None, fresh: bool = False) -> dict:
             c["last"] = max(x for x in (c["last"], r["last"]) if x is not None) if r["last"] else c["last"]
         cur = await conn.execute("SELECT * FROM lab_tests ORDER BY ts DESC, id DESC LIMIT 30")
         trail = [dict(r) for r in await cur.fetchall()]
+        cur = await conn.execute("SELECT * FROM lab_tests WHERE kind IN ('backtest', 'look', 'demote')"
+                                 " ORDER BY rule_id, ver, ts")
+        tests: dict = {}
+        for r in await cur.fetchall():
+            tests.setdefault((r["rule_id"], int(r["ver"])), []).append(dict(r))
     outs = await _agg()
     code = specs.by_id()
     out = []
@@ -118,12 +123,13 @@ async def overview(ts: int | None = None, fresh: bool = False) -> dict:
         except (TypeError, ValueError):
             spec = {}
         c = counts.get(key, {"n": 0})
-        out.append({**r, "spec_d": spec, "counts": c,
+        out.append({**r, "spec_d": spec, "counts": c, "tests": tests.get(key, []),
                     "horizons": _horizons(spec, key, outs) if r["status"] != "emekli" else [],
                     "status_tr": specs.STATUS_TR.get(r["status"], r["status"]),
                     "evidence_tr": {"log": LABEL_LOG, "forward": "yalnız ileri veri (kayıttan sonra)",
                                     "frozen_backtest": "Aşama A donmuş geçmişte bir kez + ileri veri"}
-                    .get(r["evidence"], r["evidence"]),
+                    .get(r["evidence"], r["evidence"]) + (" · örüntü sinyalleri üzerinden denetim (olay kaydı yok)"
+                                                           if spec.get("custom") == "oru" else ""),
                     "in_code": r["rule_id"] in code and int(code[r["rule_id"]]["ver"]) == int(r["ver"])})
     st = await kv_get("lab_stats") or {}
     v = {"rules": out, "trail": trail, "stats": st, "ts": ts, "note": NOTE,

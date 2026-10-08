@@ -2660,6 +2660,12 @@ def strat_detail(r: dict | None, rid: str, base_url: str = "") -> str:
         lines.append(f"Yuva {r['slot']} · α {r['alpha']:.5f} (kayıtta dondu)")
     if r.get("status_note"):
         lines.append(f"<i>{esc(r['status_note'])}</i>")
+    for t in r.get("tests") or []:
+        tag = ("Aşama A (geçmiş — seçim örneği)" if t["kind"] == "backtest"
+               else "Canlı düşüş denetimi" if t["kind"] == "demote" else f"Bakış {t['look_no']}")
+        pv = f" · p {t['p']:.2g} (eşik {(t.get('alpha_k') or 0):.2g})" if t.get("p") is not None else ""
+        lines.append(f"{tag}: {t.get('n_events') or 0} olay / {t.get('n_clusters') or 0} küme · ortalama net"
+                     f" {_lab_pct(t.get('est'))}{pv} → <b>{esc(t.get('decision') or '')}</b>")
     for h in r.get("horizons") or []:
         lines.append(f"\n<b>{esc(h['label'])}</b>{' (birincil)' if h.get('primary') else ''}")
         lines.append("  " + _lab_line(h.get("fwd") or {}, "kayıttan sonra"))

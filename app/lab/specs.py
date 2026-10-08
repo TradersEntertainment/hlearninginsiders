@@ -159,6 +159,22 @@ def side_of(mode: str, side: int, feats: dict) -> int:
     return 0
 
 
+def _look_errs(spec: dict, ev, metric) -> list[str]:
+    errs: list[str] = []
+    if ev in ("forward", "frozen_backtest"):
+        looks = [float(x) for x in spec.get("looks") or []]
+        if not looks or looks != sorted(looks) or looks[0] <= 0 or abs(looks[-1] - 1.0) > 1e-9:
+            errs.append("bakış oranları artan ve 1 ile bitmeli")
+        n_max, min_g = int(spec.get("n_max") or 0), int(spec.get("min_g") or 20)
+        if looks and -(-looks[0] * n_max // 1) < min_g:
+            errs.append(f"ilk bakış {min_g} kümeden önce düşüyor (n_max {n_max})")
+        if metric == "barrier":
+            errs.append("barrier metriği şimdilik kapalı (binom testi olay düzeyinde; küme düzeyine geçene dek)")
+        if ev == "frozen_backtest" and not 0 < float(spec.get("bt_alpha_share") or 0) < 1:
+            errs.append("bt_alpha_share (0, 1) dışında")
+    return errs
+
+
 def validate(spec: dict) -> list[str]:
     """Kayıttan ÖNCE tanım denetimi — hatalı kural yuva harcamaz, 'emekli' (tanım geçersiz) kaydolur."""
     errs: list[str] = []
@@ -167,6 +183,14 @@ def validate(spec: dict) -> list[str]:
         errs.append(f"evidence {ev!r}")
     if metric not in ("net", "barrier"):
         errs.append(f"metric {metric!r}")
+    if spec.get("custom"):                            # denetim kuralı: ufuk satırı yok, kendi ölçüsü
+        if spec["custom"] != "oru" or spec.get("set") not in ("alertable", "all"):
+            errs.append(f"özel ölçü {spec.get('custom')!r}/{spec.get('set')!r}")
+        if int(spec.get("cluster_s") or 0) < 2 * 86400:
+            errs.append("denetim kümesi < 2 gün (24 sa vadeli satırlar örtüşürdü)")
+        if spec.get("src"):
+            errs.append("denetim kuralı türetilmez")
+        return errs + [e for e in _look_errs(spec, ev, metric)]
     hs = [int(h) for h in spec.get("horizons_s") or []]
     ex = spec.get("exit") or None
     ph = int(spec.get("primary_h") if spec.get("primary_h") is not None else -1)
@@ -180,17 +204,7 @@ def validate(spec: dict) -> list[str]:
         errs.append("küme genişliği birincil ufuktan kısa (örtüşen olaylar ayrı sayılırdı)")
     if ex and not int(ex.get("timeout") or 0) > 0:
         errs.append("çıkış kuralında zaman aşımı yok")
-    if ev in ("forward", "frozen_backtest"):
-        looks = [float(x) for x in spec.get("looks") or []]
-        if not looks or looks != sorted(looks) or looks[0] <= 0 or abs(looks[-1] - 1.0) > 1e-9:
-            errs.append("bakış oranları artan ve 1 ile bitmeli")
-        n_max, min_g = int(spec.get("n_max") or 0), int(spec.get("min_g") or 20)
-        if looks and -(-looks[0] * n_max // 1) < min_g:
-            errs.append(f"ilk bakış {min_g} kümeden önce düşüyor (n_max {n_max})")
-        if metric == "barrier":
-            errs.append("barrier metriği şimdilik kapalı (binom testi olay düzeyinde; küme düzeyine geçene dek)")
-        if ev == "frozen_backtest" and not 0 < float(spec.get("bt_alpha_share") or 0) < 1:
-            errs.append("bt_alpha_share (0, 1) dışında")
+    errs += _look_errs(spec, ev, metric)
     if spec.get("src"):
         if spec["src"] not in {r["id"] for r in RULES if r.get("evidence") == "log"}:
             errs.append(f"kaynak aile yok: {spec['src']}")
@@ -201,6 +215,24 @@ def validate(spec: dict) -> list[str]:
         if spec.get("unit") != "src" and not int(spec.get("unit_s") or 0) > 0:
             errs.append("unit_s yok")
     return errs
+
+
+# Örüntü denetimi (R3): pattern_signals'tan doğrudan (olay kaydı yok, app/lab/audit.py). Aşama A kayıttan
+# ÖNCEKİ satırlarda BİR kez (kayıttan 2 gün sonra — önceki satırların vadesi dolsun), sonra kayıttan
+# sonraki satırlarda planlı bakışlar. Yön = fark (p_up − taban) işareti; 2 günlük takvim kümeleri.
+def _oru(rid: str, title: str, which: str) -> dict:
+    return {"id": rid, "ver": 1, "family": "oruntu", "title": title, "evidence": "frozen_backtest", "metric": "net",
+            "custom": "oru", "set": which, "horizons_s": [], "primary_h": 0, "exit": None, "latency_s": 0,
+            "cluster_s": 2 * 86400, "looks": [0.5, 1.0], "n_max": 60, "min_g": 20, "bt_alpha_share": 0.25,
+            "max_events_day": 0, "cfg_keys": []}
+
+
+RULES = RULES + (
+    _oru("ORU-ALERT-F", "Örüntü denetimi: uyarılabilir sinyaller (n ≥ 20, |z| ≥ 2, |fark| ≥ 10) → fark yönünde, vadeye kadar",
+         "alertable"),
+    _oru("ORU-ALL-F", "Örüntü denetimi: tüm kayıtlı sinyaller → fark yönünde, vadeye kadar", "all"),
+)
+STAGE_A_WAIT = 2 * 86400
 
 
 def by_id() -> dict[str, dict]:

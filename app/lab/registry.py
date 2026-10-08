@@ -53,10 +53,19 @@ def _derive_code_sha() -> str:
     return hashlib.sha256(src.encode()).hexdigest()
 
 
+def _audit_code_sha() -> str:
+    import inspect
+    from . import audit
+    src = "".join(inspect.getsource(f) for f in (audit.is_alertable, audit.dedupe_thin, audit.trade, audit.clusters))
+    return hashlib.sha256((src + repr((audit.ALERT_MIN_N, audit.ALERT_Z, audit.ALERT_EDGE))).encode()).hexdigest()
+
+
 def spec_sha(spec: dict, cfg=None) -> str:
     body = {"spec": spec, "cfg": cfg_snapshot(spec, cfg) if cfg is not None else {}, "costs": COSTS_SHA}
     if spec.get("src"):
         body["derive"] = _derive_code_sha()        # süzgeç anlamı değişirse türetilmiş kural emekli
+    if spec.get("custom") == "oru":
+        body["audit"] = _audit_code_sha()          # denetim kuralları (giriş/çıkış/inceltme) kodun parçası
     return hashlib.sha256(canon(body).encode()).hexdigest()
 
 

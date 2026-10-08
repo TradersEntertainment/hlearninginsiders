@@ -1903,8 +1903,16 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
   bir kez, 24 sa);
   `AKI-STICKY-F` emriyle doğrulanan ≥ $1M yapışkan duvar; `LIQ-S3-F` liq'e ≤ %0.5 kalan dev kripto
   pozisyon → liq yönünde; `ANO-FUND-T` funding ≥ %0.05/sa → ödeyenin tersine. Bakış: %50 ve %100
-  `n_max` (40–120 küme) — önce haftalar geçer. Geçmişe dönük Aşama A çalışmaları (örüntü denetimi,
-  kapalı seans, açılış) sonraki adım.
+  `n_max` (40–120 küme) — önce haftalar geçer.
+- **Örüntü denetimi (`ORU-ALERT-F`, `ORU-ALL-F`):** eski örüntü uyarısı ("şu şekil görüldü, sonra
+  yükselen pay %p") gerçekten para kazandırır mıydı? Kayıtlı `pattern_signals` satırlarından: mükerrer
+  sorgu barı tek, örtüşen pencereler inceltilmiş, yön = fark (p_up − taban) işareti (eski sicil
+  p_up ≥ 50'yi isabet sayıp piyasa yönünü ödüllendiriyordu), giriş satır yazıldıktan SONRA kapanan ilk
+  bar, çıkış vade barı, maliyet sonrası, 2 günlük kümeler. "Uyarılabilir" küme donmuş eşiklerle
+  (n ≥ 20, |z| ≥ 2, |fark| ≥ 10). **Aşama A** kayıttan 2 gün sonra kayıttan önceki satırlarda BİR kez
+  (geçmezse emekli, yeniden denenmez); geçerse yeni sinyaller üzerinde ileri bakışlar. Sonuç `/lab`
+  ve `/strat ORU-ALERT-F`'te "seçim örneği" etiketiyle. Kapalı seans ve açılış için geçmişe dönük
+  Aşama A sonraki adım.
 - **Bağımsız inceleme (08.10, 4 mercek + yargıç, 17 gerçek bulgu — hepsi düzeltildi):** çözücü coin
   başına tek pencereyle ve iş birikince her turda koşar (720 olay/gün → birikim 0; önce 5 dk'da ~7
   pencereyle sınırsız birikiyordu), kıyas bütçeye takılınca bekler (net'siz sonuç yazılmaz), bir coinin

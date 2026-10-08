@@ -46,6 +46,16 @@
     {% if c.n %}<span class="dim">(ölçülen {{ c.done or 0 }} · süren {{ c.open or 0 }} · giriş bekleyen {{ c.pending or 0 }}
     · ölçülemeyen {{ c.unresolvable or 0 }}) · {{ c.first|dt }} → {{ c.last|dt }}</span>{% endif %}
     · <a href="/lab?rule={{ r.rule_id }}{{ qk }}">son olaylar</a></p>
+  {% if r.tests %}
+  <p class="hint">{% for t in r.tests %}
+    <b>{{ 'Aşama A (geçmiş — seçim örneği)' if t.kind == 'backtest' else ('Canlı düşüş denetimi' if t.kind == 'demote' else 'Bakış ' ~ t.look_no) }}</b>
+    {{ t.ts|dt }}: {{ t.n_events or 0 }} olay / {{ t.n_clusters or 0 }} küme · ortalama net {{ pct(t.est) }}
+    {% if t.p is not none %}· p {{ '%.2g'|format(t.p) }} (eşik {{ '%.2g'|format(t.alpha_k or 0) }}){% endif %}
+    → <b>{{ t.decision }}</b>{% if not loop.last %}<br>{% endif %}
+  {% endfor %}</p>
+  {% elif r.spec_d.custom == 'oru' and r.status == 'aday' %}
+  <p class="hint">Aşama A kayıttan 2 gün sonra bir kez koşar (kayıttan önceki sinyallerin vadesi dolsun).</p>
+  {% endif %}
   {% if r.horizons %}
   <table class="compact">
     <tr><th class="l">Ufuk</th><th class="l">Kayıttan sonra (ileri veri)</th><th class="l">Geçmiş veri — seçim örneği</th></tr>

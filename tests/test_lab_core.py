@@ -392,8 +392,8 @@ def test_every_log_family_has_an_emit_site():
     logs = {r["id"] for r in specs.RULES if r["evidence"] == "log"}
     for r in specs.RULES:
         if r["evidence"] != "log":
-            assert r.get("src") in logs, f"{r['id']}: türetildiği aile yok"   # türetilmiş: kendi kayıt noktası yok
-            continue
+            assert r.get("src") in logs or r.get("custom") == "oru", f"{r['id']}: türetildiği aile yok"
+            continue                                                   # türetilmiş / denetim: kayıt noktası yok
         sites = [f for f, s in src.items() if f'"{r["id"]}"' in s]
         assert sites, f"{r['id']} için kayıt noktası yok"
     for name in ("autoscan.py", "collector.py", "twaplive.py", "stickywall.py", "anomaly.py", "cryptovol.py",

@@ -91,3 +91,44 @@ def test_market_drift_not_rewarded():
         assert out["n_ev"] == 10 and all(x < 0 for x in out["xc"].tolist()), out["xc"]
     asyncio.run(run())
     print("✅ denetim) piyasa yönü ödüllendirilmez: p_up ≥ 50 ama fark < 0 → aşağı yönde, yükselen piyasada zarar")
+
+
+def test_stage_a_once_after_wait():
+    """Örüntü denetimi kuralı: Aşama A kayıttan 2 gün sonra BİR kez (UNIQUE), kayıttan önceki satırlarla;
+    güçlü etki → kagit (ileri bakışlar başlar); sonuç /strat ayrıntısında 'seçim örneği' etiketiyle."""
+    async def run():
+        import numpy as np
+        from app.config import Config
+        from app.lab import looks, registry, specs, ui
+        from app.telegram import format as fmt
+        await _fresh()
+        rng = np.random.default_rng(2)
+        steps = 1.0 + rng.normal(0.001, 0.001, 1300)
+        path = 100.0 * np.cumprod(steps)
+        await _bars("BTC", "1h", lambda i: float(path[i]), 1300)
+        for k in range(24):                                   # 2 günde bir sinyal → 24 ayrı küme
+            last = T0 + (10 + k * 48) * H
+            await _sig("BTC", last + 60, 12, last, edge=+15)
+        reg_ts = T0 + 1250 * H
+        cfg = Config()
+        cfg.lab_k_budget, cfg.lab_alpha, cfg.lab_epoch = 2, 0.05, 1
+        oru = [r for r in specs.RULES if r.get("custom") == "oru"]
+        registry._SEEN.clear()
+        await registry.sync(cfg, ts=reg_ts, rules=oru)
+        assert {registry.ACTIVE[r["id"]]["status"] for r in oru} == {"aday"}
+        assert await looks.run(reg_ts + 86400) == [], "2 gün dolmadan Aşama A yok"
+        out = await looks.run(reg_ts + 2 * 86400 + 60)
+        by = {r["rule_id"]: r for r in out}
+        assert by["ORU-ALERT-F"]["look"] == 0 and by["ORU-ALERT-F"]["n_c"] == 24, by
+        assert registry.ACTIVE["ORU-ALERT-F"]["status"] == "kagit", by["ORU-ALERT-F"]
+        assert await looks.run(reg_ts + 2 * 86400 + 3600) == [], "Aşama A bir kez"
+        async with dbm.db() as c:
+            n = (await (await c.execute("SELECT COUNT(*) n FROM lab_tests WHERE kind='backtest'")).fetchone())["n"]
+        assert n == 2
+        ui._CACHE.update(ts=0, v=None)
+        v = await ui.overview(reg_ts + 2 * 86400 + 3700)
+        r = next(x for x in v["rules"] if x["rule_id"] == "ORU-ALERT-F")
+        det = fmt.strat_detail(r, "ORU-ALERT-F")
+        assert "Aşama A (geçmiş — seçim örneği): 24 olay / 24 küme" in det and "örüntü sinyalleri üzerinden" in det
+    asyncio.run(run())
+    print("✅ denetim kuralı) Aşama A 2 gün sonra bir kez; güçlü etki → kâğıt; /strat'ta seçim örneği etiketi")

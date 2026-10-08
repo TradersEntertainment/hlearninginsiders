@@ -56,6 +56,52 @@ async def forward_clusters(rule_id: str, ver: int, spec: dict, since: int, ts: i
             "outcomes": [r["exit_reason"] for r in done]}
 
 
+async def clusters_for(rid: str, ver: int, spec: dict, since: int, ts: int, until: int | None = None) -> dict:
+    """Kuralın ileri (ya da until verilirse geçmiş) kümeleri: olay kaydından ya da özel denetimden."""
+    if spec.get("custom") == "oru":
+        from . import audit
+        return await audit.clusters(spec, since=since, until=until, ts=ts)
+    return await forward_clusters(rid, ver, spec, since, ts, until)
+
+
+async def _stage_a(rid: str, a: dict, ts: int) -> dict | None:
+    """Aşama A — donmuş geçmişte BİR kez (UNIQUE look_no 0): kayıttan önceki veri, kayıttan
+    STAGE_A_WAIT sonra (önceki satırların vadesi dolsun). Geçerse kagit (ileri bakışlar başlar), kalırsa
+    emekli. Aynı işlemde durum."""
+    import asyncio
+    from .specs import STAGE_A_WAIT
+    spec = a["spec"]
+    if ts < int(a["registered_ts"]) + STAGE_A_WAIT:
+        return None
+    async with db() as conn:
+        cur = await conn.execute("SELECT 1 FROM lab_tests WHERE rule_id=? AND ver=? AND kind='backtest'", (rid, a["ver"]))
+        if await cur.fetchone():
+            return None
+    fc = await clusters_for(rid, a["ver"], spec, 0, ts, until=int(a["registered_ts"]))
+    rule = {**spec, "alpha": a["alpha"]}
+    res = await asyncio.to_thread(gate.stage_a, rule, fc["xc"], None, seed=_seed(rid, a["ver"], 0))
+    mean = float(np.mean(fc["xc"])) if len(fc["xc"]) else None
+    new = "kagit" if res["decision"] == gate.KAGIT else "emekli"
+    try:
+        async with db() as conn:
+            await conn.execute(
+                "INSERT INTO lab_tests(ts, rule_id, ver, kind, look_no, n_events, n_clusters, est, p, alpha_k,"
+                " decision, payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (ts, rid, a["ver"], "backtest", 0, fc["n_ev"], len(fc["xc"]), mean, res["p"], res["alpha_used"],
+                 res["decision"], _payload({**res, "alpha_k": res["alpha_used"]}, fc)))
+            await registry.set_status(rid, a["ver"], new, f"Aşama A: {res.get('why', '')}"[:200], ts=ts, conn=conn)
+    except Exception:
+        log.warning("Aşama A yazılamadı %s/v%d", rid, a["ver"], exc_info=True)
+        return None
+    if new == "emekli":
+        registry.ACTIVE.pop(rid, None)
+    else:
+        a["status"] = new
+    return {"rule_id": rid, "ver": a["ver"], "look": 0, "decision": res["decision"], "p": res["p"],
+            "alpha_k": res["alpha_used"], "n_c": len(fc["xc"]), "n_ev": fc["n_ev"], "mean": mean,
+            "why": res.get("why", "")}
+
+
 def _seed(rule_id: str, ver: int, look_no: int) -> int:
     import hashlib
     return int(hashlib.sha256(f"{rule_id}:{ver}:{look_no}".encode()).hexdigest()[:8], 16)
@@ -78,6 +124,11 @@ async def run(ts: int | None = None, on_pass=None, on_stop=None) -> list[dict]:
         if a["status"] == "canli":
             await _demote(rid, a, ts, on_stop)
             continue
+        if a["status"] == "aday" and spec.get("evidence") == "frozen_backtest":
+            rec = await _stage_a(rid, a, ts)
+            if rec:
+                done.append(rec)
+            continue
         if a["status"] != "kagit":
             continue                                   # aday (Aşama A bekliyor), gecti (onay bekliyor), durdu
         rule = {**spec, "alpha": a["alpha"]}
@@ -85,7 +136,7 @@ async def run(ts: int | None = None, on_pass=None, on_stop=None) -> list[dict]:
             cur = await conn.execute("SELECT look_no FROM lab_tests WHERE rule_id=? AND ver=? AND kind='look'",
                                      (rid, a["ver"]))
             looks_done = [int(r["look_no"]) for r in await cur.fetchall()]
-        fc = await forward_clusters(rid, a["ver"], spec, a["registered_ts"], ts)
+        fc = await clusters_for(rid, a["ver"], spec, a["registered_ts"], ts)
         k = gate.look_due(rule, len(fc["xc"]), looks_done)
         if not k:
             continue
@@ -136,7 +187,7 @@ async def _demote(rid: str, a: dict, ts: int, on_stop) -> None:
                                  (rid, a["ver"]))
         last = int((await cur.fetchone())["m"] or 0)
     since = int((r["approved_ts"] if r and r["approved_ts"] else a["registered_ts"]))
-    fc = await forward_clusters(rid, a["ver"], a["spec"], since, ts)
+    fc = await clusters_for(rid, a["ver"], a["spec"], since, ts)
     g = len(fc["xc"])
     if g < DEMOTE_EVERY or g < last + DEMOTE_EVERY:
         return

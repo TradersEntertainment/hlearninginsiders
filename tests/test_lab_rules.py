@@ -49,8 +49,12 @@ def _q(rid):
 def test_first_wave_registered():
     async def run():
         cfg, out = await _prod("rules0.db")
-        fwd = [r for r in specs.RULES if r["evidence"] != "log"]
-        assert len(fwd) >= 12 and out["slots_used"] == len(fwd) and not out["retired"]
+        slotted = [r for r in specs.RULES if r["evidence"] != "log"]
+        assert out["slots_used"] == len(slotted) and not out["retired"]
+        oru = [r for r in slotted if r.get("custom") == "oru"]
+        assert len(oru) == 2 and all(r["evidence"] == "frozen_backtest" for r in oru)
+        fwd = [r for r in slotted if not r.get("custom")]
+        assert len(fwd) >= 12
         async with dbm.db() as c:
             rows = {r["rule_id"]: dict(r) for r in await (await c.execute("SELECT * FROM lab_rules")).fetchall()}
         for r in fwd:
@@ -59,7 +63,8 @@ def test_first_wave_registered():
             assert r["src"] in {x["id"] for x in specs.RULES if x["evidence"] == "log"}
             assert not specs.validate(r)
         assert all(rows[r["id"]]["slot"] is None for r in specs.RULES if r["evidence"] == "log")
-        assert len({rows[r["id"]]["slot"] for r in fwd}) == len(fwd), "yuvalar tekil"
+        assert len({rows[r["id"]]["slot"] for r in slotted}) == len(slotted), "yuvalar tekil"
+        assert all(rows[r["id"]]["status"] == "aday" for r in oru), "denetim: Aşama A bekliyor"
         sha = registry.spec_sha(fwd[0])
         changed = dict(fwd[0], where=fwd[0]["where"] + [["usd", ">=", 1]])
         assert registry.spec_sha(changed) != sha, "süzgeç hash'e girer"
