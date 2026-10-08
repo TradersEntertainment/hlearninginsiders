@@ -1452,7 +1452,11 @@ class TelegramBot:
         rid = (args[0] if args else "").strip().upper()
         if rid:
             r = next((x for x in v["rules"] if x["rule_id"].upper() == rid), None)
-            await self.send(fmt.strat_detail(r, rid, base_url=base), chat_id)
+            kb = None
+            if r and r.get("status") == "gecti":       # onay sorusu kaybolduysa buradan da (tuşa yalnız sahip basar)
+                from ..lab.deliver import approve_kb
+                kb = approve_kb(r["rule_id"], int(r["ver"]))
+            await self.send(fmt.strat_detail(r, rid, base_url=base), chat_id, reply_markup=kb)
         else:
             await self.send(fmt.strat_card(v, base_url=base), chat_id)
 

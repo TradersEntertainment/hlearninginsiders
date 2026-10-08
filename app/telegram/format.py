@@ -2588,7 +2588,7 @@ def strat_card(v: dict, base_url: str = "") -> str:
     lines = [f"🧪 <b>Strateji laboratuvarı</b> · {len(rules)} kural etkin · canlı {v.get('n_live') or 0}"]
     if not rules:
         lines.append("Henüz kayıtlı kural yok — lab döngüsü ilk turda kaydeder.")
-    for r in rules[:20]:
+    for r in rules[:30]:
         c = r.get("counts") or {}
         prim = next((h for h in r.get("horizons") or [] if h.get("primary")), None)
         lines.append(f"\n<b>{esc(r['rule_id'])}</b> v{r['ver']} · {esc(r['title'])}\n"
@@ -2599,9 +2599,11 @@ def strat_card(v: dict, base_url: str = "") -> str:
     emekli = sum(1 for r in v.get("rules") or [] if r.get("status") == "emekli")
     if emekli:
         lines.append(f"\n<i>{emekli} emekli kural (tanımı değişen / koddan kalkan) — sayfada</i>")
+    if len(rules) > 30:
+        lines.append(f"\n<i>+{len(rules) - 30} kural daha — sayfada</i>")
     lines.append("\n/strat KURAL — ayrıntı" + (f" · 🔗 {esc(base_url)}/lab" if base_url else " · sayfada 🧪 lab"))
     lines.append(STRAT_FOOT)
-    return "\n".join(lines)[:4000]
+    return "\n".join(lines)          # uzun metni bot.send parçalara böler — dipnot ve bağlantı kesilmez
 
 
 def _lab_h(h: int) -> str:
@@ -2623,9 +2625,10 @@ def strat_pass(rec: dict, spec: dict) -> str:
 
 
 def strat_stop(rec: dict) -> str:
-    return (f"🧪 <b>Canlı kural durduruldu</b> · {esc(rec['rule_id'])} v{rec['ver']}\n"
-            f"Onaydan sonraki {rec['n_c']} kümede ortalama net {_lab_pct(rec.get('mean'))} — sıfırın altında"
-            f" anlamlı (tek yönlü t, 0.05). Yeni olay mesajı gelmeyecek.\n{STRAT_FOOT}")
+    return (f"🧪 <b>Canlı kural durduruldu (koruma kuralı)</b> · {esc(rec['rule_id'])} v{rec['ver']}\n"
+            f"Onaydan sonraki {rec['n_c']} kümede ortalama net {_lab_pct(rec.get('mean'))}. Koruma: her 20 yeni"
+            f" kümede tek yönlü t (p ≤ 0.05, tekrara göre düzeltilmemiş — bilerek erken durdurur, gerçek etkili"
+            f" kuralı da durdurabilir). Yeni olay mesajı gelmeyecek.\n{STRAT_FOOT}")
 
 
 def strat_signal(e: dict, r: dict, spec: dict) -> str:
@@ -2665,7 +2668,7 @@ def strat_detail(r: dict | None, rid: str, base_url: str = "") -> str:
     if base_url:
         lines.append(f"\n🔗 {esc(base_url)}/lab?rule={esc(r['rule_id'])}")
     lines.append(STRAT_FOOT)
-    return "\n".join(lines)[:4000]
+    return "\n".join(lines)
 
 
 def seans_card(views: list[dict], base_url: str = "") -> str:

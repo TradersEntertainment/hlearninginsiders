@@ -137,13 +137,30 @@ def _reason(o) -> str | None:
     return o.get("reason") if isinstance(o, dict) else o
 
 
-def _p(rule: dict, a: np.ndarray, outcomes, reps: int, seed: int) -> tuple[float, dict]:
-    """Kuralın metriğine göre tek yönlü p ve ayrıntısı (barrier: tp < sl'de zaman aşımı/open başarısız)."""
+MC_RESOLUTION = 20               # Monte Carlo p'nin tabanı eşiğin en çok 1/20'si olsun
+MC_REPS_MAX = 20_000_000
+
+
+def mc_reps(reps: int, need: float | None) -> int:
+    """Eşik α küçükse tekrar sayısı büyür (taban 1/(1+reps) eşiğin altında kalsın — yoksa erken bakış
+    hiç geçemezdi: OBF α_1 ≈ 5e-6 < 1e-5)."""
+    if not need or need <= 0:
+        return int(reps)
+    return int(min(MC_REPS_MAX, max(int(reps), math.ceil(MC_RESOLUTION / need))))
+
+
+def _p(rule: dict, a: np.ndarray, outcomes, reps: int, seed: int, need: float | None = None) -> tuple[float, dict]:
+    """Kuralın metriğine göre tek yönlü p ve ayrıntısı (barrier: tp < sl'de zaman aşımı/open başarısız).
+    `need` = bu kararın eşiği: Monte Carlo onu çözecek kadar uzar, p'nin eşiği aştığı kesinleşince durur."""
     if _metric(rule) == "net":
+        r = mc_reps(reps, need)
         p_t = float(S.t_test_one(a)["p"])
-        p_sf = float(S.signflip_p(a, reps=reps, seed=seed))
-        p_bt = float(S.boot_t_p(a, reps=reps, seed=seed))
-        return max(p_t, p_sf, p_bt), {"p_t": p_t, "p_sf": p_sf, "p_bt": p_bt, "skew": S.skewness(a)}
+        p_sf = float(S.signflip_p(a, reps=r, seed=seed, stop_above=need))
+        p_bt = float(S.boot_t_p(a, reps=r, seed=seed, stop_above=need)) if p_sf <= (need or 1.0) else p_sf
+        p = max(p_t, p_sf, p_bt)
+        # eşik aşıldığı kesinleşince Monte Carlo durur: yazılan p o zaman yalnız ALT SINIRDIR (karar aynı)
+        return p, {"p_t": p_t, "p_sf": p_sf, "p_bt": p_bt, "skew": S.skewness(a),
+                   "alt_sinir": bool(need is not None and p > need and max(p_sf, p_bt) > p_t)}
     if outcomes is None:
         raise ValueError("barrier: outcomes (tp/sl/timeout listesi) gerekli")
     p0 = barrier_p0(rule)
@@ -190,7 +207,7 @@ def stage_a(rule: dict, xc, outcomes=None, *, reps: int = SF_REPS, seed: int = 0
     a = _arr(xc)
     n_c = int(a.size)
     a_a = alpha_split(rule)[0]
-    p, test = _p(rule, a, outcomes, reps, seed)
+    p, test = _p(rule, a, outcomes, reps, seed, need=a_a)
     if n_c < _min_g(rule):
         dec, why = EMEKLI, f"yetersiz küme ({n_c} < {_min_g(rule)})"
     elif not _skew_ok(rule, a):
@@ -218,7 +235,7 @@ def stage_b(rule: dict, look_no: int, xc, outcomes=None, *, reps: int = SF_REPS,
     a = _arr(xc)
     n_c = int(a.size)
     mean = float(a.mean()) if n_c else float("nan")
-    p, test = _p(rule, a, outcomes, reps, seed)
+    p, test = _p(rule, a, outcomes, reps, seed, need=a_k)
     guards = {"min_g": n_c >= _min_g(rule), "mean_pos": mean > 0,
               "half_split": bool(S.half_split_same_sign(a)), "skew": _skew_ok(rule, a)}
     frac, last = fr[k - 1], k == len(fr)

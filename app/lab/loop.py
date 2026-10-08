@@ -38,11 +38,26 @@ class State:
         self.d1_cursor = 0
         self.err = ""
         self.looks_out: list = []
+        self.errs: dict = {}
+
+
+async def _guard(st: State, name: str, coro):
+    """Aşama yalıtımı: bir aşamanın hatası (HL 500, kilit) ötekileri durdurmaz; hata durum kv'sinde."""
+    try:
+        return await coro
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:                           # noqa: BLE001
+        st.errs[name] = f"{type(e).__name__}: {e}"[:160]
+        log.exception("lab aşaması: %s", name)
+        return None
 
 
 async def step(cfg, client, budget: data.Budget, st: State, t: int | None = None, notifier=None) -> None:
-    """Bir tur (test edilebilir): sırası önemli — önce kuyruk, sonra çözücü, sonra dolum."""
+    """Bir tur (test edilebilir): sırası önemli — önce kuyruk, sonra çözücü (iş birikince HER turda),
+    derin dolum yalnız çözücü yetişmişken (bütçe önce ölçüme)."""
     t = int(t or now())
+    st.errs = {}
     if not getattr(cfg, "lab_enabled", True):
         if st.synced:
             registry.ACTIVE.clear()                 # kapalı: emit reddedilir, kuyruk boşaltılır
@@ -55,26 +70,31 @@ async def step(cfg, client, budget: data.Budget, st: State, t: int | None = None
         if st.sync_out.get("new") or st.sync_out.get("retired"):
             log.info("lab kayıt: yeni %s · emekli %s", st.sync_out["new"], st.sync_out["retired"])
     await registry.flush(ts=t)
-    await deliver.send_live(notifier, cfg, registry.take_live())
+    await _guard(st, "teslim", deliver.send_live(notifier, cfg, registry.take_live()))
     if t - st.last["hour"] >= HOUR:
         st.last["hour"] = t
-        await data.lab_coins(cfg, t)
-        await data.prune(t)
+        await _guard(st, "evren", data.lab_coins(cfg, t))
+        await _guard(st, "budama", data.prune(t))
 
         async def _pass(rec):
-            await deliver.on_pass(notifier, cfg, rec)
+            return await deliver.on_pass(notifier, cfg, rec)
 
         async def _stop(rec):
-            await deliver.on_stop(notifier, cfg, rec)
-        st.looks_out = await looks.run(t, on_pass=_pass, on_stop=_stop) or st.looks_out
-    if t - st.last["resolve"] >= RESOLVE_EVERY:
+            return await deliver.on_stop(notifier, cfg, rec)
+        st.looks_out = (await _guard(st, "bakış", looks.run(t, on_pass=_pass, on_stop=_stop))) or st.looks_out
+        await _guard(st, "onay", deliver.resend_pending(notifier, cfg, t))
+    backlog = int((st.resolve_out or {}).get("backlog") or 0)
+    if backlog or t - st.last["resolve"] >= RESOLVE_EVERY:
         st.last["resolve"] = t
-        st.resolve_out = await resolver.resolve_due(client, budget, t)
-    if t - st.last["deep"] >= DEEP_EVERY:
+        st.resolve_out = (await _guard(st, "çözücü", resolver.resolve_due(client, budget, t))) or st.resolve_out
+        backlog = int((st.resolve_out or {}).get("backlog") or 0)
+    if not backlog and t - st.last["deep"] >= DEEP_EVERY:
         st.last["deep"] = t
         coins = sorted(await data.lab_coins(cfg, t))
-        st.deep_out = await data.deep_fill_step(client, budget, coins, t, max_n=1)
-        await _daily_1d(client, budget, coins, st, t)
+        st.deep_out = (await _guard(st, "derin dolum", data.deep_fill_step(client, budget, coins, t, max_n=1))) \
+            or st.deep_out
+        await _guard(st, "1d", _daily_1d(client, budget, coins, st, t))
+    st.err = "; ".join(f"{k}: {v}" for k, v in st.errs.items())[:300]
     await kv_set(STATS_KV, {"ts": t, "reg": registry.stats_line(), "sync": st.sync_out,
                             "resolve": st.resolve_out, "deep": st.deep_out, "err": st.err,
                             "looks": st.looks_out[-5:],
@@ -109,14 +129,26 @@ async def loop(cfg, client, notifier=None) -> None:
     PRIORITY.set("low")
     budget = data.Budget(int(getattr(cfg, "lab_weight_min", data.WEIGHT_MIN) or data.WEIGHT_MIN))
     st = State()
-    while True:
-        try:
-            await step(cfg, client, budget, st, notifier=notifier)
-            st.err = ""
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:                       # noqa: BLE001 — tur başına; döngü sürer
-            st.err = f"{type(e).__name__}: {e}"[:160]
-            log.exception("lab turu")
-        await beat("lab")
-        await asyncio.sleep(5 if registry.pending() > 200 else TICK)
+    try:
+        while True:
+            try:
+                await step(cfg, client, budget, st, notifier=notifier)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:                   # noqa: BLE001 — tur başına; döngü sürer
+                st.err = f"{type(e).__name__}: {e}"[:160]
+                log.exception("lab turu")
+            await beat("lab")
+            await asyncio.sleep(5 if registry.pending() > 200 else TICK)
+    except asyncio.CancelledError:
+        await shutdown_flush()                       # kapanış/deploy: kuyruktaki karar anı kayıtları kaybolmasın
+        raise
+
+
+async def shutdown_flush(timeout: float = 5.0) -> int:
+    """Kuyruğu son kez yaz (sınırlı süre). main.lifespan da kapanışta çağırır; ikinci çağrı boş döner."""
+    try:
+        return await asyncio.wait_for(registry.flush(limit=registry.QUEUE_MAX), timeout)
+    except BaseException:                            # noqa: BLE001 — kapanışta asla takılma
+        log.warning("lab kuyruğu kapanışta yazılamadı (%d olay)", registry.pending())
+        return 0

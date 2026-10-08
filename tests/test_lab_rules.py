@@ -102,10 +102,13 @@ def test_derivation():
         registry.emit("LOG-OPEN", "xyz:A9", T, side=1, trig_key="2026-10-06:5", features={"dk": 5, "sira": 1})
         assert {e["coin"] for e in _q("ACI-12-F")} == {"xyz:A1", "xyz:A2"}
         assert all(e["side"] == 1 for e in _q("ACI-16-T")), "fade: düşene yukarı"
-        # TWAP: yalnız kapıdan geçen
-        registry.emit("LOG-TWAP", "xyz:SNDK", T, side=1, trig_key="0xa:1", features={"kapi": "ok"})
-        registry.emit("LOG-TWAP", "xyz:MU", T, side=1, trig_key="0xb:1", features={"kapi": "order_small"})
-        assert {e["coin"] for e in _q("AKI-TWAP-F")} == {"xyz:SNDK"}
+        # TWAP: SABİT eşikler (radarın ayarlı kapısı değil) + o anki ön süzgeç ayarı
+        tw = {"st": "activated", "plan": 2_000_000, "left": 1_500_000, "vol_pct": 8.0, "lk_min": 50_000,
+              "min_sl": 10, "kapi": "order_small"}
+        registry.emit("LOG-TWAP", "xyz:SNDK", T, side=1, trig_key="0xa:1", features=tw)
+        registry.emit("LOG-TWAP", "xyz:MU", T, side=1, trig_key="0xb:1", features={**tw, "plan": 600_000, "kapi": "ok"})
+        registry.emit("LOG-TWAP", "xyz:AMD", T, side=1, trig_key="0xc:1", features={**tw, "lk_min": 200_000})
+        assert {e["coin"] for e in _q("AKI-TWAP-F")} == {"xyz:SNDK"}, "radar kapısı değil sabit eşik; ayar yükselince türemez"
         assert specs.side_of("-sign:x", 1, {"x": "metin"}) == 0 and specs.side_of("follow", 0, {}) == 0
         assert not specs.match([["yok", "==", 1]], {}, T), "eksik alan eşleşmez"
         wrote = await registry.flush(ts=T + 30)
@@ -277,3 +280,78 @@ def test_live_demotion():
         assert await deliver.on_stop(note, cfg, stopped[0]) and "durduruldu" in note.sent[-1][1]
     asyncio.run(run())
     print("✅ canlıda düşüş) onay sonrası 20 kümede anlamlı negatif → durdu + tek mesaj")
+
+
+def test_reoffer_unit_src_and_ladder():
+    """İnceleme (08.10): türetilmiş kural kaynağın İLK görülüşüyle sınırlı değil (sonradan aşırılaşan
+    funding yakalanır); pozisyon başına birim (src) yeniden görülmede ikinci olay üretmez; gün tavanına
+    takılan kaynak türetmeyi engellemez; kripto liq aşaması lab'ın SABİT basamaklarıyla."""
+    async def run():
+        cfg, _ = await _prod("rules6.db")
+        registry.emit("LOG-ANOM", "SOL", T + 60, side=0, trig_key=str((T + 60) // 86400), features={"fund": 0.0002})
+        assert not _q("ANO-FUND-T")
+        registry.emit("LOG-ANOM", "SOL", T + 3600, side=0, trig_key=str((T + 3600) // 86400), features={"fund": 0.0008})
+        got = _q("ANO-FUND-T")
+        assert len(got) == 1 and got[0]["ts_decision"] == T + 3600 and got[0]["side"] == -1, "aynı gün sonradan aşırılaşan"
+        assert len(_q("LOG-ANOM")) == 1, "aile kaydı gün başına bir"
+        nb = {"usd": 2_000_000, "age_s": 3600}
+        registry.emit("LOG-NEWBIG", "xyz:NVDA", T, side=1, trig_key="0xa:100", features=nb)
+        registry.emit("LOG-NEWBIG", "xyz:NVDA", T + 86400 + 60, side=1, trig_key="0xa:100", features={**nb, "age_s": 5 * 3600})
+        assert [e["trig_key"] for e in _q("AKI-NEWBIG-F")] == ["0xa:100"], "aynı pozisyon bir kez (birim = kaynak)"
+        await registry.flush(ts=T + 90000)
+        registry._SEEN.clear()                                          # yeniden başlama
+        await registry.sync(cfg, ts=T + 90000)
+        registry.emit("LOG-NEWBIG", "xyz:NVDA", T + 90000, side=1, trig_key="0xa:100", features=nb)
+        assert not _q("AKI-NEWBIG-F"), "yeniden başlamada da (son 2 günden tohumlanan bellek)"
+        # gün tavanına takılan kaynak da türetir; tavan sayısı tekrarla şişmez
+        cap = registry.ACTIVE["LOG-VOL"]["spec"]["max_events_day"]
+        day = (T + 5 * 86400) // 86400 * 86400
+        registry._DAY[("LOG-VOL", day // 86400)] = cap
+        feat = {"usd": 1_500_000, "chg": 0.5, "kova": day, "piyasa": "crypto", "taban": 50_000}
+        registry.emit("LOG-VOL", "DOGE", day + 600, side=1, trig_key="z1", features=feat)
+        registry.emit("LOG-VOL", "DOGE", day + 700, side=1, trig_key="z1", features=feat)
+        assert _q("HAC-KRP-F") and registry.CAP_DROPS.get("LOG-VOL") == 1, registry.CAP_DROPS
+        # kripto liq: radarın d3'ü %0.3'e çekilse de lab basamağı %0.5'te
+        from app.radar import cryptoliq
+        cryptoliq._LAB_ST.clear()
+        by = {"ETH": [{"address": "0xw", "side": "long", "dist": 0.45, "notional": 900_000, "mark": 3000.0,
+                       "leverage": 20, "liq_px": 2986.5}]}
+        cryptoliq._lab_stages(by, T, 2.5, 1.0, 0.3, 500_000)
+        ev = [e for e in _q("LOG-CLIQ") if e["coin"] == "ETH"]
+        assert ev and '"asama":3' in ev[0]["features"] and _q("LIQ-S3-F") and _q("LIQ-S3-F")[0]["side"] == -1
+    asyncio.run(run())
+    print("✅ inceleme düzeltmeleri) sonradan aşırılaşan funding; pozisyon başına bir; yeniden başlamada tekrar"
+          " yok; tavana takılan kaynak türetir; kripto liq sabit basamak")
+
+
+
+def test_lost_approval_prompt_is_resent_and_card_not_cut():
+    async def run():
+        from app.telegram import format as fmt
+        from app.lab import ui
+        cfg = await core._fresh("rules7.db")
+        cfg.lab_k_budget, cfg.telegram_chat_id = 1, "111"
+        await registry.sync(cfg, ts=T, rules=[_rule("P")])
+        async with dbm.db() as c:                                    # geçen bakış kaydı + durum
+            await c.execute("INSERT INTO lab_tests(ts, rule_id, ver, kind, look_no, n_events, n_clusters, est, p,"
+                            " alpha_k, decision) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            (T, "P", 1, "look", 1, 30, 22, 0.004, 1e-4, 0.005, "gecti"))
+        await registry.set_status("P", 1, "gecti", "bakış 1", ts=T)
+
+        class Down(_Note):
+            async def send(self, kind, text, **kw):
+                return False
+        assert await deliver.resend_pending(Down(), cfg, T) == 0               # teslim düştü: işaret yok
+        note = _Note()
+        assert await deliver.resend_pending(note, cfg, T + 3600) == 1 and "onay bekliyor" in note.sent[-1][1]
+        assert await deliver.resend_pending(note, cfg, T + 7200) == 0, "teslim edilen bir daha sorulmaz"
+        # /strat kartı: kesilmez, dipnot ve bağlantı her zaman sonda
+        ui._CACHE.update(ts=0, v=None)
+        v = await ui.overview(T + 10)
+        many = {**v, "rules": [dict(v["rules"][0], rule_id=f"R{i:02d}") for i in range(40)]}
+        card = fmt.strat_card(many, base_url="https://x.test")
+        assert card.rstrip().endswith("</i>") and "strateji asla aramaz" in card and "/lab" in card
+        assert "+10 kural daha" in card
+    asyncio.run(run())
+    print("✅ onay) teslim edilemeyen onay sorusu saatlik yeniden; teslim edilen tekrar sorulmaz; /strat kartı"
+          " kesilmez")

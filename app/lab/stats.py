@@ -167,7 +167,7 @@ def t_test_one(x) -> dict:
 
 # ── işaret çevirme ─────────────────────────────────────────────────────────────
 
-def signflip_p(x, reps: int = 100_000, seed: int = 0) -> float:
+def signflip_p(x, reps: int = 100_000, seed: int = 0, stop_above: float | None = None) -> float:
     """Tek yönlü işaret çevirme p'si (küme ortalamaları, H1: ortalama > 0; H0: simetrik etrafında 0).
 
     Çevrilmiş toplam = S − 2·(çevrilenlerin toplamı) ≥ S ⟺ çevrilenlerin toplamı ≤ 0 (göreli 1e-12
@@ -192,10 +192,12 @@ def signflip_p(x, reps: int = 100_000, seed: int = 0) -> float:
         flips = rng.random((m, n)) < 0.5
         hits += int(np.count_nonzero(flips @ a <= tol))
         done += m
+        if stop_above is not None and (1 + hits) / (1 + reps) > stop_above:
+            break                                      # nihai p bundan küçük olamaz → karar değişmez
     return (1 + hits) / (1 + reps)
 
 
-def boot_t_p(x, reps: int = 100_000, seed: int = 0) -> float:
+def boot_t_p(x, reps: int = 100_000, seed: int = 0, stop_above: float | None = None) -> float:
     """Tek yönlü bootstrap-t p'si (H1: ortalama > 0): yeniden örneklenmiş t* = (m* − m)/(s*/√n),
     p = (1 + #{t* ≥ t_gözlenen}) / (1 + reps). Sola çarpık getiride (seyrek büyük kayıp: TP/SL,
     kısa vadeli satış primi) t ve işaret çevirme iyimserdir — bu ikisinin yanına üçüncü test olarak
@@ -225,6 +227,8 @@ def boot_t_p(x, reps: int = 100_000, seed: int = 0) -> float:
         tb = (mb - m) / (np.where(ok, sb, 1.0) / rn)
         hits += int(np.count_nonzero(~ok | (tb >= t_obs)))
         done += k
+        if stop_above is not None and (1 + hits) / (1 + reps) > stop_above:
+            break                                      # nihai p bundan küçük olamaz → karar değişmez
     return (1 + hits) / (1 + reps)
 
 

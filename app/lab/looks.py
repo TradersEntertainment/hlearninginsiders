@@ -38,9 +38,15 @@ async def forward_clusters(rule_id: str, ver: int, spec: dict, since: int, ts: i
             + (" AND e.ts_decision < ?" if until else "") + " ORDER BY e.ts_decision",
             (h, rule_id, ver, since, *((until,) if until else ())))
         rows = [dict(r) for r in await cur.fetchall()]
-    rows = [r for r in rows if r["cluster"] is not None and int(r["cluster"]) <= last_key]
+    lat = int(spec.get("latency_s") or 0)
+    rows = [r for r in rows if r["cluster"] is not None and int(r["cluster"]) <= last_key
+            # penceresi küme sınırını aşan olay atılır: komşu kümelerin pencereleri örtüşmez → küme
+            # ortalamaları bağımsız (aksi hâlde ortak piyasa hareketi iki kümeye birden yazılırdı)
+            and int(r["ts_decision"]) + lat + span < (int(r["cluster"]) + 1) * width]
     n_all = len(rows)
-    unres = sum(1 for r in rows if r["status"] == "unresolvable" or r["ostatus"] == "unresolvable")
+    # ölçülemeyen: olay ya da birincil ufuk ölçülemedi, ya da "done" ama net yok (eski kayıt) — hepsi sayılır
+    unres = sum(1 for r in rows if r["status"] == "unresolvable" or r["ostatus"] == "unresolvable"
+                or (r["ostatus"] == "done" and r["net"] is None))
     done = [r for r in rows if r["ostatus"] == "done" and r["net"] is not None]
     keep = stats.thin_nonoverlap([r["ts_decision"] for r in done], [r["coin"] for r in done], max(span, 1))
     done = [r for r, k in zip(done, keep) if k]
@@ -83,33 +89,41 @@ async def run(ts: int | None = None, on_pass=None, on_stop=None) -> list[dict]:
         k = gate.look_due(rule, len(fc["xc"]), looks_done)
         if not k:
             continue
-        res = gate.stage_b(rule, k, fc["xc"], fc["outcomes"] if spec.get("metric") == "barrier" else None,
-                           seed=_seed(rid, a["ver"], k))
+        import asyncio
+        # CPU: erken bakışta eşik ~5e-6 → milyonlarca Monte Carlo tekrarı; olay döngüsünü (WS) bloklamasın
+        res = await asyncio.to_thread(gate.stage_b, rule, k, fc["xc"],
+                                      fc["outcomes"] if spec.get("metric") == "barrier" else None,
+                                      seed=_seed(rid, a["ver"], k))
         dec = res["decision"]
         if dec == gate.GECTI and fc["unres_share"] > UNRES_MAX:
             res["guards"]["unres"] = False
             dec = gate.EMEKLI if k == len(rule["looks"]) else gate.DEVAM
             res["why"] = f"ölçülemeyen payı %{fc['unres_share'] * 100:.0f} > %{UNRES_MAX * 100:.0f}"
         mean = float(np.mean(fc["xc"])) if len(fc["xc"]) else None
+        new = {gate.GECTI: "gecti", gate.EMEKLI: "emekli"}.get(dec)
         try:
-            async with db() as conn:
+            async with db() as conn:                   # bakış satırı + durum TEK işlemde
                 await conn.execute(
                     "INSERT INTO lab_tests(ts, rule_id, ver, kind, look_no, n_events, n_clusters, est, p, alpha_k,"
                     " decision, payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (ts, rid, a["ver"], "look", k, fc["n_ev"], len(fc["xc"]), mean, res["p"], res["alpha_k"],
                      dec, _payload(res, fc)))
+                if new:
+                    await registry.set_status(rid, a["ver"], new, f"bakış {k}: {res.get('why', '')}"[:200],
+                                              ts=ts, conn=conn)
         except Exception:                              # UNIQUE: bu bakış zaten yapılmış (yarış) — dokunma
             log.warning("lab bakışı yazılamadı %s/v%d bakış %d", rid, a["ver"], k, exc_info=True)
             continue
+        if new:                                        # işlem kapandı: bellekteki durum
+            if new == "emekli":
+                registry.ACTIVE.pop(rid, None)
+            else:
+                a["status"] = new
         rec = {"rule_id": rid, "ver": a["ver"], "look": k, "decision": dec, "p": res["p"], "alpha_k": res["alpha_k"],
                "n_c": len(fc["xc"]), "n_ev": fc["n_ev"], "mean": mean, "why": res.get("why", "")}
         done.append(rec)
-        if dec == gate.GECTI:
-            await registry.set_status(rid, a["ver"], "gecti", f"bakış {k}: {res.get('why', '')}"[:200], ts=ts)
-            if on_pass:
-                await on_pass(rec)
-        elif dec == gate.EMEKLI:
-            await registry.set_status(rid, a["ver"], "emekli", f"bakış {k}: {res.get('why', '')}"[:200], ts=ts)
+        if dec == gate.GECTI and on_pass:
+            await on_pass(rec)                         # teslim düşerse deliver.resend_pending yeniden dener
     return done
 
 

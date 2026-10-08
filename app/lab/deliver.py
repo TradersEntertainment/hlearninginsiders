@@ -37,12 +37,47 @@ async def _send(notifier, cfg, text: str, key: str, kb: dict | None = None) -> b
         return False
 
 
+PROMPT_KV = "lab_prompt:{}:{}"
+
+
 async def on_pass(notifier, cfg, rec: dict) -> bool:
+    """Onay sorusu. Başarılı teslim kv'ye işlenir; düşerse resend_pending saatlik yeniden dener (kural
+    'gecti'de sonsuza dek takılı kalmasın)."""
+    from ..db import kv_set
     from ..telegram import format as fmt
     from .registry import ACTIVE
     spec = (ACTIVE.get(rec["rule_id"]) or {}).get("spec") or {}
-    return await _send(notifier, cfg, fmt.strat_pass(rec, spec), f"lab:gecti:{rec['rule_id']}:{rec['ver']}",
-                       approve_kb(rec["rule_id"], rec["ver"]))
+    ok = await _send(notifier, cfg, fmt.strat_pass(rec, spec), f"lab:gecti:{rec['rule_id']}:{rec['ver']}",
+                     approve_kb(rec["rule_id"], rec["ver"]))
+    if ok:
+        await kv_set(PROMPT_KV.format(rec["rule_id"], rec["ver"]), {"ts": now_ts()})
+    return ok
+
+
+def now_ts() -> int:
+    from ..db import now
+    return int(now())
+
+
+async def resend_pending(notifier, cfg, ts: int | None = None) -> int:
+    """'gecti' durumunda olup onay sorusu henüz TESLİM EDİLMEMİŞ kurallar: son geçen bakışla yeniden sor."""
+    from ..db import db, kv_get
+    from .registry import ACTIVE
+    n = 0
+    for rid, a in list(ACTIVE.items()):
+        if a["status"] != "gecti" or await kv_get(PROMPT_KV.format(rid, a["ver"])):
+            continue
+        async with db() as conn:
+            cur = await conn.execute(
+                "SELECT * FROM lab_tests WHERE rule_id=? AND ver=? AND kind='look' AND decision='gecti'"
+                " ORDER BY look_no DESC LIMIT 1", (rid, a["ver"]))
+            r = await cur.fetchone()
+        if not r:
+            continue
+        rec = {"rule_id": rid, "ver": a["ver"], "look": r["look_no"], "decision": "gecti", "p": r["p"],
+               "alpha_k": r["alpha_k"], "n_c": r["n_clusters"], "n_ev": r["n_events"], "mean": r["est"]}
+        n += await on_pass(notifier, cfg, rec)
+    return n
 
 
 async def on_stop(notifier, cfg, rec: dict) -> bool:
@@ -57,11 +92,13 @@ async def send_live(notifier, cfg, events: list[dict]) -> int:
     from ..telegram import format as fmt
     from . import ui
     from .registry import ACTIVE
-    v = await ui.overview()
-    by = {(r["rule_id"], int(r["ver"])): r for r in v["rules"]}
+    cards: dict = {}
     n = 0
     for e in events:
-        r = by.get((e["rule_id"], int(e["ver"])))
+        k = (e["rule_id"], int(e["ver"]))
+        if k not in cards:                              # kural başına tek hedefli sorgu (tüm tablo değil)
+            cards[k] = await ui.rule_card(*k)
+        r = cards[k]
         spec = (ACTIVE.get(e["rule_id"]) or {}).get("spec") or {}
         if r is None or r["status"] != "canli":
             continue

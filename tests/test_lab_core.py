@@ -197,16 +197,24 @@ def test_registry_sync_slots_hash():
         assert rows["L"]["slot"] is None and rows["L"]["alpha"] == 0 and rows["L"]["status"] == "kagit"
         assert rows["E"]["status"] == "emekli" and "K bütçesi" in rows["E"]["status_note"], "5. yuva yok (K=4)"
         assert set(registry.ACTIVE) == {"A", "B", "L", "C", "D"} and out["slots_used"] == 4
-        # α kayıtta donar: K değişse de eski kuralın α'sı aynı
+        # α kayıtta donar: K değişse de eski kuralın α'sı aynı; dönem ortasında K/α değişikliği REDDEDİLİR
         cfg.lab_k_budget = 100
-        await registry.sync(cfg, ts=T + 10, rules=rules)
+        outk = await registry.sync(cfg, ts=T + 10, rules=rules + [_rule("F")])
         async with dbm.db() as c:
             a = dict(await (await c.execute("SELECT alpha, registered_ts FROM lab_rules WHERE rule_id='A'")).fetchone())
+            f = dict(await (await c.execute("SELECT status, slot FROM lab_rules WHERE rule_id='F'")).fetchone())
         assert abs(a["alpha"] - 0.05 / 4) < 1e-15 and a["registered_ts"] == T
-        # tanım değişti → emekli; yeni sürüm yeni yuva
+        assert "LAB_EPOCH" in outk["epoch_note"] and f["status"] == "emekli" and f["slot"] is None, \
+            "K artırmak toplam α'yı LAB_ALPHA'nın üstüne çıkarırdı"
+        # tanım değişti → emekli; yeni sürüm YENİ DÖNEMDE yeni yuva (dönem 1'in bütçesi dolu)
+        cfg.lab_epoch = 2
         rules2 = [_rule("A", horizons_s=[900]), _rule("B", "frozen_backtest"), _rule("L", "log"),
                   _rule("C"), _rule("A", ver=2)]
         out2 = await registry.sync(cfg, ts=T + 20, rules=rules2)
+        async with dbm.db() as c:
+            a2 = dict(await (await c.execute("SELECT alpha, epoch, slot FROM lab_rules WHERE rule_id='A' AND ver=2"))
+                      .fetchone())
+        assert a2 == {"alpha": 0.05 / 100, "epoch": 2, "slot": 1}, a2
         assert "A/v1" in out2["retired"] and "D/v1" in out2["retired"] and "A/v2" in out2["new"], out2
         assert registry.ACTIVE["A"]["ver"] == 2 and "D" not in registry.ACTIVE
         # bağlı ayar hash'e girer

@@ -52,11 +52,12 @@ RULES: tuple[dict, ...] = (
 
 def _fwd(rid: str, family: str, title: str, src: str, where: list, side: str, unit_s: int,
          horizons: tuple, primary_h: int, cluster_s: int, n_max: int, latency_s: int = 60,
-         max_day: int = 200) -> dict:
+         max_day: int = 200, ver: int = 1, unit: str | None = None) -> dict:
     """İleri (forward) kural: kayıttan SONRAKİ veride, önceden yazılı iki bakış (%50, %100 n_max);
-    birincil ölçü birincil ufukta maliyet sonrası piyasa düzeltmeli net getiri (> 0)."""
-    return {"id": rid, "ver": 1, "family": family, "title": title, "evidence": "forward", "metric": "net",
-            "src": src, "where": where, "side": side, "unit_s": unit_s,
+    birincil ölçü birincil ufukta maliyet sonrası piyasa düzeltmeli net getiri (> 0). Penceresi küme
+    sınırını aşan olay teste girmez (komşu kümeler örtüşmesin — looks.forward_clusters)."""
+    return {"id": rid, "ver": ver, "family": family, "title": title, "evidence": "forward", "metric": "net",
+            "src": src, "where": where, "side": side, "unit_s": unit_s, **({"unit": unit} if unit else {}),
             "horizons_s": list(horizons), "primary_h": primary_h, "exit": None, "latency_s": latency_s,
             "cluster_s": cluster_s, "looks": [0.5, 1.0], "n_max": n_max, "min_g": 20, "bt_alpha_share": 0.0,
             "max_events_day": max_day, "cfg_keys": []}
@@ -87,20 +88,28 @@ RULES = RULES + (
          _OPEN5, "follow", D, (21480,), 21480, D, 60),
     _fwd("ACI-16-T", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → ters yönde, 10:01–15:59 ET", "LOG-OPEN",
          _OPEN5, "fade", D, (21480,), 21480, D, 60),
-    _fwd("AKI-TWAP-F", "akis", "Kapıdan geçen TWAP emri → emrin yönünde, 4 sa", "LOG-TWAP",
-         [["kapi", "in", ["ok", "big"]]], "follow", D, (H, 4 * H, 24 * H), 4 * H, D, 60),
+    # v2 (08.10 inceleme): radarın ayarlı kapısı ("kapi") yerine SABİT eşikler + o anki ön süzgeç ayarı
+    _fwd("AKI-TWAP-F", "akis", "Etkin TWAP emri ≥ $1M, kalan ≥ $500K, 24s hacmin ≥ %5'i → emrin yönünde, 4 sa",
+         "LOG-TWAP", [["st", "==", "activated"], ["plan", ">=", 1_000_000], ["left", ">=", 500_000],
+                      ["vol_pct", ">=", 5.0], ["lk_min", "<=", 50_000], ["min_sl", "<=", 10]],
+         "follow", D, (H, 4 * H, 24 * H), 4 * H, D, 60, ver=2),
     _fwd("AKI-WFILL-F", "akis", "Hissede ≥ $500K balina dolumu → dolum yönünde, 4 sa", "LOG-WFILL",
          [["kripto", "==", 0], ["usd", ">=", 500_000]], "follow", 4 * H, (H, 4 * H), 4 * H, D, 60),
+    # v2: pozisyon başına bir kez (birim = kaynak kimliği); 24 sa ufuk için 3 günlük küme
     _fwd("AKI-NEWBIG-F", "akis", "≥ $1M yeni büyük pozisyon → pozisyon yönünde, 24 sa", "LOG-NEWBIG",
-         [["usd", ">=", 1_000_000], ["age_s", "<=", 6 * H]], "follow", D, (4 * H, 24 * H), 24 * H, D, 60),
+         [["usd", ">=", 1_000_000], ["age_s", "<=", 6 * H]], "follow", D, (4 * H, 24 * H), 24 * H, 3 * D, 40,
+         ver=2, unit="src"),
     _fwd("AKI-STICKY-F", "akis", "Emriyle doğrulanan ≥ $1M yapışkan duvar (açılış) → duvar yönünde, 4 sa",
          "LOG-STICKY", [["sahip", "==", "order"], ["etki", "==", "open"], ["usd", ">=", 1_000_000],
-                        ["taban", "<=", 1_000_000]], "follow", D, (H, 4 * H), 4 * H, D, 60),
+                        ["taban", "<=", 1_000_000], ["taban_pct", "<=", 2.0]],
+         "follow", D, (H, 4 * H), 4 * H, D, 60, ver=2),
+    # v2: lab'ın sabit basamakları + radarın ayarlı d1'i ≥ %0.5 (aday kümesi)
     _fwd("LIQ-S3-F", "liq", "Kripto liq'e ≤ %0.5 kalan dev pozisyon → liq yönünde, 1 sa", "LOG-CLIQ",
-         [["mesafe", "<=", 0.5], ["usd", ">=", 500_000], ["taban", "<=", 500_000]], "follow", D,
-         (15 * 60, H), H, 4 * H, 120),
+         [["mesafe", "<=", 0.5], ["usd", ">=", 500_000], ["taban", "<=", 500_000], ["d1", ">=", 0.5]],
+         "follow", D, (15 * 60, H), H, 4 * H, 120, ver=2),
+    # v2: 24 sa ufuk için 3 günlük küme
     _fwd("ANO-FUND-T", "anomali", "Funding ≥ %0.05/sa (aşırı) → ödeyen tarafın tersine, 24 sa", "LOG-ANOM",
-         [["fund", "abs>=", 0.0005]], "-sign:fund", D, (4 * H, 24 * H), 24 * H, D, 40),
+         [["fund", "abs>=", 0.0005]], "-sign:fund", D, (4 * H, 24 * H), 24 * H, 3 * D, 40, ver=2),
 )
 
 
@@ -164,7 +173,10 @@ def validate(spec: dict) -> list[str]:
     if ph not in hs and not (ph == 0 and ex):
         errs.append("birincil ufuk listede yok")
     span = int(ex["timeout"]) if (ph == 0 and ex) else ph
-    if int(spec.get("cluster_s") or 0) < max(span, 1):
+    width = int(spec.get("cluster_s") or 0)
+    if ev in ("forward", "frozen_backtest") and width < 2 * (max(span, 1) + int(spec.get("latency_s") or 0)):
+        errs.append("küme genişliği < 2 × (ufuk + gecikme): sınırı aşan olaylar atıldığında örnek yarıdan çok kısalır")
+    elif width < max(span, 1):
         errs.append("küme genişliği birincil ufuktan kısa (örtüşen olaylar ayrı sayılırdı)")
     if ex and not int(ex.get("timeout") or 0) > 0:
         errs.append("çıkış kuralında zaman aşımı yok")
@@ -175,8 +187,8 @@ def validate(spec: dict) -> list[str]:
         n_max, min_g = int(spec.get("n_max") or 0), int(spec.get("min_g") or 20)
         if looks and -(-looks[0] * n_max // 1) < min_g:
             errs.append(f"ilk bakış {min_g} kümeden önce düşüyor (n_max {n_max})")
-        if metric == "barrier" and not (ex and ex.get("tp") and ex.get("sl") and ph == 0):
-            errs.append("barrier metriği TP + SL + birincil ufuk 0 ister")
+        if metric == "barrier":
+            errs.append("barrier metriği şimdilik kapalı (binom testi olay düzeyinde; küme düzeyine geçene dek)")
         if ev == "frozen_backtest" and not 0 < float(spec.get("bt_alpha_share") or 0) < 1:
             errs.append("bt_alpha_share (0, 1) dışında")
     if spec.get("src"):
@@ -184,7 +196,9 @@ def validate(spec: dict) -> list[str]:
             errs.append(f"kaynak aile yok: {spec['src']}")
         if spec.get("side") not in ("follow", "fade") and str(spec.get("side"))[:6] not in ("+sign:", "-sign:"):
             errs.append(f"yön kuralı {spec.get('side')!r}")
-        if not int(spec.get("unit_s") or 0) > 0:
+        if spec.get("unit") not in (None, "src"):
+            errs.append(f"birim {spec.get('unit')!r}")
+        if spec.get("unit") != "src" and not int(spec.get("unit_s") or 0) > 0:
             errs.append("unit_s yok")
     return errs
 

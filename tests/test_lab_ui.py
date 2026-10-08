@@ -34,6 +34,7 @@ T = core.T
 
 async def _with_data(name):
     cfg = await core._fresh(name)
+    ui._CACHE.update(ts=0, v=None)
     await registry.sync(cfg, ts=T - 86400, rules=[core._rule("A"), core._rule("BAD", n_max=10)])
     registry.emit("A", "xyz:TEST", T, side=1, px_ref=100.0, trig_key="t1")
     await registry.flush(ts=T + 5)
@@ -54,7 +55,8 @@ def test_validate_and_overview():
         assert specs.validate(core._rule("X", cluster_s=600)), "küme < ufuk reddedilir"
         assert specs.validate(core._rule("X", metric="barrier")), "barrier TP+SL+h0 ister"
         assert specs.validate(core._rule("X", looks=[1.0, 0.5])), "bakışlar artan"
-        assert not specs.validate(core._rule("X", metric="barrier", primary_h=0))
+        assert any("barrier" in e for e in specs.validate(core._rule("X", metric="barrier", primary_h=0))), \
+            "barrier metriği küme düzeyine geçene dek kapalı"
         before = dict(rows["A"])
         v = await ui.overview(T + 3 * 3600)
         a = next(r for r in v["rules"] if r["rule_id"] == "A")
@@ -99,6 +101,7 @@ def test_strat_text():
 def test_lab_page_route():
     async def run():
         app = await smoke._fresh()
+        ui._CACHE.update(ts=0, v=None)
         cfg = app.state.cfg
         await registry.sync(cfg, ts=T - 86400, rules=[core._rule("A")])
         registry.emit("A", "xyz:TEST", T, side=1, trig_key="p1")

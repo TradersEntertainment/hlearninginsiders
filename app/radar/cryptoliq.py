@@ -607,11 +607,13 @@ async def page(cfg, dist_pct: float = 5.0, side: str = "hepsi",
 # ya da bildirim kapalıysa hiç), lab örneklemi teslime bağlı olmasın. Uzaklaşınca (d1 dışı) sıfırlanır.
 _LAB_ST: dict[tuple[str, str], int] = {}
 LAB_BUCKET = 6 * 3600                 # yeniden başlamada aynı aşama 6 saatlik dilimde bir kez
+LAB_LADDER = (2.5, 1.0, 0.5)          # lab'ın SABİT mesafe basamakları (%) — radarın ayarlı basamaklarından bağımsız
 
 
 def _lab_stages(by: dict, ts: int, d1: float, d2: float, d3: float, min_usd: float) -> int:
-    """Aşama geçişi (1 → 2 → 3, DOĞRULANMAMIŞ: sonda gönderim kapısının arkasında) karar anında
-    kaydedilir. Yön = likidasyona yürüyen hareketin yönü (long'un liq'i aşağıda → −1). Ayarlı
+    """Aşama geçişi (lab'ın SABİT basamakları %2.5 / %1 / %0.5; DOĞRULANMAMIŞ: sonda gönderim kapısının
+    arkasında) karar anında kaydedilir. Aday kümesi radarın ayarlı d1 ve tabanından gelir — ikisi de
+    özellik olarak yazılır, türetilmiş kural sabit koşulla süzer. Yön = likidasyona yürüyen hareketin yönü (long'un liq'i aşağıda → −1). Ayarlı
     mesafe/taban özellik olarak yazılır. Senkron, G/Ç yok."""
     n = 0
     try:
@@ -621,7 +623,7 @@ def _lab_stages(by: dict, ts: int, d1: float, d2: float, d3: float, min_usd: flo
             for p in cands:
                 key = (coin, p["address"])
                 live.add(key)
-                need = needed_stage(p["dist"], d1, d2, d3)
+                need = needed_stage(p["dist"], *LAB_LADDER)
                 if need <= _LAB_ST.get(key, 0):
                     continue
                 _LAB_ST[key] = need
@@ -629,7 +631,7 @@ def _lab_stages(by: dict, ts: int, d1: float, d2: float, d3: float, min_usd: flo
                           trig_key=f"{p['address']}:{need}:{ts // LAB_BUCKET}",
                           features={"asama": need, "mesafe": round(float(p["dist"]), 3),
                                     "usd": round(float(p.get("notional") or 0)), "kaldirac": p.get("leverage"),
-                                    "liq_px": p.get("liq_px"), "d": [d1, d2, d3], "taban": min_usd})
+                                    "liq_px": p.get("liq_px"), "d": [d1, d2, d3], "d1": d1, "taban": min_usd})
         for key in [k for k in _LAB_ST if k not in live]:
             _LAB_ST.pop(key, None)
     except Exception:                                  # noqa: BLE001

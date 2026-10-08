@@ -182,9 +182,10 @@ def test_stage_a_alpha_share_and_once():
     p = max(S.t_test_one(x)["p"], S.signflip_p(x))
     assert 0.01 < p <= 0.04, p
     a = G.stage_a(fb, x)
-    assert a["decision"] == G.EMEKLI and close(a["p"], p) and close(a["alpha_used"], 0.01)
+    assert a["decision"] == G.EMEKLI and a["p"] > 0.01 and close(a["alpha_used"], 0.01)
     assert a["n_c"] == 30 and set(a) >= {"decision", "p", "alpha_used", "n_c"}
-    assert close(a["test"]["p_t"], S.t_test_one(x)["p"]) and close(a["test"]["p_sf"], S.signflip_p(x))
+    # eşik aşılınca Monte Carlo erken durur: p o zaman alt sınır (karar aynı); t-testi tam
+    assert close(a["test"]["p_t"], S.t_test_one(x)["p"]) and a["p"] <= p + 1e-12
     # güçlü etki → kagit
     y = exact_t(30, 4.5, seed=4)
     b = G.stage_a(fb, y)
@@ -222,7 +223,7 @@ def test_stage_b_obf_increments():
     p = max(S.t_test_one(x)["p"], S.signflip_p(x), S.boot_t_p(x))
     assert inc[0] < p <= inc[1] and p <= inc_b[1], p
     r1, r2 = G.stage_b(fw, 1, x), G.stage_b(fw, 2, x)
-    assert r1["decision"] == G.DEVAM and close(r1["alpha_k"], inc[0]) and close(r1["p"], p)
+    assert r1["decision"] == G.DEVAM and close(r1["alpha_k"], inc[0]) and inc[0] < r1["p"] <= p + 1e-12
     assert r2["decision"] == G.GECTI and close(r2["alpha_k"], inc[1])
     assert all(r1["guards"].values()) and r1["n_c"] == 40
     assert set(r1) >= {"decision", "p", "alpha_k", "n_c", "guards"}
@@ -576,3 +577,26 @@ def test_boot_t_basics():
     assert S.boot_t_p(pos, reps=5000, seed=1) == S.boot_t_p(pos, reps=5000, seed=1), "tohum sabit"
     assert abs(S.skewness([1, 2, 3])) < 1e-12 and S.skewness([0, 0, 0, 10]) > 1
     print("✅ bootstrap-t) gerçek etkide küçük, ters etkide büyük p; tohum sabit; çarpıklık işareti")
+
+
+def test_early_look_reachable_for_registered_rules():
+    """İnceleme (08.10): OBF ilk bakış eşiği (~5e-6) Monte Carlo tabanının (1e-5) altındaydı — erken bakış
+    hiç geçemiyordu. Tekrar sayısı eşiğe göre büyür; boş veride erken durur."""
+    from app.lab import specs
+    for r in specs.RULES:
+        if r["evidence"] == "log":
+            continue
+        rule = {**r, "alpha": 0.05 / 40}
+        a1 = G.alpha_increments(rule)[0]
+        assert 1 / (1 + G.mc_reps(G.SF_REPS, a1)) < a1 / 10, (r["id"], a1)
+    rule = {"id": "X", "evidence": "forward", "metric": "net", "alpha": 0.05 / 40, "looks": [0.5, 1.0],
+            "n_max": 40, "min_g": 20}
+    rng = np.random.default_rng(4)
+    t0 = time.time()
+    res = G.stage_b(rule, 1, 0.006 + rng.normal(0, 0.003, 20), seed=2)
+    assert res["decision"] == G.GECTI, res
+    t1 = time.time()
+    null = G.stage_b(rule, 1, rng.normal(0, 0.003, 20), seed=3)
+    assert null["decision"] != G.GECTI and time.time() - t1 < 1.0, "boş veride erken durur"
+    print(f"✅ erken bakış) eşik 1/20 çözünürlükle ulaşılabilir; güçlü etki 1. bakışta geçer ({t1 - t0:.1f} sn);"
+          " boş veri erken durur")

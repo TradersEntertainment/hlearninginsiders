@@ -1897,17 +1897,32 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
   ailelerinden DONMUŞ süzgeçle türetilir (radarın ayarlı tabanı değil sabit eşik; ayar eşiği aşarsa
   olay türemez). Her yön ayrı kural: `HAC-KRP-F/T` kripto 5 dk hacim rekoru ≥ $1M → kova yönünde /
   tersine 1 sa; `HAC-HSS-F/T` aynısı hissede (09:30 kovası hariç); `ACI-12-F/T`, `ACI-16-F/T`
-  açılışın ilk 30 dk en hareketli 5'i → 10:01–11:59 / 15:59 ET aynı / ters yön; `AKI-TWAP-F` kapıdan
-  geçen TWAP; `AKI-WFILL-F` hissede ≥ $500K balina dolumu; `AKI-NEWBIG-F` ≥ $1M yeni pozisyon (24 sa);
+  açılışın ilk 30 dk en hareketli 5'i → 10:01–11:59 / 15:59 ET aynı / ters yön; `AKI-TWAP-F` etkin
+  TWAP emri ≥ $1M, kalan ≥ $500K, 24s hacmin ≥ %5'i (sabit eşik — radarın ayarlı kapısı değil);
+  `AKI-WFILL-F` hissede ≥ $500K balina dolumu; `AKI-NEWBIG-F` ≥ $1M yeni pozisyon (pozisyon başına
+  bir kez, 24 sa);
   `AKI-STICKY-F` emriyle doğrulanan ≥ $1M yapışkan duvar; `LIQ-S3-F` liq'e ≤ %0.5 kalan dev kripto
   pozisyon → liq yönünde; `ANO-FUND-T` funding ≥ %0.05/sa → ödeyenin tersine. Bakış: %50 ve %100
   `n_max` (40–120 küme) — önce haftalar geçer. Geçmişe dönük Aşama A çalışmaları (örüntü denetimi,
   kapalı seans, açılış) sonraki adım.
+- **Bağımsız inceleme (08.10, 4 mercek + yargıç, 17 gerçek bulgu — hepsi düzeltildi):** çözücü coin
+  başına tek pencereyle ve iş birikince her turda koşar (720 olay/gün → birikim 0; önce 5 dk'da ~7
+  pencereyle sınırsız birikiyordu), kıyas bütçeye takılınca bekler (net'siz sonuç yazılmaz), bir coinin
+  HL hatası turu düşürmez, olay KENDİ sürümünün donmuş tanımıyla ölçülür; türetilmiş kural kaynağın her
+  sunuşunda süzülür (sonradan aşırılaşan funding kaçmaz) ve yeniden başlamada çift saymaz; radar
+  ayarı türetilmiş kuralın örneklemini sessizce değiştirmez (ayar özellik olarak yazılır, sabit eşik);
+  penceresi küme sınırını aşan olay teste girmez (komşu kümeler bağımsız); erken bakış Monte Carlo
+  çözünürlüğü eşiğe göre (önce 1. bakış hiç geçemiyordu); dönemin α/K'si ilk kayıtta donar (dönem
+  ortasında K artırmak reddedilir — yeni bütçe = yeni dönem); teslim edilemeyen onay sorusu saatlik
+  yeniden; kapanışta kuyruk yazılır; barrier (TP/SL binom) metriği küme düzeyine geçene dek kapalı.
+  Tanımı değişen 5 kural v2 (TWAP, yeni pozisyon, yapışkan duvar, kripto liq, funding).
 - **Teslim:** kural kapıyı geçerse sahibe ölçülü özet + **✅ Onayla / 🛑 Reddet** (yalnız sahip, yalnız
   'kapıyı geçti' durumunda). Onaylanan kuralın YENİ olayı `STRAT_CHAT_ID`'ye (yoksa ana sohbet) ölçülü
   mesajla gelir: kural, coin, yön, karar anı, kayıttan sonraki karne — "işlem aç" yok, herkese açık
   akışa asla, **arama asla**. Canlıda onaydan sonraki her 20 kümede düşüş denetimi: ortalama net
-  sıfırın altında anlamlıysa kural durur (tek mesaj). Bildirim anahtarı `notify_strat`.
+  sıfırın altında anlamlıysa kural durur (tek mesaj; koruma kuralı — tekrara göre düzeltilmemiş, bilerek
+  erken durdurur). Bildirim anahtarı `notify_strat`. Onay sorusu kaybolursa `/strat KURAL` de tuşları
+  gösterir.
 - **Görünür:** `/lab` sayfası ve `/strat` komutu — kural, durum, olay sayısı, kayıttan SONRAKİ
   sonuç önce, geçmiş veri "seçim örneği" etiketiyle; kayıt / onay / emeklilik izi. Salt okunur.
 
@@ -1915,7 +1930,7 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
 ham `asset_metrics` 45 günde budanıyordu, oracle/premium hiç saklanmıyordu), `lab_candles` (1h ~208 gün
 ve 1d derin dolum; `bars` turunun aynı yanıtından 1h kopya, ek istek yok; 1m/5m pencereler 7/21 gün),
 `SEANS_ARCHIVE_ALL` (PROPR'daki ABD hisselerinin 30 dk arşivi, sekmelerden ayrı). HL istekleri lab'ın
-kendi ağırlık bütçesinden (`LAB_WEIGHT_MIN`, dakikada 150) ve düşük şeritten; paylaşılan pencere
+kendi ağırlık bütçesinden (`LAB_WEIGHT_MIN`, dakikada 240; önce çözücü, artanla geri doldurma) ve düşük şeritten; paylaşılan pencere
 yarıdan doluysa lab bekler — canlı radarlar lab yüzünden 429 yemez.
 
 **Beklenti dürüst:** kurallar ileri veri biriktikçe kapıdan geçer — haftalar / aylar; hiçbiri

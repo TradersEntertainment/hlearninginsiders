@@ -25,7 +25,7 @@ HL_MAX = 5000                      # HL her dilimde yalnız son 5000 mumu verir
 KEEP_S = {60: 7 * 86400, 300: 21 * 86400}   # kısa dilimler budanır; 15m ve üstü süresiz
 DEEP_TFS = (3600, 86400)
 DEEP_KV = "lab_deep"
-WEIGHT_MIN = 150                   # lab'ın kendi dakikalık HL ağırlık tavanı
+WEIGHT_MIN = 240                   # lab'ın kendi dakikalık HL ağırlık tavanı (paylaşılan pencere ayrıca korunur)
 SHARED_MAX = 0.5                   # paylaşılan pencerenin (HL 1200/dk) bu payı doluysa lab bekler
 
 

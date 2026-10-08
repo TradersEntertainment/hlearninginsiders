@@ -534,7 +534,8 @@ def chat_for(cfg, coin: str) -> tuple[str, bool]:
 
 # ---------------- değerlendirme turu ----------------
 
-def _lab_twap(run: "Run", order: dict, det: dict, gate: str, ts: int) -> bool:
+def _lab_twap(run: "Run", order: dict, det: dict, gate: str, ts: int, lookup_min: float = 0.0,
+              min_slices: int = 0) -> bool:
     """🧪 Laboratuvar kaydı: HL'de doğrulanmış TWAP emri, kapı sonucu ne olursa olsun (kapıdan kalan
     = kontrol grubu). Senkron, G/Ç yok, asla fırlatmaz. Bekleme içindeki tekrar emir kayda girmez
     (emir sorgusu yapılmıyor) — sayfada yazılı sınır."""
@@ -544,7 +545,8 @@ def _lab_twap(run: "Run", order: dict, det: dict, gate: str, ts: int) -> bool:
                     trig_key=f"{run.address}:{int(run.first_ts)}",
                     features={"plan": round(det.get("planned") or 0), "left": order.get("remaining_usd"),
                               "vol_pct": det.get("vol_pct"), "n": run.n, "dur": int(run.last_ts - run.first_ts),
-                              "seen": round(run.total), "kapi": gate, "st": order.get("status")},
+                              "seen": round(run.total), "kapi": gate, "st": order.get("status"),
+                              "lk_min": lookup_min, "min_sl": min_slices},
                     gated=gate in ("ok", "big"))
     except Exception:                                  # noqa: BLE001
         return False
@@ -683,7 +685,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                                "left": (order or {}).get("remaining_usd"), "status": order.get("status"),
                                "vol_pct": det["vol_pct"]}
             if order:
-                _lab_twap(run, order, det, g, ts)          # 🧪 kapıdan ÖNCE: geçen + kalan (kontrol grubu)
+                _lab_twap(run, order, det, g, ts, lookup_min, min_slices)   # 🧪 kapıdan ÖNCE: geçen + kalan
             if g not in ("ok", "big"):
                 out[g] = out.get(g, 0) + 1
                 decide(run, "lookup_fail" if (g == "no_order" and out.get("lookup_fail", 0) > lf_before) else g, det)

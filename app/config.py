@@ -824,7 +824,7 @@ class Config:
         self.lab_alpha = float(os.getenv("LAB_ALPHA", "0.05"))
         self.lab_k_budget = int(os.getenv("LAB_K_BUDGET", "40"))
         self.lab_epoch = int(os.getenv("LAB_EPOCH", "1"))
-        self.lab_weight_min = int(os.getenv("LAB_WEIGHT_MIN", "150"))
+        self.lab_weight_min = int(os.getenv("LAB_WEIGHT_MIN", "240"))
         self.sticky_enabled = True
         self.notify_sticky = True
         self.sticky_min_usd = float(os.getenv("STICKY_MIN_USD", "1000000"))

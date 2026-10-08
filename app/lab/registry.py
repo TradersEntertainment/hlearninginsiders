@@ -68,15 +68,26 @@ async def _status_row(conn, rule_id: str, ver: int, status: str, note: str, ts: 
 
 
 async def set_status(rule_id: str, ver: int, status: str, note: str = "", by: str = "lab",
-                     ts: int | None = None) -> None:
+                     ts: int | None = None, conn=None) -> None:
+    """Durum + iz. `conn` verilirse çağıranın işleminde (bakış satırıyla birlikte yazılsın)."""
     assert status in specs.STATUSES, status
     ts = int(ts or now())
-    async with db() as conn:
-        await conn.execute("UPDATE lab_rules SET status=?, status_ts=?, status_note=?"
-                           + (", approved_ts=?" if status == "canli" else "")
-                           + " WHERE rule_id=? AND ver=?",
-                           (status, ts, note, *((ts,) if status == "canli" else ()), rule_id, ver))
-        await _status_row(conn, rule_id, ver, status, note, ts, by)
+
+    async def _do(c):
+        await c.execute("UPDATE lab_rules SET status=?, status_ts=?, status_note=?"
+                        + (", approved_ts=?" if status == "canli" else "")
+                        + " WHERE rule_id=? AND ver=?",
+                        (status, ts, note, *((ts,) if status == "canli" else ()), rule_id, ver))
+        await _status_row(c, rule_id, ver, status, note, ts, by)
+    if conn is not None:
+        await _do(conn)
+    else:
+        async with db() as c:
+            await _do(c)
+    from . import ui
+    ui._CACHE["v"] = None                            # /strat ve /lab yeni durumu hemen göstersin
+    if conn is not None:
+        return                                       # çağıran işlem kapanınca belleği kendisi günceller
     a = ACTIVE.get(rule_id)
     if a and a["ver"] == ver:
         if status == "emekli":
@@ -87,12 +98,24 @@ async def set_status(rule_id: str, ver: int, status: str, note: str = "", by: st
 
 async def sync(cfg, ts: int | None = None, rules=None) -> dict:
     """Kod listesi ↔ lab_rules. Döner: {new, retired, active, slots_used}."""
+    from ..db import kv_get
     ts = int(ts or now())
     rules = specs.RULES if rules is None else rules
     k_budget = max(1, int(getattr(cfg, "lab_k_budget", 40)))
     alpha_lab = float(getattr(cfg, "lab_alpha", 0.05))
     epoch = int(getattr(cfg, "lab_epoch", 1))
-    out = {"new": [], "retired": [], "active": 0, "slots_used": 0}
+    out = {"new": [], "retired": [], "active": 0, "slots_used": 0, "epoch_note": ""}
+    # Dönemin α ve K'si İLK kayıtta donar: dönem ortasında env değişirse (K artırmak "bütçe doldu"nun
+    # doğal tepkisidir) toplam α LAB_ALPHA'yı aşardı. Değişiklik reddedilir; yeni bütçe = yeni dönem.
+    ek = f"lab_epoch:{epoch}"
+    frozen = await kv_get(ek)
+    if frozen:
+        if (float(frozen["alpha"]), int(frozen["k"])) != (alpha_lab, k_budget):
+            out["epoch_note"] = (f"LAB_ALPHA/LAB_K_BUDGET dönem {epoch} ortasında değişmiş ({alpha_lab}/{k_budget})"
+                                 f" — dönemin donmuş değeri {frozen['alpha']}/{frozen['k']} kullanılıyor;"
+                                 f" yeni bütçe için LAB_EPOCH'u artır")
+            log.error("lab: %s", out["epoch_note"])
+        alpha_lab, k_budget = float(frozen["alpha"]), int(frozen["k"])
     async with db() as conn:
         cur = await conn.execute("SELECT * FROM lab_rules")
         have = {(r["rule_id"], int(r["ver"])): dict(r) for r in await cur.fetchall()}
@@ -118,6 +141,10 @@ async def sync(cfg, ts: int | None = None, rules=None) -> dict:
                     else:
                         used += 1
                         slot, alpha = used, alpha_lab / k_budget
+                        if not frozen:                   # aynı işlemde (ikinci bağlantı kilitte beklerdi)
+                            frozen = {"alpha": alpha_lab, "k": k_budget, "ts": ts}
+                            await conn.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE"
+                                               " SET v=excluded.v", (ek, json.dumps(frozen)))
                 await conn.execute(
                     "INSERT INTO lab_rules(rule_id, ver, family, title, spec, spec_sha, registered_ts, epoch,"
                     " slot, alpha, evidence, status, status_ts, status_note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -149,8 +176,27 @@ async def sync(cfg, ts: int | None = None, rules=None) -> dict:
     for rid, a in ACTIVE.items():
         if a["spec"].get("src"):
             DERIVED.setdefault(a["spec"]["src"], []).append(rid)
+    await _seed_seen(ts)
     out["active"], out["slots_used"] = len(ACTIVE), used
     return out
+
+
+async def _seed_seen(ts: int, back: int = 2 * 86400) -> None:
+    """Yeniden başlamada bellek tekilliği ve gün sayacı son 2 günün kayıtlarından kurulur — aynı tetik
+    yeniden sayılmaz, gün tavanı sıfırdan başlamaz."""
+    today: dict[tuple, int] = {}
+    async with db() as conn:
+        for rid, a in ACTIVE.items():
+            cur = await conn.execute("SELECT coin, trig_key, ts_decision FROM strat_events WHERE rule_id=? AND"
+                                     " rule_ver=? AND ts_decision >= ?", (rid, a["ver"], ts - back))
+            for r in await cur.fetchall():
+                _SEEN[(rid, a["ver"], r["coin"], str(r["trig_key"]))] = None
+                k = (rid, int(r["ts_decision"]) // 86400)
+                today[k] = today.get(k, 0) + 1
+    for k, n in today.items():                       # ikinci kayıtta iki kez sayılmasın
+        _DAY[k] = max(_DAY.get(k, 0), n)
+    while len(_SEEN) > SEEN_MAX:
+        _SEEN.popitem(last=False)
 
 
 def _features(features) -> str | None:
@@ -181,11 +227,10 @@ def emit(rule_id: str, coin: str, ts_decision: int, side: int = 0, px_ref: float
             return False
         ts_d = int(ts_decision)
         tk = str(trig_key if trig_key is not None else ts_d)
-        sk = (rule_id, a["ver"], coin, tk)
-        if sk in _SEEN:
-            STATS["seen"] += 1
-            return False
-        for did in DERIVED.get(rule_id, ()):          # türetilmiş kurallar: aynı an, donmuş süzgeç
+        # Türetilmiş kurallar HER sunuşta süzülür (kaynağın ilk görülüşüyle sınırlı değil: sonradan $1M'ı
+        # geçen pozisyon, gün içinde aşırılaşan funding kaçmaz); kendi birimleriyle tekilleşir. Birim "src"
+        # = kaynak tetik kimliği (aynı pozisyon bir kez — yeniden başlamada da DB tekilliği korur).
+        for did in DERIVED.get(rule_id, ()):
             d = ACTIVE.get(did)
             if d is None:
                 continue
@@ -193,17 +238,22 @@ def emit(rule_id: str, coin: str, ts_decision: int, side: int = 0, px_ref: float
             if specs.match(ds.get("where"), features or {}, ts_d):
                 sd = specs.side_of(ds["side"], int(side or 0), features or {})
                 if sd:
-                    emit(did, coin, ts_d, side=sd, px_ref=px_ref, trig_key=str(ts_d // int(ds["unit_s"])),
+                    unit = tk if ds.get("unit") == "src" else str(ts_d // int(ds["unit_s"]))
+                    emit(did, coin, ts_d, side=sd, px_ref=px_ref, trig_key=unit,
                          features=features, gated=gated, origin=origin)
+        sk = (rule_id, a["ver"], coin, tk)
+        if sk in _SEEN:
+            STATS["seen"] += 1
+            return False
+        _SEEN[sk] = None                             # gün tavanına takılan da "görüldü" (tekrar sayılmaz)
+        if len(_SEEN) > SEEN_MAX:
+            _SEEN.popitem(last=False)
         day = (rule_id, ts_d // 86400)
         cap = int(a["spec"].get("max_events_day") or 0)
         if cap and _DAY.get(day, 0) >= cap:
             STATS["cap_drop"] += 1
             CAP_DROPS[rule_id] = CAP_DROPS.get(rule_id, 0) + 1
             return False
-        _SEEN[sk] = None
-        if len(_SEEN) > SEEN_MAX:
-            _SEEN.popitem(last=False)
         _DAY[day] = _DAY.get(day, 0) + 1
         if len(_DAY) > 4096:                       # eski günler
             for k in sorted(_DAY, key=lambda k: k[1])[:2048]:
@@ -259,8 +309,8 @@ async def flush(limit: int = 2000, ts: int | None = None) -> int:
                 if (cur.rowcount or 0) > 0:
                     fresh.append(dict(e))
             wrote = conn.total_changes - before
-    except Exception:
-        for e in reversed(items):                  # yazılamadı: geri koy (taşarsa sayılır)
+    except BaseException:                          # iptal (kapanış) dahil: geri koy (taşarsa sayılır)
+        for e in reversed(items):
             _Q.appendleft(e)
         raise
     LIVE_OUT.extend(fresh)                             # yalnız işlem başarıyla kapandıktan sonra

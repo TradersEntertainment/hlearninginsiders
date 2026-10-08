@@ -38,21 +38,25 @@ def _lab_fills(agg: dict, crypto_coins, spot_coins, watch) -> int:
     laboratuvar evreni (PROPR). Sıcak yol: senkron, G/Ç yok, asla fırlatmaz."""
     n = 0
     try:
+        from .. import assets
         from ..lab.data import in_universe
         from ..lab.registry import emit
         for (coin, addr, side), a in agg.items():
             if coin in spot_coins or not a.get("sz") or not in_universe(coin):
                 continue
-            crypto = coin in crypto_coins
+            k = assets.klass(coin)
+            crypto = coin in crypto_coins or k == "kripto"          # HIP-3 kripto dex'i (para:…) de kripto
             if a["ntl"] < (LAB_FILL_MIN_CRYPTO if crypto else LAB_FILL_MIN_EQ):
                 continue
             n += emit("LOG-WFILL", coin, int(a["ts"]), side=1 if side == "buy" else -1,
                       px_ref=a["pxsz"] / a["sz"], trig_key=f"{addr}:{min(a['tids'])}",
                       features={"usd": round(a["ntl"]), "taker": round(a["tk"] / a["known"], 2) if a["known"] else None,
-                                "parts": len(set(a["tids"])), "watch": int(addr in watch), "kripto": int(crypto)})
+                                "parts": len(set(a["tids"])), "watch": int(addr in watch), "kripto": int(crypto),
+                                "sinif": k})
     except Exception:                                  # noqa: BLE001
         pass
     return n
+
 
 class Collector:
     def __init__(self, cfg: Config, session: aiohttp.ClientSession, bot=None,

@@ -455,6 +455,11 @@ async def lifespan(app: FastAPI):
         await flush_logs()        # kapanış öncesi son uyarılar diske insin
     except Exception:
         pass
+    try:
+        from .lab.loop import shutdown_flush
+        await shutdown_flush()    # 🧪 karar anı kayıtları kuyrukta kalmasın (deploy / kapanış)
+    except Exception:
+        pass
     for info in TASKS.values():
         info["task"].cancel()
     await asyncio.gather(*(i["task"] for i in TASKS.values()), return_exceptions=True)
