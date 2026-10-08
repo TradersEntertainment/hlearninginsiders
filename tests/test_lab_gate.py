@@ -583,13 +583,15 @@ def test_early_look_reachable_for_registered_rules():
     """İnceleme (08.10): OBF ilk bakış eşiği (~5e-6) Monte Carlo tabanının (1e-5) altındaydı — erken bakış
     hiç geçemiyordu. Tekrar sayısı eşiğe göre büyür; boş veride erken durur."""
     from app.lab import specs
+    from app.config import Config
+    d = Config()
     for r in specs.RULES:
         if r["evidence"] == "log":
             continue
-        rule = {**r, "alpha": 0.05 / 40}
+        rule = {**r, "alpha": d.lab_alpha / d.lab_k_budget}
         a1 = G.alpha_increments(rule)[0]
         assert 1 / (1 + G.mc_reps(G.SF_REPS, a1)) < a1 / 10, (r["id"], a1)
-    rule = {"id": "X", "evidence": "forward", "metric": "net", "alpha": 0.05 / 40, "looks": [0.5, 1.0],
+    rule = {"id": "X", "evidence": "forward", "metric": "net", "alpha": 0.05 / 10, "looks": [0.5, 1.0],
             "n_max": 40, "min_g": 20}
     rng = np.random.default_rng(4)
     t0 = time.time()

@@ -389,9 +389,9 @@ def test_every_log_family_has_an_emit_site():
     import glob
     src = {f: open(f, encoding="utf-8").read() for f in glob.glob(os.path.join(ROOT, "app", "**", "*.py"),
                                                                     recursive=True) if "/lab/" not in f}
-    logs = {r["id"] for r in specs.RULES if r["evidence"] == "log"}
+    logs = {r["id"] for r in specs.RULES if r["evidence"] == "log" and not r.get("src")}   # kaynak aileler
     for r in specs.RULES:
-        if r["evidence"] != "log":
+        if r["id"] not in logs:
             assert r.get("src") in logs or r.get("custom") == "oru", f"{r['id']}: türetildiği aile yok"
             continue                                                   # türetilmiş / denetim: kayıt noktası yok
         sites = [f for f, s in src.items() if f'"{r["id"]}"' in s]
@@ -400,7 +400,7 @@ def test_every_log_family_has_an_emit_site():
                  "openmove.py", "cryptoliq.py"):
         f = next(f for f in src if f.endswith("/" + name))
         assert "lab.registry import emit" in src[f], name
-    assert all(r["ver"] >= 2 and r["latency_s"] <= 60 for r in specs.RULES if r["evidence"] == "log"), \
+    assert all(r["ver"] >= 2 and r["latency_s"] <= 60 for r in specs.RULES if r["id"] in logs), \
         "görme anı + tepki süresi"
     print("✅ kayıt noktaları) 8 akış ailesinin her biri kodda; v2 gecikme = tepki süresi")
 

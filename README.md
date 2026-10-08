@@ -1872,7 +1872,7 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
 
 **Şu an ne yapıyor:** kayıt ve kâğıt üstü ölçüm. Mesaj yalnız kapıyı geçip onayladığın kuraldan.
 - **Ön kayıt:** kurallar `app/lab/specs.py`'de donar (git commit = kayıt belgesi). Her kural ilk
-  görüldüğünde bir **yuva** alır ve α = `LAB_ALPHA / LAB_K_BUDGET` (0.05 / 40) **kayıtta donar** —
+  görüldüğünde bir **yuva** alır ve α = `LAB_ALPHA / LAB_K_BUDGET` (dönem 2: 0.05 / 10 = 0.005) **kayıtta donar** —
   sonradan kural eklemek eskilerin eşiğini değiştirmez, yuva geri dönmez. Tanım, maliyet tablosu ya
   da bağlı ayar değişirse (hash) kural **emekli** olur; yeni sürüm yeni yuva ister. Kayıt / onay /
   emeklilik izi `lab_tests` tablosunda, hiç budanmaz.
@@ -1893,18 +1893,28 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
   08.10 benzetimi: TP 1 / SL 3 şeklinde boş veride t + işaret çevirme α=0.005'te %2.2 geçiriyordu,
   üçü birlikte ≈0. TP/SL kuralları tam binom testiyle (TP < SL ise zaman aşımı başarısız sayılır).
   Tanımı hatalı kural (küme < ufuk, bakış 20 kümeden önce…) yuva harcamadan emekli kaydolur.
-- **İlk dalga kurallar (08.10, veri görülmeden kaydedildi — 14 kural, her biri bir yuva):** akış
-  ailelerinden DONMUŞ süzgeçle türetilir (radarın ayarlı tabanı değil sabit eşik; ayar eşiği aşarsa
-  olay türemez). Her yön ayrı kural: `HAC-KRP-F/T` kripto 5 dk hacim rekoru ≥ $1M → kova yönünde /
-  tersine 1 sa; `HAC-HSS-F/T` aynısı hissede (09:30 kovası hariç); `ACI-12-F/T`, `ACI-16-F/T`
-  açılışın ilk 30 dk en hareketli 5'i → 10:01–11:59 / 15:59 ET aynı / ters yön; `AKI-TWAP-F` etkin
-  TWAP emri ≥ $1M, kalan ≥ $500K, 24s hacmin ≥ %5'i (sabit eşik — radarın ayarlı kapısı değil);
-  `AKI-WFILL-F` hissede ≥ $500K balina dolumu; `AKI-NEWBIG-F` ≥ $1M yeni pozisyon (pozisyon başına
-  bir kez, 24 sa);
-  `AKI-STICKY-F` emriyle doğrulanan ≥ $1M yapışkan duvar; `LIQ-S3-F` liq'e ≤ %0.5 kalan dev kripto
-  pozisyon → liq yönünde; `ANO-FUND-T` funding ≥ %0.05/sa → ödeyenin tersine. Bakış: %50 ve %100
-  `n_max` (40–120 küme) — önce haftalar geçer.
-- **Örüntü denetimi (`ORU-ALERT-F`, `ORU-ALL-F`):** eski örüntü uyarısı ("şu şekil görüldü, sonra
+- **Kurallar — dönem 2 (08.10, kullanıcı: "kural sayısını 10'a indir"):** hiçbir kural bakış eşiğine
+  ulaşmadan (α harcanmadan, sonuç görülmeden) yuva 16 → 10; kural başına α 0.00125 → **0.005** (son
+  bakışta z ≈ 3.0 → **2.6**). Seçim yalnız olay sıklığı + botun amacı + çeşitlilik. Kümeler ~%20 kısa
+  (aynı güç: gereken küme ∝ (z_α + z_β)²). Yuvalı kurallar akış ailelerinden DONMUŞ süzgeçle türetilir
+  (radarın ayarlı tabanı değil sabit eşik; ayar eşiği aşarsa olay türemez), her yön ayrı kural:
+
+  | Kural | Ne | Küme | Bakışlar (küme) | En erken (her blokta olay varsa) |
+  |---|---|---|---|---|
+  | `HAC-KRP-F/T` | kripto 5 dk hacim rekoru ≥ $1M → kova yönünde / tersine, 1 sa | 4 sa | 48 / 96 | ~8 / 16 gün |
+  | `HAC-HSS-F/T` | aynısı hissede (09:30 kovası hariç) | 4 sa | 32 / 64 | ~2–3 / 4–6 hafta (seans) |
+  | `ACI-12-F/T` | açılışın ilk 30 dk en hareketli 5'i → 10:01–11:59 ET aynı / ters | 1 gün | 24 / 48 | ~5 / 10 hafta |
+  | `LIQ-S3-F` | kripto liq'e ≤ %0.5 kalan dev pozisyon → liq yönünde, 1 sa | 4 sa | 48 / 96 | sıklığa bağlı |
+  | `AKI-TWAP-F` | etkin TWAP ≥ $1M, kalan ≥ $500K, 24s hacmin ≥ %5'i → emrin yönünde, 4 sa | 1 gün | 24 / 48 | ~4 / 8 hafta |
+  | `AKI-NEWBIG-F` | ≥ $1M yeni pozisyon (pozisyon başına bir kez) → yönünde, 24 sa | 3 gün | 20 / 40 | ~2 / 4 ay |
+  | `ORU-ALERT-F` | eski örüntü uyarısının denetimi (aşağıda) | 2 gün | 24 / 48 | Aşama A ~2 gün |
+
+  **İzleme (yuvasız, kapıya girmez, mesaj atmaz — /lab'da betimlenir):** `ACI-16-F/T` (15:59'a kadar),
+  `AKI-WFILL-F` hissede ≥ $500K balina dolumu, `AKI-STICKY-F` emriyle doğrulanan ≥ $1M yapışkan duvar,
+  `ANO-FUND-T` funding ≥ %0.05/sa → ödeyenin tersine. İyi görünen biri ancak YENİ dönemde, yeni
+  saatle yuvaya alınabilir. **Railway'de `LAB_K_BUDGET` / `LAB_EPOCH` elle ayarlıysa sil ya da 10 / 2 yap**
+  (dönemin α/K'si ilk kayıtta donar; dönem ortası değişiklik reddedilir).
+- **Örüntü denetimi (`ORU-ALERT-F`):** eski örüntü uyarısı ("şu şekil görüldü, sonra
   yükselen pay %p") gerçekten para kazandırır mıydı? Kayıtlı `pattern_signals` satırlarından: mükerrer
   sorgu barı tek, örtüşen pencereler inceltilmiş, yön = fark (p_up − taban) işareti (eski sicil
   p_up ≥ 50'yi isabet sayıp piyasa yönünü ödüllendiriyordu), giriş satır yazıldıktan SONRA kapanan ilk

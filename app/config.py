@@ -822,8 +822,9 @@ class Config:
         self.notify_strat = True
         self.strat_chat_id = os.getenv("STRAT_CHAT_ID", "").strip()     # env-only: boşsa ana sohbet
         self.lab_alpha = float(os.getenv("LAB_ALPHA", "0.05"))
-        self.lab_k_budget = int(os.getenv("LAB_K_BUDGET", "40"))
-        self.lab_epoch = int(os.getenv("LAB_EPOCH", "1"))
+        # Dönem 2 (08.10): 10 kural, kural başına α 0.05/10 = 0.005 (dönem 1: 40 yuva, bakış öncesi kapandı)
+        self.lab_k_budget = int(os.getenv("LAB_K_BUDGET", "10"))
+        self.lab_epoch = int(os.getenv("LAB_EPOCH", "2"))
         self.lab_weight_min = int(os.getenv("LAB_WEIGHT_MIN", "240"))
         self.sticky_enabled = True
         self.notify_sticky = True

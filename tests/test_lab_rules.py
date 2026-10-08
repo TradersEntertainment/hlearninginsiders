@@ -36,8 +36,11 @@ ET = ZoneInfo("America/New_York")
 
 
 async def _prod(name):
+    """Üretim varsayılanları (dönem 2: K = 10, α 0.05)."""
+    from app.config import Config
     cfg = await core._fresh(name)
-    cfg.lab_k_budget = 40
+    d = Config()
+    cfg.lab_k_budget, cfg.lab_alpha, cfg.lab_epoch = d.lab_k_budget, d.lab_alpha, d.lab_epoch
     out = await registry.sync(cfg, ts=T - 86400)
     return cfg, out
 
@@ -50,16 +53,20 @@ def test_first_wave_registered():
     async def run():
         cfg, out = await _prod("rules0.db")
         slotted = [r for r in specs.RULES if r["evidence"] != "log"]
-        assert out["slots_used"] == len(slotted) and not out["retired"]
+        assert cfg.lab_k_budget == 10 and cfg.lab_epoch == 2, "dönem 2: 10 kural"
+        assert len(slotted) == 10 and out["slots_used"] == 10 and not out["retired"]
         oru = [r for r in slotted if r.get("custom") == "oru"]
-        assert len(oru) == 2 and all(r["evidence"] == "frozen_backtest" for r in oru)
+        assert [r["id"] for r in oru] == ["ORU-ALERT-F"] and oru[0]["evidence"] == "frozen_backtest"
         fwd = [r for r in slotted if not r.get("custom")]
-        assert len(fwd) >= 12
+        watch = [r for r in specs.RULES if r["evidence"] == "log" and r.get("src")]
+        assert {r["id"] for r in watch} == {"ACI-16-F", "ACI-16-T", "AKI-WFILL-F", "AKI-STICKY-F", "ANO-FUND-T"}
+        assert all(r["title"].startswith("(izleme)") for r in watch)
         async with dbm.db() as c:
             rows = {r["rule_id"]: dict(r) for r in await (await c.execute("SELECT * FROM lab_rules")).fetchall()}
         for r in fwd:
             row = rows[r["id"]]
-            assert row["status"] == "kagit" and row["slot"] and abs(row["alpha"] - 0.05 / 40) < 1e-15, row
+            assert row["status"] == "kagit" and row["slot"] and abs(row["alpha"] - 0.05 / 10) < 1e-15, row
+            assert row["epoch"] == 2
             assert r["src"] in {x["id"] for x in specs.RULES if x["evidence"] == "log"}
             assert not specs.validate(r)
         assert all(rows[r["id"]]["slot"] is None for r in specs.RULES if r["evidence"] == "log")
@@ -69,7 +76,33 @@ def test_first_wave_registered():
         changed = dict(fwd[0], where=fwd[0]["where"] + [["usd", ">=", 1]])
         assert registry.spec_sha(changed) != sha, "süzgeç hash'e girer"
     asyncio.run(run())
-    print("✅ ilk dalga) ileri kurallar yuvalı, α = 0.05/40 kayıtta; log aileleri yuvasız; süzgeç hash'te")
+    print("✅ ilk dalga) dönem 2: 10 yuvalı kural, α = 0.05/10 kayıtta; izleme ve log aileleri yuvasız;"
+          " süzgeç hash'te")
+
+
+def test_epoch_one_to_two_transition():
+    """Dönem 1'de (K = 40) kaydolmuş eski sürümler varken yeni kod: eskiler emekli ('kod listesinde yok'),
+    10 yeni sürüm dönem 2'de yuva 1–10, α 0.005; izleme kuralları yuvasız; dönem 2'nin α/K'si donar."""
+    async def run():
+        cfg = await core._fresh("rules_ep.db")
+        old = [dict(r, ver=1) for r in specs.RULES if r["evidence"] != "log"]
+        old = [dict(o, evidence="forward") if o.get("custom") is None else o for o in old]
+        cfg.lab_k_budget, cfg.lab_epoch = 40, 1
+        await registry.sync(cfg, ts=T - 86400, rules=old)
+        cfg.lab_k_budget, cfg.lab_epoch = 10, 2
+        out = await registry.sync(cfg, ts=T)
+        assert {x.split("/")[0] for x in out["retired"]} >= {r["id"] for r in old}, out["retired"]
+        async with dbm.db() as c:
+            rows = [dict(r) for r in await (await c.execute(
+                "SELECT rule_id, ver, epoch, slot, alpha, status FROM lab_rules WHERE status != 'emekli'")).fetchall()]
+            frozen = (await (await c.execute("SELECT v FROM kv WHERE k='lab_epoch:2'")).fetchone())["v"]
+        slotted = [r for r in rows if r["slot"]]
+        assert len(slotted) == 10 and {r["epoch"] for r in slotted} == {2}
+        assert sorted(r["slot"] for r in slotted) == list(range(1, 11))
+        assert all(abs(r["alpha"] - 0.005) < 1e-15 for r in slotted)
+        assert '"k": 10' in frozen and '"alpha": 0.05' in frozen
+    asyncio.run(run())
+    print("✅ dönem 2) eski sürümler emekli; 10 yeni sürüm yuva 1–10, α 0.005; dönem bütçesi dondu")
 
 
 def test_derivation():

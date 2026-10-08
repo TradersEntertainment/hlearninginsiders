@@ -52,64 +52,75 @@ RULES: tuple[dict, ...] = (
 
 def _fwd(rid: str, family: str, title: str, src: str, where: list, side: str, unit_s: int,
          horizons: tuple, primary_h: int, cluster_s: int, n_max: int, latency_s: int = 60,
-         max_day: int = 200, ver: int = 1, unit: str | None = None) -> dict:
+         max_day: int = 200, ver: int = 1, unit: str | None = None, evidence: str = "forward") -> dict:
     """İleri (forward) kural: kayıttan SONRAKİ veride, önceden yazılı iki bakış (%50, %100 n_max);
     birincil ölçü birincil ufukta maliyet sonrası piyasa düzeltmeli net getiri (> 0). Penceresi küme
     sınırını aşan olay teste girmez (komşu kümeler örtüşmesin — looks.forward_clusters)."""
-    return {"id": rid, "ver": ver, "family": family, "title": title, "evidence": "forward", "metric": "net",
+    return {"id": rid, "ver": ver, "family": family, "title": title, "evidence": evidence, "metric": "net",
             "src": src, "where": where, "side": side, "unit_s": unit_s, **({"unit": unit} if unit else {}),
             "horizons_s": list(horizons), "primary_h": primary_h, "exit": None, "latency_s": latency_s,
             "cluster_s": cluster_s, "looks": [0.5, 1.0], "n_max": n_max, "min_g": 20, "bt_alpha_share": 0.0,
             "max_events_day": max_day, "cfg_keys": []}
 
 
+def _watch(*a, **kw) -> dict:
+    """İzleme: aynı türetilmiş tanım ama yuvasız ('log') — kapıya girmez, mesaj atmaz, /lab'da betimlenir.
+    İyi görünen biri ancak YENİ dönemde, yeni saatle (yeni sürüm) yuvaya alınabilir."""
+    return _fwd(*a, evidence="log", **kw)
+
+
 D = 86400
 # İlk dalga ileri kurallar (08.10, veri görülmeden kaydedildi — akış aileleri aynı gün başladı).
 # Her yön ayrı kural, ayrı yuva (α = LAB_ALPHA / K). Eşikler sabit; radarın ayarlı tabanı
 # eşikten yüksekse olay türemez (taban koşulu) — ayar oynatmak kuralı sessizce değiştirmez.
+# DÖNEM 2 (08.10, kullanıcı: "kural sayısını 10'a indir"): hiçbir kural bakış eşiğine ulaşmadan (α
+# harcanmadan, sonuç görülmeden) yuva 16 → 10, kural başına α 0.00125 → 0.005. Seçim yalnız olay
+# sıklığı + botun amacı + çeşitlilik. Yuvalı 10 kural yeni sürüm (dönem 2'de yeni yuva, saat yeniden
+# başlar) ve n_max ~%20 küçük: gereken küme ∝ (z_α + z_β)²; z 3.02 → 2.58 ile aynı güç %21 daha az
+# kümeyle. Kalan 5 izlemede (yuvasız); ORU-ALL-F kalktı (ORU-ALERT-F ile aynı veri).
 _VOL_K = [["piyasa", "==", "crypto"], ["usd", ">=", 1_000_000], ["taban", "<=", 1_000_000]]
 _VOL_H = [["piyasa", "==", "equity"], ["usd", ">=", 1_000_000], ["taban", "<=", 1_000_000],
           ["kova", "et_not_in", ["09:30", "09:35"]]]
 _OPEN5 = [["dk", "==", 30], ["sira", "<=", 5]]
 RULES = RULES + (
     _fwd("HAC-KRP-F", "hacim", "Kripto 5 dk hacim rekoru ≥ $1M → kova yönünde, 1 sa", "LOG-VOL", _VOL_K,
-         "follow", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 120),
+         "follow", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 96, ver=2),
     _fwd("HAC-KRP-T", "hacim", "Kripto 5 dk hacim rekoru ≥ $1M → kova tersine, 1 sa", "LOG-VOL", _VOL_K,
-         "fade", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 120),
+         "fade", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 96, ver=2),
     _fwd("HAC-HSS-F", "hacim", "Hisse 5 dk hacim rekoru ≥ $1M (09:30 kovası hariç) → kova yönünde, 1 sa",
-         "LOG-VOL", _VOL_H, "follow", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 80),
+         "LOG-VOL", _VOL_H, "follow", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 64, ver=2),
     _fwd("HAC-HSS-T", "hacim", "Hisse 5 dk hacim rekoru ≥ $1M (09:30 kovası hariç) → kova tersine, 1 sa",
-         "LOG-VOL", _VOL_H, "fade", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 80),
+         "LOG-VOL", _VOL_H, "fade", 4 * H, (15 * 60, H, 4 * H), H, 4 * H, 64, ver=2),
     _fwd("ACI-12-F", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → aynı yönde, 10:01–11:59 ET", "LOG-OPEN",
-         _OPEN5, "follow", D, (7080,), 7080, D, 60),
+         _OPEN5, "follow", D, (7080,), 7080, D, 48, ver=2),
     _fwd("ACI-12-T", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → ters yönde, 10:01–11:59 ET", "LOG-OPEN",
-         _OPEN5, "fade", D, (7080,), 7080, D, 60),
-    _fwd("ACI-16-F", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → aynı yönde, 10:01–15:59 ET", "LOG-OPEN",
-         _OPEN5, "follow", D, (21480,), 21480, D, 60),
-    _fwd("ACI-16-T", "acilis", "Açılışın ilk 30 dk en hareketli 5'i → ters yönde, 10:01–15:59 ET", "LOG-OPEN",
-         _OPEN5, "fade", D, (21480,), 21480, D, 60),
+         _OPEN5, "fade", D, (7080,), 7080, D, 48, ver=2),
+    _watch("ACI-16-F", "acilis", "(izleme) Açılışın ilk 30 dk en hareketli 5'i → aynı yönde, 10:01–15:59 ET",
+           "LOG-OPEN", _OPEN5, "follow", D, (21480,), 21480, D, 60, ver=2),
+    _watch("ACI-16-T", "acilis", "(izleme) Açılışın ilk 30 dk en hareketli 5'i → ters yönde, 10:01–15:59 ET",
+           "LOG-OPEN", _OPEN5, "fade", D, (21480,), 21480, D, 60, ver=2),
     # v2 (08.10 inceleme): radarın ayarlı kapısı ("kapi") yerine SABİT eşikler + o anki ön süzgeç ayarı
     _fwd("AKI-TWAP-F", "akis", "Etkin TWAP emri ≥ $1M, kalan ≥ $500K, 24s hacmin ≥ %5'i → emrin yönünde, 4 sa",
          "LOG-TWAP", [["st", "==", "activated"], ["plan", ">=", 1_000_000], ["left", ">=", 500_000],
                       ["vol_pct", ">=", 5.0], ["lk_min", "<=", 50_000], ["min_sl", "<=", 10]],
-         "follow", D, (H, 4 * H, 24 * H), 4 * H, D, 60, ver=2),
-    _fwd("AKI-WFILL-F", "akis", "Hissede ≥ $500K balina dolumu → dolum yönünde, 4 sa", "LOG-WFILL",
-         [["kripto", "==", 0], ["usd", ">=", 500_000]], "follow", 4 * H, (H, 4 * H), 4 * H, D, 60),
+         "follow", D, (H, 4 * H, 24 * H), 4 * H, D, 48, ver=3),
+    _watch("AKI-WFILL-F", "akis", "(izleme) Hissede ≥ $500K balina dolumu → dolum yönünde, 4 sa", "LOG-WFILL",
+           [["kripto", "==", 0], ["usd", ">=", 500_000]], "follow", 4 * H, (H, 4 * H), 4 * H, D, 60, ver=2),
     # v2: pozisyon başına bir kez (birim = kaynak kimliği); 24 sa ufuk için 3 günlük küme
     _fwd("AKI-NEWBIG-F", "akis", "≥ $1M yeni büyük pozisyon → pozisyon yönünde, 24 sa", "LOG-NEWBIG",
          [["usd", ">=", 1_000_000], ["age_s", "<=", 6 * H]], "follow", D, (4 * H, 24 * H), 24 * H, 3 * D, 40,
-         ver=2, unit="src"),
-    _fwd("AKI-STICKY-F", "akis", "Emriyle doğrulanan ≥ $1M yapışkan duvar (açılış) → duvar yönünde, 4 sa",
-         "LOG-STICKY", [["sahip", "==", "order"], ["etki", "==", "open"], ["usd", ">=", 1_000_000],
-                        ["taban", "<=", 1_000_000], ["taban_pct", "<=", 2.0]],
-         "follow", D, (H, 4 * H), 4 * H, D, 60, ver=2),
+         ver=3, unit="src"),
+    _watch("AKI-STICKY-F", "akis", "(izleme) Emriyle doğrulanan ≥ $1M yapışkan duvar (açılış) → duvar yönünde, 4 sa",
+           "LOG-STICKY", [["sahip", "==", "order"], ["etki", "==", "open"], ["usd", ">=", 1_000_000],
+                          ["taban", "<=", 1_000_000], ["taban_pct", "<=", 2.0]],
+           "follow", D, (H, 4 * H), 4 * H, D, 60, ver=3),
     # v2: lab'ın sabit basamakları + radarın ayarlı d1'i ≥ %0.5 (aday kümesi)
     _fwd("LIQ-S3-F", "liq", "Kripto liq'e ≤ %0.5 kalan dev pozisyon → liq yönünde, 1 sa", "LOG-CLIQ",
          [["mesafe", "<=", 0.5], ["usd", ">=", 500_000], ["taban", "<=", 500_000], ["d1", ">=", 0.5]],
-         "follow", D, (15 * 60, H), H, 4 * H, 120, ver=2),
+         "follow", D, (15 * 60, H), H, 4 * H, 96, ver=3),
     # v2: 24 sa ufuk için 3 günlük küme
-    _fwd("ANO-FUND-T", "anomali", "Funding ≥ %0.05/sa (aşırı) → ödeyen tarafın tersine, 24 sa", "LOG-ANOM",
-         [["fund", "abs>=", 0.0005]], "-sign:fund", D, (4 * H, 24 * H), 24 * H, 3 * D, 40, ver=2),
+    _watch("ANO-FUND-T", "anomali", "(izleme) Funding ≥ %0.05/sa (aşırı) → ödeyen tarafın tersine, 24 sa", "LOG-ANOM",
+           [["fund", "abs>=", 0.0005]], "-sign:fund", D, (4 * H, 24 * H), 24 * H, 3 * D, 40, ver=3),
 )
 
 
@@ -220,17 +231,16 @@ def validate(spec: dict) -> list[str]:
 # Örüntü denetimi (R3): pattern_signals'tan doğrudan (olay kaydı yok, app/lab/audit.py). Aşama A kayıttan
 # ÖNCEKİ satırlarda BİR kez (kayıttan 2 gün sonra — önceki satırların vadesi dolsun), sonra kayıttan
 # sonraki satırlarda planlı bakışlar. Yön = fark (p_up − taban) işareti; 2 günlük takvim kümeleri.
-def _oru(rid: str, title: str, which: str) -> dict:
-    return {"id": rid, "ver": 1, "family": "oruntu", "title": title, "evidence": "frozen_backtest", "metric": "net",
+def _oru(rid: str, title: str, which: str, ver: int = 1, n_max: int = 60) -> dict:
+    return {"id": rid, "ver": ver, "family": "oruntu", "title": title, "evidence": "frozen_backtest", "metric": "net",
             "custom": "oru", "set": which, "horizons_s": [], "primary_h": 0, "exit": None, "latency_s": 0,
-            "cluster_s": 2 * 86400, "looks": [0.5, 1.0], "n_max": 60, "min_g": 20, "bt_alpha_share": 0.25,
+            "cluster_s": 2 * 86400, "looks": [0.5, 1.0], "n_max": n_max, "min_g": 20, "bt_alpha_share": 0.25,
             "max_events_day": 0, "cfg_keys": []}
 
 
 RULES = RULES + (
     _oru("ORU-ALERT-F", "Örüntü denetimi: uyarılabilir sinyaller (n ≥ 20, |z| ≥ 2, |fark| ≥ 10) → fark yönünde, vadeye kadar",
-         "alertable"),
-    _oru("ORU-ALL-F", "Örüntü denetimi: tüm kayıtlı sinyaller → fark yönünde, vadeye kadar", "all"),
+         "alertable", ver=2, n_max=48),
 )
 STAGE_A_WAIT = 2 * 86400
 

@@ -124,7 +124,7 @@ def test_stage_a_once_after_wait():
         assert await looks.run(reg_ts + 2 * 86400 + 3600) == [], "Aşama A bir kez"
         async with dbm.db() as c:
             n = (await (await c.execute("SELECT COUNT(*) n FROM lab_tests WHERE kind='backtest'")).fetchone())["n"]
-        assert n == 2
+        assert n == 1, "tek denetim kuralı (ORU-ALERT-F)"
         ui._CACHE.update(ts=0, v=None)
         v = await ui.overview(reg_ts + 2 * 86400 + 3700)
         r = next(x for x in v["rules"] if x["rule_id"] == "ORU-ALERT-F")
