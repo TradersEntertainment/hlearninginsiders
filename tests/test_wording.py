@@ -39,7 +39,9 @@ FORBIDDEN = [
     (r"olasılık", "olasılık dili"), (r"olabilir", "kanıtsız ihtimal"),
     (r"gidebilir|yükselebilir|düşebilir|dönebilir|süpürebilir|hareket edebilir", "fiyat kipi"),
     (r"yükselecek|düşecek|gidecek|dönecek", "gelecek zaman tahmini"),
-    (r"kaçınılmaz|öngörülebilir|\bdöner\b", "kesinlik iddiası"),
+    (r"kaçınılmaz|öngörülebilir|\bdöner\b|döneceğ", "kesinlik iddiası"),
+    (r"spoof", "niyet atfı (çekilme/dolum ayırt edilmez)"),
+    (r"doğru\s*/\s*yanlış|yanıldı|insider\s+şüphe", "tahmin / içeriden bilgi çerçevesi"),
     (r"garanti(?!\s*değil|si yok)", "kesinlik iddiası"),
     (r"işlem açabilirsin|girebilirsin|tavsiye ed|fırsat", "işlem önerisi"),
     (r"insider (olabilir|paterni|şüphesi)|erken kuş|(?<![\wçğıöşü])biliyor|doğru bil(di|en|iyor)|bilici"
@@ -57,7 +59,10 @@ ALLOW = [
     r"havuz henüz dar olabilir", r"eksik olabilir", r"ulaşılamıyor olabilir", r"normal olabilir",
     r"tahmin değil|tahmin yok",
 ]
-SOURCES = ["app/telegram/format.py", "app/telegram/public.py", "app/telegram/fanout.py",
+# config.py / diag.py taranmaz: ayar ve tanı açıklamalarında "döner" (istek/döngü döner), "olabilir"
+# (teknik açıklama) mesaj değil, sahibe teknik bilgi.
+SOURCES = ["app/telegram/format.py", "app/telegram/public.py", "app/telegram/fanout.py", "app/telegram/bot.py",
+           "app/radar/liqchart.py", "app/radar/patterns.py",
            "app/radar/cascade.py", "app/radar/scorer.py", "app/radar/anomaly.py", "app/radar/forensics.py",
            "app/radar/liqattack.py", "app/radar/hourstats.py", "app/earnings/evaluator.py", "app/propr.py"]
 WEB_SKIP = {"olabilir", "olasılık", "kesin"}            # web sayfalarında bayatlık/kapsam uyarıları çok
@@ -87,13 +92,18 @@ def _strings(path: str):
             skip.update(id(a) for a in ast.walk(n))
         if isinstance(n, ast.Compare):
             skip.update(id(a) for a in ast.walk(n))
+        # eski→yeni düzeltme tabloları (ör. evaluator.REASON_FIXES) eski metni bilerek taşır
+        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id.endswith("_FIXES") for t in n.targets):
+            skip.update(id(a) for a in ast.walk(n))
     for n in ast.walk(tree):
         if id(n) in skip:
             continue
         if isinstance(n, ast.JoinedStr):
             skip.update(id(v) for v in n.values)
-            yield n.lineno, "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in n.values)
-        elif isinstance(n, ast.Constant) and isinstance(n.value, str) and "UPDATE earnings_events" not in n.value:
+            txt = "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in n.values)
+            if "UPDATE " not in txt:                       # SQL düzeltmesi eski metni arar
+                yield n.lineno, txt
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str) and "UPDATE " not in n.value:
             yield n.lineno, n.value
 
 
@@ -131,7 +141,8 @@ def test_rendered_messages():
     pat = fmt.pattern_alert({"coin": "xyz:SNDK", "p_up": 68, "tf": "1h", "horizon": 24, "base_up": 52,
                              "edge": 16, "z": 2.4, "n": 41, "med": 1.2, "q25": -0.5, "q75": 2.8,
                              "record": {"rate": 71, "n": 300}})
-    assert "n=<b>41</b> benzer geçmiş örnekte" in pat and "yükselen pay <b>%68</b>" in pat
+    assert "n=<b>41</b> benzer geçmiş örnekte <b>24 bar (24s)</b> sonra fiyatı yukarıda olan pay <b>%68</b>" in pat, pat
+    assert "taban oranı (şekle bakmadan) %52 → fark <b>+16 puan</b>" in pat, pat
     assert "sicili" not in pat and "PROPR" not in pat, "yanlı sicil satırı ve PROPR notu örüntüde yok"
     c, c_ex = _cascade()
     casc = "\n".join(cz.describe(c) + cz.describe(c_ex))
@@ -144,7 +155,7 @@ def test_rendered_messages():
                              "anchor_ts": dbm.now() - 7200, "oi_chg": -3.0})
     assert "OI) kapanıştan beri %-3.0" in off and "kuruluyor" not in off
     whale = fmt.whale_fill_alert("xyz:SNDK", A, "buy", 480, 2e6, True, (2, 1))
-    assert "Sicil: 2 yön tuttu / 1 tutmadı" in whale
+    assert "Sicil: 2 kez yönü tuttu / 1 kez tutmadı" in whale
     win = fmt.winners_list([{"address": A, "hits": 2, "misses": 0, "watchlist": 1}])
     assert "Bilanço yön sicili" in win and "şansla" in win
     top = {"side": "long", "address": A, "notional": 5e6}
@@ -154,7 +165,7 @@ def test_rendered_messages():
     wall = fmt.wall_gone({"symbol": "SNDK", "side": "ask", "first_ts": dbm.now() - 600, "peak_notional": 5e6})
     liqm = fmt.track_liq_move({"symbol": "SNDK", "id": 3, "address": A, "side": "short", "base_notional": 1e6},
                               {"notional": 8e5}, 500, 506)
-    assert "boyut $1.0M → $800K" in liqm
+    assert "fiyattan <b>uzaklaştı</b>" in liqm and "boyut" not in liqm, "farklı aralıklar yan yana yazılmaz"
     hot = fmt.hot_hours_channel([{"symbol": "SNDK", "avg": 0.4, "win": 61, "n": 55}], 16)
     assert "GEÇMİŞ KARNESİ" in hot and "şansla" in hot
     bad = [f"{name}: {h}" for name, t in (("örüntü", pat), ("kaskad", casc), ("liq saldırısı", atk),

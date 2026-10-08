@@ -494,7 +494,7 @@ async def _subsystems(cfg, state=None) -> list[str]:
             r = await prec()
             out.append(f"       karne: {r['hit']}✓/{r['miss']}✗/{r['open']} açık"
                        + (f" · isabet %{r['rate']}" if r["rate"] is not None
-                          else " · henüz kapanmış tahmin yok"))
+                          else " · henüz kapanmış sinyal yok"))
         except Exception as e:
             out.append(f"       karne okunamadı ({type(e).__name__}: {e})")
     # "Ne oldu" sekmesinin yakıtı: kripto fill kaydı ve ana dex OI örneği.

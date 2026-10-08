@@ -83,7 +83,7 @@ def test_describe():
     t2 = "\n".join(cz.describe(c2, 89.13))
     assert "arada başka liq yok" in t2 and "görünen defter 90.20 seviyesinde bitiyor" in t2 and "yerleşmedi" in t2, t2
     c3 = cz.simulate([], lv((89.50, 10)), TRIG, POOL, 89.13)
-    assert "uzanmıyor" in cz.describe(c3, 89.13)[0] and "en geniş görünüm fiyattan %+0.4'e kadar" in cz.describe(c3, 89.13)[0]
+    assert "uzanmıyor" in cz.describe(c3, 89.13)[0] and "en geniş görünüm: fiyattan %+0.4 uzaklığa kadar" in cz.describe(c3, 89.13)[0]
     assert cz.describe(None) == []
     print("✅ metin) hedef, ara liq, toplam, şimdiden %, tükenme notu; defter yoksa dürüst")
 

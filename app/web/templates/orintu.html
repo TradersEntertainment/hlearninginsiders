@@ -40,9 +40,9 @@
   <h2>🔮 Örüntü bulucu <span class="st">· şu anki grafik şekli geçmişte olduğunda sonra ne olmuş · 15m + 1h</span></h2>
   <p class="sub">Bir sembolün son barlarının <b>şekli</b> z-normalize edilip
   geçmişte aranıyor; yeterince benzeyen pencerelerden <b>sonra</b> ne olduğu
-  toplanıp yükselen paya çevriliyor. Şekil normalize olduğu için $220'lık NVDA ile
-  $6'lık SHEIN aynı dilde konuşur.</p>
-  <p class="sub"><b>Yükselen pay tek başına bir şey söylemez.</b> "%62 yükselen pay"
+  toplanıp yükselen paya çevriliyor. Şekil normalize olduğu için 220 dolarlık NVDA ile
+  6 dolarlık SHEIN aynı dilde konuşur.</p>
+  <p class="sub"><b>Yükselen pay tek başına bir şey söylemez.</b> "yükselen pay %62"
   ancak <b>taban oranın</b> yanında anlamlıdır: aynı seride şekle bakmadan da
   %58 yukarı çıkıyorsa haber yok demektir. Tablodaki <b>Fark</b> kolonu asıl
   sayıdır; <b>z</b> ise o farkın rastlantıyla açıklanıp açıklanamayacağını
@@ -58,7 +58,7 @@
 
   {% if bst.n_empty %}
   <p class="alert warn">⚠️ <b>{{ bst.n_empty }} sembolde arşiv yok/çok sığ</b>
-    ({{ bst.empty|join(', ') }}). Bu semboller için olasılık üretilemez —
+    ({{ bst.empty|join(', ') }}). Bu semboller için yükselen pay üretilemez —
     sorun eşiklerde değil <b>veri kaynağında</b>: HL bu perp'lere o dilimde
     mum vermiyor ya da listeleneli çok olmamış olabilir.</p>
   {% endif %}
@@ -156,15 +156,15 @@
   <h2>📊 Karne <span class="st">· bu araç gerçekten tutuyor mu</span></h2>
   <p class="sub">Üretilen her sinyal kaydedilip <b>vadesinde otomatik
   notlanıyor</b>. Aracın kendisine güvenip güvenmeyeceğimizin tek dürüst ölçüsü
-  budur — olasılığın kendisi değil.
-  <span class="warn">Aşağıdaki sayı 30-50 kapanmış tahminden önce anlam
+  budur — yükselen payın kendisi değil.
+  <span class="warn">Aşağıdaki sayı 30-50 kapanmış sinyalden önce anlam
   taşımaz.</span></p>
 
   <div class="setwrap">
     <div>
       <p class="sub"><b>Tümü:</b>
         {% if rec.rate is not none %}<b class="{{ 'long' if rec.rate >= 55 else ('short' if rec.rate < 45 else 'dim') }}">%{{ rec.rate }}</b>
-          isabet ({{ rec.hit }}✓ / {{ rec.miss }}✗){% else %}<span class="dim">henüz kapanmış tahmin yok</span>{% endif %}
+          isabet ({{ rec.hit }}✓ / {{ rec.miss }}✗){% else %}<span class="dim">henüz kapanmış sinyal yok</span>{% endif %}
         · {{ rec.open }} açık{% if rec.unresolvable %} · {{ rec.unresolvable }} ölçülemedi{% endif %}</p>
       <p class="sub"><b>Yalnız kanala düşenler:</b>
         {% if rec_alerted.rate is not none %}<b class="{{ 'long' if rec_alerted.rate >= 55 else 'short' }}">%{{ rec_alerted.rate }}</b>
@@ -208,7 +208,7 @@
   </table>
   </div></div>
   {% else %}
-  {{ m.empty(["Henüz kapanmış tahmin yok.", "Her sinyal vadesinde otomatik notlanır; ilk kapanışlarla burası dolar."]) }}
+  {{ m.empty(["Henüz kapanmış sinyal yok.", "Her sinyal vadesinde otomatik notlanır; ilk kapanışlarla burası dolar."]) }}
   {% endif %}
 </div>
 

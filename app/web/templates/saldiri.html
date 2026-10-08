@@ -6,8 +6,8 @@
 <div class="panel">
   <h2>🎯 Liq attack radarı <span class="st">·
     hafta sonu yakın likidasyonlar ve itme maliyeti</span></h2>
-  <p class="sub">Hafta sonu dayanak hisse normal seansta işlem görmez; perp fiyatı Cuma
-  kapanışından ayrı hareket eder. Bu sayfa yakın likidasyon kümelerini ve oraya kadar itmenin
+  <p class="sub">Hafta sonu dayanak hisse normal seansta işlem görmez; perp hafta sonu da işlem
+  görür; sapması Cuma kapanışına göre ölçülür. Bu sayfa yakın likidasyon kümelerini ve oraya kadar itmenin
   görünen defter maliyetini ölçer; Pazartesi açılış fiyatı burada ölçülmez.</p>
   <p class="sub"><b>Oran</b> = patlayacak $ ÷ fiyatı oraya itmek için yenmesi gereken
   defter $. <b>{{ '%g'|format(min_score) }}×</b> üstü <b>aday</b>: sayfada öne çıkar.
@@ -105,7 +105,7 @@
         <div class="rb cell"><span class="tr"><i class="sg {{ 'f-liq-long' if c.direction == 'down' else 'f-liq-short' }}" style="width:{{ '%.1f'|format(c.liq_w) }}%"></i></span></div>
         <div class="rb cell"><span class="tr"><i class="sg f-book" style="width:{{ '%.1f'|format(c.cost_w) }}%"></i></span></div></td>
       <td><b>{{ c.liq_usd|usd }}</b> <span class="dim">{{ c.n_pos }} poz</span></td>
-      <td>{{ c.cost_usd|usd }}{% if c.book_thin %} <span title="Görünen defter hedefe varmadan bitiyor — gerçek maliyet bundan büyük olamaz">🕳</span>{% endif %}</td>
+      <td>{{ c.cost_usd|usd }}{% if c.book_thin %} <span title="Görünen defter hedefe varmadan bitiyor — maliyet yalnız görünen derinlikten; ötesi ölçülmedi">🕳</span>{% endif %}</td>
       <td><b>{{ '%.1f'|format(c.score) }}×</b>
         {% if c.hot %}<span class="pill warn">🔥 aday</span>
           {% if c.big %}<span class="hint" title="Endeks/emtia/FX kapısı: ≤%{{ '%g'|format(c.alert_dist) }} içinde ≥ {{ c.alert_min|usd }} liq gerekir (likit perp, küçük küme gürültü)">📐</span>{% endif %}
@@ -131,7 +131,7 @@
     defter çekilemedi</b> — aday hesaplanamadı. Bu "hedef yok" demek DEĞİL;
     <code>/tani</code>'ye bak, sonraki tur yeniden dener.</p>
   {% elif not lq.stats.coins %}
-  {{ m.empty(["Bu turda itmeye değer hedef görünmüyor.",
+  {{ m.empty(["Bu turda eşik üstü yakın likidasyon kümesi yok.",
               "Hiçbir hissede %" ~ '%g'|format(max_dist) ~ " içinde " ~ min_usd|usd ~ "'lik bir likidasyon kümesi yok."]) }}
   {% else %}
   {{ m.empty([lq.stats.coins ~ " hissede küme var ama hiçbirinde oran ölçülemedi.",
@@ -185,8 +185,8 @@
     başına 1 istek) · pozisyonlar süpürmede görülenler · hedef uzaklık tavanı
     %{{ '%g'|format(max_dist) }} · küme tabanı {{ min_usd|usd }} · Telegram kapısı ≤%{{ '%g'|format(alert_dist) }}
     içinde ≥ {{ alert_min|usd }} liq ve o bölgede oran ≥ {{ '%g'|format(min_score) }}× — endeks/emtia/FX'te
-    ≤%{{ '%g'|format(big_dist) }} içinde ≥ {{ big_min|usd }} — mesaj bölgeyi anlatır (Ayarlar → Liq attack). Oran bir üst sınırdır:
-    defter hedefe varmıyorsa gerçek maliyet daha da düşük.</p>
+    ≤%{{ '%g'|format(big_dist) }} içinde ≥ {{ big_min|usd }} — mesaj bölgeyi anlatır (Ayarlar → Liq attack). Oran yalnız görünen
+    defterden; defter hedefe varmıyorsa ötesi ölçülmedi.</p>
 </div>
 
 <script>

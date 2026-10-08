@@ -65,7 +65,7 @@ def test_compact_fit_and_drop_order():
     assert "💣" not in cap, cap
     roomy = fmt.crypto_liq_snapshot(s, offers=[74, 75, 76], compact=True, limit=1600)
     assert "💣 <b>Zincir</b>: $19.0M long 0.0030 seviyesinde patlarsa → <b>0.0023</b> · toplam <b>$19.0M</b> · -46.2% · kaba defter · defter bitti" in roomy, roomy
-    assert "havuzda 635 açık pozisyon, 12'ü ≥ $500K · HL'nin tamamı değil · kapsama long %37 · short %46 (havuz / HL OI) · sayım %63 (toplu)" in cap
+    assert "havuzda 635 açık pozisyon, ≥ $500K olan: 12 · HL'nin tamamı değil · kapsama long %37 · short %46 (havuz / HL OI) · sayım %63 (toplu)" in cap
     # bağlam ekleri de zincirle birlikte düştü (öncelik 5); yer olunca geri gelir
     assert "288 toz" not in cap and "288 toz" in roomy
     assert cap.rstrip().endswith("yatırım tavsiyesi değildir.</i>")

@@ -707,8 +707,8 @@ iddiası ölçülmedi; mesajlar bunu yazmaz (strateji laboratuvarında ayrıca t
 **Skor = patlayacak $ ÷ itmek için yenmesi gereken defter $.**
 - Payda `l2Book`'tan, **canlı**: fiyatı d% itmek için o yöndeki görünen
   seviyelerin toplam notionali. Görünen defter d'ye **varmadan bitiyorsa** (🕳)
-  itmek neredeyse bedava — en güçlü sinyal. Oran bir üst sınırdır: gerçek
-  maliyet bundan büyük olamaz.
+  maliyet yalnız görünen derinliktir; ötesi ölçülmedi (gerçek maliyet bundan
+  küçük olamaz, oran bu yüzden üst sınırdır).
 - Pay likidasyon haritasının verisi: d içinde liq fiyatı olan pozisyonlar.
 - d, %0.25'lik ızgarada `liq_attack_max_dist_pct`'ye (vars. %4) kadar taranır;
   L(d) ≥ `liq_attack_min_usd` (vars. $2M) olan d'ler arasında oranı maksimize
@@ -1035,7 +1035,7 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   ~91.00 (şimdiki fiyattan +2.1%)"; grafikte hedef çizgisi. **Alt sınırdır:** defter
   anlık ve görünen kadar (l2Book 20 seviye, genişlik için `nSigFigs=3`; ince
   defter liq'e uzanmıyorsa 2 haneli kaba defterle yeniden bakılır, mesaj "kaba
-  defter" der; o da uzanmıyorsa "en geniş görünüm %X'e kadar" yazar), havuz
+  defter" der; o da uzanmıyorsa "en geniş görünüm: fiyattan %X uzaklığa kadar" yazar), havuz
   HL'nin tamamı değil; defter bitince "$X yerleşmedi — ötesi bilinmiyor" yazar.
   `/hype` cevabında da var. Ayar: `crypto_liq_cascade`.
 - **Mesaja grafik — tek mesaj.** Kademe mesajı resim + altyazı olarak gider
@@ -1062,7 +1062,7 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
 `PUBLIC_BOT_ENABLED=1` (ya da Ayarlar → *Satış / Kullanıcılar*) açıkken bota
 **özelden** yazan herkes `users` tablosuna kaydolur ve coin adı yazınca
 (`HYPE`, `TSLA`) sahibin `/hype` komutuyla aynı hattan (`cryptoliq.snapshot` +
-`liqchart`) liq'e en yakın büyük pozisyonlar, zincir hedefi ve grafik alır.
+`liqchart`) liq'e en yakın büyük pozisyonlar, zincir sonu (anlık defter simülasyonu) ve grafik alır.
 **Uzak seviyeler ekseni bozmaz:** grafiğin penceresi mumlar + fiyat + ana seviye
 (+ ana mesafenin 2 katı, en az %10) — daha uzak ama `max_liq_distance_pct` (%50)
 içindeki seviyeler ölçeği değiştirmeden üst/alt kenarda toplu etiket olur

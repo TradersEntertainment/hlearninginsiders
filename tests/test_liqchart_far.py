@@ -131,7 +131,7 @@ def test_snapshot_prefers_near():
         # band tek pozisyonluysa satır POZİSYONun kendisidir (adres + kaldıraç), "band" soyutlaması yok
         assert "liq bantları" in txt and "🟢 LONG <b>$20K</b>" in txt and "bandı" not in txt, txt
         assert "👤" in txt and txt.count("🟢 LONG <b>$20K</b>") == 1 and "⭐" in txt, "tek satır, tekrar yok"
-        assert "Büyük tekler" not in txt and "1 pozisyon %50'den uzak" in txt, txt
+        assert "Büyük tekler" not in txt and "1 pozisyon fiyattan %50+ uzakta" in txt, txt
         assert s["png"] is None or s["png"][:8] == b"\x89PNG\r\n\x1a\n"
         # yalnız uzak: eski davranış (en yakın uzaklar) + all_far + grafik yok
         async with dbm.db() as c:
@@ -271,7 +271,7 @@ def test_pump_near_band_beats_far_single():
         # yakın büyük tek kendi bandı olarak, sahibiyle birlikte (tekrar yok, /takip band satırında)
         assert txt.count("$986K") == 1 and "$5.2M" not in txt, txt
         assert "/takip_74" in txt and "Büyük tekler" not in txt, txt
-        assert "1 pozisyon ≥ $500K ama %20'den uzak" in txt, txt
+        assert "1 pozisyon ≥ $500K ama fiyattan %20+ uzakta" in txt, txt
         assert s["cascade"] is None or s["cascade"].get("direction") == "down"
         if s["png"]:
             assert s["png"][:8] == b"\x89PNG\r\n\x1a\n"

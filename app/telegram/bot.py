@@ -1033,7 +1033,7 @@ class TelegramBot:
             row = await cur.fetchone()
         if row:
             r = dict(row)
-            lines.append(f"🎯 Sicil: {r.get('hits') or 0} doğru / {r.get('misses') or 0} yanlış"
+            lines.append(f"🎯 Sicil: {r.get('hits') or 0} kez yönü tuttu / {r.get('misses') or 0} kez tutmadı"
                          + (" │ ⭐ watchlist" if r.get("watchlist") else ""))
         pos_found = False
         n_fail = 0

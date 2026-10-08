@@ -453,7 +453,7 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
         tag(place(plot_t + 13, down=True), _pinned_text(top_pin, top=True), col)
         lo_lim += LABEL_PITCH
     if plan["target_pinned"] and tpx and tpx > mark:
-        tag(place(plot_t + 13, down=True), f"▲ {target[1] or f'zincir hedefi {_px(tpx)}'}", AMBER)
+        tag(place(plot_t + 13, down=True), f"▲ {target[1] or f'zincir sonu {_px(tpx)}'}", AMBER)
         lo_lim += LABEL_PITCH
 
     # liq seviyeleri: ÇİZGİ her seviyeye, ETİKET gruba. En yakın önce işlenir ki
@@ -490,7 +490,7 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
         tag(place(plot_b - 13, down=False), f"+ {_group_text(rest)}", col)
         hi_lim -= LABEL_PITCH
     if plan["target_pinned"] and tpx and tpx <= mark:
-        tag(place(plot_b - 13, down=False), f"▼ {target[1] or f'zincir hedefi {_px(tpx)}'}", AMBER)
+        tag(place(plot_b - 13, down=False), f"▼ {target[1] or f'zincir sonu {_px(tpx)}'}", AMBER)
         hi_lim -= LABEL_PITCH
     bot_pin = plan["pinned"]["bottom"]                # pencere dışı ≤ far_pct seviyeler (toplu)
     if bot_pin:
@@ -505,7 +505,7 @@ def render(coin: str, candles: list[dict], mark: float | None, levels: list[dict
     if tpx and not plan["target_pinned"]:
         yt = y_of(tpx)
         dashed(yt, AMBER, dash=4, width=2)
-        gutter.append((yt, str(target[1] or f"zincir hedefi {_px(tpx)}"), AMBER))
+        gutter.append((yt, str(target[1] or f"zincir sonu {_px(tpx)}"), AMBER))
     # ⭐ ana band manşet rakamdır: yığın ONDAN dışarı büyür, kendisi kıpırdamaz
     pivot = next((i for i, g in enumerate(groups) if g[0].get("main")), None)
     for (ay, txt, col), ty in zip(gutter, stack_labels([a for a, _, _ in gutter], y_m,

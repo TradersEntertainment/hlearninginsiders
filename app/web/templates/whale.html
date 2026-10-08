@@ -8,7 +8,7 @@
     · <a href="https://hypurrscan.io/address/{{ address }}" target="_blank" rel="noopener">hypurrscan ↗</a></p>
   <div class="kpi">
     <div><div class="l">Sicil</div><div class="v">{{ arow.get('hits', 0) }}✓ / {{ arow.get('misses', 0) }}✗</div>
-      <div class="s">bilanço yönünü doğru / yanlış bildi</div></div>
+      <div class="s">bilanço öncesi pozisyon yönü fiyat yönüyle aynı (✓) / değil (✗)</div></div>
     {% if arow.get('account_value') %}
     <div class="ihit" tabindex="0" data-tip="Tüm dex'lerdeki perp teminatı toplamı · spot, vault ve zincir dışı varlıklar DAHİL DEĞİL — 'net worth' değildir">
       <div class="l">HL bakiye</div><div class="v">{{ arow.account_value|usd }}{% if stale_acct(arow.get('account_ts')) %} ⏳{% endif %}</div>
@@ -61,7 +61,7 @@
 </div>
 
 <div class="panel">
-  <h2>🧩 Bağlantılı cüzdanlar <span class="st">· transfer geçmişinden çıkarılan bağlar — bölünmüş tek balina mı?</span></h2>
+  <h2>🧩 Bağlantılı cüzdanlar <span class="st">· transfer geçmişinden çıkarılan bağlar (tek sahiplik ölçülmedi)</span></h2>
   {% if linked %}
   <div class="tscroll"><div class="tscroll-x">
   <table>

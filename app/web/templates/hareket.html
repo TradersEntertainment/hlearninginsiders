@@ -81,8 +81,8 @@
   Bir coin hacim rekoru kırmadan da en çok oynayan olabilir — o yüzden bu liste
   <code>vol_events</code>'ten değil, aynı mumlardan ayrıca çıkarılıyor.</p>
   <p><b>Tazelik.</b> Veri hacim radarının turundan geliyor (her {{ poll // 60 }} dakika)
-  ve her satır <b>son kapanmış</b> kovayı gösteriyor. Yani gösterilen kova en çok
-  ~{{ (poll // 60) * 2 }} dakika eskidir. Her satırda kova saati
+  ve her satır <b>son kapanmış</b> kovayı gösteriyor. Tur zamanında koşarsa gösterilen
+  kova en çok ~{{ (poll // 60) * 2 }} dakika eskidir; gecikmede künyedeki tur yaşına bak. Her satırda kova saati
   yazılı, künyede de turun yaşı var; sayfa <b>"şu an" demiyor</b>. Daha tazesi
   gerekiyorsa Ayarlar → <i>Kripto hacim / Hisse hacim</i> tarama aralığı düşürülebilir
   (HL istek bütçesinden yer alır).</p>

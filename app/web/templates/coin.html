@@ -91,7 +91,7 @@
   <div class="walls">🧱 <b>Emir defteri duvarı:</b>
     {% for w in bwalls %}
     <span class="wall ihit {{ 'shortliq-t' if w.side == 'ask' else 'longliq-t' }}" data-side="{{ 'short' if w.side == 'ask' else 'long' }}"
-          data-tip="{{ 'fiyatın ÜSTÜNDE satış duvarı' if w.side == 'ask' else 'fiyatın ALTINDA alış duvarı' }} · {{ w.notional|usd }}{% if w.sz %} ({{ '%.0f'|format(w.sz) }} adet){% endif %} · {{ w.px_lo|px }}–{{ w.px_hi|px }}{% if w.peak_notional %} · zirvesi {{ w.peak_notional|usd }}{% if w.notional < w.peak_notional * 0.7 %} ⚠️ zirveden %30+ çekildi{% endif %}{% endif %}">
+          data-tip="{{ 'fiyatın ÜSTÜNDE satış duvarı' if w.side == 'ask' else 'fiyatın ALTINDA alış duvarı' }} · {{ w.notional|usd }}{% if w.sz %} ({{ '%.0f'|format(w.sz) }} adet){% endif %} · {{ w.px_lo|px }}–{{ w.px_hi|px }}{% if w.peak_notional %} · zirvesi {{ w.peak_notional|usd }}{% if w.notional < w.peak_notional * 0.7 %} ⚠️ zirveden %30+ azaldı (dolum mu iptal mi ayırt edilmez){% endif %}{% endif %}">
       {{ 'SATIŞ' if w.side == 'ask' else 'ALIŞ' }} <b>{{ w.notional|usd }}</b>
       · {{ w.px_lo|px }}–{{ w.px_hi|px }} (fiyata %{{ '%.1f'|format(w.dist_pct) }})
       {% if w.address %}· sahibi {{ m.addr(w.address, k, 6) }}{% endif %}
@@ -100,7 +100,7 @@
   </div>
   {% else %}
   {{ m.empty(["Bu coinde şu an eşik üstü bekleyen emir yok.",
-              "Defter düzenli taranır; dev bir emir konduğunda burada belirir, çekilirse (spoof) ana sayfadaki duvar listesinden düşer."]) }}
+              "Defter düzenli taranır; dev bir emir konduğunda burada belirir, defterden kalkınca ana sayfadaki duvar listesinden düşer."]) }}
   {% endif %}
 </div>
 
@@ -111,7 +111,7 @@
   {% elif hchart %}
   <p class="sub">Her sütun bir saat (TSİ): yukarı uzayan sütun o saatte tarihsel olarak ortalama
   <b>yükselmiş</b>, aşağı uzayan <b>düşmüş</b>; boy = ortalama getiri. Soluk sütun = az örnek.
-  Üzerine gel → kazanç oranı ve örnek sayısı.</p>
+  Üzerine gel → pozitif saat oranı ve örnek sayısı.</p>
   <div class="legend">
     <span><i class="sw f-up"></i> saat ortalaması yukarı</span>
     <span><i class="sw f-dn"></i> aşağı</span>
@@ -123,7 +123,7 @@
     {% if hmeta.closed_heavy %}<span class="warn">→ getirinin çoğu borsa KAPALIYKEN gelmiş 🌙</span>{% endif %}
     {% else %}<span class="dim">seans toplamları bu kayıtta yok — yenilenince gelir</span>{% endif %}
     {% if now_verdict %}<span class="ihit" tabindex="0" data-pos="{{ 1 if now_verdict.b.avg >= 0 else 0 }}"
-      data-tip="TSİ {{ '%02d'|format(now_verdict.tsi_now) }}:00 tarihsel karnesi · ort {{ '%+.2f'|format(now_verdict.b.avg) }}%/saat · %{{ '%.0f'|format(now_verdict.b.win) }} kazanç · {{ now_verdict.b.n }} örnek">ŞU AN (TSİ {{ '%02d'|format(now_verdict.tsi_now) }}):
+      data-tip="TSİ {{ '%02d'|format(now_verdict.tsi_now) }}:00 tarihsel karnesi · ort {{ '%+.2f'|format(now_verdict.b.avg) }}%/saat · %{{ '%.0f'|format(now_verdict.b.win) }} pozitif saat · {{ now_verdict.b.n }} örnek">ŞU AN (TSİ {{ '%02d'|format(now_verdict.tsi_now) }}):
       <b class="{{ 'long' if now_verdict.v == 'güçlü' else ('short' if now_verdict.v == 'zayıf' else 'dim') }}">{{ now_verdict.v|upper }}</b> saat</span>{% endif %}
   </div>
   {# 24 sütun, ortada sıfır çizgisi. HTML olduğu için yazı telefonda küçülmez;
@@ -146,7 +146,7 @@
     <div class="tscroll"><div class="tscroll-x">
     <table>
       <tr><th class="l">TSİ</th><th class="l">ET</th><th title="O saatteki 1 saatlik mumların ortalama getirisi">Ortalama</th>
-          <th title="Kaç mum yükselişle kapandı">Kazanç</th><th title="Kaç mum (örnek)">Örnek</th><th class="l">Seans</th></tr>
+          <th title="Kaç mum yükselişle kapandı">Pozitif saat</th><th title="Kaç mum (örnek)">Örnek</th><th class="l">Seans</th></tr>
       {% for c in hchart %}
       <tr><td class="l"><b>{{ '%02d'|format(c.tsi) }}:00</b></td><td class="l dim">{{ '%02d'|format(c.et) }}:00</td>
           <td class="{{ 'long' if c.avg > 0 else ('short' if c.avg < 0 else 'dim') }}">{{ '%+.2f'|format(c.avg) }}%</td>
@@ -411,8 +411,8 @@
 <div class="panel">
   <h2>🐋 En büyük pozisyonlar <span class="st">· kim ne kadar koydu, kaçtan girdi, kaç kaldıraçla</span></h2>
   <p class="sub">{% if kind == 'crypto' %}Bu coine en çok para koyan cüzdanlar — süpürmede görülenler, her boyut.
-  İnsider skoru yok: skor hisse hattına ait (bilanço, taze cüzdan, tek hisse…); sıralama notional.
-  Adrese tıkla → cüzdanın tüm karnesi.{% else %}Bu hisseye en çok para koyan cüzdanlar. Skor = kurallı şüphe puanı, isabeti ölçülmedi (nedenleri sağdaki kolonda;
+  Şüphe skoru yok: skor hisse hattına ait (bilanço, taze cüzdan, tek hisse…); sıralama notional.
+  Adrese tıkla → cüzdanın tüm karnesi.{% else %}Bu hisseye en çok para koyan cüzdanlar. Skor = kural tabanlı şüphe puanı, isabeti ölçülmedi (nedenleri sağdaki kolonda;
   70+ 🚨). Adrese tıkla → cüzdanın tüm karnesi.{% endif %}</p>
   {% if rows %}
   <div class="tabs">

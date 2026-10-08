@@ -9,7 +9,7 @@
   <tr>{% if is_admin and dir == 'up' %}<th title="Kanala gönderilecekleri seç"></th>{% endif %}
       <th class="l">Hisse</th>
       <th title="Bu saat kovasının tarihsel ortalama getirisi">Bu saat ort.</th>
-      <th title="Bu saatte kaç kez {{ 'yükselmiş' if dir == 'up' else 'düşmüş' }}">Kazanç</th>
+      <th title="Bu saatte kaç kez {{ 'yükselmiş' if dir == 'up' else 'düşmüş' }}">Pozitif saat</th>
       <th title="Kaç örnek gün — küçükse rakama az güven">Örnek</th>
       <th class="l">Damga</th></tr>
   {% for h in rows %}
@@ -46,10 +46,10 @@
   {% if rank.n_stats %}
     {% if rank.n_strong %}
     <p class="alert ok">Bu saatte eşiği geçen <b>{{ rank.n_strong }}</b> hisse var
-      (💪 = örnek ≥ {{ min_n }} · ortalama ≥ +%{{ hot_mean }} · kazanç ≥ %{{ hot_win|int }}).</p>
+      (💪 = örnek ≥ {{ min_n }} · ortalama ≥ +%{{ hot_mean }} · pozitif saat ≥ %{{ hot_win|int }}).</p>
     {% else %}
     <p class="alert warn">⚠️ Bu saatte istatistiksel olarak <b>güçlü olan yok</b>.
-      Aşağıdakiler yine de en iyiler — ama <b>sinyal zayıf</b>, rakamlara göre
+      Eşiği geçen yok; aşağıdakiler yalnız sıralamanın başı —
       örnek sayısına ve pozitif saat oranına bak.</p>
     {% endif %}
   {% endif %}
@@ -59,7 +59,7 @@
 </div>
 
 <div class="panel">
-  <h2>⬆️ Bu saatte geçmiş ortalaması pozitif <span class="st">· bu saatte tarihsel ortalaması pozitif olanlar{% if rank.up %} · {{ rank.up|length }} hisse{% endif %}</span></h2>
+  <h2>⬆️ Bu saatte geçmiş ortalaması pozitif olanlar <span class="st">· bu saatte tarihsel ortalaması pozitif olanlar{% if rank.up %} · {{ rank.up|length }} hisse{% endif %}</span></h2>
   {% if rank.up %}
     {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">
       <input type="hidden" name="nxt" value="/saatler">{% endif %}
@@ -80,7 +80,7 @@
 </div>
 
 <div class="panel">
-  <h2>⬇️ Bu saatte geçmiş ortalaması negatif <span class="st">· bu saatte tarihsel ortalaması negatif olanlar{% if rank.down %} · {{ rank.down|length }} hisse{% endif %}</span></h2>
+  <h2>⬇️ Bu saatte geçmiş ortalaması negatif olanlar <span class="st">· bu saatte tarihsel ortalaması negatif olanlar{% if rank.down %} · {{ rank.down|length }} hisse{% endif %}</span></h2>
   <p class="sub">Aynı veri, ters yön — ayrı liste.</p>
   {% if rank.down %}
   {{ hourtable(rank.down, 'down') }}

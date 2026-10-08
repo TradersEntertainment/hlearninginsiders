@@ -124,13 +124,13 @@
 
 <div class="panel compact">
   <h2>🧱 Emir defteri duvarları <span class="st">· kim fiyatın yanına dev bekleyen emir dizmiş?</span></h2>
-  <p class="sub">Biri fiyatın hemen yanına milyonlarca dolarlık emir dizmiş: fiyatı iter ya da durdurur.
-  Satış duvarı üstte = "buradan yukarı çıkartmam", alış duvarı altta = "buradan aşağı düşürtmem".
-  Sahibi tanıdığımız bir balinaysa yazar; duvar çekilirse (spoof) Telegram'dan haber gelir.</p>
+  <p class="sub">Fiyatın hemen yanına konmuş milyonlarca dolarlık bekleyen emirler; satış duvarı
+  fiyatın üstünde, alış duvarı altında. Duvarın fiyata etkisi ölçülmez. Sahibi tanıdığımız bir balinaysa
+  yazar; duvar defterden kalkınca Telegram'dan haber gelir.</p>
   {% if book_walls %}
   {% for x in book_walls %}
   <div class="rb" data-propr="{{ 1 if x.propr else 0 }}" tabindex="0" data-side="{{ 'short' if x.side == 'ask' else 'long' }}"
-       data-tip="{{ x.symbol }} {{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }} duvarı {{ x.notional|usd }} ({{ '%.0f'|format(x.sz) }} adet) · {{ 'fiyatın ÜSTÜNDE' if x.side == 'ask' else 'fiyatın ALTINDA' }} · {{ x.px_lo|px }}–{{ x.px_hi|px }}{% if x.mark_px %} · şimdi {{ x.mark_px|px }}{% endif %} · mesafe %{{ '%.2f'|format(x.dist_pct) }} · zirvesi {{ x.peak_notional|usd }}{% if x.peak_notional and x.notional < x.peak_notional * 0.7 %} ⚠️ zirveden %30+ çekildi{% endif %} · {{ x.first_ts|age }} önce belirdi">
+       data-tip="{{ x.symbol }} {{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }} duvarı {{ x.notional|usd }} ({{ '%.0f'|format(x.sz) }} adet) · {{ 'fiyatın ÜSTÜNDE' if x.side == 'ask' else 'fiyatın ALTINDA' }} · {{ x.px_lo|px }}–{{ x.px_hi|px }}{% if x.mark_px %} · şimdi {{ x.mark_px|px }}{% endif %} · mesafe %{{ '%.2f'|format(x.dist_pct) }} · zirvesi {{ x.peak_notional|usd }}{% if x.peak_notional and x.notional < x.peak_notional * 0.7 %} ⚠️ zirveden %30+ azaldı (dolum mu iptal mi ayırt edilmez){% endif %} · {{ x.first_ts|age }} önce belirdi">
     <span class="k"><a href="/t/{{ x.symbol }}{{ k }}">{{ x.symbol }}</a>{% if x.propr %}<span class="ptick" title="propr.xyz'de listeli">✅</span>{% endif %}</span>
     <span class="t {{ 'shortliq-t' if x.side == 'ask' else 'longliq-t' }}">{{ 'SATIŞ' if x.side == 'ask' else 'ALIŞ' }}</span>
     <span class="tr"><i class="sg {{ 'f-liq-short' if x.side == 'ask' else 'f-liq-long' }}" style="width:{{ '%.0f'|format(x.wpct) }}%"></i></span>
@@ -143,7 +143,7 @@
   {% endfor %}
   <p class="kunye">🧾 {{ book_walls|length }} duvar · eşik ≥ {{ wall_min|usd }} · tazelik penceresi {{ wall_window_min }} dk ·
     defter anonimdir — sahibi yalnız tanıdığımız bir balinanın pozisyonuyla eşleşirse yazılır ("?" = bilinmiyor) ·
-    çekilen duvar listeden düşer (spoof), Telegram haber verir.</p>
+    defterden kalkan duvar listeden düşer (dolum mu iptal mi ayırt edilmez), Telegram haber verir.</p>
   {% else %}
   {{ m.empty(["Şu an eşik üstü bekleyen emir yok.",
               "Defterler her " ~ wall_window_min ~ " dk penceresinde taranır (eşik ≥ " ~ wall_min|usd ~ "); dev bir emir konduğunda burada belirir."]) }}
@@ -196,7 +196,7 @@
   <table>
     <tr>{% if is_admin %}<th title="Kanala gönderilecekleri seç"></th>{% endif %}
         <th class="l">Hisse</th><th title="Bu saatin tarihsel ortalama getirisi">Bu saat ort.</th>
-        <th title="Bu saatte kaç kez yükselmiş">Kazanç</th><th title="Kaç örnek gün">Örnek</th>
+        <th title="Bu saatte kaç kez yükselmiş">Pozitif saat</th><th title="Kaç örnek gün">Örnek</th>
         <th class="l">Damga</th></tr>
     {% for h in hot_hours %}
     <tr data-propr="{{ 1 if h.propr else 0 }}">
@@ -214,7 +214,7 @@
   </table>
   </div></div>
   <p class="kunye">🧾 {{ n_hstats }} hissenin saat istatistiği var{% if hot_rank.thin %} · {{ hot_rank.thin }} hisse az örnekle elendi{% endif %} ·
-    💪 = en az 40 örnek, ort ≥ +%0.10, kazanç ≥ %55 · geçmiş istatistiktir.</p>
+    💪 = en az 40 örnek, ort ≥ +%0.10, pozitif saat ≥ %55 · geçmiş istatistiktir.</p>
   {% if is_admin %}
   <div class="btnrow">
     <button type="submit" {% if not has_channel %}disabled title="Railway'e TELEGRAM_CHANNEL_ID ekle (botu kanala admin yap)"{% endif %}>📣 Seçtiklerimi kanala gönder</button>
@@ -273,11 +273,11 @@
 
 <div class="panel third compact" id="supheli">
   <h2>🚨 En şüpheliler <span class="st">· skoru 40+ olan açık pozisyonlar</span></h2>
-  <p class="sub">Kurallı şüphe skoru 40+ olan açık pozisyonlar; skorun isabeti ölçülmedi.</p>
+  <p class="sub">Kural tabanlı şüphe skoru 40+ olan açık pozisyonlar; skorun isabeti ölçülmedi.</p>
   {% if suspicious %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
-    <tr><th title="0-100 insider şüphe puanı">Skor</th><th class="l">Hisse</th>
+    <tr><th title="0-100 kural tabanlı şüphe puanı (isabeti ölçülmedi)">Skor</th><th class="l">Hisse</th>
         <th title="L = yükseliş bahsi, S = düşüş bahsi">Yön</th>
         <th title="Pozisyonun dolar değeri">Boyut</th>
         <th title="Pozisyon ne zaman açıldı">Açılış</th></tr>
@@ -306,7 +306,7 @@
     <tr><th class="l">Hisse</th><th title="L = yükseliş bahsi, S = düşüş bahsi">Yön</th>
         <th title="Pozisyonun dolar değeri">Boyut</th>
         <th title="Pozisyon ne zaman açıldı">Açılış</th>
-        <th title="0-100 insider şüphe puanı">Skor</th></tr>
+        <th title="0-100 kural tabanlı şüphe puanı (isabeti ölçülmedi)">Skor</th></tr>
     {% for p in recent_big %}
     <tr data-propr="{{ 1 if p.propr else 0 }}">
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>{% if p.propr %}<span class="ptick" title="propr.xyz'de listeli">✅</span>{% endif %}
@@ -348,11 +348,11 @@
 
 <div class="panel third compact">
   <h2>🏆 Bilanço yön sicili <span class="st">· pozisyon yönü = sonraki fiyat yönü · <a href="/gecmis{{ k }}">tümü →</a></span></h2>
-  <p class="sub">Bilanço öncesi pozisyon yönü sonraki fiyat yönüyle aynı çıkan cüzdanlar. 2+ kez yönü tutan = otomatik ⭐ watchlist + anlık bildirim (şans payı: 2 olayın ikisini de her dört adresten biri şansla tutturur).</p>
+  <p class="sub">Bilanço öncesi pozisyon yönü sonraki fiyat yönüyle aynı çıkan cüzdanlar. 2+ kez yönü tutan = otomatik ⭐ watchlist + anlık bildirim (şans payı, yazı-tura varsayımıyla: tam 2 olayda ikisini de tutturmanın şansla beklenen oranı dörtte bir).</p>
   {% if winners %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
-    <tr><th class="l">Adres</th><th>Doğru</th><th>Yanlış</th><th class="l">Durum</th></tr>
+    <tr><th class="l">Adres</th><th>Tuttu</th><th>Tutmadı</th><th class="l">Durum</th></tr>
     {% for w in winners %}
     <tr>
       <td class="l">{{ m.addr(w.address, k, 6) }}</td>
@@ -395,7 +395,7 @@
     <tr><th class="l">Adres</th><th class="l">Hisse</th>
         <th title="Son kayıtlı dönemde kaç büyük işlem yaptı">İşlem</th>
         <th title="Son kayıtlı dönemin toplam işlem hacmi">Hacim</th>
-        <th title="Kaç bilançoyu doğru/yanlış bildi">Sicil</th><th class="l">Açık poz</th></tr>
+        <th title="Kaç bilançoda pozisyon yönü fiyat yönüyle aynı çıktı (✓) / çıkmadı (✗)">Sicil</th><th class="l">Açık poz</th></tr>
     {% for s in specialists %}
     <tr data-propr="{{ 1 if s.propr else 0 }}">
       <td class="l">{{ m.addr(s.address, k) }}{% if s.watchlist %} ⭐{% endif %}</td>
@@ -444,7 +444,7 @@
         <b>Boyut</b><span>pozisyonun dolar değeri — $2M short = 2 milyon dolarlık düşüş bahsi</span>
         <b>Kaldıraç (5x)</b><span>parasının 5 katı büyüklükte pozisyon; kâr da zarar da 5 kat</span>
         <b>Liq</b><span>fiyat bu seviyeye değerse pozisyon otomatik patlar, para gider. "Mesafe %" = fiyat oraya ne kadar uzak</span>
-        <b>Skor (0-100)</b><span>kurallı şüphe puanı (isabeti ölçülmedi): taze cüzdan + bilançodan hemen önce + büyük pozisyon = yüksek puan. 70+ 🚨 çok şüpheli</span>
+        <b>Skor (0-100)</b><span>kural tabanlı şüphe puanı (isabeti ölçülmedi): taze cüzdan + bilançodan hemen önce + büyük pozisyon = yüksek puan. 70+ 🚨 yüksek puan</span>
         <b>Açılış</b><span>pozisyon ne zaman açıldı — bilançodan hemen önce açılanlar ilginçtir</span>
         <b>Sicil</b><span>bu cüzdanın bilanço öncesi pozisyonu kaç kez sonraki fiyat yönüyle aynı çıktı (✓) / çıkmadı (✗)</span>
         <b>Earnings</b><span>şirketin bilanço açıklaması. AMC = borsa kapandıktan sonra, BMO = açılmadan önce</span>
@@ -454,8 +454,8 @@
         <b>🗂 Geçmiş</b><span>eski bilançoların arşivi: öncesinde kim ne pozisyondaydı, kimin yönü tuttu</span>
         <b>👣 Takip</b><span>bilanço geçince bot Telegram'dan sorar: "balinanın çıkışını izleyeyim mi?" — /takip_N'e basınca balina pozunun her %10'luk kapanış adımında bildirim gelir (tam kapanış + yön değişimi anında)</span>
         <b>🐘 Sessiz sular</b><span>üstteki sekme: düşük hacimli hisselerde tek başına OI'nin çoğunu tutan devler — kimse trade etmezken milyonluk poz tutan hesaplar (pozisyon / hacim oranı)</span>
-        <b>🧱 Duvar</b><span>emir defterine konmuş dev BEKLEYEN emir (henüz pozisyon değil) — fiyatın hemen üstüne satış duvarı dikilmiş büyük emir; çekilip çekilmediği ayrıca izlenir</span>
-        <b>🕐 Saati gelenler</b><span>her hissenin 90 günlük saat haritası çıkarılır (hangi saatte ortalama yükselmiş/düşmüş); ŞU SAATİ tarihsel olarak güçlü olanlar ana sayfada listelenir — MU/NVDA tarzı "yükseliş borsa kapalıyken" desenini de hisse sayfasında görürsün</span>
+        <b>🧱 Duvar</b><span>emir defterine konmuş dev BEKLEYEN emir (henüz pozisyon değil) — ör. fiyatın hemen üstüne konmuş büyük satış emri; defterden kalkması izlenir (dolum mu iptal mi ayırt edilmez)</span>
+        <b>🕐 Bu saatin geçmiş karnesi</b><span>her hissenin 90 günlük saat haritası çıkarılır (hangi saatte ortalama yükselmiş/düşmüş); bu saatte geçmiş ortalaması eşikleri geçenler ana sayfada listelenir — MU/NVDA tarzı "yükseliş borsa kapalıyken" desenini de hisse sayfasında görürsün</span>
       </div>
       <p class="mb0">👉 <b>Nasıl kullanırım?</b> Yukarıdan bir hisse ara (ör. SNDK) ya da
       tablolardaki hisse/cüzdan linklerine tıkla. Bot her şeyi Telegram'a da atar.

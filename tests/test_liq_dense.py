@@ -136,9 +136,9 @@ def test_text_is_short_chart_is_full():
         assert mb and all(b["dist_lo"] <= 20 or b is mb for b in s["clusters"]), s["clusters"]
         txt = fmt.crypto_liq_snapshot(s)
         assert "$2.5M" not in txt and "$800K" not in txt, "%20 ötesi ≥$500K metinde YOK"
-        assert f"{N_FAR} pozisyon ≥ $500K ama %20'den uzak — metinde yok, grafikte var" in txt, txt
+        assert f"{N_FAR} pozisyon ≥ $500K ama fiyattan %20+ uzakta — metinde yok, grafikte var" in txt, txt
         assert f"grafikte ≥ $200K {N_CHART} pozisyon çizili" in txt, "metin/grafik farkı söylenir"
-        assert "havuzda 45 açık pozisyon, 5'ü ≥ $500K" in txt, txt
+        assert "havuzda 45 açık pozisyon, ≥ $500K olan: 5" in txt, txt
         print(f"✅ eşikler) metin {N_LIST} satır (≥$500K, ≤%20) · grafik {N_CHART} pozisyon (≥$200K);"
               " fark bağlam satırında açıkça yazılı")
     asyncio.run(run())

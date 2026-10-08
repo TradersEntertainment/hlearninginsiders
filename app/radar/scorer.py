@@ -236,7 +236,7 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             seen_d = max(0.0, (ref_ts - seen) / 86400)
             if seen_d >= 14:
                 pts += 6
-                reasons.append(f"🦉 en az {seen_d:.0f} gündür açık (ilk görülme)")
+                reasons.append(f"🦉 en az {seen_d:.0f} gündür açık (ilk görülmeden beri)")
             elif seen_d >= 3:
                 pts += 4
                 reasons.append(f"en az {seen_d:.0f} gündür açık")
@@ -283,11 +283,11 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
     if (age_h is not None and ntl >= cfg.big_position_usd
             and age_h <= cfg.combo_window_hours):
         pts += 15
-        reasons.append(f"🎯 büyük + {age_txt} önce açıldı (≤ {int(cfg.combo_window_hours)} sa penceresi)")
+        reasons.append(f"🎯 büyük poz, ≤ {int(cfg.combo_window_hours)} saatlik pencerede açıldı")
     elif age_h is not None and ntl >= cfg.big_position_usd and age_h <= 504:
         # büyük poz + sessizce erkenden açılmış (CBRS paterni: 2 hafta önce)
         pts += 8
-        reasons.append(f"🦉 büyük + {age_txt} önce açıldı")
+        reasons.append("🦉 büyük poz, 3 hafta içinde açıldı")
 
     if oi_ntl and oi_ntl > 0:
         share = ntl / oi_ntl * 100
@@ -324,10 +324,10 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
     misses = (addr_row or {}).get("misses") or 0
     if hits >= 2:
         pts += 35
-        reasons.append(f"sicil: {hits} yön tuttu / {misses} tutmadı")
+        reasons.append(f"sicil: {hits} kez yönü tuttu / {misses} kez tutmadı")
     elif hits == 1:
         pts += 20
-        reasons.append(f"sicil: 1 yön tuttu / {misses} tutmadı")
+        reasons.append(f"sicil: 1 kez yönü tuttu / {misses} kez tutmadı")
 
     return min(pts, 100), reasons
 

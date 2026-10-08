@@ -549,7 +549,7 @@ def test_snapshot():
         s_off = await cl.snapshot(cfg, cli_off, "PUMP")
         assert s_off["cascade"] is None and cli_off.book_calls == [] and "Zincir" not in fmt.crypto_liq_snapshot(s_off)
         cfg.crypto_liq_cascade = True
-        assert "havuzda 4 açık pozisyon, 3'ü ≥ $500K" in t and "PROPR" not in t, t
+        assert "havuzda 4 açık pozisyon, ≥ $500K olan: 3" in t and "PROPR" not in t, t
         assert "grafikte ≥ $200K 4 pozisyon çizili" in t, "metin ile grafik farkı söylenir"
         # $300K metin eşiğinin ($500K) altında: eşiği geçen hiç yoksa eski davranış
         # (en yakın küçükler) — pozisyon hiç yoksa nedeni
@@ -669,7 +669,7 @@ def test_cascade_fallback():
         s2 = await cl.snapshot(cfg, cli2, "PUMP")
         assert s2["cascade"]["no_book"] and cli2.book_calls == [("PUMP", 3), ("PUMP", 2)]
         t2 = fmt.crypto_liq_snapshot(s2)
-        assert "uzanmıyor" in t2 and "en geniş görünüm fiyattan %-1.0'e kadar" in t2, t2
+        assert "uzanmıyor" in t2 and "en geniş görünüm: fiyattan %-1.0 uzaklığa kadar" in t2, t2
         # (3) ince defter yetiyorsa tek istek
         cli3 = Client(rows)
         s3 = await cl.snapshot(cfg, cli3, "PUMP")

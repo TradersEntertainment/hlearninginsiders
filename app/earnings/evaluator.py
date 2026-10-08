@@ -52,11 +52,45 @@ async def fix_old_notes() -> int:
     return n
 
 
+REASON_FIX_KV = "score_reasons_v2"     # açık pozisyonlardaki eski skor nedenleri bir kez düzeltildi
+# (eski metin, yeni metin) — sıra önemli: uzun kalıplar önce
+REASON_FIXES = [
+    ("🎯 büyük + taze açılış (insider paterni)", "🎯 büyük poz, kısa pencerede açıldı"),
+    ("🦉 büyük + sabırlı açılış (erken kuş insider)", "🦉 büyük poz, 3 hafta içinde açıldı"),
+    (" gündür açık — sabırlı/erken kuş", " gündür açık (ilk görülmeden beri)"),
+    ("sabırlı açılış (", "pozisyon "), (" önce) — erken kuş", " önce açıldı"),
+    (" (yüksek conviction)", ""), (" earnings doğru bildi", " kez yönü tuttu"), ("sicilli: ", "sicil: "),
+    (" doğru / ", " kez yönü tuttu / "), (" yanlış", " kez tutmadı"),
+]
+
+
+async def fix_old_reasons() -> int:
+    """positions_current.score_reasons eski "erken kuş / insider paterni" metinlerini taşıyabilir
+    (yeniden skorlanana dek COALESCE ile korunur) — ölçüm diline bir kez çevrilir (kv damgası)."""
+    from ..db import kv_get, kv_set
+    if await kv_get(REASON_FIX_KV):
+        return 0
+    expr = "score_reasons"
+    args: list = []
+    for old, new in REASON_FIXES:
+        expr = f"REPLACE({expr}, ?, ?)"
+        args += [old, new]
+    async with db() as conn:
+        cur = await conn.execute(
+            f"UPDATE positions_current SET score_reasons = {expr} WHERE score_reasons LIKE '%erken kuş%'"
+            " OR score_reasons LIKE '%insider%' OR score_reasons LIKE '%conviction%'"
+            " OR score_reasons LIKE '%doğru%' OR score_reasons LIKE '%yanlış%'", args)
+        n = cur.rowcount or 0
+    await kv_set(REASON_FIX_KV, now())
+    return n
+
+
 async def evaluate_due(cfg: Config, client: HLClient, notifier) -> None:
-    try:
-        await fix_old_notes()
-    except Exception:
-        log.debug("eski not düzeltmesi", exc_info=True)
+    for fix in (fix_old_notes, fix_old_reasons):
+        try:
+            await fix()
+        except Exception:
+            log.debug("eski metin düzeltmesi", exc_info=True)
     cutoff = now()
     async with db() as conn:
         # Pencere 6 gün değil 30 gün: bot birkaç gün kapalı kaldıysa (Railway

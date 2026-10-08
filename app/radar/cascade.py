@@ -140,7 +140,7 @@ def describe(c: dict | None, mark: float | None = None) -> list[str]:
             f"{px(c['start_px'])} seviyesinde patlarsa zorunlu {act}")
     if c.get("no_book"):
         reach = c.get("book_reach_pct")
-        seen = (f" (en geniş görünüm fiyattan %{reach:+.1f}'e kadar, 20 seviye)"
+        seen = (f" (en geniş görünüm: fiyattan %{reach:+.1f} uzaklığa kadar, 20 seviye)"
                 if reach is not None else "")
         return [head + f" — görünen defter liq fiyatına kadar uzanmıyor{seen}, derinlik bilinmiyor"]
     st = c["steps"]

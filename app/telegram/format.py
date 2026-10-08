@@ -254,9 +254,9 @@ def liq_cluster_alert(c: dict) -> str:
     is_short = c["side"] == "short"
     yon = "🔵 SHORT" if is_short else "🟠 LONG"
     nerede = "ÜSTÜNDE" if is_short else "ALTINDA"
-    etki = (f"fiyat bu bölgeye gelirse ~{usd(c['total'])} zorunlu <b>ALIŞ</b> tetiklenir"
+    etki = (f"fiyat bölgenin tamamını geçerse toplam ~{usd(c['total'])} zorunlu <b>ALIŞ</b> tetiklenir"
             if is_short else
-            f"fiyat bu bölgeye gelirse ~{usd(c['total'])} zorunlu <b>SATIŞ</b> tetiklenir")
+            f"fiyat bölgenin tamamını geçerse toplam ~{usd(c['total'])} zorunlu <b>SATIŞ</b> tetiklenir")
     lo = min(m["liq_px"] for m in c["members"])
     hi = max(m["liq_px"] for m in c["members"])
     top = c["members"][0]
@@ -296,7 +296,7 @@ def anomaly_alert(symbol: str, coin: str, triggers: list[str], event: dict | Non
     lines = [f"📡 <b>ANOMALİ — {symbol}</b>"]
     if event:
         hint = {"amc": "AMC", "bmo": "BMO"}.get(event.get("hour_hint") or "", "?")
-        lines.append(f"📅 Earnings yaklaşıyor: <b>{event['date_et']}</b> ({hint}) ")
+        lines.append(f"📅 Earnings yaklaşıyor: <b>{event['date_et']}</b> ({hint})")
     for t in triggers:
         lines.append(f"  ⚠️ {t}")
     lines.append(f"🔍 Detay için: /scan {symbol}")
@@ -355,7 +355,7 @@ def whale_fill_alert(coin: str, addr: str, side: str, price: float,
     hits, misses = record
     if is_watch:
         head = f"🎯 <b>SİCİLLİ BALİNA {sym}'E DÖNDÜ</b>"
-        note = f"Bu adresin {sym} bilançosundaki pozisyonu daha önce fiyat yönüyle aynıydı — şimdi yeniden işlem"
+        note = f"Bu adresin daha önceki bir {sym} bilançosu öncesindeki pozisyon yönü, sonraki fiyat yönüyle aynı çıktı — şimdi bu hissede yeni işlem yaptı"
     else:
         head = "🐋 <b>BÜYÜK İŞLEM</b>"
         note = None
@@ -373,7 +373,7 @@ def whale_fill_alert(coin: str, addr: str, side: str, price: float,
     if n_parts > 1:
         lines.append(f"🧩 Tek emir {n_parts} parçaya bölünmüş (toplam yukarıda)")
     if hits or misses:
-        lines.append(f"🎯 Sicil: {hits} yön tuttu / {misses} tutmadı")
+        lines.append(f"🎯 Sicil: {hits} kez yönü tuttu / {misses} kez tutmadı")
     lines += what_happened(brief)
     if is_listed(sym):
         lines.append(PROPR_NOTE)
@@ -430,7 +430,7 @@ def health_up(name: str, mins: int) -> str:
 def health_bulk(names: list[str]) -> str:
     lst = ", ".join(_task(n) for n in names)
     return (f"🌐 <b>GENİŞ KESİNTİ</b> — {len(names)} görev aynı anda sessizleşti:"
-            f" {lst}.\nOrtak nokta: hepsi Hyperliquid API'ye bağlı —"
+            f" {lst}.\nAynı turda sessizleştiler; ortak neden ölçülmedi (Hyperliquid API erişimini kontrol et) —"
             " görevleri yeniden başlattım, düzelince tek tek haber veririm.")
 
 
@@ -480,7 +480,7 @@ def health_report(snap: dict) -> str:
 def hot_hours_channel(entries: list[dict], tsi_now: int) -> str:
     """Panelden seçilen 'saati gelenler'in kanal yayını."""
     lines = [f"🕐 <b>BU SAATİN GEÇMİŞ KARNESİ</b> — TSİ {tsi_now:02d}:00",
-             "Son ~90 günde bu saatte ortalaması eşiği geçen hisseler:", ""]
+             "Son ~90 günde bu saatte eşikleri geçen hisseler (örnek ≥ 40 · ort ≥ +%0.10 · pozitif saat ≥ %55):", ""]
     for h in entries:
         sym = h.get("symbol") or (h.get("coin") or "").split(":")[-1]
         moon = " 🌙" if h.get("closed_heavy") else ""
@@ -489,7 +489,7 @@ def hot_hours_channel(entries: list[dict], tsi_now: int) -> str:
                      f" · %{h['win']:.0f} pozitif saat · {h['n']} örnek{propr}")
     lines.append("\n<i>🌙 = getirinin çoğu ABD borsası kapalıyken · son ~90 günün"
                  " 1 saatlik mumlarından · çok sayıda hisse × saat hücresi taranır; eşiği"
-                 " şansla geçen hücreler de olur — geçmiş karne, yön ölçümü değil</i>")
+                 " şansla geçen hücreler de olur — geçmiş karne; bugünkü saatin yönünü ölçmez</i>")
     lines.append(DISCLAIMER)
     return "\n".join(lines)
 
@@ -530,7 +530,7 @@ def wall_alert(w: dict, day_volume: float | None) -> str:
         r = w["notional"] / opp
         facts.append(f"karşı taraf derinliğinin <b>{'50+' if r > 50 else f'{r:.1f}'} katı</b>")
     if day_volume:
-        facts.append(f"24h hacmin %{w['notional'] / day_volume * 100:.0f}'i kadar")
+        facts.append(f"24h hacme oranı %{w['notional'] / day_volume * 100:.0f}")
     if facts:
         lines.append("📊 " + " · ".join(facts))
     addr = w.get("address")
@@ -539,7 +539,7 @@ def wall_alert(w: dict, day_volume: float | None) -> str:
                      f'{addr}#orders">{short(addr)}</a>')
     else:
         lines.append("👤 Sahibi bilinmiyor — defter anonim, tanıdığımız balinalarla eşleşmedi")
-    lines.append("<i>Duvar çekilirse (spoof) ya da dolarsa ayrıca haber veririm.</i>")
+    lines.append("<i>Duvar defterden kalkınca ayrıca haber veririm (dolum mu iptal mi bu radar ayırt etmez).</i>")
     if is_listed(sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
@@ -591,7 +591,7 @@ def _sticky_owner(w: dict) -> str:
         tif = "post-only (Alo)" if (w.get("order_tif") or "").lower() == "alo" else esc(w.get("order_tif") or "limit")
         ro = "reduce-only" if w.get("reduce_only") else "reduce-only DEĞİL"
         return f"👤 Sahibi {alink(owner)}{name} · {tif}, {ro} — açık emriyle doğrulandı"
-    share = f", akışın %{float(w['owner_share']) * 100:.0f}'i" if w.get("owner_share") else ""
+    share = f" (akış payı %{float(w['owner_share']) * 100:.0f})" if w.get("owner_share") else ""
     return (f"👤 Sahip adayı {alink(owner)}{name} — duvar fiyatındaki dolumların en büyük"
             f" maker'ı{share}; açık emirle doğrulanamadı")
 
@@ -1450,7 +1450,7 @@ def liq_attack_alert(s: dict, wk: tuple | None = None) -> str:
         lines.append(f"🔔 kapı: ≤%{s.get('alert_dist', 2):g} içinde <b>{usd(liq)}</b> liq"
                      f" · oran {score:.1f}× ≥ {s.get('min_score', 2):g}")
         if abs(float(s.get("dist_pct") or 0) - float(dist)) > 1e-9:
-            lines.append(f"<i>daha geniş bakınca: %{s.get('dist_pct', 0):.2f}'e kadar "
+            lines.append(f"<i>daha geniş bakınca: %{s.get('dist_pct', 0):.2f} mesafe içinde "
                          f"{usd(s.get('liq_usd'))} liq, oran {s.get('score', 0):.1f}×</i>")
     elif s.get("near_usd") is not None:
         lines.append(f"🔔 fiyatın ≤%{s.get('alert_dist', 2):g} yakınında "
@@ -1609,21 +1609,21 @@ def _liq_ctx(s: dict, rows: list[dict]) -> tuple[list[str], list[str]]:
     """(zorunlu bağlam, ekler): zorunlu = havuz sayısı + 'HL'nin tamamı değil' + kapsama/sayım;
     ekler = ölçüm yaşı, uzak sayısı, toz notu (compact'ta yer kalırsa)."""
     far = float(s.get("far_pct") or 50)
-    core = [f"havuzda {s.get('n_all', 0)} açık pozisyon, {s.get('n_big', 0)}'ü ≥ {usd(s.get('min_usd'))}"]
+    core = [f"havuzda {s.get('n_all', 0)} açık pozisyon, ≥ {usd(s.get('min_usd'))} olan: {s.get('n_big', 0)}"]
     extra = []
     oldest = min((int(p.get("ts") or 0) for p in rows), default=0)
     if oldest:
         extra.append(f"pozisyon ölçümü en eski {age_str(oldest)} önce (süpürme)")
     if s.get("n_far") and not s.get("all_far"):
-        extra.append(f"{s['n_far']} pozisyon %{far:.0f}'den uzak (listede/grafikte yok)")
+        extra.append(f"{s['n_far']} pozisyon fiyattan %{far:.0f}+ uzakta (listede/grafikte yok)")
     if s.get("n_more"):
         extra.append(f"{s['n_more']} pozisyon daha ≥ {usd(s.get('min_usd'))} (liste sınırı — tamamı coin sayfasında)")
     if s.get("n_dust"):
         extra.append(f"{s['n_dust']} toz pozisyon (&lt; {usd(s.get('dust'))}) bantlarda var, tek listesinde yok")
     # Metin ile grafik AYRI eşikte: bunu söylemezsek "grafikte var, listede yok" olur.
     if s.get("n_list_far"):
-        extra.append(f"{s['n_list_far']} pozisyon ≥ {usd(s.get('min_usd'))} ama %{float(s.get('list_dist') or 0):.0f}'den"
-                     f" uzak — metinde yok, grafikte var")
+        extra.append(f"{s['n_list_far']} pozisyon ≥ {usd(s.get('min_usd'))} ama fiyattan %{float(s.get('list_dist') or 0):.0f}+"
+                     f" uzakta — metinde yok, grafikte var")
     # Grafik metnin üst kümesi: yalnız DAHA FAZLASINI gösterdiğinde söylenir.
     # "metin eşiği daha yüksek" demek, eşik çöküp metin aşağı indiğinde yalan olurdu.
     if s.get("n_chart") and s["n_chart"] > len(rows):
@@ -1830,7 +1830,7 @@ def crypto_vol_alert(e: dict) -> str:
     if e.get("day_vol"):
         lines.append(f"📊 24s hacim {usd(e['day_vol'])}")
     lines += what_happened(e.get("brief"))
-    lines.append("<i>Hacim yön söylemez; işaret bu 5 dakikalık kovanın fiyat değişimidir. "
+    lines.append("<i>Hacim yön göstermez; 🟢/🔴 yalnız bu 5 dakikalık kovanın fiyat değişimidir. "
                  "Yatırım tavsiyesi değildir.</i>")
     return "\n".join(lines)
 
@@ -1861,7 +1861,7 @@ def equity_vol_alert(e: dict) -> str:
     except Exception:
         pass
     lines += what_happened(e.get("brief"))
-    lines.append("<i>Hacim yön söylemez; işaret bu 5 dakikalık kovanın fiyat değişimidir. "
+    lines.append("<i>Hacim yön göstermez; 🟢/🔴 yalnız bu 5 dakikalık kovanın fiyat değişimidir. "
                  "Yatırım tavsiyesi değildir.</i>")
     return "\n".join(lines)
 
@@ -1873,25 +1873,26 @@ def pattern_alert(r: dict) -> str:
     "13 puan fark" olur ve okuyan bunu görmeden değerlendiremez.
     """
     sym = (r.get("coin") or "").split(":")[-1]
-    arrow = "🟢" if (r.get("edge") or 0) > 0 else "🔴"
+    edge = r.get("edge") or 0
     tf, h = r.get("tf"), r.get("horizon")
     span = f"{h} bar" + (f" ({h}s)" if tf == "1h" else f" ({h * 15}dk)")
     # Ölçüm dili (08.10): yön/olasılık yazılmaz — benzer geçmiş örneklerde ne oldu, tabanla farkı.
     # Eski "🎯 sicil" satırı kalktı: record() mükerrer ve zayıf satırları da sayıyordu (yanlı).
     lines = [
         f"🔮 <b>{sym}</b> — {tf} grafiğinde geçmiş örüntü eşleşmesi",
-        f"{arrow} n=<b>{r.get('n') or 0}</b> benzer geçmiş örnekte sonraki <b>{span}</b> içinde"
-        f" yükselen pay <b>%{r.get('p_up') or 0:.0f}</b>",
-        f"📊 Aynı serinin tabanı %{r.get('base_up') or 0:.0f} → fark"
-        f" <b>{r.get('edge') or 0:+.0f} puan</b> · z={r.get('z') or 0:.1f}",
+        f"📊 n=<b>{r.get('n') or 0}</b> benzer geçmiş örnekte <b>{span}</b> sonra fiyatı yukarıda"
+        f" olan pay <b>%{r.get('p_up') or 0:.0f}</b>",
+        f"{'▲' if edge > 0 else '▼'} Aynı serinin taban oranı (şekle bakmadan) %{r.get('base_up') or 0:.0f}"
+        f" → fark <b>{edge:+.0f} puan</b> · z={r.get('z') or 0:.1f}",
     ]
     if r.get("med") is not None:
         lines.append(f"📐 Benzer örneklerde medyan hareket <b>{r['med']:+.2f}%</b>"
                      + (f" (çeyrekler {r['q25']:+.1f}% … {r['q75']:+.1f}%)"
                         if r.get("q25") is not None else ""))
     lines.append("<i>Her turda binin üzerinde kombinasyon taranıyor; tek test için z≥2 eşiğini "
-                 "şansla geçenler de olur (tur başına Bonferroni eşiği z≈4). Bu sinyalin isabeti "
-                 "henüz ayrıca ölçülmedi. Yatırım tavsiyesi değildir.</i>")
+                 "şansla geçenler de olur (tur başına Bonferroni eşiği z≈4). Sinyal vadesinde otomatik "
+                 "notlanır; aracın karnesi henüz güvenilir değil (mükerrer kayıt düzeltmesi bekliyor). "
+                 "Yatırım tavsiyesi değildir.</i>")
     return "\n".join(lines)
 
 
@@ -1937,7 +1938,9 @@ def offhours_move(m: dict) -> str:
     # olurdu ve hiçbir şey anlatmazdı — son 1 saate bakılır. Hangi pencereye
     # bakıldığını `what_happened` kendi akış satırında yazıyor.
     lines += what_happened(m.get("brief"))
-    lines.append("<i>Kapanış çıpasına göre ölçülen sapma; açılış fiyatı hakkında ölçüm içermez.</i>")
+    lines.append(f"<i>Son {m.get('window_min')} dakikadaki ölçülen sıçrama; açılış fiyatı hakkında ölçüm içermez.</i>"
+                 if m["kind"] == "spike" else
+                 "<i>Kapanış çıpasına göre ölçülen sapma; açılış fiyatı hakkında ölçüm içermez.</i>")
     if is_listed(sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
@@ -1965,7 +1968,7 @@ def lowvol_alert(p: dict) -> str:
         lines.append(f"🎯 Şüphe skoru: {score_badge(p['score'])}")
     hits, misses = p.get("hits") or 0, p.get("misses") or 0
     if hits or misses:
-        lines.append(f"🎯 Sicil: {hits} yön tuttu / {misses} tutmadı")
+        lines.append(f"🎯 Sicil: {hits} kez yönü tuttu / {misses} kez tutmadı")
     if is_listed(sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
@@ -2152,8 +2155,7 @@ def track_liq_move(t: dict, live: dict, prev: float, cur: float) -> str:
     chg = (cur - prev) / prev * 100
     short = t.get("side") == "short"
     away = (short and cur > prev) or (not short and cur < prev)
-    size = f" · boyut {usd(t.get('base_notional'))} → {usd(live.get('notional'))}"
-    why = ("fiyattan <b>uzaklaştı</b>" if away else "fiyata <b>yaklaştı</b>") + size
+    why = "fiyattan <b>uzaklaştı</b>" if away else "fiyata <b>yaklaştı</b>"
     lines = [f"🛡 <b>LIQ FİYATI KAYDI</b> — {sym} (#{t['id']})",
              f"👤 {alink(t['address'])} {_side_badge(t['side'])} <b>{usd(live.get('notional'))}</b>",
              f"liq {px(prev)} → <b>{px(cur)}</b> ({chg:+.2f}%) · {why}"]
@@ -2296,7 +2298,7 @@ def eval_report(event: dict, move_pct: float | None, results: list[dict],
         if wrong:
             lines.append(f"❌ Yönü tutmayan: {len(wrong)} adres")
         if promoted:
-            lines.append("\n⭐ <b>Watchlist'e eklendi</b> (2+ yön tuttu): "
+            lines.append("\n⭐ <b>Watchlist'e eklendi</b> (2+ kez yönü tuttu): "
                          + ", ".join(alink(a) for a in promoted))
     if closed:
         lines.append(f"🚪 Pozisyonunu kapatanlar: {', '.join(short(a) for a in closed[:10])}")
@@ -2349,15 +2351,16 @@ def winners_list(rows: list[dict]) -> str:
     if not rows:
         return ("🏆 Henüz sicilli adres yok — her earnings sonrası pozisyon yönü fiyat yönüyle"
                 " karşılaştırılır; ilk sonuçlardan sonra dolar.")
-    lines = ["🏆 <b>Bilanço yön sicili</b> (pozisyon yönü = sonraki fiyat yönü):"]
+    lines = ["🏆 <b>Bilanço yön sicili</b> (✓ = bilanço öncesi pozisyon yönü, sonraki 24 saatin fiyat yönüyle aynı):"]
     for r in rows[:15]:
         tot = (r.get("hits") or 0) + (r.get("misses") or 0)
         rate = (r["hits"] / tot * 100) if tot else 0
         star = " ⭐" if r.get("watchlist") else ""
         lines.append(f"  {alink(r['address'])} — <b>{r.get('hits') or 0}</b>✓ /"
                      f" {r.get('misses') or 0}✗ (%{rate:.0f}){star}")
-    lines.append("\n<i>⭐ = watchlist: yeni poz açtığı anda bildirim gelir. Şans payı: yön tutma"
-                 " yazı-tura gibi %50 — 2 olayın ikisinde de yönü tutturmayı her dört adresten biri şansla yapar.</i>")
+    lines.append("\n<i>⭐ = watchlist: daha önce yönü tuttuğu hisseye eşik üstü işlemle dönünce bildirim gelir."
+                 " Şans payı (her olayda yazı-tura varsayımı): tam 2 olayda ikisini de tutturmanın şansla"
+                 " beklenen oranı dörtte bir; daha çok olayda en az 2 isabet şansla daha da sık.</i>")
     return "\n".join(lines)
 
 
@@ -2589,7 +2592,7 @@ def seans_card(views: list[dict], base_url: str = "") -> str:
         if v.get("caveat"):
             lines.append(f"⚠️ <i>{esc(v['caveat'])}</i>")
         if (v.get("thin") or {}).get("level") == "warn":
-            lines.append(f"⚠️ <i>mumların %{v['thin']['share'] * 100:.0f}'ında işlem yok — fiyatlar kısmen bayat</i>")
+            lines.append(f"⚠️ <i>işlemsiz mum payı %{v['thin']['share'] * 100:.0f} — fiyatlar kısmen bayat</i>")
         if not (v.get("live") or {}).get("ok"):
             lines.append("📡 <i>canlı mum alınamadı — arşivle</i>")
         if ph != "bekleniyor":
@@ -2885,7 +2888,7 @@ def sim_opened(t: dict, acc: dict, cfg) -> str:
     after = int(getattr(cfg, "sim_after_liq_min", 30) or 0)
     if int(t.get("leg") or 1) == 1:
         if t.get("tp_src") == "cascade":
-            lines.append(f"plan: liq gelince iğne {px(tp)}'e uzanırsa {'long' if up else 'short'} orada kapanır,"
+            lines.append(f"plan: liq gelince iğne {px(tp)} seviyesine uzanırsa {'long' if up else 'short'} orada kapanır,"
                          f" aynı fiyattan <b>{'SHORT' if up else 'LONG'}</b> açılır"
                          f" (hedef %{pct_num(float(getattr(cfg, 'sim_post_tp_pct', 0.75)))} geri çekilme,"
                          f" stop %{pct_num(float(getattr(cfg, 'sim_post_stop_pct', 10)))});"

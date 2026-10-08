@@ -199,8 +199,7 @@ def infer(a: dict, pos: dict | None, t0: int, t1: int,
                     "note": "bu adresin defterini hiç çekmedik —"
                             " 'Profilleri tazele' ile şimdi çekebilirsin"}
         return {"label": "pozisyon taşımıyor", "stale": False,
-                "note": "defterine baktık, bu coinde açık pozisyonu yok —"
-                        " pencerede işlem yaptı, şimdi bu coinde pozisyonu yok"}
+                "note": "defterine baktığımızda bu coinde açık pozisyonu yoktu; pencerede işlem yaptı"}
     meas = int(pos.get("ts") or 0)
     # BAYATLIK İKİ YÖNLÜ: eskiden yalnız `t0 - meas` bakılıyordu, yani
     # pencereden SONRA ölçülmüş bir pozisyon asla bayat sayılmıyordu — üç gün

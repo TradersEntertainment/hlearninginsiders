@@ -5,12 +5,12 @@
 <div class="panel">
   <h2>🏆 Bilanço yön sicili <span class="st">· pozisyon yönü = sonraki fiyat yönü</span></h2>
   <p class="sub">Bilanço öncesi pozisyonu sonraki fiyat yönüyle aynı çıkan cüzdanlar. 2+ kez yönü tutan otomatik
-  watchlist'e (⭐) girer ve yeni poz açtığı anda Telegram'a bildirim düşer. Şans payı: 2 olayın ikisinde de yönü tutturmayı her dört adresten biri şansla yapar.</p>
+  watchlist'e (⭐) girer ve yeni poz açtığı anda Telegram'a bildirim düşer. Şans payı (her olayda yazı-tura varsayımı): tam 2 olayda ikisini de tutturmanın şansla beklenen oranı dörtte bir.</p>
   {% if winners %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Adres</th><th title="Kaç bilançoda yönü tuttu">Tuttu</th>
-        <th>Yanlış</th><th>İsabet</th><th class="l">Durum</th><th class="l">İlk fonlama</th></tr>
+        <th title="Kaç bilançoda yönü tutmadı">Tutmadı</th><th>İsabet</th><th class="l">Durum</th><th class="l">İlk fonlama</th></tr>
     {% for w in winners %}
     <tr>
       <td class="l">{{ m.addr(w.address, k) }}</td>
@@ -52,7 +52,7 @@
         <td><span class="badge {{ 'b-hi' if (p.score or 0)>=70 else ('b-mid' if (p.score or 0)>=50 else 'b-lo') }}">{{ p.score or 0 }}</span></td>
         <td class="l">{% if p.hit is none %}<span class="dim">ölçülemedi</span>
           {% elif p.hit %}<span class="long">✅ yön tuttu</span>
-          {% else %}<span class="short">❌ yanıldı</span>{% endif %}</td>
+          {% else %}<span class="short">❌ yön tutmadı</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </table>

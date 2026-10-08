@@ -14,8 +14,7 @@ Pinlenenler:
   • label/is_spot/spot_coin_of; perp ve HIP-3 davranışı DEĞİŞMEZ (gerileme)
   • kv'den açılış yüklemesi; evren yenilemesi önbelleği doldurur
   • twap_alert/progress/end okunur ad yazar; '@' hiç geçmez; 🪙 işareti var
-  • spot'ta "açık perp pozisyonu yok — kapatıyor ya da hedge olabilir" YAZILMAZ
-    (spot'ta pozisyon diye bir şey yok; o cümle okuyanı yanıltıyordu)
+  • spot'ta "açık perp pozisyonu yok" satırı YAZILMAZ (spot'ta pozisyon diye bir şey yok)
   • assets.kind('@272') 'equity' DEĞİL → bilanço takvimi aranmaz; klass 'kripto' kalır
   • /twap sayfası ve _macros.coin() ham kimlik ya da ölü /t/@272 linki üretmez
   • kapı: 24s hacmi `spot_twap_min_day_vol` altındaki spot çifti alarm üretmez
@@ -101,8 +100,7 @@ def test_telegram_messages():
     assert "🪙" in t and "<b>USDT0/USDC</b>" in t, t
     assert "1.7K USDT0/USDC ≈ $1.9M" in t, "emir satırı da okunur adla"
     assert "📍 spot çifti — pozisyon, likidasyon ve funding yok" in t
-    assert "kapatıyor ya da hedge olabilir" not in t, \
-        "spot'ta pozisyon yok; 'kapatıyor' çıkarımı yanıltıcıydı"
+    assert "açık perp pozisyonu yok" not in t, "spot'ta perp pozisyon satırı yazılmaz"
     p = fmt.twap_progress(m, ctx)
     e = fmt.twap_end(m, {"order": {}, "day_vol": 238_000})
     assert "USDT0/USDC" in p and "@" not in p, p
