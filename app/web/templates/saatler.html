@@ -19,7 +19,7 @@
         {% if h.verdict != 'güçlü' %}disabled title="Yalnız 💪 güçlü olanlar kanala gönderilebilir"{% endif %}></td>
     {% endif %}
     <td class="l"><a href="/t/{{ h.symbol }}{{ k }}"><b>{{ h.symbol }}</b></a>
-      {%- if h.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+      {%- if h.propr %}<span class="ptick" title="propr.xyz'de listeli">✅</span>{% endif %}
       {%- if h.closed_heavy %} <span title="Bu hissede getirinin çoğu borsa KAPALIYKEN gelmiş">🌙</span>{% endif %}</td>
     <td class="{{ 'long' if h.avg > 0 else 'short' }}"><b>{{ '%+.2f'|format(h.avg) }}%</b></td>
     <td>%{{ '%.0f'|format(h.win) }}</td>
@@ -34,7 +34,7 @@
 {% endmacro %}
 
 <div class="panel">
-  <h2>🕐 Şu saatte ne bekliyoruz? <span class="st">·
+  <h2>🕐 Bu saatin geçmiş karnesi <span class="st">·
     TSİ {{ '%02d'|format(tsi_now) }}:00 · ET {{ '%02d'|format(et_now) }}:00</span></h2>
   <p class="sub">Son ~90 günün 1 saatlik mumlarından, <b>bu saat kovasının</b> tarihsel
   karnesi. Bu bir <b>sıralama</b>dır, tahmin değil: geçmişte bu saatte ne olduğunu
@@ -50,7 +50,7 @@
     {% else %}
     <p class="alert warn">⚠️ Bu saatte istatistiksel olarak <b>güçlü olan yok</b>.
       Aşağıdakiler yine de en iyiler — ama <b>sinyal zayıf</b>, rakamlara göre
-      işlem açmadan önce örnek sayısına ve kazanç oranına bak.</p>
+      örnek sayısına ve pozitif saat oranına bak.</p>
     {% endif %}
   {% endif %}
   <p class="kunye">🧾 {{ rank.n_stats }} hissenin istatistiği hazır{% if rank.thin %} ·
@@ -59,7 +59,7 @@
 </div>
 
 <div class="panel">
-  <h2>⬆️ Yükselmesi beklenenler <span class="st">· bu saatte tarihsel ortalaması pozitif olanlar{% if rank.up %} · {{ rank.up|length }} hisse{% endif %}</span></h2>
+  <h2>⬆️ Bu saatte geçmiş ortalaması pozitif <span class="st">· bu saatte tarihsel ortalaması pozitif olanlar{% if rank.up %} · {{ rank.up|length }} hisse{% endif %}</span></h2>
   {% if rank.up %}
     {% if is_admin %}<form method="post" action="/saatler/gonder{{ k }}">
       <input type="hidden" name="nxt" value="/saatler">{% endif %}
@@ -80,9 +80,8 @@
 </div>
 
 <div class="panel">
-  <h2>⬇️ Düşmesi beklenenler <span class="st">· bu saatte tarihsel ortalaması negatif olanlar{% if rank.down %} · {{ rank.down|length }} hisse{% endif %}</span></h2>
-  <p class="sub">Aynı veri, ters yön. "Bu saatte bir şey beklemiyoruz" ile
-  "bu saatte düşmesini bekliyoruz" ayrı şeyler — ikisi karışmasın diye ayrı liste.</p>
+  <h2>⬇️ Bu saatte geçmiş ortalaması negatif <span class="st">· bu saatte tarihsel ortalaması negatif olanlar{% if rank.down %} · {{ rank.down|length }} hisse{% endif %}</span></h2>
+  <p class="sub">Aynı veri, ters yön — ayrı liste.</p>
   {% if rank.down %}
   {{ hourtable(rank.down, 'down') }}
   {% elif rank.n_stats %}

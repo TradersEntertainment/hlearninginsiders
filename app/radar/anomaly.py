@@ -131,7 +131,7 @@ async def check_anomalies(cfg: Config, notifier) -> None:
         funding = cur_m.get("funding")
         if funding is not None and abs(funding) >= cfg.funding_extreme:
             side = "shortlar" if funding < 0 else "longlar"
-            t = f"funding aşırı: {funding * 100:+.4f}%/h ({side} ödemeyi göze almış)"
+            t = f"funding aşırı: {funding * 100:+.4f}%/h ({side} ödüyor)"
             if has_event:
                 triggers.append(t)
                 cats.append("funding")

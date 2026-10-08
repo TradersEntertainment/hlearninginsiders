@@ -699,11 +699,10 @@ diziler yazılmaz; yalnız listedeki adres + coin izlenir.
 
 ## Liq attack radarı: `/saldiri`
 
-**Mekanizma.** Hafta sonu hissenin gerçek fiyatı sabittir (borsa kapalı). Perp
-fiyatını yakın likidasyon kümesine kadar itip patlatan biri için dönüş
-garantidir: Pazartesi fiyat zaten Cuma kapanışına döner. Saldırgan için
-neredeyse risksiz — ve tam da bu yüzden **öngörülebilir**: hedef (yakın küme),
-pencere (hafta sonu, ince defter) ve dönüş çıpası (Cuma kapanışı) önceden belli.
+**Mekanizma.** Hafta sonu dayanak hisse normal seansta işlem görmez; perp fiyatı
+Cuma kapanışından ayrı hareket eder. Radar yakın likidasyon kümelerini ve oraya kadar
+itmenin görünen defter maliyetini **ölçer**. "Pazartesi fiyat Cuma kapanışına döner"
+iddiası ölçülmedi; mesajlar bunu yazmaz (strateji laboratuvarında ayrıca test edilir).
 
 **Skor = patlayacak $ ÷ itmek için yenmesi gereken defter $.**
 - Payda `l2Book`'tan, **canlı**: fiyatı d% itmek için o yöndeki görünen
@@ -1032,8 +1031,8 @@ ana sohbet kirlenmez). Eşikler ⚙️ Ayarlar → **Kripto liq** grubunda.
   nereye kadar süpürür; o fiyata kadar liq'i olan aynı yönlü pozisyonlar da
   patlar, onların emri de yürür… yeni tetiklenen kalmayınca ya da görünen
   defter bitince durur (`app/radar/cascade.py`, saf). Satır: "→ 90.50 · arada
-  2 short daha ($4.1M) → 91.00 · toplam $17.4M · fiyat kaçınılmaz ~91.00'a
-  gidebilir (şimdiden +2.1%)"; grafikte hedef çizgisi. **Alt sınırdır:** defter
+  2 short daha ($4.1M) → 91.00 · toplam $17.4M · anlık defterde zincir sonu
+  ~91.00 (şimdiki fiyattan +2.1%)"; grafikte hedef çizgisi. **Alt sınırdır:** defter
   anlık ve görünen kadar (l2Book 20 seviye, genişlik için `nSigFigs=3`; ince
   defter liq'e uzanmıyorsa 2 haneli kaba defterle yeniden bakılır, mesaj "kaba
   defter" der; o da uzanmıyorsa "en geniş görünüm %X'e kadar" yazar), havuz

@@ -266,7 +266,7 @@ def chart_cols(stats: dict | None) -> list[dict] | None:
             "label": f"{h['tsi']:02d}" if h["tsi"] % 3 == 0 else "",
             "l6": h["tsi"] % 6 == 0,
             "tip": (f"TSİ {h['tsi']:02d}:00 (ET {h['et']:02d}:00) · ort {v:+.2f}%"
-                    f" · %{h['win']:.0f} kazanç · {n} örnek"
+                    f" · %{h['win']:.0f} pozitif saat · {n} örnek"
                     + (f" · az örnek (<{MIN_N}) — güven düşük" if n < MIN_N else "")),
         })
     return cols

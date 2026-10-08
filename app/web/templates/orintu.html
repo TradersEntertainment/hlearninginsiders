@@ -8,9 +8,9 @@
 <table>
   <tr><th class="l">Sembol</th><th>Dilim</th>
       <th title="Eşleşmeden sonra kaç bar ileriye bakıldı">Vade</th>
-      <th title="Benzer geçmiş durumlarda fiyatın yukarı gitme oranı">Olasılık</th>
+      <th title="Benzer geçmiş durumlarda fiyatın yükseldiği pay">Yükselen pay</th>
       <th title="Aynı seride ŞEKLE BAKMADAN yukarı gitme oranı — kıyas noktası">Taban</th>
-      <th title="Olasılık eksi taban oran. ASIL SAYI BU">Fark</th>
+      <th title="Yükselen pay eksi taban oran. ASIL SAYI BU">Fark</th>
       <th title="Farkın standart hataya oranı; 2 ≈ %95">z</th>
       <th title="Kaç bağımsız benzer örnek bulundu">n</th>
       <th title="O örneklerde ileri hareketin medyanı">Medyan</th>
@@ -40,9 +40,9 @@
   <h2>🔮 Örüntü bulucu <span class="st">· şu anki grafik şekli geçmişte olduğunda sonra ne olmuş · 15m + 1h</span></h2>
   <p class="sub">Bir sembolün son barlarının <b>şekli</b> z-normalize edilip
   geçmişte aranıyor; yeterince benzeyen pencerelerden <b>sonra</b> ne olduğu
-  toplanıp olasılığa çevriliyor. Şekil normalize olduğu için $220'lık NVDA ile
+  toplanıp yükselen paya çevriliyor. Şekil normalize olduğu için $220'lık NVDA ile
   $6'lık SHEIN aynı dilde konuşur.</p>
-  <p class="sub"><b>Olasılık tek başına bir şey söylemez.</b> "%62 yukarı"
+  <p class="sub"><b>Yükselen pay tek başına bir şey söylemez.</b> "%62 yükselen pay"
   ancak <b>taban oranın</b> yanında anlamlıdır: aynı seride şekle bakmadan da
   %58 yukarı çıkıyorsa haber yok demektir. Tablodaki <b>Fark</b> kolonu asıl
   sayıdır; <b>z</b> ise o farkın rastlantıyla açıklanıp açıklanamayacağını
@@ -154,7 +154,7 @@
 
 <div class="panel">
   <h2>📊 Karne <span class="st">· bu araç gerçekten tutuyor mu</span></h2>
-  <p class="sub">Üretilen her tahmin kaydedilip <b>vadesinde otomatik
+  <p class="sub">Üretilen her sinyal kaydedilip <b>vadesinde otomatik
   notlanıyor</b>. Aracın kendisine güvenip güvenmeyeceğimizin tek dürüst ölçüsü
   budur — olasılığın kendisi değil.
   <span class="warn">Aşağıdaki sayı 30-50 kapanmış tahminden önce anlam
@@ -168,7 +168,7 @@
         · {{ rec.open }} açık{% if rec.unresolvable %} · {{ rec.unresolvable }} ölçülemedi{% endif %}</p>
       <p class="sub"><b>Yalnız kanala düşenler:</b>
         {% if rec_alerted.rate is not none %}<b class="{{ 'long' if rec_alerted.rate >= 55 else 'short' }}">%{{ rec_alerted.rate }}</b>
-          ({{ rec_alerted.n }} tahmin){% else %}<span class="dim">henüz yok</span>{% endif %}
+          ({{ rec_alerted.n }} sinyal){% else %}<span class="dim">henüz yok</span>{% endif %}
         <span class="dim">— asıl merak edilen bu</span></p>
     </div>
     <div>
@@ -189,7 +189,7 @@
   </div>
 
   {% if hist %}
-  <p class="sub dim mt10"><b>Son kapanan tahminler</b></p>
+  <p class="sub dim mt10"><b>Son kapanan sinyaller</b></p>
   <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Sembol</th><th>Dilim</th><th>Vade</th>

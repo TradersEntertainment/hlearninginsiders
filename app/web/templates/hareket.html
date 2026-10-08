@@ -44,7 +44,7 @@
     <tr data-propr="1">
       <td class="l">{% if r.kind == 'kripto' %}<a href="/t/{{ r.coin }}{{ k }}"><b>{{ r.symbol }}</b></a>
         {%- else %}<a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>{% endif %}
-        <span title="propr.xyz'de listeli — işlem açabilirsin">✅</span></td>
+        <span title="propr.xyz'de listeli">✅</span></td>
       <td class="dim">{{ '🪙 kripto' if r.kind == 'kripto' else '📈 hisse' }}</td>
       <td class="{{ 'long' if r.up else 'short' }}"><b>{{ '%+.2f'|format(r.chg_pct) }}%</b></td>
       <td data-v="{{ r.notional|int }}">{{ r.notional|usd }}</td>
@@ -81,8 +81,8 @@
   Bir coin hacim rekoru kırmadan da en çok oynayan olabilir — o yüzden bu liste
   <code>vol_events</code>'ten değil, aynı mumlardan ayrıca çıkarılıyor.</p>
   <p><b>Tazelik.</b> Veri hacim radarının turundan geliyor (her {{ poll // 60 }} dakika)
-  ve her satır <b>son kapanmış</b> kovayı gösteriyor. Yani gösterilen kova en kötü
-  ihtimalle ~{{ (poll // 60) * 2 }} dakika öncesine ait olabilir. Her satırda kova saati
+  ve her satır <b>son kapanmış</b> kovayı gösteriyor. Yani gösterilen kova en çok
+  ~{{ (poll // 60) * 2 }} dakika eskidir. Her satırda kova saati
   yazılı, künyede de turun yaşı var; sayfa <b>"şu an" demiyor</b>. Daha tazesi
   gerekiyorsa Ayarlar → <i>Kripto hacim / Hisse hacim</i> tarama aralığı düşürülebilir
   (HL istek bütçesinden yer alır).</p>

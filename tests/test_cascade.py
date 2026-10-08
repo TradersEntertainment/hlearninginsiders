@@ -75,12 +75,13 @@ def test_simulate_chain():
 def test_describe():
     c = cz.simulate([], lv(*ASKS), TRIG, POOL, 89.13)
     t = "\n".join(cz.describe(c, 89.13))
-    assert "💣 <b>Zincir</b>" in t and "$13.3M short 89.93'te patlarsa zorunlu alış → <b>90.50</b>" in t, t
+    assert "💣 <b>Zincir</b>" in t and "$13.3M short 89.93 seviyesinde patlarsa zorunlu alış → <b>90.50</b>" in t, t
     assert "arada 2 short daha ($4.1M) → <b>91.00</b>" in t and "toplam <b>$17.4M</b>" in t
-    assert "~<b>91.00</b>'a gidebilir (şimdiden +2.1%)" in t and "bitiyor" not in t
+    assert "anlık defterde zincir sonu ~<b>91.00</b> (şimdiki fiyattan +2.1%)" in t and "bitiyor" not in t
+    assert "gidebilir" not in t and "kaçınılmaz" not in t, "ölçüm dili: tahmin yok"
     c2 = cz.simulate([], lv((89.95, 50_000), (90.20, 40_000)), TRIG, POOL, 89.13)
     t2 = "\n".join(cz.describe(c2, 89.13))
-    assert "arada başka liq yok" in t2 and "görünen defter 90.20'da bitiyor" in t2 and "yerleşmedi" in t2, t2
+    assert "arada başka liq yok" in t2 and "görünen defter 90.20 seviyesinde bitiyor" in t2 and "yerleşmedi" in t2, t2
     c3 = cz.simulate([], lv((89.50, 10)), TRIG, POOL, 89.13)
     assert "uzanmıyor" in cz.describe(c3, 89.13)[0] and "en geniş görünüm fiyattan %+0.4'e kadar" in cz.describe(c3, 89.13)[0]
     assert cz.describe(None) == []

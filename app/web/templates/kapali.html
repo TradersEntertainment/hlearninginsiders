@@ -102,7 +102,7 @@
     {% for r in scr.rows %}
     <tr data-propr="{{ 1 if r.propr else 0 }}">
       <td class="l"><a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>
-        {%- if r.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {%- if r.propr %}<span class="ptick" title="propr.xyz'de listeli">✅</span>{% endif %}
         {%- if r.stale %} <span title="Çıpa örneği kapanıştan 30dk'dan eski — sapma yanıltıcı olabilir">⏳</span>{% endif %}</td>
       <td class="mh dim">{{ r.base_px|px }}</td>
       <td>{{ r.px|px }}</td>

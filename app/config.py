@@ -24,7 +24,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "notify_anomaly": {"type": "bool", "label": "📡 OI birikimi (≥ $5M) / funding", "group": "Bildirimler",
                        "desc": "Pozisyon sahibi bilinmese de 'birileri büyük pozisyon açtı' alarmı: normal hissede OI 24 saatte en az $5M büyüdüyse (Anomali dedektörü ayarları). Hacim artışı bildirim üretmez; büyük hisse (NVDA…) ve endeks/emtia bu kapıdan bildirim almaz"},
     "notify_eval": {"type": "bool", "label": "🏁 Earnings sonuç raporu", "group": "Bildirimler",
-                    "desc": "Bilanço sonrası kim doğru bildi raporu"},
+                    "desc": "Bilanço sonrası yön sicili raporu"},
     "notify_digest": {"type": "bool", "label": "🌅 Günlük sabah özeti", "group": "Bildirimler",
                       "desc": "Sessiz saatte biriken bildirimler + günün gündemi"},
     "quiet_start_hour": {"type": "int", "label": "Sessiz saat başlangıcı (TSİ)", "group": "Bildirimler",

@@ -5,11 +5,10 @@
 
 <div class="panel">
   <h2>🎯 Liq attack radarı <span class="st">·
-    hafta sonu yakın likidasyonları kim ucuza patlatabilir</span></h2>
-  <p class="sub">Hafta sonu hissenin gerçek fiyatı <b>sabit</b> (borsa kapalı).
-  Perp fiyatını yakın likidasyon kümesine kadar itip patlatanın dönüşü garanti:
-  Pazartesi fiyat Cuma kapanışına döner. Bu yüzden saldırı <b>öngörülebilir</b> —
-  hedef (yakın küme), pencere (ince defter) ve dönüş çıpası önceden belli.</p>
+    hafta sonu yakın likidasyonlar ve itme maliyeti</span></h2>
+  <p class="sub">Hafta sonu dayanak hisse normal seansta işlem görmez; perp fiyatı Cuma
+  kapanışından ayrı hareket eder. Bu sayfa yakın likidasyon kümelerini ve oraya kadar itmenin
+  görünen defter maliyetini ölçer; Pazartesi açılış fiyatı burada ölçülmez.</p>
   <p class="sub"><b>Oran</b> = patlayacak $ ÷ fiyatı oraya itmek için yenmesi gereken
   defter $. <b>{{ '%g'|format(min_score) }}×</b> üstü <b>aday</b>: sayfada öne çıkar.
   Telegram'a yalnız <b>kapıyı geçen</b> aday düşer: fiyatın ≤%{{ '%g'|format(alert_dist) }}
@@ -19,8 +18,8 @@
   <code>LIQ_ATTACK_CHAT_ID</code> ayarlanırsa kendi kanalına{% endif %}. Mesaj o ≤%{{ '%g'|format(alert_dist) }}
   bölgesini anlatır, tablodaki geniş hedefi (%{{ '%g'|format(max_dist) }}'e kadar) değil. Uzaktaki küme
   sayfada kalır, mesaj atmaz (🔕). 🕳 = görünen defter hedefe varmadan bitiyor,
-  itmek bundan da ucuz olabilir. <span class="warn">Oran kâr tahmini değil, göreli
-  çekicilik. Yatırım tavsiyesi değildir.</span></p>
+  maliyet yalnız görünen derinlikten; ötesi ölçülmedi. <span class="warn">Oran kâr hesabı
+  değildir. Yatırım tavsiyesi değildir.</span></p>
 
   <div class="strip">
     {% if lq.weekend %}

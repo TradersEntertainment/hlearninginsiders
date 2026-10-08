@@ -76,7 +76,7 @@
   {# ── veri künyesi ─────────────────────────────────────────────────────── #}
   <p class="kunye">🧾 Bu pencerede <b>{{ rep.n_fills }}</b> işlem kaydımız var ·
     alım <b class="long">{{ rep.buy|usd }}</b> / satım <b class="short">{{ rep.sell|usd }}</b> ·
-    {{ rep.rows|length }} adres · <b>{{ rep.n_known }}</b> tanesinin pozisyonunu biliyoruz
+    {{ rep.rows|length }} adres · <b>{{ rep.n_known }}</b> tanesinin pozisyonu ölçüldü
     {%- if rep.n_flat %} · {{ rep.n_flat }} tanesi baktığımızda pozisyon taşımıyordu{% endif %}
     {%- if rep.n_unseen %} · <span class="bad">{{ rep.n_unseen }} adrese hiç uğramadık</span>{% endif %}
     {%- if rep.n_stale %} · <span class="warn">{{ rep.n_stale }} çıkarım bayat veriye dayanıyor ⏳</span>{% endif %}.

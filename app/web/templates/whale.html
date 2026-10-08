@@ -3,7 +3,7 @@
 {% block title %}👤 {{ address[:6] }}..{{ address[-4:] }}{% if arow.get('hits') %} {{ arow.hits }}✓{% endif %} · HL Radar{% endblock %}
 {% block content %}
 <div class="panel">
-  <h2>👤 Balina karnesi <span class="st">· bu cüzdan kim, ne taşıdı, haklı çıktı mı</span></h2>
+  <h2>👤 Balina karnesi <span class="st">· bu cüzdan kim, ne taşıdı, yönü tuttu mu</span></h2>
   <p class="sub mb0"><code>{{ address }}</code>
     · <a href="https://hypurrscan.io/address/{{ address }}" target="_blank" rel="noopener">hypurrscan ↗</a></p>
   <div class="kpi">
@@ -75,7 +75,7 @@
     {% endfor %}
   </table>
   </div></div>
-  <p class="kunye">🧾 Bağ = aralarında transfer görülen cüzdanlar · aynı kümedekiler aynı yönde pozisyon taşıyorsa bölünmüş tek balina olabilir.</p>
+  <p class="kunye">🧾 Bağ = aralarında transfer görülen cüzdanlar · küme transfer bağını gösterir; tek sahiplik ölçülmedi.</p>
   {% else %}{{ m.empty(["Bilinen bağlantı yok.", "Bağlar derin keşif ve transfer taramasıyla çıkarılır; tur ilerledikçe dolar."]) }}{% endif %}
 </div>
 

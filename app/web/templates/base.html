@@ -574,7 +574,7 @@ details.guidetv[open] summary{margin-bottom:2px}
   <a href="{{ path }}{{ k }}" title="{{ tip }}"{% if cur == path or cur.startswith(path + '/') %} class="on" aria-current="page"{% endif %}>{{ label }}</a>
   {%- endmacro %}
   <nav class="topnav" aria-label="Bölümler">
-  {{ nl('/saldiri', 'Hafta sonu yakın likidasyonları kim ucuza patlatabilir — liq attack adayları ve karne', '🎯 liq attack') }}
+  {{ nl('/saldiri', 'Hafta sonu yakın likidasyon kümeleri ve itme maliyeti — liq attack adayları ve karne', '🎯 liq attack') }}
   {{ nl('/kriptoliq', 'Kripto liq kümeleri — ana dex kriptosunda likidasyona yakın birikim (defter derinliği yok, oran yok)', '💥 kripto liq') }}
   {{ nl('/yapiskan', 'Yapışkan duvarlar — en iyi fiyata yapışıp fiyatla birlikte hareket eden dev TEK emirler (ana dex kripto)', '🧲 yapışkan') }}
   {{ nl('/sim', 'Liq olayı simülasyonu — kâğıt üstünde iki bacaklı işlem defteri, bakiye ve isabet (gerçek emir yok)', '🧪 sim') }}
@@ -582,15 +582,15 @@ details.guidetv[open] summary{margin-bottom:2px}
   {{ nl('/twaplar', 'Görülen TÜM TWAP emirleri (spot dahil) — emrin planlanan boyutuna göre büyükten küçüğe', '📋 twap emirleri') }}
   {% if is_admin %}{{ nl('/kullanicilar', 'Satılabilir bot: kullanıcılar, Pro, ödemeler, fan-out (yönetici)', '🛒 satış') }}{% endif %}
   {{ nl('/neoldu', 'Belli bir dakika aralığında kim ne aldı, ne sattı, açtı mı kapattı mı', '🔎 ne oldu') }}
-  {{ nl('/orintu', 'Şu anki grafik şekli geçmişte olduğunda sonra ne olmuş — olasılık + karne', '🔮 örüntü') }}
+  {{ nl('/orintu', 'Şu anki grafik şekli geçmişte olduğunda sonra ne olmuş — yükselen pay + karne', '🔮 örüntü') }}
   {{ nl('/hacim', 'Yakın zamanda 24 saatin en yüksek 5dk hacmine ulaşan kripto coin\'ler', '🚀 hacim') }}
   {{ nl('/hareket', 'Son 5 dakikanın en büyük fiyat hareketleri — PROPR listesi, 24s hacmi $1M+ olanlar', '📊 hareket') }}
   {{ nl('/funding', 'Funding oranına göre sıralı — kim kime ödüyor + balinaların günlük funding maliyeti', '💸 funding') }}
   {{ nl('/kapali', 'Borsa kapalıyken kapanıştan beri sapanlar + kapalıyken açılan pozisyonlar', '🌙 kapalı seans') }}
-  {{ nl('/saatler', 'Şu saatte yükselmesi/düşmesi beklenenler — tarihsel saat sıralaması', '🕐 saatler') }}
+  {{ nl('/saatler', 'Bu saatin geçmiş karnesi — tarihsel saat sıralaması', '🕐 saatler') }}
   {{ nl('/seans', 'ABD seans karnesi — Asya → Londra → New York: AMD / Power of 3 algısının ölçümü (XYZ100, SP500, ABD hisseleri)', '🕰 seans') }}
   {{ nl('/devler', 'Düşük hacimli hisselerdeki dev pozisyonlar + OI hakimleri', '🐘 sessiz sular') }}
-  {{ nl('/gecmis', 'Geçmiş bilançolar + en iyi biliciler', '🗂 geçmiş') }}
+  {{ nl('/gecmis', 'Geçmiş bilançolar + bilanço yön sicili', '🗂 geçmiş') }}
   {{ nl('/ai', 'AI analistin hipotezleri ve kendi sicili', '🤖 ai') }}
   {{ nl('/tani', 'Tam sistem dökümü — düz metin, kopyalayıp gönderilir', '🩺 tanı') }}
   {{ nl('/settings', 'Ayarlar', '⚙️ ayarlar') }}

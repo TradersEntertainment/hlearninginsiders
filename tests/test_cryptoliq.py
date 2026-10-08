@@ -237,7 +237,7 @@ def test_scan_flow():
         assert chat == "-100" and nbytes > 1000 and cli2.candle_calls == 1
         assert text.startswith("💥 <b>PUMP</b>") and "2 pozisyon" in text and "$1.9M" in text
         # zincir: en yakın (A, long -%1.8) patlarsa satış bid'leri yer → hedef + satır
-        assert "💣 <b>Zincir</b>" in text and "$1.2M long" in text and "gidebilir" in text, text
+        assert "💣 <b>Zincir</b>" in text and "$1.2M long" in text and "zincir sonu" in text, text
         assert cli2.book_calls == [("PUMP", 3)] and out2["cascades"] == 1
         assert "$1.2M" in text and "%1.80 altta" in text and "%2.30 üstte" in text
         assert "🏦VAULT" in text and "doğrulandı" in text and "BTC" not in text and "PROPR" not in text
@@ -663,7 +663,7 @@ def test_cascade_fallback():
         assert s["cascade"] and s["cascade"]["coarse"] is True and not s["cascade"]["no_book"]
         assert abs(s["cascade"]["end_px"] - m * 0.98) < 1e-12, s["cascade"]
         t = fmt.crypto_liq_snapshot(s)
-        assert "kaba defter (2 anlamlı hane)" in t and "gidebilir" in t, t
+        assert "kaba defter (2 anlamlı hane)" in t and "zincir sonu" in t, t
         # (2) ikisi de uzanmıyor → tek satır, en geniş görünüm yazılı
         cli2 = Client(rows, book={3: fine, 2: fine})
         s2 = await cl.snapshot(cfg, cli2, "PUMP")

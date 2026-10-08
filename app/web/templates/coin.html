@@ -30,7 +30,7 @@
 <div class="panel">
   <h2>{{ symbol }} <span class="st">({{ coin }}{% if kind == 'crypto' %} · ana dex kripto{% elif klass == 'kripto' %} · {{ coin.split(':')[0] }} dex kripto{% endif %})</span>
     {% if propr %}<span class="pbadge"
-      title="propr.xyz'de listeli — trade ettiğin platformda işlem açabilirsin">✅ PROPR'da listeli</span>{% endif %}</h2>
+      title="propr.xyz'de listeli">✅ PROPR'da listeli</span>{% endif %}</h2>
   <div class="kpi">
     <div><div class="l">Fiyat (mark)</div><div class="v">{{ summ.mark|px }}</div>
       <div class="s">{% if summ.px_change_pct is not none %}<b class="{{ 'long' if summ.px_change_pct > 0 else ('short' if summ.px_change_pct < 0 else 'dim') }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</b> · 24 saat{% else %}24 saatlik değişim henüz yok{% endif %}{% if mark_src == 'candle' %} · <span class="warn">fiyat = son mumun kapanışı, metrik yok</span>{% endif %}</div></div>
@@ -91,7 +91,7 @@
   <div class="walls">🧱 <b>Emir defteri duvarı:</b>
     {% for w in bwalls %}
     <span class="wall ihit {{ 'shortliq-t' if w.side == 'ask' else 'longliq-t' }}" data-side="{{ 'short' if w.side == 'ask' else 'long' }}"
-          data-tip="{{ 'fiyatın ÜSTÜNDE satış duvarı — yukarı çıkışı zorlaştırır' if w.side == 'ask' else 'fiyatın ALTINDA alış duvarı — aşağı inişi zorlaştırır' }} · {{ w.notional|usd }}{% if w.sz %} ({{ '%.0f'|format(w.sz) }} adet){% endif %} · {{ w.px_lo|px }}–{{ w.px_hi|px }}{% if w.peak_notional %} · zirvesi {{ w.peak_notional|usd }}{% if w.notional < w.peak_notional * 0.7 %} ⚠️ zirveden çekilmiş (spoof olabilir){% endif %}{% endif %} · çekilirse spoof olabilir">
+          data-tip="{{ 'fiyatın ÜSTÜNDE satış duvarı' if w.side == 'ask' else 'fiyatın ALTINDA alış duvarı' }} · {{ w.notional|usd }}{% if w.sz %} ({{ '%.0f'|format(w.sz) }} adet){% endif %} · {{ w.px_lo|px }}–{{ w.px_hi|px }}{% if w.peak_notional %} · zirvesi {{ w.peak_notional|usd }}{% if w.notional < w.peak_notional * 0.7 %} ⚠️ zirveden %30+ çekildi{% endif %}{% endif %}">
       {{ 'SATIŞ' if w.side == 'ask' else 'ALIŞ' }} <b>{{ w.notional|usd }}</b>
       · {{ w.px_lo|px }}–{{ w.px_hi|px }} (fiyata %{{ '%.1f'|format(w.dist_pct) }})
       {% if w.address %}· sahibi {{ m.addr(w.address, k, 6) }}{% endif %}
@@ -412,7 +412,7 @@
   <h2>🐋 En büyük pozisyonlar <span class="st">· kim ne kadar koydu, kaçtan girdi, kaç kaldıraçla</span></h2>
   <p class="sub">{% if kind == 'crypto' %}Bu coine en çok para koyan cüzdanlar — süpürmede görülenler, her boyut.
   İnsider skoru yok: skor hisse hattına ait (bilanço, taze cüzdan, tek hisse…); sıralama notional.
-  Adrese tıkla → cüzdanın tüm karnesi.{% else %}Bu hisseye en çok para koyan cüzdanlar. Skor = insider şüphesi (nedenleri sağdaki kolonda;
+  Adrese tıkla → cüzdanın tüm karnesi.{% else %}Bu hisseye en çok para koyan cüzdanlar. Skor = kurallı şüphe puanı, isabeti ölçülmedi (nedenleri sağdaki kolonda;
   70+ 🚨). Adrese tıkla → cüzdanın tüm karnesi.{% endif %}</p>
   {% if rows %}
   <div class="tabs">

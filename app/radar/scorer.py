@@ -225,7 +225,7 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             # CBRS dersi: insider illa taze olmak zorunda değil — 2 hafta önceden
             # çaktırmadan açıp bekleyebilir
             pts += 6
-            reasons.append(f"sabırlı açılış ({age_txt} önce) — erken kuş")
+            reasons.append(f"pozisyon {age_txt} önce açıldı")
 
     if not opened:
         # Açılış bilinmiyor (fill'ler emekli olmuş olabilir) ama pozisyonu NE
@@ -236,7 +236,7 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
             seen_d = max(0.0, (ref_ts - seen) / 86400)
             if seen_d >= 14:
                 pts += 6
-                reasons.append(f"🦉 en az {seen_d:.0f} gündür açık — sabırlı/erken kuş")
+                reasons.append(f"🦉 en az {seen_d:.0f} gündür açık (ilk görülme)")
             elif seen_d >= 3:
                 pts += 4
                 reasons.append(f"en az {seen_d:.0f} gündür açık")
@@ -283,11 +283,11 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
     if (age_h is not None and ntl >= cfg.big_position_usd
             and age_h <= cfg.combo_window_hours):
         pts += 15
-        reasons.append("🎯 büyük + taze açılış (insider paterni)")
+        reasons.append(f"🎯 büyük + {age_txt} önce açıldı (≤ {int(cfg.combo_window_hours)} sa penceresi)")
     elif age_h is not None and ntl >= cfg.big_position_usd and age_h <= 504:
         # büyük poz + sessizce erkenden açılmış (CBRS paterni: 2 hafta önce)
         pts += 8
-        reasons.append("🦉 büyük + sabırlı açılış (erken kuş insider)")
+        reasons.append(f"🦉 büyük + {age_txt} önce açıldı")
 
     if oi_ntl and oi_ntl > 0:
         share = ntl / oi_ntl * 100
@@ -301,7 +301,7 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
         dist = abs(mark - liq) / mark
         if dist <= 0.15:
             pts += 10
-            reasons.append(f"likidasyona %{dist*100:.0f} mesafe (yüksek conviction)")
+            reasons.append(f"likidasyona %{dist*100:.0f} mesafe")
 
     if funding is not None:
         paying = (pos["side"] == "long" and funding > 0) or \
@@ -324,10 +324,10 @@ def compute(cfg: Config, pos: dict, oi_ntl: float | None, funding: float | None,
     misses = (addr_row or {}).get("misses") or 0
     if hits >= 2:
         pts += 35
-        reasons.append(f"sicilli: {hits} earnings doğru bildi")
+        reasons.append(f"sicil: {hits} yön tuttu / {misses} tutmadı")
     elif hits == 1:
         pts += 20
-        reasons.append(f"sicil: 1 doğru / {misses} yanlış")
+        reasons.append(f"sicil: 1 yön tuttu / {misses} tutmadı")
 
     return min(pts, 100), reasons
 

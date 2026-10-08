@@ -1,7 +1,7 @@
 """propr.xyz listesi — kullanıcının trade ettiği platform.
 
 Bir sinyal propr'da da listeli bir enstrümana aitse alert'lere ve dashboard'a
-"✅ PROPR'da listeli — işlem açabilirsin" işareti eklenir.
+"✅ PROPR'da listeli" işareti eklenir (yalnız bilgi — işlem önerisi değil).
 Liste propr.xyz/universe'ten alındı; /settings'teki "propr_symbols" ile genişletilebilir.
 """
 from .config import get_config
@@ -46,4 +46,4 @@ def is_listed(symbol_or_coin: str) -> bool:
     return sym in {s.strip().upper() for s in extra.split(",") if s.strip()}
 
 
-PROPR_NOTE = "✅ <b>PROPR'da listeli</b> — işlem açabilirsin"
+PROPR_NOTE = "✅ <b>PROPR'da listeli</b>"

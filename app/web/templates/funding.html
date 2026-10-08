@@ -48,7 +48,7 @@
     {% for r in fr.rows %}
     <tr data-propr="{{ 1 if r.propr else 0 }}">
       <td class="l"><a href="/t/{{ r.symbol }}{{ k }}"><b>{{ r.symbol }}</b></a>
-        {%- if r.propr %}<span class="ptick" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {%- if r.propr %}<span class="ptick" title="propr.xyz'de listeli">✅</span>{% endif %}
         {%- if r.extreme %} <span title="Aşırı funding — anomali eşiğini geçti">🔥</span>{% endif %}
         {%- if r.flipped %} <span title="24 saatte işaret değişti: kalabalık taraf dönmüş">🔄</span>{% endif %}</td>
       <td class="{{ 'long' if r.funding > 0 else ('short' if r.funding < 0 else 'dim') }}">

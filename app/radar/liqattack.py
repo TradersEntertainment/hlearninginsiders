@@ -1,10 +1,10 @@
 """Liq attack radarı — "hafta sonu yakın pozları patlatıp fiyata geri dönüyorlar".
 
-MEKANİZMA. Hafta sonu hissenin GERÇEK fiyatı sabittir (borsa kapalı). Perp
-fiyatını yakın likidasyon kümesine kadar itip patlatan biri için dönüş
-garantidir: Pazartesi fiyat zaten Cuma kapanışına döner. Saldırgan için
-neredeyse risksiz — ve tam da bu yüzden ÖNGÖRÜLEBİLİR: hedef (yakın küme),
-pencere (hafta sonu, ince defter) ve dönüş çıpası (Cuma kapanışı) önceden belli.
+MEKANİZMA. Hafta sonu dayanak hisse normal seansta işlem görmez; perp fiyatı Cuma
+kapanışından ayrı hareket eder. Radar yakın likidasyon kümelerini ve oraya kadar
+itmenin görünen defter maliyetini ÖLÇER. "Pazartesi fiyat Cuma kapanışına döner"
+iddiası ölçülmedi (08.10 ifade temizliği) — strateji laboratuvarında (kapalı seans
+hareketinin açılışta kalan payı) ayrıca test edilir; mesajlar bu iddiayı yazmaz.
 
 SKOR = patlayacak $ / itmek için yenmesi gereken defter $.
   • Payda emir defterinden (l2Book, CANLI): fiyatı d% itmek için o yöndeki

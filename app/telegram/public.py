@@ -57,7 +57,7 @@ def welcome(cfg) -> str:
             "Hyperliquid'de balinaların likidasyon seviyelerini, dev pozisyonları ve sessiz "
             "birikimleri izler.\n\n"
             "📈 Bir coin adı yaz — <code>HYPE</code>, <code>BTC</code>, <code>TSLA</code> — liq'e en "
-            "yakın büyük pozisyonlar, zincir hedefi ve grafik gelsin.\n"
+            "yakın büyük pozisyonlar, zincir sonu (anlık defter simülasyonu) ve grafik gelsin.\n"
             f"🆓 Ücretsiz: günde <b>{free_limit(cfg)}</b> sorgu.\n"
             "⭐ Pro: sınırsız sorgu + seçtiğin türlerde anlık bildirim — /pro\n\n"
             "Komutlar: /hesap · /bildirimler · /adres · /yardim\n" + DISCLAIMER)
@@ -66,7 +66,7 @@ def welcome(cfg) -> str:
 def help_text(cfg) -> str:
     return ("❓ <b>Nasıl kullanılır</b>\n"
             "• Coin adı yaz: <code>HYPE</code>, <code>SOL</code>, <code>TSLA</code>, <code>SP500</code>"
-            " → liq'e en yakın büyük pozisyonlar, zorunlu alış/satış, zincir hedefi, grafik.\n"
+            " → liq'e en yakın büyük pozisyonlar, zorunlu alış/satış, zincir sonu (anlık defter simülasyonu), grafik.\n"
             "• Pozisyon verisi süpürülen ~1500 büyük hesaptan gelir — HL'nin tamamı değil; mesaj ne kadar"
             " eski olduğunu söyler.\n"
             f"• 🆓 Ücretsiz: günde {free_limit(cfg)} sorgu (TSİ 00:00'da yenilenir).\n"

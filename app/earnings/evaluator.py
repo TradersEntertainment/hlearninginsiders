@@ -15,9 +15,48 @@ from ..telegram import format as fmt
 from .calendar import event_ts_estimate
 
 log = logging.getLogger("earnings.evaluator")
+NOTE_FIX_KV = "eval_note_v2"          # eski "DOĞRU BİLDİ (insider olabilir)" notları bir kez düzeltildi
+
+
+def result_note(top: dict | None, move_pct: float | None, results: list[dict], thr: float) -> str | None:
+    """Arşiv notu (SAF): bilanço öncesi en büyük anlamlı pozun yönü fiyat yönüyle aynı mıydı.
+    Ölçüm dili (08.10): "doğru bildi / insider olabilir" yazılmaz — yalnız yön tuttu / tutmadı."""
+    if not top:
+        return None
+    side_txt = "SHORT" if top["side"] == "short" else "LONG"
+    who = f"{top['address'][:8]}..{top['address'][-4:]}"
+    size = fmt.usd(top["notional"])
+    if move_pct is None:
+        return f"En büyük poz {side_txt} {size} ({who}) — sonuç ölçülemedi"
+    if abs(move_pct) < thr:
+        return f"En büyük poz {side_txt} {size} ({who}) — fiyat %{move_pct:+.1f}, hareket eşiğin altında"
+    hit = (top["side"] == "short" and move_pct < 0) or (top["side"] == "long" and move_pct > 0)
+    n_right = sum(1 for r in results if r["hit"])
+    return (f"En büyük poz {side_txt} {size} ({who}) → fiyat %{move_pct:+.1f}"
+            f" · {'✅ yön tuttu' if hit else '❌ yön tutmadı'} · {n_right}/{len(results)} adresin yönü tuttu")
+
+
+async def fix_old_notes() -> int:
+    """Eski notlardaki tahmin dilini ölçüm diline çevirir — kv damgasıyla BİR kez."""
+    from ..db import kv_get, kv_set
+    if await kv_get(NOTE_FIX_KV):
+        return 0
+    async with db() as conn:
+        cur = await conn.execute(
+            "UPDATE earnings_events SET result_note = REPLACE(REPLACE(REPLACE(result_note,"
+            " '✅ DOĞRU BİLDİ (insider olabilir)', '✅ yön tuttu'), '❌ yanılmış', '❌ yön tutmadı'),"
+            " ' adres doğru', ' adresin yönü tuttu')"
+            " WHERE result_note LIKE '%DOĞRU BİLDİ%' OR result_note LIKE '%yanılmış%'")
+        n = cur.rowcount or 0
+    await kv_set(NOTE_FIX_KV, now())
+    return n
 
 
 async def evaluate_due(cfg: Config, client: HLClient, notifier) -> None:
+    try:
+        await fix_old_notes()
+    except Exception:
+        log.debug("eski not düzeltmesi", exc_info=True)
     cutoff = now()
     async with db() as conn:
         # Pencere 6 gün değil 30 gün: bot birkaç gün kapalı kaldıysa (Railway
@@ -127,24 +166,7 @@ async def _evaluate(cfg: Config, client: HLClient, notifier, ev: dict, est: int)
         log.warning("T+24h taraması başarısız %s: %s", coin, e)
 
     # ---- Arşiv notu: earnings öncesi en büyük ANLAMLI poz kimdi, haklı çıktı mı ----
-    note = None
-    if qual:
-        top = qual[0]
-        side_txt = "SHORT" if top["side"] == "short" else "LONG"
-        who = f"{top['address'][:8]}..{top['address'][-4:]}"
-        size = fmt.usd(top["notional"])
-        if move_pct is None:
-            note = f"En büyük poz {side_txt} {size} ({who}) — sonuç ölçülemedi"
-        elif abs(move_pct) < cfg.eval_move_threshold:
-            note = (f"En büyük poz {side_txt} {size} ({who}) — fiyat %{move_pct:+.1f},"
-                    " hareket eşiğin altında")
-        else:
-            hit = (top["side"] == "short" and move_pct < 0) or \
-                  (top["side"] == "long" and move_pct > 0)
-            verdict = "✅ DOĞRU BİLDİ (insider olabilir)" if hit else "❌ yanılmış"
-            n_right = sum(1 for r in results if r["hit"])
-            note = (f"En büyük poz {side_txt} {size} ({who}) → fiyat %{move_pct:+.1f}"
-                    f" · {verdict} · {n_right}/{len(results)} adres doğru")
+    note = result_note(qual[0] if qual else None, move_pct, results, cfg.eval_move_threshold)
 
     async with db() as conn:
         await conn.execute(

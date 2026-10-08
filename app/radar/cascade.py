@@ -119,7 +119,7 @@ def describe_short(c: dict | None) -> str:
     from ..telegram.format import px, usd
     up = c["direction"] == UP
     who = "short" if up else "long"
-    head = f"💣 <b>Zincir</b>: {usd(c['trigger_usd'])} {who} {px(c['start_px'])}'te patlarsa"
+    head = f"💣 <b>Zincir</b>: {usd(c['trigger_usd'])} {who} {px(c['start_px'])} seviyesinde patlarsa"
     if c.get("no_book"):
         return head + " — görünen defter liq'e uzanmıyor, derinlik bilinmiyor"
     move = f" · {c['move_pct']:+.1f}%" if c.get("move_pct") is not None else ""
@@ -137,7 +137,7 @@ def describe(c: dict | None, mark: float | None = None) -> list[str]:
     who = "short" if up else "long"
     act = "alış" if up else "satış"
     head = (f"💣 <b>Zincir</b> (defter anlık) · {usd(c['trigger_usd'])} {who} "
-            f"{px(c['start_px'])}'te patlarsa zorunlu {act}")
+            f"{px(c['start_px'])} seviyesinde patlarsa zorunlu {act}")
     if c.get("no_book"):
         reach = c.get("book_reach_pct")
         seen = (f" (en geniş görünüm fiyattan %{reach:+.1f}'e kadar, 20 seviye)"
@@ -152,13 +152,12 @@ def describe(c: dict | None, mark: float | None = None) -> list[str]:
     elif len(st) == 1 and st[0]["n_new"]:
         parts.append(f"arada {st[0]['n_new']} {who} daha ({usd(st[0]['usd_new'])}) — defter bitti")
     parts.append(f"toplam <b>{usd(c['total_usd'])}</b>")
-    move = f" (şimdiden {c['move_pct']:+.1f}%)" if c.get("move_pct") is not None else ""
-    parts.append(f"fiyat kaçınılmaz ~<b>{px(c['end_px'])}</b>'a gidebilir{move}")
+    move = f" (şimdiki fiyattan {c['move_pct']:+.1f}%)" if c.get("move_pct") is not None else ""
+    parts.append(f"anlık defterde zincir sonu ~<b>{px(c['end_px'])}</b>{move}")
     if c.get("coarse"):
         parts.append("<i>kaba defter (2 anlamlı hane)</i>")
     out = [" · ".join(parts)]
     if c.get("exhausted"):
-        out.append(f"<i>görünen defter {px(c['end_px'])}'da bitiyor ({usd(c['book_usd'])} derinlik,"
-                   f" {usd(c['pending_usd'])} yerleşmedi) — ötesi bilinmiyor, gerçek hareket"
-                   f" daha büyük olabilir</i>")
+        out.append(f"<i>görünen defter {px(c['end_px'])} seviyesinde bitiyor ({usd(c['book_usd'])} derinlik,"
+                   f" {usd(c['pending_usd'])} yerleşmedi) — ötesi ölçülmedi</i>")
     return out

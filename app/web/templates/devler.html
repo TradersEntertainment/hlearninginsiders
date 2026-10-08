@@ -31,7 +31,7 @@
     <div class="body">
       <p>🐘 <b>Kısaca:</b> Kimsenin trade etmediği, günlük hacmi düşük bir hissede birinin
       milyonlarca dolarlık pozisyon tutması tuhaftır: o boyut o hacimde <i>kolay kapanmaz</i>.
-      Yani sahibi aylarca haklı çıkacağından emin — ya çok inatçı, ya bir şey biliyor.
+      Tablo pozisyonun hacme oranını ölçer; sahibinin niyetini ölçmez.
       Burada iki tür "dev" listelenir:</p>
       <div class="gloss">
         <b>Sessiz su</b><span>günlük işlem hacmi {{ max_vol|usd }}'nin altındaki hisse — burada büyük poz dikkat çeker</span>
@@ -125,7 +125,7 @@
     {% for p in humans %}
     <tr data-propr="{{ 1 if p.symbol in propr else 0 }}">
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
-        {% if p.symbol in propr %}<span class="pbadge" title="propr.xyz'de listeli — işlem açabilirsin">✅</span>{% endif %}
+        {% if p.symbol in propr %}<span class="pbadge" title="propr.xyz'de listeli">✅</span>{% endif %}
         {% if p.low_volume %}<span class="dim" title="günlük hacim eşiğin altında">🤫</span>{% endif %}</td>
       <td class="l">{{ m.addr(p.address, k) }}{% if p.watchlist %} ⭐{% endif %}
         {% if p.hits %}<span class="dim">{{ p.hits }}✓/{{ p.misses }}✗</span>{% endif %}</td>
