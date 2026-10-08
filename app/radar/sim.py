@@ -335,8 +335,12 @@ def svg_curve(points: list, start_balance: float, w: int = 640, h: int = 120) ->
             continue
         good = float(c.get("pnl_usd") or 0) >= 0
         col = "var(--green)" if good else "var(--red)"
-        title = (f"{c.get('coin')} {'ön' if int(c.get('leg') or 1) == 1 else 'ters'} bacak"
-                 f" · {c.get('exit_reason')} · {float(c.get('pnl_usd') or 0):+,.0f}$ → {v:,.0f}$")
+        if c.get("title"):                               # başka hesaplar (🧪 lab) kendi etiketini verir
+            import html
+            title = html.escape(f"{c['title']} → {v:,.0f}$")
+        else:
+            title = (f"{c.get('coin')} {'ön' if int(c.get('leg') or 1) == 1 else 'ters'} bacak"
+                     f" · {c.get('exit_reason')} · {float(c.get('pnl_usd') or 0):+,.0f}$ → {v:,.0f}$")
         out.append(f'<circle cx="{X(i, ts):.1f}" cy="{Y(v):.1f}" r="4" fill="{col}" stroke="var(--surface-1)"'
                    f' stroke-width="2" vector-effect="non-scaling-stroke"><title>{title}</title></circle>')
     out.append(f'<text x="{pad_l - 6}" y="{pad_t + 8}" text-anchor="end" font-size="10" fill="var(--dim)">'

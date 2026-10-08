@@ -26,6 +26,11 @@
   dürüst kapıyı geçen ve <b>sahibin onayladığı</b> kuraldan gelir — <b>strateji asla aramaz</b>.
   <span class="warn">{{ v.note }} · geçmiş ölçüm, tahmin değil · yatırım tavsiyesi değildir.</span></p>
   {% if err %}<p class="warn">⚠️ Sayfanın bir kısmı kurulamadı: {{ err }}</p>{% endif %}
+  {% for kk, vv in (sec or {}).items() %}<p class="warn">⚠️ Bölüm kurulamadı ({{ kk }}): {{ vv }}</p>{% endfor %}
+  {% if v.closest %}<p>⏳ <b>Sinyale en yakın:</b> {{ v.closest.rule_id }} — {{ v.closest.line }}</p>{% endif %}
+  <p class="hint"><a href="#ne-kaldi">Sinyale ne kaldı</a> · <a href="#pozlar">Açık kâğıt pozisyonlar</a> ·
+    <a href="#kurallar">Kurallar + kâğıt hesap</a> · <a href="/lab/islemler{{ ('?key=' + k[5:]) if k else '' }}">Sonuçlanan işlemler / CSV</a> ·
+    <a href="#saglik">Veri sağlığı</a></p>
   {% set st = v.stats or {} %}{% set reg = st.reg or {} %}
   <p class="hint">Döngü: {% if st.ts %}son tur {{ st.ts|dt }} · kuyruk {{ reg.pending or 0 }} · yazılan {{ reg.flushed or 0 }}
     · gün tavanından düşen {{ reg.cap_drop or 0 }} · taşma {{ reg.overflow or 0 }}
@@ -33,6 +38,68 @@
     {% if st.err %}· <span class="warn">⚠️ {{ st.err }}</span>{% endif %}{% else %}henüz tur yok{% endif %}</p>
 </div>
 
+<style>
+.lsteps{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
+.lsteps span{font-size:var(--fs-s);padding:1px 8px;border-radius:var(--r-pill);border:1px solid var(--line, rgba(127,127,127,.3));color:var(--dim)}
+.lsteps span.done{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
+.lsteps span.now{color:var(--head);font-weight:700;border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.lpaper svg{max-width:100%;display:block}
+.lprow{padding:8px 0;border-bottom:1px solid var(--line, rgba(127,127,127,.18))}
+.lprow:last-child{border-bottom:0}
+</style>
+
+<div class="panel" id="ne-kaldi">
+  <h3>⏳ Sinyale ne kaldı <span class="st">· yalnız sayım — ara test sonucu gösterilmez</span></h3>
+  {% set slotted = v.rules|selectattr('evidence', 'ne', 'log')|rejectattr('status', 'eq', 'emekli')|list %}
+  {% if slotted %}
+  <div class="lprog">
+    {% for r in slotted %}{% set pg = r.progress or {} %}
+    <div class="lprow"><div><b>{{ r.rule_id }}</b> <span class="dim">v{{ r.ver }} · {{ r.status_tr }}</span></div>
+      <div>{{ pg.line or '—' }}
+        {% if pg.unres_share %}<span class="dim">· ölçülemeyen payı %{{ '%.0f'|format(pg.unres_share * 100) }} (sınır %20)</span>{% endif %}</div>
+      <div class="lsteps">{% for s in pg.steps or [] %}<span class="{{ s.state }}" title="{{ s.note }}">{{ '✓ ' if s.state == 'done' else ('▶ ' if s.state == 'now' else '') }}{{ s.label }}{% if s.note and s.state != 'todo' %} · {{ s.note }}{% elif s.note and s.label.endswith('bakış') %} · {{ s.note }}{% endif %}</span>{% endfor %}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% set g1 = slotted|map(attribute='progress')|selectattr('guard')|map(attribute='guard')|first %}
+  <p class="hint">Bir bakış, kayıttan sonraki <b>kapanmış küme</b> sayısı eşiğe ulaşınca bir kez yapılır (sonuçtan değil
+    sayıdan tetiklenir). {% if g1 %}Geçmek için hepsi birlikte: ortalama net &gt; 0; üç test (t, işaret çevirme,
+    bootstrap) birlikte bakışın z eşiğini aşar; iki yarı aynı işaret; ölçülemeyen ≤ %20; 60 kümeden azsa sola çarpık
+    değil.{% endif %} "Bu hızla en erken" yalnız şimdiye kadarki küme hızından bir takvim sayımıdır — sonuç hakkında
+    bir şey söylemez; geçtikten sonra da mesaj için senin onayın gerekir.</p>
+  {% else %}<p class="dim">Yuvalı kural yok.</p>{% endif %}
+  {% set logs = v.rules|selectattr('evidence', 'eq', 'log')|rejectattr('status', 'eq', 'emekli')|list %}
+  {% if logs %}<p class="hint">{{ logs|length }} kural yalnız kayıt (LOG-* aileleri + izleme kuralları) — sinyal üretemez.</p>{% endif %}
+</div>
+
+<div class="panel" id="pozlar">
+  <h3>📄 Açık kâğıt pozisyonlar <span class="st">· girişi yapılmış, ufku sürmekte · {{ (pos.rows or [])|length }}
+    {% if (pos.rows or [])|length >= 200 %}(ilk 200){% endif %} · giriş bekleyen {{ pos.pending or 0 }}</span></h3>
+  {% if pos.rows %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table class="compact">
+    <tr><th class="l stick">Coin</th><th class="l">Kural</th><th>Yön</th><th class="l">Giriş</th><th>Giriş px</th><th>Şimdi</th>
+      <th>Anlık ham</th><th>Anlık net</th><th class="l">Sıradaki ufuk</th></tr>
+    {% for p in pos.rows %}
+    <tr><td class="l stick"><b>{{ p.coin.split(':')[-1] }}</b></td>
+      <td class="l">{{ p.rule_id }}{% if p.izleme %} <span class="dim">(izleme)</span>{% endif %}</td>
+      <td>{{ '▲ long' if p.side == 1 else ('▼ short' if p.side == -1 else '·') }}</td>
+      <td class="l">{{ p.entry_ts|dt }}</td><td>{{ p.entry_px|px5 }}</td>
+      <td>{% if p.px_now %}{{ p.px_now|px5 }}{% if p.px_age is not none and p.px_age > 600 %} <span class="dim">({{ (p.px_age // 60)|int }} dk önce)</span>{% endif %}{% else %}—{% endif %}</td>
+      <td style="color:{{ 'var(--green)' if (p.ret_now or 0) > 0 else ('var(--red-fg)' if (p.ret_now or 0) < 0 else 'inherit') }}">{{ pct(p.ret_now) }}</td>
+      <td style="color:{{ 'var(--green)' if (p.net_now or 0) > 0 else ('var(--red-fg)' if (p.net_now or 0) < 0 else 'inherit') }}"><b>{{ pct(p.net_now) }}</b></td>
+      <td class="l">{% if p.left_s is not none %}{% if p.left_s > 0 %}{% if p.left_s >= 3600 %}{{ (p.left_s // 3600)|int }} sa {% endif %}{{ ((p.left_s % 3600) // 60)|int }} dk{% else %}ölçülüyor{% endif %}{% else %}—{% endif %}
+        <span class="dim">· {{ p.n_open }} ufuk açık</span></td></tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="hint">Anlık ham = yön × (şimdiki fiyat / giriş − 1). Anlık net = ham − şimdiye kadarki maliyet (ücret,
+    kayma, funding yer tutucusu); piyasa düzeltmesi yok — kapının ölçtüğü net ufuk sonunda, piyasa düzeltmeli
+    yazılır. Şimdiki fiyat ağsız: ana dex için son mark, HIP-3 için son metrik satırı.</p>
+  {% else %}<p class="dim">Şu an açık kâğıt pozisyon yok{% if pos.pending %} — {{ pos.pending }} olay giriş fiyatını bekliyor{% endif %}.</p>{% endif %}
+</div>
+
+<div id="kurallar"></div>
 {% for r in v.rules %}
 <div class="panel">
   <h3>{{ r.rule_id }} <span class="dim">v{{ r.ver }}</span> · {{ r.title }}
@@ -65,6 +132,22 @@
     {% endfor %}
   </table>
   {% endif %}
+  {% if r.progress and r.progress.line and r.evidence != 'log' %}<p class="hint">⏳ {{ r.progress.line }}</p>{% endif %}
+  {% set pa = paper.get((r.rule_id, r.ver)) if paper else none %}
+  {% if pa %}
+  <div class="lpaper">
+  <p><b>Kâğıt hesap</b> <span class="dim">(${{ '{:,.0f}'.format(pa.start) }} · {{ pa.lev|int }}x · işlem başına bakiyenin
+    %{{ pa.margin_pct|int }}'ü · kayıttan sonraki birincil ufuk işlemleri, piyasa düzeltmesiz)</span>:
+    {% if pa.n %}<b>${{ '{:,.0f}'.format(pa.balance) }}</b> ({{ '%+.1f'|format(pa.ret_pct) }}%) · {{ pa.n }} işlem
+    {% if pa.skipped %}· {{ pa.skipped }} işlem yer kalmadığı için atlandı{% endif %}
+    · pozitif pay %{{ '%.0f'|format((pa.pos_share or 0) * 100) }} · en kötü işlem {{ '{:+,.0f}'.format(pa.worst_trade or 0) }}$
+    {% if pa.worst_day %}· en kötü gün {{ pa.worst_day[0] }} {{ '{:+,.0f}'.format(pa.worst_day[1]) }}${% endif %}
+    · en büyük düşüş {{ '%.1f'|format(pa.max_dd_pct) }}%
+    {% else %}<span class="dim">henüz sonuçlanan işlem yok</span>{% endif %}
+    · <a href="/lab/islemler?rule={{ r.rule_id }}{{ qk }}">işlemler</a></p>
+  {% if pa.svg %}{{ pa.svg|safe }}{% endif %}
+  </div>
+  {% endif %}
 </div>
 {% else %}
 <div class="panel"><p class="dim">Henüz kayıtlı kural yok — lab döngüsü ilk turda kuralları kaydeder.</p></div>
@@ -90,6 +173,45 @@
   {% else %}<p class="dim">Bu kural için henüz olay yok.</p>{% endif %}
 </div>
 {% endif %}
+
+<div class="panel">
+  <h3>📑 Sonuçlanan işlemler</h3>
+  <p>Tüm kuralların sonuçlanan ufuk satırları (giriş/çıkış fiyatı, ham, kıyas, düzeltilmiş, maliyet, net, MFE/MAE):
+    <a href="/lab/islemler{{ ('?key=' + k[5:]) if k else '' }}">tablo</a> ·
+    <a href="/lab/islemler?fmt=csv{{ qk }}">CSV indir</a></p>
+</div>
+
+<div class="panel" id="saglik">
+  <h3>🩺 Veri sağlığı <span class="st">· lab'ın topladığı veri ve döngü</span></h3>
+  {% if health %}
+  {% for w in health.warns %}<p class="warn">⚠️ {{ w }}</p>{% else %}<p><span class="pill ok">sorun görünmüyor</span></p>{% endfor %}
+  {% set hv = health.heavy or {} %}{% set hs = health.stats or {} %}{% set rs = hs.resolve or {} %}{% set bu = hs.budget or {} %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table class="compact">
+    <tr><th class="l">Kaynak</th><th>Satır</th><th>Coin</th><th class="l">Son</th></tr>
+    {% set mh = hv.mh or {} %}
+    <tr><td class="l">Saatlik metrik (mark, oracle, prim, funding, OI, hacim)</td><td>{{ '{:,}'.format(mh.n or 0) }}</td><td>{{ mh.c or 0 }}</td><td class="l">{{ mh.m|dt }}</td></tr>
+    {% for c in hv.lc or [] %}
+    <tr><td class="l">Mum {{ {60: '1 dk', 300: '5 dk', 900: '15 dk', 3600: '1 sa', 14400: '4 sa', 86400: '1 gün'}.get(c.tf, c.tf ~ ' sn') }}</td>
+      <td>{{ '{:,}'.format(c.n or 0) }}</td><td>{{ c.c or 0 }}</td><td class="l">{{ c.m|dt }}</td></tr>
+    {% endfor %}
+    {% set sb = hv.sb or {} %}
+    <tr><td class="l">Seans barları</td><td>{{ '{:,}'.format(sb.n or 0) }}</td><td>{{ sb.c or 0 }}</td><td class="l">{{ sb.m|dt }}</td></tr>
+  </table>
+  </div></div>
+  {% set dp = health.deep or {} %}
+  <p class="hint">Derin dolum (1 sa ~208 gün, 1 gün tüm geçmiş): evren {{ dp.universe or 0 }} coin ·
+    {% for tf, n in (dp.by_tf or {}).items() %}{{ {'3600': '1 sa', '86400': '1 gün'}.get(tf, tf) }} {{ n }} bitti{% if not loop.last %} · {% endif %}{% else %}henüz yok{% endfor %}</p>
+  {% set ev = health.ev or {} %}
+  <p class="hint">Olay kaydı — türetilmiş kurallar: {% for kk, vv in (ev.kural or {}).items() %}{{ kk }} {{ '{:,}'.format(vv) }}{% if not loop.last %} · {% endif %}{% else %}yok{% endfor %}
+    <br>Kayıt aileleri (LOG-*): {% for kk, vv in (ev.aile or {}).items() %}{{ kk }} {{ '{:,}'.format(vv) }}{% if not loop.last %} · {% endif %}{% else %}yok{% endfor %}</p>
+  {% set re_ = rs.entries or {} %}{% set ro_ = rs.outcomes or {} %}
+  <p class="hint">Çözücü son tur: giriş açılan {{ re_.opened or 0 }} · ölçülen ufuk {{ ro_.done or 0 }} · ölçülemeyen
+    {{ (re_.unres or 0) + (ro_.unres or 0) }} · bekleyen {{ rs.backlog or 0 }}
+    {% if rs.errors %}· hata {{ rs.errors }}{% endif %} · API bütçesi harcanan {{ bu.spent or 0 }} · reddedilen {{ bu.denied or 0 }}
+    {% if hs.ts %}· son tur {{ hs.ts|dt }}{% endif %} <span class="dim">· sayımlar 10 dk önbellekli ({{ health.cached_at|dt }})</span></p>
+  {% else %}<p class="dim">Veri sağlığı okunamadı.</p>{% endif %}
+</div>
 
 <div class="panel">
   <h3>Kayıt izi <span class="st">· kayıt, onay, emeklilik, planlı bakışlar — hiç budanmaz</span></h3>

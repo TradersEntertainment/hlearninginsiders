@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}🧪 Lab işlemleri · HL Radar{% endblock %}
+{% block content %}
+{% set qk = ('&key=' + k[5:]) if k else '' %}
+{% macro pct(x, d=2) -%}
+{% if x is none %}—{% else %}{{ ('%+.' ~ d ~ 'f')|format(x * 100) }}%{% endif %}
+{%- endmacro %}
+<div class="panel">
+  <h2>📑 Sonuçlanan kâğıt işlemleri <span class="st">· {{ rows|length }} satır{% if rows|length >= limit %} (en yeni {{ limit }}; tamamı CSV'de){% endif %}</span></h2>
+  <p class="sub">Her satır bir olayın bir ufku: giriş = karar + tepki süresi sonrası ilk işlemin fiyatı, çıkış = ufuk
+    sonu (ya da kuralın çıkış tanımı). Ham = yön × getiri; düzeltilmiş = ham − β × kıyas; net = düzeltilmiş − maliyet
+    (kapının ölçtüğü). Kayıt aileleri (LOG-*) yalnız kural süzgeciyle listelenir.
+    <span class="warn">geçmiş ölçüm, tahmin değil · yatırım tavsiyesi değildir.</span></p>
+  <form method="get" action="/lab/islemler" class="hint">
+    {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
+    Kural <input type="text" class="sq" name="rule" value="{{ rule }}" size="14" placeholder="HAC-KRP-F">
+    Coin <input type="text" class="sq" name="coin" value="{{ coin }}" size="10" placeholder="BTC">
+    Ufuk (sn) <input type="number" class="sq" name="h" value="{{ h if h is not none else '' }}" size="6" placeholder="3600">
+    <button type="submit">Süz</button>
+    · <a href="/lab/islemler?fmt=csv{% if rule %}&rule={{ rule|urlencode }}{% endif %}{% if coin %}&coin={{ coin|urlencode }}{% endif %}{% if h is not none %}&h={{ h }}{% endif %}{{ qk }}">CSV indir</a>
+    · <a href="/lab{{ ('?key=' + k[5:]) if k else '' }}">← lab</a>
+  </form>
+  {% if err %}<p class="warn">⚠️ Liste kurulamadı: {{ err }}</p>{% endif %}
+  {% if rows %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table class="compact">
+    <tr><th class="l stick">Coin</th><th class="l">Kural</th><th>Yön</th><th class="l">Giriş</th><th>Giriş px</th><th class="l">Ufuk</th>
+      <th class="l">Çıkış</th><th>Çıkış px</th><th>Ham</th><th>Kıyas</th><th>Düzeltilmiş</th><th>Maliyet</th><th>Net</th><th>MFE</th><th>MAE</th><th class="l">Durum</th></tr>
+    {% for r in rows %}
+    <tr><td class="l stick"><b>{{ r.coin.split(':')[-1] }}</b></td>
+      <td class="l">{{ r.rule_id }} <span class="dim">v{{ r.rule_ver }}{% if r.origin != 'live' %} · {{ r.origin }}{% endif %}</span></td>
+      <td>{{ '▲' if r.side == 1 else ('▼' if r.side == -1 else '·') }}</td>
+      <td class="l">{{ r.entry_ts|dt }}</td><td>{{ r.entry_px|px5 }}</td><td class="l">{{ h_label(r.h) }}</td>
+      <td class="l">{{ r.exit_ts|dt }}{% if r.exit_reason %} <span class="dim">{{ r.exit_reason }}</span>{% endif %}</td>
+      <td>{{ r.exit_px|px5 }}</td><td>{{ pct(r.ret_raw) }}</td><td class="dim">{{ pct(r.ret_bench) }}</td>
+      <td>{{ pct(r.ret_adj) }}</td><td class="dim">{% if r.cost is none %}—{% else %}{{ '%.2f'|format(r.cost * 100) }}%{% endif %}</td>
+      <td style="color:{{ 'var(--green)' if (r.net or 0) > 0 else ('var(--red-fg)' if (r.net or 0) < 0 else 'inherit') }}"><b>{{ pct(r.net) }}</b></td>
+      <td class="dim">{{ pct(r.mfe) }}</td><td class="dim">{{ pct(r.mae) }}</td>
+      <td class="l dim">{{ 'ölçüldü' if r.status == 'done' else 'ölçülemedi' }}</td></tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  {% else %}<p class="dim">Bu süzgeçle sonuçlanan işlem yok.</p>{% endif %}
+</div>
+{% endblock %}

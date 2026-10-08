@@ -127,3 +127,162 @@ def test_strat_routing():
     fsrc = open(os.path.join(ROOT, "app/telegram/format.py"), encoding="utf-8").read()
     assert '"/strat — 🧪 strateji laboratuvarı' in fsrc, "yardım metni"
     print("✅ /strat yönlendirme) sahip zinciri + kendi kanallar (coin aramasına düşmez)")
+
+
+# ---------------- sinyale ne kaldı · açık pozisyonlar · kâğıt hesap · işlemler · veri sağlığı ----------------
+
+D = 86400
+
+
+async def _seed_done(rid, ver, reg_ts, days, net=0.004, coin="xyz:TEST", h=3600, start_day=1):
+    """Kayıttan sonra her gün bir olay (küme = gün), birincil ufuk ölçülmüş — kapının saydığı biçimde."""
+    async with dbm.db() as c:
+        for d in range(start_day, start_day + days):
+            t = (reg_ts // D + d) * D + 3600
+            cur = await c.execute(
+                "INSERT INTO strat_events(rule_id, rule_ver, origin, coin, klass, ts_decision, trig_key, side, latency_s,"
+                " entry_ts, entry_px, cluster, status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (rid, ver, "live", coin, "hisse", t, f"s{d}", 1, 60, t + 60, 100.0, t // D, "done"))
+            await c.execute(
+                "INSERT INTO strat_outcomes(event_id, h, due_ts, status, exit_ts, exit_px, ret_raw, ret_bench, ret_adj,"
+                " cost, net) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (cur.lastrowid, h, t + 60 + h, "done", t + 60 + h, 100.0 * (1 + net + 0.001), net + 0.001, 0.0,
+                 net + 0.001, 0.001, net))
+
+
+def test_progress_counts_not_stats():
+    async def run():
+        from app.lab import gate, looks
+        cfg = await core._fresh("labui_prog.db")
+        ui._CACHE.update(ts=0, v=None)
+        reg = T - 30 * D
+        await registry.sync(cfg, ts=reg, rules=[core._rule("A"), core._rule("L", evidence="log"),
+                                                core._rule("FB", evidence="frozen_backtest")])
+        await _seed_done("A", 1, reg, 5)
+        ts = reg + 10 * D
+        v = await ui.overview(ts)
+        by = {r["rule_id"]: r for r in v["rules"]}
+        a = by["A"]
+        fc = await looks.clusters_for("A", 1, a["spec_d"], a["registered_ts"], ts)
+        assert len(fc["xc"]) == 5, "kapının saydığı küme"
+        pg = a["progress"]
+        assert pg["line"].startswith("1. bakışa 15 küme kaldı (5/20)"), pg["line"]
+        assert "bu hızla en erken" in pg["line"] and pg["rank"] and pg["rank"] > 0
+        z1 = ui._z(gate.alpha_increments({**a["spec_d"], "alpha": a["alpha"]})[0])
+        step = next(s for s in pg["steps"] if s["label"] == "1. bakış")
+        assert step["state"] == "now" and step["note"] == f"5/20 küme · eşik z ≥ {z1:.2f}", step
+        assert [s["label"] for s in pg["steps"]] == ["kayıt", "1. bakış", "2. bakış", "sahip onayı", "canlı (mesaj)"]
+        assert set(pg) <= {"line", "steps", "rank", "guard", "pipe", "unres_share"}, "ara p / z / ortalama yok"
+        assert "p " not in pg["line"] and "ortalama" not in pg["line"]
+        assert by["L"]["progress"]["line"] == "yalnız kayıt — sinyal üretemez (yuvasız)"
+        fb = by["FB"]["progress"]
+        assert fb["line"].startswith("Aşama A (geçmiş veri testi)") and "Aşama A (geçmiş)" in [s["label"] for s in fb["steps"]]
+        assert v["closest"] and v["closest"]["rule_id"] in ("A", "FB")
+        empty = await ui.progress({**a, "registered_ts": ts - 3600}, a["spec_d"], ts)
+        assert "henüz kapanmış küme yok" in empty["line"]
+        from app.telegram import format as fmt
+        card = fmt.strat_card(v)
+        assert "⏳ 1. bakışa 15 küme kaldı (5/20)" in card and "Sinyale en yakın:" in card
+        assert "⏳ yalnız kayıt" not in card, "log kuralı kartta ilerleme satırı almaz"
+    asyncio.run(run())
+    print("✅ ne kaldı) kapının saydığı küme; sıradaki eşik ve z; bu hızla en erken; ara p/z yok; log/Aşama A ayrı")
+
+
+def test_open_positions_and_paper():
+    async def run():
+        from app.hl.universe import MAIN_CTX_KV
+        from app.lab import costs
+        cfg = await core._fresh("labui_pos.db")
+        ui._CACHE.update(ts=0, v=None)
+        reg = T - 30 * D
+        await registry.sync(cfg, ts=reg, rules=[core._rule("A")])
+        ts = T
+        async with dbm.db() as c:
+            for rid, coin, side, eid in (("A", "BTC", 1, 1), ("A", "xyz:TEST", -1, 2), ("A", "ZZZ", 1, 3),
+                                         ("LOG-TWAP", "ETH", 1, 4)):
+                await c.execute(
+                    "INSERT INTO strat_events(id, rule_id, rule_ver, origin, coin, klass, ts_decision, trig_key, side,"
+                    " entry_ts, entry_px, status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (eid, rid, 1 if rid == "A" else 2, "live", coin, "kripto" if coin in ("BTC", "ZZZ", "ETH") else "hisse",
+                     ts - 1800, f"o{eid}", side, ts - 1700, 100.0, "open"))
+                await c.execute("INSERT INTO strat_outcomes(event_id, h, due_ts, status) VALUES(?,?,?,?)",
+                                (eid, 3600, ts - 1700 + 3600, "open"))
+            await c.execute("INSERT INTO strat_events(rule_id, rule_ver, origin, coin, ts_decision, trig_key, status)"
+                            " VALUES('A', 1, 'live', 'SOL', ?, 'p1', 'pending')", (ts,))
+            await c.execute("INSERT INTO asset_metrics(coin, ts, mark_px) VALUES('xyz:TEST', ?, 98.0)", (ts - 120,))
+        await dbm.kv_set(MAIN_CTX_KV, {"c": {"BTC": {"m": 102.0}}, "ts": ts - 30})
+        pos = await ui.open_positions(ts)
+        by = {r["coin"]: r for r in pos["rows"]}
+        assert set(by) == {"BTC", "xyz:TEST", "ZZZ"} and pos["pending"] == 1, "LOG-* hariç; giriş bekleyen ayrı"
+        c_btc = costs.cost("kripto", False, 1700, 1, None)["total"]
+        assert abs(by["BTC"]["ret_now"] - 0.02) < 1e-12 and abs(by["BTC"]["net_now"] - (0.02 - c_btc)) < 1e-12
+        assert by["BTC"]["px_age"] == 30 and by["BTC"]["left_s"] == 1900
+        assert abs(by["xyz:TEST"]["ret_now"] - 0.02) < 1e-12, "short: fiyat düştü → +"
+        assert by["xyz:TEST"]["px_now"] == 98.0 and by["xyz:TEST"]["px_age"] == 120
+        assert by["ZZZ"]["px_now"] is None and by["ZZZ"]["net_now"] is None, "fiyat yoksa —"
+        # kâğıt hesap: kayıttan sonraki birincil ufuk işlemleri (ham − maliyet)
+        await _seed_done("A", 1, reg, 4, net=0.01)
+        r = dict(registry.ACTIVE["A"])
+        async with dbm.db() as c:
+            r = dict(await (await c.execute("SELECT * FROM lab_rules WHERE rule_id='A'")).fetchone())
+        pa = await ui.paper_for(r, core._rule("A"), cfg)
+        assert pa["n"] == 4 and pa["balance"] > 10_000 and pa["svg"].startswith("<svg"), pa
+        assert "points" not in pa
+        assert await ui.paper_for({**r, "evidence": "log"}, core._rule("A"), cfg) is None
+    asyncio.run(run())
+    print("✅ pozlar) ağsız fiyat (kv mark / HIP-3 metrik); anlık ham ve maliyet sonrası; LOG-* hariç; kâğıt hesap")
+
+
+async def _get(app, path, query=b""):
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "http",
+             "path": path, "raw_path": path.encode(), "query_string": query, "root_path": "",
+             "headers": [(b"host", b"test")], "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 80)}
+    out = {"body": []}
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(msg):
+        if msg["type"] == "http.response.start":
+            out["status"], out["headers"] = msg["status"], dict(msg.get("headers") or [])
+        elif msg["type"] == "http.response.body":
+            out["body"].append(msg.get("body", b""))
+    await app(scope, receive, send)
+    return out["status"], out["headers"], b"".join(out["body"]).decode("utf-8", "replace")
+
+
+def test_lab_sections_trades_csv_health():
+    async def run():
+        app = await smoke._fresh()
+        ui._CACHE.update(ts=0, v=None)
+        ui._HEALTH.update(ts=0, v=None)
+        cfg = app.state.cfg
+        reg = dbm.now() - 30 * D
+        await registry.sync(cfg, ts=reg, rules=[core._rule("A")])
+        await _seed_done("A", 1, reg, 6)
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO lab_candles(coin, tf, ts, c) VALUES('BTC', 3600, ?, 1.0)", (dbm.now() - 3600,))
+        st, hd, body = await _get(app, "/lab")
+        assert st == 200, body[:300]
+        for s in ("Sinyale ne kaldı", "1. bakışa 14 küme kaldı (6/20)", "Açık kâğıt pozisyonlar", "Kâğıt hesap",
+                  "Sonuçlanan işlemler", "Veri sağlığı", "saatlik metrik 2 saatten eski", "Mum 1 sa", "Kayıt izi"):
+            assert s in body, s
+        assert "Bölüm kurulamadı" not in body
+        st, hd, body = await _get(app, "/lab/islemler", b"rule=A")
+        assert st == 200 and body.count("<td class=\"l stick\"><b>TEST</b>") == 6, body[:500]
+        st, hd, body = await _get(app, "/lab/islemler", b"coin=NOPE")
+        assert st == 200 and "Bu süzgeçle sonuçlanan işlem yok" in body
+        st, hd, body = await _get(app, "/lab/islemler", b"fmt=csv&rule=A&h=3600")
+        assert st == 200 and hd[b"content-type"].startswith(b"text/csv")
+        assert b"attachment; filename=lab_islemler.csv" in hd[b"content-disposition"]
+        lines = body.lstrip("﻿").strip().splitlines()
+        assert lines[0].startswith("kural,sürüm,coin,yön,karar_tsi") and len(lines) == 7, lines[:2]
+        assert lines[1].split(",")[:4] == ["A", "1", "xyz:TEST", "long"]
+        st, hd, body = await _get(app, "/lab/islemler", b"fmt=csv&h=900")
+        assert len(body.lstrip("﻿").strip().splitlines()) == 1, "süzgeç CSV'ye de uygulanır"
+        h = await ui.data_health(cfg)
+        assert h["heavy"]["lc"][0]["tf"] == 3600 and h["ev"]["kural"]["done"] == 6
+        h2 = await ui.data_health(cfg)
+        assert h2["cached_at"] == h["cached_at"], "pahalı sayımlar önbellekli"
+    asyncio.run(run())
+    print("✅ /lab bölümleri) ne kaldı, pozlar, kâğıt hesap, işlemler + CSV (süzgeç, başlık, tip), veri sağlığı")

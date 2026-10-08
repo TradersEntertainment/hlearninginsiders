@@ -2586,6 +2586,9 @@ def strat_card(v: dict, base_url: str = "") -> str:
     Bağlantıda anahtar YOK (Telegram'a ?key= sızmaz)."""
     rules = [r for r in v.get("rules") or [] if r.get("status") != "emekli"]
     lines = [f"🧪 <b>Strateji laboratuvarı</b> · {len(rules)} kural etkin · canlı {v.get('n_live') or 0}"]
+    if v.get("closest"):
+        cl = v["closest"]
+        lines.append(f"Sinyale en yakın: <b>{esc(cl['rule_id'])}</b> — {esc(cl['line'])}")
     if not rules:
         lines.append("Henüz kayıtlı kural yok — lab döngüsü ilk turda kaydeder.")
     for r in rules[:30]:
@@ -2596,6 +2599,9 @@ def strat_card(v: dict, base_url: str = "") -> str:
                      + (f" ({c.get('unresolvable', 0)} ölçülemedi)" if c.get("unresolvable") else ""))
         if prim:
             lines.append("  " + _lab_line(prim.get("fwd") or {}, f"ileri, {prim['label']}"))
+        pg = (r.get("progress") or {}).get("line")
+        if pg and r.get("evidence") != "log":
+            lines.append(f"  ⏳ {esc(pg)}")
     emekli = sum(1 for r in v.get("rules") or [] if r.get("status") == "emekli")
     if emekli:
         lines.append(f"\n<i>{emekli} emekli kural (tanımı değişen / koddan kalkan) — sayfada</i>")

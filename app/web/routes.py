@@ -1661,8 +1661,52 @@ async def lab_page(request: Request):
             evs = await lab_ui.recent_events(rid)
         except Exception as e:                 # noqa: BLE001
             err = err or f"{type(e).__name__}: {e}"[:200]
-    return _render(request, "lab.html", {"v": v, "rid": rid, "evs": evs, "err": err,
-                                         "cfg_lab": bool(getattr(request.app.state.cfg, "lab_enabled", True))})
+    cfg = request.app.state.cfg
+    sec: dict = {}                             # bölüm → hata metni (bir bölüm düşerse sayfa açılır)
+
+    async def part(name, coro, empty):
+        try:
+            return await coro
+        except Exception as e:                 # noqa: BLE001
+            log.exception("lab bölümü %s", name)
+            sec[name] = f"{type(e).__name__}: {e}"[:200]
+            return empty
+    pos = await part("pos", lab_ui.open_positions(), {"rows": [], "pending": 0, "ts": now()})
+    paper = {}
+    for r in v.get("rules") or []:
+        p = await part("paper", lab_ui.paper_for(r, r.get("spec_d") or {}, cfg), None)
+        if p:
+            paper[(r["rule_id"], r["ver"])] = p
+    health = await part("health", lab_ui.data_health(cfg), None)
+    return _render(request, "lab.html", {"v": v, "rid": rid, "evs": evs, "err": err, "sec": sec, "pos": pos,
+                                         "paper": paper, "health": health,
+                                         "cfg_lab": bool(getattr(cfg, "lab_enabled", True))})
+
+
+@router.get("/lab/islemler")
+async def lab_trades(request: Request):
+    """🧪 Sonuçlanan kâğıt işlemleri (ufuk satırları) — süzgeç ?rule=&coin=&h=, ?fmt=csv indirir."""
+    _guard(request)
+    from ..lab import ui as lab_ui
+    q = request.query_params
+    rule = (q.get("rule") or "").strip()[:40]
+    coin = (q.get("coin") or "").strip()[:40]
+    try:
+        h = int(q["h"]) if (q.get("h") or "").strip() else None
+    except ValueError:
+        h = None
+    csv_out = (q.get("fmt") or "") == "csv"
+    err, rows = "", []
+    try:
+        rows = await lab_ui.trades(rule, coin, h, limit=20_000 if csv_out else 500)
+    except Exception as e:                     # noqa: BLE001
+        log.exception("lab işlemleri")
+        err = f"{type(e).__name__}: {e}"[:200]
+    if csv_out:
+        return Response("\ufeff" + lab_ui.trades_csv(rows), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": "attachment; filename=lab_islemler.csv"})
+    return _render(request, "lab_trades.html", {"rows": rows, "rule": rule, "coin": coin, "h": h, "err": err,
+                                                "h_label": lab_ui.h_label, "limit": 500})
 
 
 @router.get("/ai")
