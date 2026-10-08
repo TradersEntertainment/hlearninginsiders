@@ -1945,7 +1945,8 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
   sonuç önce, geçmiş veri "seçim örneği" etiketiyle; kayıt / onay / emeklilik izi. Salt okunur.
   Sayfa bölümleri:
   - **⏳ Sinyale ne kaldı:** her yuvalı kural için sıradaki bakışa kaç kapanmış küme kaldı (kapının
-    saydığı `looks.clusters_for` ile aynı sayı), bakışın z eşiği, adımlar (kayıt → [Aşama A] → 1./2. bakış
+    saydığı `looks.clusters_for` ile aynı sayı; örüntü denetimi için kapının saatlik turda yazdığı sayı),
+    bakışın p eşiği (z-eşdeğeriyle), adımlar (kayıt → [Aşama A] → 1./2. bakış
     → sahip onayı → canlı) ve "bu hızla en erken ~N gün (tarih)". Bu yalnız bir takvim sayımıdır. Ara test
     istatistiği (şimdiki p/z/ortalama) bilerek gösterilmez. Sayfa başında "Sinyale en yakın" satırı
     vardır; `/strat` kartında da kural başına aynı ⏳ satırı yer alır.
@@ -1955,10 +1956,12 @@ mesajı** (strateji **asla aramaz** — `app/lab` uyandırmayı içe aktarmaz, t
     Sıradaki ufka kalan süre ve giriş bekleyen olay sayısı da yazılır.
   - **Kâğıt hesap** (kural kartında): kayıttan sonraki birincil ufuk işlemleri sim ayarıyla ($10K, 5x,
     işlem başına %33) yeniden oynatılır. Her işlem ham − maliyet olarak sayılır; zarar marjini aşmaz,
-    serbest marjin kalmazsa işlem "yer yok" sayılır. Sonuçta eğri, toplam %, en kötü işlem/gün ve en
+    serbest marjin kalmazsa işlem "yer yok" sayılır. Yol üstündeki en kötü an (MAE) × kaldıraç ≤ −%100
+    ise işlem, son net kazanç olsa da likidasyon sayılır. Sonuçta eğri, toplam %, en kötü işlem/gün ve en
     büyük düşüş görünür. Kapı bu hesaba bakmaz.
   - **📑 Sonuçlanan işlemler** `/lab/islemler`: `?rule=&coin=&h=` süzgeçleri vardır, tablo en çok 500
-    satırdır. `?fmt=csv` en çok 20 000 satırı Türkçe başlıklarla indirir.
+    satırdır. `?fmt=csv` en çok 20 000 satırı Türkçe başlıklarla indirir; kesilirse dosya adı
+    (`lab_islemler_en_yeni_20000.csv`) ve `X-Lab-Truncated` başlığı bunu söyler.
   - **🩺 Veri sağlığı:** saatlik metrik, mum dilimleri, seans barları, derin dolum, olay durumları,
     çözücü ve API bütçesi bir arada görünür. Uyarılar: veri 2 saatten eski, birikim > 500, son tur
     hatası, döngü durdu. Sayımlar 10 dk önbelleklidir.

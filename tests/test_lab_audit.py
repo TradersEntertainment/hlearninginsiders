@@ -122,6 +122,9 @@ def test_stage_a_once_after_wait():
         assert by["ORU-ALERT-F"]["look"] == 0 and by["ORU-ALERT-F"]["n_c"] == 24, by
         assert registry.ACTIVE["ORU-ALERT-F"]["status"] == "kagit", by["ORU-ALERT-F"]
         assert await looks.run(reg_ts + 2 * 86400 + 3600) == [], "Aşama A bir kez"
+        ver = registry.ACTIVE["ORU-ALERT-F"]["ver"]
+        g = await dbm.kv_get(ui.G_KV.format("ORU-ALERT-F", ver))
+        assert g and g["ts"] == reg_ts + 2 * 86400 + 3600 and g["g"] == 0, "kapı sayımı /lab için yazar (ileri küme yok)"
         async with dbm.db() as c:
             n = (await (await c.execute("SELECT COUNT(*) n FROM lab_tests WHERE kind='backtest'")).fetchone())["n"]
         assert n == 1, "tek denetim kuralı (ORU-ALERT-F)"

@@ -137,6 +137,10 @@ async def run(ts: int | None = None, on_pass=None, on_stop=None) -> list[dict]:
                                      (rid, a["ver"]))
             looks_done = [int(r["look_no"]) for r in await cur.fetchall()]
         fc = await clusters_for(rid, a["ver"], spec, a["registered_ts"], ts)
+        if spec.get("custom"):                         # /lab "sinyale ne kaldı" pahalı denetimi yeniden koşmaz
+            from ..db import kv_set
+            await kv_set(f"lab_g:{rid}:{a['ver']}", {"g": len(fc["xc"]), "ts": ts, "unres_share": fc["unres_share"],
+                                                     "k0": int(min(fc["keys"])) if len(fc["keys"]) else None})
         k = gate.look_due(rule, len(fc["xc"]), looks_done)
         if not k:
             continue

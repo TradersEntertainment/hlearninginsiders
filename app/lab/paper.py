@@ -5,6 +5,8 @@ Yalnız betimleme: kapı bu hesaba bakmaz (kapı küme düzeyinde, piyasa düzel
 maliyet). Kurallar:
   • girişte marjin = min(bakiye × pay, serbest bakiye); serbest kalmadıysa işlem "yer yok" (sayılır)
   • kâr/zarar = marjin × kaldıraç × net; zarar marjini aşamaz (likidasyon = marjinin tamamı)
+  • yol üstünde en kötü an (mae, yön düzeltmeli) kaldıraçla marjini bitirdiyse işlem likidasyon sayılır —
+    sonradan toparlanan son net kazanç yazılmaz
   • kapanış sırası çıkış zamanına göre; aynı anda giriş varsa önce kapanışlar
 """
 from __future__ import annotations
@@ -17,7 +19,7 @@ MIN_MARGIN = 1.0
 
 
 def replay(trades: list[dict], start: float, lev: float, margin_pct: float, start_ts: int = 0) -> dict:
-    """trades: {"entry_ts", "exit_ts", "net", "coin", "rule"?}. Döner: eğri noktaları (sim.curve biçimi:
+    """trades: {"entry_ts", "exit_ts", "net", "coin", "mae"?, "rule"?}. Döner: eğri noktaları (sim.curve biçimi:
     (ts, bakiye, işlem|None)), son bakiye ve özet."""
     start = float(start)
     lev = max(1.0, float(lev or 1))
@@ -46,11 +48,14 @@ def replay(trades: list[dict], start: float, lev: float, margin_pct: float, star
         if margin < MIN_MARGIN:
             skipped += 1
             continue
-        pnl = max(-margin, margin * lev * float(t["net"]))           # likidasyon: en çok marjin gider
+        mae = t.get("mae")
+        liq = mae is not None and lev * float(mae) <= -1.0           # yol üstünde marjin bitti
+        pnl = -margin if liq else max(-margin, margin * lev * float(t["net"]))   # en çok marjin gider
         coin = str(t.get("coin") or "")
         opened.append({**t, "entry_ts": int(t["entry_ts"]), "exit_ts": int(t["exit_ts"]), "margin": margin,
-                       "pnl_usd": pnl, "coin": coin.split(":")[-1],
-                       "title": f"{coin.split(':')[-1]} · net %{float(t['net']) * 100:+.2f} · {pnl:+,.0f}$"})
+                       "pnl_usd": pnl, "coin": coin.split(":")[-1], "liq": liq,
+                       "title": f"{coin.split(':')[-1]} · net %{float(t['net']) * 100:+.2f}"
+                                + (" · likidasyon" if liq else "") + f" · {pnl:+,.0f}$"})
     close_until(None)
     peak, dd = start, 0.0
     for _, b, _ in pts:
@@ -63,7 +68,23 @@ def replay(trades: list[dict], start: float, lev: float, margin_pct: float, star
         days[d] = days.get(d, 0.0) + o["pnl_usd"]
     n = len(closed)
     return {"points": pts, "balance": bal, "start": start, "ret_pct": (bal / start - 1) * 100 if start else None,
-            "n": n, "skipped": skipped, "pos_share": (sum(1 for o in closed if o["pnl_usd"] > 0) / n) if n else None,
+            "n": n, "skipped": skipped, "liq": sum(1 for o in closed if o["liq"]), "pos_share": (sum(1 for o in closed if o["pnl_usd"] > 0) / n) if n else None,
             "worst_trade": min((o["pnl_usd"] for o in closed), default=None),
             "worst_day": min(days.items(), key=lambda kv: kv[1]) if days else None,
             "max_dd_pct": dd * 100, "lev": lev, "margin_pct": pct * 100}
+
+
+def thin(points: list, maxp: int = 300) -> list:
+    """Çizim için seyreltme: kova başına en düşük ve en yüksek bakiye (zaman sırasıyla); işaretler düşer.
+    Özet sayılar seyreltmeden ÖNCE hesaplanır — yalnız eğri kabalaşır."""
+    if len(points) <= maxp:
+        return points
+    step = -(-(len(points) - 2) // (maxp // 2))
+    keep = [points[0]]
+    for i in range(1, len(points) - 1, step):
+        b = points[i:min(i + step, len(points) - 1)]
+        lo, hi = min(b, key=lambda p: p[1]), max(b, key=lambda p: p[1])
+        for p in sorted({id(lo): lo, id(hi): hi}.values(), key=lambda p: p[0]):
+            keep.append((p[0], p[1], None))
+    keep.append((points[-1][0], points[-1][1], None))
+    return keep

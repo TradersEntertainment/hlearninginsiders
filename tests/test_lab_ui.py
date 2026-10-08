@@ -170,16 +170,38 @@ def test_progress_counts_not_stats():
         assert "bu hızla en erken" in pg["line"] and pg["rank"] and pg["rank"] > 0
         z1 = ui._z(gate.alpha_increments({**a["spec_d"], "alpha": a["alpha"]})[0])
         step = next(s for s in pg["steps"] if s["label"] == "1. bakış")
-        assert step["state"] == "now" and step["note"] == f"5/20 küme · eşik z ≥ {z1:.2f}", step
+        a1 = gate.alpha_increments({**a["spec_d"], "alpha": a["alpha"]})[0]
+        assert step["state"] == "now" and step["note"] == f"5/20 küme · eşik p ≤ {a1:.2g} (z-eşdeğeri {z1:.2f})", step
+        assert pg["rank"] >= 15, "günlük kümede hız günde 1'i aşamaz (15 küme ≥ 15 gün)"
         assert [s["label"] for s in pg["steps"]] == ["kayıt", "1. bakış", "2. bakış", "sahip onayı", "canlı (mesaj)"]
         assert set(pg) <= {"line", "steps", "rank", "guard", "pipe", "unres_share"}, "ara p / z / ortalama yok"
         assert "p " not in pg["line"] and "ortalama" not in pg["line"]
         assert by["L"]["progress"]["line"] == "yalnız kayıt — sinyal üretemez (yuvasız)"
         fb = by["FB"]["progress"]
         assert fb["line"].startswith("Aşama A (geçmiş veri testi)") and "Aşama A (geçmiş)" in [s["label"] for s in fb["steps"]]
-        assert v["closest"] and v["closest"]["rule_id"] in ("A", "FB")
+        assert v["closest"] and v["closest"]["rule_id"] == "A", "Aşama A bekleyen (aday) en yakın sayılmaz"
+        assert fb["rank"] is None
         empty = await ui.progress({**a, "registered_ts": ts - 3600}, a["spec_d"], ts)
         assert "henüz kapanmış küme yok" in empty["line"]
+        # hız sınırı: ilk küme sayılabilir olduğu an bile "19 küme ~19 saatte" yazmaz
+        one = await ui.progress({**a, "registered_ts": reg}, a["spec_d"], reg + 3 * D)
+        assert one["line"].startswith("1. bakışa") and (one["rank"] is None or one["rank"] >= 18), one
+        # örüntü denetimi: pahalı denetim sayfada koşmaz — kapının saatlik turda yazdığı sayı okunur
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO lab_tests(ts, rule_id, ver, kind, look_no, decision) VALUES(?,?,?,?,?,?)",
+                            (ts, "FB", 1, "backtest", 0, "kagit"))
+        fbr = {**by["FB"], "status": "kagit"}
+        oru = {**fbr["spec_d"], "custom": "oru"}
+        assert "küme sayımı sıradaki saatlik turda" in (await ui.progress(fbr, oru, ts))["line"]
+        await dbm.kv_set(ui.G_KV.format("FB", 1), {"g": 7, "ts": ts - 600, "k0": None, "unres_share": 0.0})
+        assert (await ui.progress(fbr, oru, ts))["line"].startswith("1. bakışa 13 küme kaldı (7/20)")
+        # geçti: onay sorusu teslim edilmediyse "gönderildi" yazmaz; sonraki bakış "gerekmedi"
+        gx = await ui.progress({**a, "status": "gecti"}, a["spec_d"], ts)
+        assert "henüz teslim edilemedi" in gx["line"] and gx["rank"] == 0
+        assert all(s["state"] == "skip" for s in gx["steps"] if s["label"].endswith("bakış"))
+        from app.lab.deliver import PROMPT_KV
+        await dbm.kv_set(PROMPT_KV.format("A", 1), {"ts": ts})
+        assert "onay sorusu gönderildi" in (await ui.progress({**a, "status": "gecti"}, a["spec_d"], ts))["line"]
         from app.telegram import format as fmt
         card = fmt.strat_card(v)
         assert "⏳ 1. bakışa 15 küme kaldı (5/20)" in card and "Sinyale en yakın:" in card
@@ -194,6 +216,7 @@ def test_open_positions_and_paper():
         from app.lab import costs
         cfg = await core._fresh("labui_pos.db")
         ui._CACHE.update(ts=0, v=None)
+        ui._PAPER.clear()
         reg = T - 30 * D
         await registry.sync(cfg, ts=reg, rules=[core._rule("A")])
         ts = T
@@ -256,6 +279,7 @@ def test_lab_sections_trades_csv_health():
         app = await smoke._fresh()
         ui._CACHE.update(ts=0, v=None)
         ui._HEALTH.update(ts=0, v=None)
+        ui._PAPER.clear()
         cfg = app.state.cfg
         reg = dbm.now() - 30 * D
         await registry.sync(cfg, ts=reg, rules=[core._rule("A")])
@@ -275,11 +299,22 @@ def test_lab_sections_trades_csv_health():
         st, hd, body = await _get(app, "/lab/islemler", b"fmt=csv&rule=A&h=3600")
         assert st == 200 and hd[b"content-type"].startswith(b"text/csv")
         assert b"attachment; filename=lab_islemler.csv" in hd[b"content-disposition"]
-        lines = body.lstrip("﻿").strip().splitlines()
+        lines = body.lstrip("\ufeff").strip().splitlines()
         assert lines[0].startswith("kural,sürüm,coin,yön,karar_tsi") and len(lines) == 7, lines[:2]
         assert lines[1].split(",")[:4] == ["A", "1", "xyz:TEST", "long"]
         st, hd, body = await _get(app, "/lab/islemler", b"fmt=csv&h=900")
-        assert len(body.lstrip("﻿").strip().splitlines()) == 1, "süzgeç CSV'ye de uygulanır"
+        assert len(body.lstrip("\ufeff").strip().splitlines()) == 1, "süzgeç CSV'ye de uygulanır"
+        assert b"x-lab-truncated" not in hd
+        st, hd, body = await _get(app, "/lab/islemler", b"rule=A&coin=test")
+        assert body.count("<b>TEST</b>") == 6, "coin süzgeci büyük/küçük harf duyarsız"
+        old_max = ui.CSV_MAX
+        ui.CSV_MAX = 4
+        try:
+            st, hd, body = await _get(app, "/lab/islemler", b"fmt=csv&rule=A")
+        finally:
+            ui.CSV_MAX = old_max
+        assert hd[b"x-lab-truncated"] == b"4" and b"lab_islemler_en_yeni_4.csv" in hd[b"content-disposition"]
+        assert len(body.lstrip("\ufeff").strip().splitlines()) == 5, "kesme sessiz değil: ad + başlık söyler"
         h = await ui.data_health(cfg)
         assert h["heavy"]["lc"][0]["tf"] == 3600 and h["ev"]["kural"]["done"] == 6
         h2 = await ui.data_health(cfg)

@@ -1698,15 +1698,19 @@ async def lab_trades(request: Request):
     csv_out = (q.get("fmt") or "") == "csv"
     err, rows = "", []
     try:
-        rows = await lab_ui.trades(rule, coin, h, limit=20_000 if csv_out else 500)
+        rows = await lab_ui.trades(rule, coin, h, limit=lab_ui.CSV_MAX + 1 if csv_out else 501)
     except Exception as e:                     # noqa: BLE001
         log.exception("lab işlemleri")
         err = f"{type(e).__name__}: {e}"[:200]
     if csv_out:
-        return Response("\ufeff" + lab_ui.trades_csv(rows), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": "attachment; filename=lab_islemler.csv"})
-    return _render(request, "lab_trades.html", {"rows": rows, "rule": rule, "coin": coin, "h": h, "err": err,
-                                                "h_label": lab_ui.h_label, "limit": 500})
+        cut = len(rows) > lab_ui.CSV_MAX       # kesildiyse dosya adı ve başlık söyler (sessiz kesme yok)
+        name = f"lab_islemler_en_yeni_{lab_ui.CSV_MAX}.csv" if cut else "lab_islemler.csv"
+        return Response("\ufeff" + lab_ui.trades_csv(rows[:lab_ui.CSV_MAX]), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f"attachment; filename={name}",
+                                 **({"X-Lab-Truncated": str(lab_ui.CSV_MAX)} if cut else {})})
+    return _render(request, "lab_trades.html", {"rows": rows[:500], "more": len(rows) > 500, "rule": rule,
+                                                "coin": coin, "h": h, "err": err, "h_label": lab_ui.h_label,
+                                                "limit": 500, "csv_max": lab_ui.CSV_MAX})
 
 
 @router.get("/ai")

@@ -43,6 +43,7 @@
 .lsteps span{font-size:var(--fs-s);padding:1px 8px;border-radius:var(--r-pill);border:1px solid var(--line, rgba(127,127,127,.3));color:var(--dim)}
 .lsteps span.done{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
 .lsteps span.now{color:var(--head);font-weight:700;border-color:color-mix(in srgb,var(--accent) 60%,transparent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.lsteps span.skip{opacity:.55;text-decoration:line-through}
 .lpaper svg{max-width:100%;display:block}
 .lprow{padding:8px 0;border-bottom:1px solid var(--line, rgba(127,127,127,.18))}
 .lprow:last-child{border-bottom:0}
@@ -63,9 +64,9 @@
   </div>
   {% set g1 = slotted|map(attribute='progress')|selectattr('guard')|map(attribute='guard')|first %}
   <p class="hint">Bir bakış, kayıttan sonraki <b>kapanmış küme</b> sayısı eşiğe ulaşınca bir kez yapılır (sonuçtan değil
-    sayıdan tetiklenir). {% if g1 %}Geçmek için hepsi birlikte: ortalama net &gt; 0; üç test (t, işaret çevirme,
-    bootstrap) birlikte bakışın z eşiğini aşar; iki yarı aynı işaret; ölçülemeyen ≤ %20; 60 kümeden azsa sola çarpık
-    değil.{% endif %} "Bu hızla en erken" yalnız şimdiye kadarki küme hızından bir takvim sayımıdır — sonuç hakkında
+    sayıdan tetiklenir). {% if g1 %}Geçmek için hepsi birlikte: ortalama net &gt; 0; üç testin (t, işaret çevirme,
+    bootstrap) tek yönlü p'si de bakışın eşiğinin altında (z-eşdeğeri yalnız ölçek için; az kümede t testi için gereken
+    değer daha yüksektir); iki yarı aynı işaret; ölçülemeyen ≤ %20; 60 kümeden azsa sola çarpık değil.{% endif %} "Bu hızla en erken" yalnız şimdiye kadarki küme hızından bir takvim sayımıdır — sonuç hakkında
     bir şey söylemez; geçtikten sonra da mesaj için senin onayın gerekir.</p>
   {% else %}<p class="dim">Yuvalı kural yok.</p>{% endif %}
   {% set logs = v.rules|selectattr('evidence', 'eq', 'log')|rejectattr('status', 'eq', 'emekli')|list %}
@@ -140,6 +141,7 @@
     %{{ pa.margin_pct|int }}'ü · kayıttan sonraki birincil ufuk işlemleri, piyasa düzeltmesiz)</span>:
     {% if pa.n %}<b>${{ '{:,.0f}'.format(pa.balance) }}</b> ({{ '%+.1f'|format(pa.ret_pct) }}%) · {{ pa.n }} işlem
     {% if pa.skipped %}· {{ pa.skipped }} işlem yer kalmadığı için atlandı{% endif %}
+    {% if pa.liq %}· {{ pa.liq }} işlem yol üstünde likidasyon (en kötü an × kaldıraç ≤ −%100){% endif %}
     · pozitif pay %{{ '%.0f'|format((pa.pos_share or 0) * 100) }} · en kötü işlem {{ '{:+,.0f}'.format(pa.worst_trade or 0) }}$
     {% if pa.worst_day %}· en kötü gün {{ pa.worst_day[0] }} {{ '{:+,.0f}'.format(pa.worst_day[1]) }}${% endif %}
     · en büyük düşüş {{ '%.1f'|format(pa.max_dd_pct) }}%

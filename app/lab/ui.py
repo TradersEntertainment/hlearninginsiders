@@ -136,8 +136,8 @@ async def overview(ts: int | None = None, fresh: bool = False) -> dict:
             r["progress"] = await progress(r, r["spec_d"], ts)
         except Exception as e:                         # noqa: BLE001 — bir kural sayfayı düşürmesin
             r["progress"] = {"line": f"ilerleme hesaplanamadı: {type(e).__name__}", "steps": [], "rank": None}
-    ranked = [r for r in out if (r["progress"] or {}).get("rank") is not None and r["status"] in ("aday", "kagit", "gecti")]
-    closest = min(ranked, key=lambda r: r["progress"]["rank"]) if ranked else None
+    ranked = [r for r in out if (r["progress"] or {}).get("rank") is not None and r["status"] in ("kagit", "gecti")]
+    closest = min(ranked, key=lambda r: (r["progress"]["rank"], r["status"] != "gecti")) if ranked else None
     st = await kv_get("lab_stats") or {}
     v = {"rules": out, "trail": trail, "stats": st, "ts": ts, "note": NOTE,
          "closest": ({"rule_id": closest["rule_id"], "ver": closest["ver"], "line": closest["progress"]["line"]}
@@ -181,9 +181,14 @@ def _days_txt(d: float) -> str:
     return f"~{d:.0f} gün" if d >= 2 else f"~{d:.1f} gün"
 
 
+G_KV = "lab_g:{}:{}"                 # looks.run'ın saatlik turda saydığı küme (örüntü denetimi için okunur)
+G_FRESH = 3 * 3600
+
+
 async def progress(r: dict, spec: dict, ts: int) -> dict:
     """Kural sinyale ne kadar uzak: adımlar, sıradaki bakışa kalan küme, bu hızla en erken ne zaman.
-    Kapının saydığı kümeler (looks.clusters_for) — aynı fonksiyon, aynı sayı. Test istatistiği YOK."""
+    Kapının saydığı kümeler (looks.clusters_for) — aynı fonksiyon, aynı sayı. Test istatistiği YOK.
+    Örüntü denetimi (ORU) kümeleri pahalı → kapının saatlik turda yazdığı sayı okunur."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
     from . import gate, looks
@@ -206,7 +211,8 @@ async def progress(r: dict, spec: dict, ts: int) -> dict:
         cur = await conn.execute("SELECT COUNT(*) n FROM strat_events WHERE rule_id=? AND rule_ver=?"
                                  " AND status IN ('pending', 'open')", (r["rule_id"], r["ver"]))
         out["pipe"] = int((await cur.fetchone())["n"])
-    g, fc = 0, None
+    g, k0, counted = 0, None, False
+    width = int(spec.get("cluster_s") or 86400)
     steps = [{"label": "kayıt", "state": "done", "note": datetime.fromtimestamp(int(r["registered_ts"]), tr)
               .strftime("%d.%m")}]
     if ev == "frozen_backtest":
@@ -217,51 +223,70 @@ async def progress(r: dict, spec: dict, ts: int) -> dict:
             left = int(r["registered_ts"]) + STAGE_A_WAIT - ts
             steps.append({"label": "Aşama A (geçmiş)", "state": "now",
                           "note": f"{max(0, left) // 3600} sa sonra" if left > 0 else "sıradaki saatlik turda"})
-    if st in ("kagit", "gecti", "canli", "durdu") and (ev == "forward" or 0 in done):
-        fc = await looks.clusters_for(r["rule_id"], int(r["ver"]), spec, int(r["registered_ts"]), ts)
-        g = len(fc["xc"])
-        out["unres_share"] = fc.get("unres_share")
+    if st == "kagit" and (ev == "forward" or 0 in done):
+        if spec.get("custom"):
+            c = await kv_get(G_KV.format(r["rule_id"], int(r["ver"]))) or {}
+            if c and ts - int(c.get("ts") or 0) <= G_FRESH:
+                g, k0, counted = int(c.get("g") or 0), c.get("k0"), True
+                out["unres_share"] = c.get("unres_share")
+        else:
+            fc = await looks.clusters_for(r["rule_id"], int(r["ver"]), spec, int(r["registered_ts"]), ts)
+            g, counted = len(fc["xc"]), True
+            k0 = int(min(fc["keys"])) if len(fc["keys"]) else None
+            out["unres_share"] = fc.get("unres_share")
     nxt = max([k for k in done if k > 0], default=0) + 1
-    for k, (t, z) in enumerate(zip(thr, zs), start=1):
-        state = "done" if k in done else ("now" if (st == "kagit" and k == nxt and (ev == "forward" or 0 in done))
-                                           else "todo")
-        steps.append({"label": f"{k}. bakış", "state": state,
-                      "note": (done[k] if k in done else f"{min(g, t)}/{t} küme · eşik z ≥ {z:.2f}" if z else f"{t} küme")})
+    for k, (t, a, z) in enumerate(zip(thr, inc, zs), start=1):
+        if k in done:
+            state, note = "done", done[k]
+        elif st in ("gecti", "canli", "durdu"):
+            state, note = "skip", "gerekmedi"
+        else:
+            state = "now" if (st == "kagit" and k == nxt and (ev == "forward" or 0 in done)) else "todo"
+            note = f"{min(g, t)}/{t} küme · eşik p ≤ {a:.2g} (z-eşdeğeri {z:.2f})" if z else f"{t} küme"
+        steps.append({"label": f"{k}. bakış", "state": state, "note": note})
     steps.append({"label": "sahip onayı", "state": "now" if st == "gecti" else ("done" if st == "canli" else "todo"),
                   "note": "/strat KURAL ya da onay mesajı"})
     steps.append({"label": "canlı (mesaj)", "state": "done" if st == "canli" else "todo", "note": ""})
     out["steps"] = steps
     if st == "aday":
-        out["line"] = next(s["note"] for s in steps if s["label"].startswith("Aşama A"))
-        out["line"] = f"Aşama A (geçmiş veri testi) {out['line']}"
-        out["rank"] = max(0, int(r["registered_ts"]) + 2 * 86400 - ts) / 86400
+        # sinyale uzaklık bilinmez (Aşama A + ilk eşiğin ileri kümeleri) → "en yakın" sıralamasına girmez
+        out["line"] = "Aşama A (geçmiş veri testi) " + next(s["note"] for s in steps if s["label"].startswith("Aşama A"))
     elif st == "kagit" and nxt <= len(thr):
         t = thr[nxt - 1]
         rem = max(0, t - g)
-        line = f"{nxt}. bakışa {rem} küme kaldı ({g}/{t})"
-        if g and fc and len(fc["keys"]):
-            width = int(spec.get("cluster_s") or 86400)
-            first = int(min(fc["keys"])) * width
-            # kümeler pencere + birincil ufuk + pay geçince sayılır → hız, sayılabilen zaman aralığından
-            span = int(spec.get("primary_h") or 0) or int((spec.get("exit") or {}).get("timeout") or 0)
-            lag = 0 if spec.get("custom") else span + looks.SETTLE + width
-            rate = g / max((ts - lag - first) / 86400, 1 / 24)
-            days = rem / rate if rate > 0 else None
-            if days is not None:
-                when = datetime.fromtimestamp(ts + days * 86400, tr).strftime("%d.%m")
-                line += f" · bu hızla en erken {_days_txt(days)} ({when})" if rem else " · bakış sıradaki turda"
-                out["rank"] = days
+        if not counted:
+            line = f"{nxt}. bakış {t} kümede · küme sayımı sıradaki saatlik turda"
         else:
-            line += " · henüz kapanmış küme yok"
+            line = f"{nxt}. bakışa {rem} küme kaldı ({g}/{t})"
+            if not rem:
+                line += " · bakış sıradaki saatlik turda"
+                out["rank"] = 0.0
+            elif g:
+                # hız: kayıttan, kapının kümeleri kapanmış saydığı ana kadar (forward_clusters ile aynı sınır);
+                # en az bir küme genişliği → küme genişliğinde birden fazla küme hızı çıkamaz
+                span = int(spec.get("primary_h") or 0) or int((spec.get("exit") or {}).get("timeout") or 0)
+                end = ts if spec.get("custom") else ((ts - span - looks.SETTLE) // width) * width
+                start = min(int(r["registered_ts"]) // width * width, int(k0) * width if k0 is not None else end)
+                rate = min(g / max((end - start) / 86400, width / 86400), 86400 / width)
+                days = rem / rate
+                when = datetime.fromtimestamp(ts + days * 86400, tr).strftime("%d.%m")
+                line += f" · bu hızla en erken {_days_txt(days)} ({when})"
+                out["rank"] = days
+            else:
+                line += " · henüz kapanmış küme yok"
         if out["pipe"]:
             line += f" · ölçümde {out['pipe']} olay"
         out["line"] = line
-        z = zs[nxt - 1]
-        out["guard"] = (f"geçmek için: ortalama net > 0 ve üç test birlikte tek yönlü z ≥ {z:.2f}; iki yarı aynı"
-                        f" işaret; ölçülemeyen ≤ %20; 60 kümeden azsa sola çarpık değil") if z else ""
+        a, z = inc[nxt - 1], zs[nxt - 1]
+        out["guard"] = (f"geçmek için: ortalama net > 0; üç testin (t, işaret çevirme, bootstrap) tek yönlü p'si de"
+                        f" ≤ {a:.2g} (z-eşdeğeri {z:.2f}); iki yarı aynı işaret; ölçülemeyen ≤ %20; 60 kümeden azsa"
+                        f" sola çarpık değil") if z else ""
     elif st == "gecti":
-        out["line"] = "kapıyı geçti — onay sorusu gönderildi (/strat KURAL'dan da onaylanır)"
-        out["rank"] = 0
+        from .deliver import PROMPT_KV
+        sent = await kv_get(PROMPT_KV.format(r["rule_id"], int(r["ver"])))
+        out["line"] = ("kapıyı geçti — onay sorusu gönderildi (/strat KURAL'dan da onaylanır)" if sent else
+                       "kapıyı geçti — onay sorusu henüz teslim edilemedi; /strat KURAL ile onaylanabilir")
+        out["rank"] = 0.0
     elif st == "canli":
         out["line"] = "canlı — yeni olayları mesaj olarak geliyor"
     elif st == "durdu":
@@ -328,40 +353,52 @@ async def open_positions(ts: int | None = None, limit: int = 200) -> dict:
 
 # ---------------- kâğıt hesap ----------------
 
-async def paper_for(r: dict, spec: dict, cfg) -> dict | None:
-    """Yuvalı kuralın kayıttan sonraki birincil ufuk işlemleri → sim ayarıyla kâğıt hesap (betimleme)."""
+_PAPER: dict = {}
+PAPER_S = 120
+
+
+async def paper_for(r: dict, spec: dict, cfg, ts: int | None = None) -> dict | None:
+    """Yuvalı kuralın kayıttan sonraki birincil ufuk işlemleri → sim ayarıyla kâğıt hesap (betimleme).
+    Kural başına 2 dk önbellek; eğri en çok ~300 noktayla çizilir (özet tüm işlemlerden)."""
     from . import paper
     from ..radar import sim
     if spec.get("custom") or r["evidence"] == "log" or r["status"] == "emekli":
         return None
+    ts = int(ts or now())
+    key = (r["rule_id"], int(r["ver"]))
+    hit = _PAPER.get(key)
+    if hit and 0 <= ts - hit[0] < PAPER_S:
+        return hit[1]
     h = int(spec.get("primary_h") or 0)
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT e.coin, e.entry_ts, o.exit_ts, o.ret_raw, o.cost FROM strat_outcomes o JOIN strat_events e"
+            "SELECT e.coin, e.entry_ts, o.exit_ts, o.ret_raw, o.cost, o.mae FROM strat_outcomes o JOIN strat_events e"
             " ON e.id = o.event_id WHERE e.rule_id=? AND e.rule_ver=? AND e.origin='live' AND o.h=?"
             " AND o.status='done' AND o.ret_raw IS NOT NULL AND o.cost IS NOT NULL AND e.ts_decision >= ?",
             (r["rule_id"], r["ver"], h, r["registered_ts"]))
         rows = [dict(x) for x in await cur.fetchall()]
-    trades = [{"entry_ts": x["entry_ts"], "exit_ts": x["exit_ts"], "net": x["ret_raw"] - x["cost"], "coin": x["coin"]}
-              for x in rows]
+    trades = [{"entry_ts": x["entry_ts"], "exit_ts": x["exit_ts"], "net": x["ret_raw"] - x["cost"], "mae": x["mae"],
+               "coin": x["coin"]} for x in rows]
     start = float(getattr(cfg, "sim_start_balance", 10_000) or 10_000)
     res = paper.replay(trades, start, float(getattr(cfg, "sim_leverage", 5) or 5),
                        float(getattr(cfg, "sim_margin_pct", 33) or 33), int(r["registered_ts"]))
-    res["svg"] = sim.svg_curve(res["points"], start) if res["n"] else ""
-    res.pop("points", None)
+    pts = res.pop("points")
+    res["svg"] = sim.svg_curve(paper.thin(pts), start) if res["n"] else ""
+    _PAPER[key] = (ts, res)
     return res
 
 
 # ---------------- sonuçlanan işlemler ----------------
 
 TRADE_COLS = ["kural", "sürüm", "coin", "yön", "karar_tsi", "giriş_tsi", "giriş_px", "ufuk", "çıkış_tsi",
-              "çıkış_px", "çıkış_nedeni", "ham_getiri", "kıyas_getirisi", "düzeltilmiş", "maliyet", "net",
+              "çıkış_px", "çıkış_nedeni", "ham_getiri", "kıyas_getirisi", "beta", "düzeltilmiş", "maliyet", "net",
               "mfe", "mae", "durum", "köken"]
+CSV_MAX = 20_000
 
 
 async def trades(rule: str = "", coin: str = "", h: int | None = None, limit: int = 500) -> list[dict]:
     """Sonuçlanan (ya da ölçülemeyen) ufuk satırları — yeni → eski. LOG-* aileleri yalnız açıkça istenirse."""
-    q = ("SELECT e.rule_id, e.rule_ver, e.coin, e.side, e.ts_decision, e.entry_ts, e.entry_px, e.origin,"
+    q = ("SELECT e.rule_id, e.rule_ver, e.coin, e.side, e.ts_decision, e.entry_ts, e.entry_px, e.origin, e.beta,"
          " o.h, o.exit_ts, o.exit_px, o.exit_reason, o.ret_raw, o.ret_bench, o.ret_adj, o.cost, o.net, o.mfe, o.mae,"
          " o.status FROM strat_outcomes o JOIN strat_events e ON e.id = o.event_id"
          " WHERE o.status IN ('done', 'unresolvable')")
@@ -369,10 +406,10 @@ async def trades(rule: str = "", coin: str = "", h: int | None = None, limit: in
     if rule:
         q += " AND e.rule_id = ?"
         args.append(rule)
-    else:
-        q += " AND e.rule_id NOT LIKE 'LOG-%'"
+    else:                                             # LOG-* aileleri hariç — kural indeksinden (tam tarama yok)
+        q += " AND e.rule_id IN (SELECT DISTINCT rule_id FROM lab_rules WHERE rule_id NOT LIKE 'LOG-%')"
     if coin:
-        q += " AND (e.coin = ? OR e.coin LIKE ?)"
+        q += " AND (e.coin = ? COLLATE NOCASE OR e.coin LIKE ?)"
         args += [coin, f"%:{coin}"]
     if h is not None:
         q += " AND o.h = ?"
@@ -399,7 +436,8 @@ def trades_csv(rows: list[dict]) -> str:
     for r in rows:
         w.writerow([r["rule_id"], r["rule_ver"], r["coin"], {1: "long", -1: "short"}.get(r["side"], ""),
                     t(r["ts_decision"]), t(r["entry_ts"]), r["entry_px"], h_label(int(r["h"])), t(r["exit_ts"]),
-                    r["exit_px"], r["exit_reason"], r["ret_raw"], r["ret_bench"], r["ret_adj"], r["cost"], r["net"],
+                    r["exit_px"], r["exit_reason"], r["ret_raw"], r["ret_bench"], r["beta"], r["ret_adj"], r["cost"],
+                    r["net"],
                     r["mfe"], r["mae"], r["status"], r["origin"]])
     return buf.getvalue()
 

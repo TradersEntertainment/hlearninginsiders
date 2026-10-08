@@ -6,9 +6,9 @@
 {% if x is none %}—{% else %}{{ ('%+.' ~ d ~ 'f')|format(x * 100) }}%{% endif %}
 {%- endmacro %}
 <div class="panel">
-  <h2>📑 Sonuçlanan kâğıt işlemleri <span class="st">· {{ rows|length }} satır{% if rows|length >= limit %} (en yeni {{ limit }}; tamamı CSV'de){% endif %}</span></h2>
+  <h2>📑 Sonuçlanan kâğıt işlemleri <span class="st">· {{ rows|length }} satır{% if more %} (en yeni {{ limit }}; CSV en yeni {{ '{:,}'.format(csv_max) }} satırı verir — daha eskisi için süzün){% endif %}</span></h2>
   <p class="sub">Her satır bir olayın bir ufku: giriş = karar + tepki süresi sonrası ilk işlemin fiyatı, çıkış = ufuk
-    sonu (ya da kuralın çıkış tanımı). Ham = yön × getiri; düzeltilmiş = ham − β × kıyas; net = düzeltilmiş − maliyet
+    sonu (ya da kuralın çıkış tanımı). Ham = yön × getiri; düzeltilmiş = ham − yön × β × kıyas (kıyas = kıyas serisinin yönsüz getirisi); net = düzeltilmiş − maliyet
     (kapının ölçtüğü). Kayıt aileleri (LOG-*) yalnız kural süzgeciyle listelenir.
     <span class="warn">geçmiş ölçüm, tahmin değil · yatırım tavsiyesi değildir.</span></p>
   <form method="get" action="/lab/islemler" class="hint">
@@ -25,7 +25,7 @@
   <div class="tscroll"><div class="tscroll-x">
   <table class="compact">
     <tr><th class="l stick">Coin</th><th class="l">Kural</th><th>Yön</th><th class="l">Giriş</th><th>Giriş px</th><th class="l">Ufuk</th>
-      <th class="l">Çıkış</th><th>Çıkış px</th><th>Ham</th><th>Kıyas</th><th>Düzeltilmiş</th><th>Maliyet</th><th>Net</th><th>MFE</th><th>MAE</th><th class="l">Durum</th></tr>
+      <th class="l">Çıkış</th><th>Çıkış px</th><th>Ham</th><th>Kıyas</th><th>β</th><th>Düzeltilmiş</th><th>Maliyet</th><th>Net</th><th>MFE</th><th>MAE</th><th class="l">Durum</th></tr>
     {% for r in rows %}
     <tr><td class="l stick"><b>{{ r.coin.split(':')[-1] }}</b></td>
       <td class="l">{{ r.rule_id }} <span class="dim">v{{ r.rule_ver }}{% if r.origin != 'live' %} · {{ r.origin }}{% endif %}</span></td>
@@ -33,7 +33,7 @@
       <td class="l">{{ r.entry_ts|dt }}</td><td>{{ r.entry_px|px5 }}</td><td class="l">{{ h_label(r.h) }}</td>
       <td class="l">{{ r.exit_ts|dt }}{% if r.exit_reason %} <span class="dim">{{ r.exit_reason }}</span>{% endif %}</td>
       <td>{{ r.exit_px|px5 }}</td><td>{{ pct(r.ret_raw) }}</td><td class="dim">{{ pct(r.ret_bench) }}</td>
-      <td>{{ pct(r.ret_adj) }}</td><td class="dim">{% if r.cost is none %}—{% else %}{{ '%.2f'|format(r.cost * 100) }}%{% endif %}</td>
+      <td class="dim">{{ '%.2f'|format(r.beta) if r.beta is not none else '—' }}</td><td>{{ pct(r.ret_adj) }}</td><td class="dim">{% if r.cost is none %}—{% else %}{{ '%.2f'|format(r.cost * 100) }}%{% endif %}</td>
       <td style="color:{{ 'var(--green)' if (r.net or 0) > 0 else ('var(--red-fg)' if (r.net or 0) < 0 else 'inherit') }}"><b>{{ pct(r.net) }}</b></td>
       <td class="dim">{{ pct(r.mfe) }}</td><td class="dim">{{ pct(r.mae) }}</td>
       <td class="l dim">{{ 'ölçüldü' if r.status == 'done' else 'ölçülemedi' }}</td></tr>

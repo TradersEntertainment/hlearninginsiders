@@ -5,7 +5,8 @@ Pinlenenler:
   • kâr/zarar = marjin × kaldıraç × net; zarar marjini aşamaz (likidasyon = marjinin tamamı)
   • aynı anda kapanış ve giriş → önce kapanış (serbest marjin geri gelir)
   • en kötü işlem / en kötü gün / en büyük düşüş; net ya da çıkışı olmayan satır sayılmaz
-  • eğri sim.svg_curve ile çizilir; lab işlemi kendi etiketini (coin · net · $) taşır, HTML kaçışlı
+  • yol üstünde en kötü an × kaldıraç ≤ −%100 → likidasyon (son net kazanç olsa da marjin gider)
+  • eğri sim.svg_curve ile çizilir; çok işlemde seyreltilir (özet tüm işlemlerden); lab işlemi kendi etiketini (coin · net · $) taşır, HTML kaçışlı
 """
 import os
 import sys
@@ -73,6 +74,24 @@ def test_svg_curve_with_lab_titles():
     assert "ETH · net %-0.40" in svg
     assert paper.replay([], 10_000, 5, 33)["n"] == 0
     print("✅ kâğıt) eğri sim.svg_curve ile; lab etiketi coin · net · $ ve HTML kaçışlı")
+
+
+def test_path_liquidation_and_thin():
+    win_after_liq = dict(_t(1, 0, 3600, 0.02), mae=-0.25)          # 5x × −%25 = −%125 → marjin bitti
+    near = dict(_t(2, 7200, 9000, 0.02), mae=-0.15)                # 5x × −%15 = −%75 → yaşar
+    r = paper.replay([win_after_liq, near], 10_000, 5, 33)
+    assert r["liq"] == 1 and abs(r["worst_trade"] + 3_300) < 1e-9, r
+    liq_t = next(p[2] for p in r["points"] if p[2] and p[2]["liq"])
+    assert "likidasyon" in liq_t["title"]
+    many = paper.replay([_t(i, i * 100, i * 100 + 50, 0.001 if i % 3 else -0.002) for i in range(2000)],
+                        10_000, 5, 33, T0 - 1)
+    th = paper.thin(many["points"])
+    assert len(th) <= 302 and th[0][1] == many["points"][0][1] and th[-1][1] == many["points"][-1][1]
+    assert min(p[1] for p in th) == min(p[1] for p in many["points"]), "kova en düşüğü korunur"
+    assert all(p[2] is None for p in th), "seyreltilmiş eğride işlem işareti yok"
+    svg = sim.svg_curve(th, 10_000)
+    assert svg.count("<circle") == 0 and len(svg) < 20_000
+    print("✅ kâğıt) yol üstü likidasyon; çok işlemde eğri seyreltilir (en düşük/yüksek korunur)")
 
 
 if __name__ == "__main__":
