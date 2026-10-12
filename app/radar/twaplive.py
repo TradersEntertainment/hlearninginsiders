@@ -1012,11 +1012,18 @@ async def diag_address(cfg, collector, addr: str) -> str:
                 if not o:
                     continue
                 vol = vols.get(coin)
-                det = gate_detail(cfg, coin, o, vol[0] if vol else None, vol[1] if vol else None, ts)
+                from . import twapfast
+                g, det = twapfast.decide_gate(cfg, coin, o, vol[0] if vol else None, vol[1] if vol else None, ts)
                 fill = f"doldu {usd(o['executed_usd'])} (%{o['filled_pct']:.0f})" if o.get("filled_pct") is not None else ""
                 lines.append(f"• {esc(assets.label(coin))} {side.upper()} {usd(o['planned_usd'])} · {fill} · kalan {usd(o['remaining_usd'])}"
                              f" · {int(o['minutes'])} dk · {esc(o['status'])}")
-                kap = f"  kapı: {REASON_TR.get(det['reason'], det['reason'])}"
+                kap = f"  kapı: {twapfast.REASON_TR.get(g, g)}"
+                if g in ("short", "slow", "short_small", "short_left") and det.get("per_min"):
+                    kap += (f" — ⚡ ≤ {quick_max(cfg):g} dk emir: dakikada ~{usd(det['per_min'])}"
+                            + (f", ortalama dakika hacminin {det['rate_x']:.1f} katı (gerek"
+                               f" {float(getattr(cfg, 'twap_fast_rate_x', 2) or 0):g})" if det.get("rate_x") is not None else ""))
+                if g == "short_small":
+                    kap += f" — emir < {usd(getattr(cfg, 'twap_fast_short_min_usd', 0))}"
                 if det["day_vol"]:
                     kap += f" — hacim {usd(det['day_vol'])}, emir hacmin %{det['vol_pct']:.1f}'i (gerek %{det['pct_needed']:g}, ≥ {usd(det['need_usd'])})"
                 if det["reason"] == "order_left":
@@ -1084,7 +1091,7 @@ async def diag_summary(cfg) -> str:
         fs = await kv_get(twapfast.STATS_KV) or {}
         rec = [d for d in (fs.get("recent") or []) if d.get("reason") != "retry"][:5]
         if rec:
-            lines.append("Hızlı yol son kararlar:\n" + "\n".join("• " + esc(twapfast.recent_line(d)) for d in rec))
+            lines.append("🔎 İlk dilim son kararlar:\n" + "\n".join("• " + esc(twapfast.recent_line(d)) for d in rec))
     except Exception:                                  # noqa: BLE001
         log.debug("hızlı twap özeti", exc_info=True)
     last = await kv_get(LAST_KV) or []

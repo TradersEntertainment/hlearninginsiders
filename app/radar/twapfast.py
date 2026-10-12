@@ -424,7 +424,8 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
         ctx = {"coin": coin, "address": addr, "side": side, "gate": g, "day_vol": day_vol,
                "vol_pct": det.get("vol_pct"), "per_min": det.get("per_min"), "rate_x": det.get("rate_x"),
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
-               "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg)}
+               "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
+               "why": det.get("reason")}
         text = fmt.twap_fast(order, ctx)
         ok = False
         if can:
@@ -540,7 +541,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
         await twaplive.mirror(cfg, notifier, text, f"end:{okey}", r["coin"], primary=chat if can else None)
         F.stats["ends"] += 1
         sent += 1
-        try:                                            # /twaplar sekmesinde ⚡ işareti (eski yolun satırı varsa)
+        try:                                            # /twaplar sekmesinde 🔎 işareti (eski yolun satırı varsa)
             from ..db import db
             async with db() as conn:
                 await conn.execute("UPDATE twap_runs SET fast_ts=? WHERE coin=? AND address=? AND side=?"

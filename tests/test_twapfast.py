@@ -544,6 +544,10 @@ def test_quick_badge_one_hour():
     for f, extra in ((fmt.twap_alert, {"vol_pct": 7.0}), (fmt.twap_progress, {}), (fmt.twap_end, {})):
         assert "⚡ <b>HIZLI · 45 dk</b>" in f(m, {"order": mk(45), "quick_max": 60, **extra}).split("\n")[0], f
         assert "⚡" not in f(m, {"order": mk(240), "quick_max": 60, **extra}).split("\n")[0], f
+    # dakika hızı kuralının nedeni doğru yazılır: $600K emir $2M hacmin %30'u → "hacim eşiğinin altında" DEĞİL
+    gx, dx = tf.decide_gate(cfg, "PUMP", mk(5), 2e6, now, now)
+    txt = fmt.twap_fast(mk(5), {**base, "gate": gx, "why": dx["reason"], "vol_pct": dx["vol_pct"]})
+    assert gx == "short" and "hacim eşiğinin altında" not in txt and "(emir toplamı tabanın altında)" in txt
     g45, _ = tf.decide_gate(cfg, "PUMP", mk(45), 2e6, now, now)        # $600K / 45 dk vs $2M günlük → hızlı kural
     g90, _ = tf.decide_gate(cfg, "PUMP", mk(90), 20e6, now, now)
     assert g45 == "short" and g90 == "order_small", (g45, g90)

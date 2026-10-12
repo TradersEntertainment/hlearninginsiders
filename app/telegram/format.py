@@ -3257,7 +3257,9 @@ def twap_fast(o: dict, ctx: dict) -> str:
     if ctx.get("day_vol"):
         extra.append(f"24s hacim {usd(ctx['day_vol'])}")
     if ctx.get("gate") == "short":
-        extra.append("⚡ dakika hızı kuralıyla (emir/24s hacim eşiğinin altında)")
+        why = {"order_small": "emir toplamı tabanın altında", "vol_small": "emir/24s hacim eşiğinin altında",
+               "order_left": "kalan eşiğin altında"}.get(ctx.get("why") or "")
+        extra.append("⚡ dakika hızı kuralıyla" + (f" ({why})" if why else ""))
     if extra:
         lines.append(" · ".join(extra))
     if ctx.get("entity"):

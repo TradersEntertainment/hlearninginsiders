@@ -37,10 +37,10 @@ A = "0x" + "a" * 40
 MARK, SZ, PLAN = 10.0, 200_000.0, 2_000_000.0
 
 
-def order(status="activated", ex=0.0, started=1000):
+def order(status="activated", ex=0.0, started=1000, minutes=360):
     return [{"time": started * 1000,
              "state": {"coin": "INJ", "side": "B", "sz": str(SZ), "executedSz": str(ex),
-                       "minutes": 360, "reduceOnly": False, "randomize": False},
+                       "minutes": minutes, "reduceOnly": False, "randomize": False},
              "status": {"status": status}, "ended": status != "activated"}]
 
 
@@ -165,7 +165,16 @@ def test_cancel_end_progress():
         bot2 = Bot()
         out = await tf.check(cfg, Col(order(status="finished", ex=SZ)), bot2)
         assert out["ended"] == 1 and "🏁 <b>TWAP bitti</b>" in bot2.sent[-1][1]
-        print("✅ bildirim) iptal → ⛔, bitiş → 🏁, %50 → 👁 tek sefer; terminal durumda kapanır")
+        assert "⚡" not in bot2.sent[-1][1], "6 sa'lik emir hızlı değil"
+        # ⚡ HIZLI (≤ 1 sa): takip notları da rozetli (kanal + ayna ile aynı)
+        await _seed()
+        await tf.start(cfg, "INJ", A, "buy", 1000, chat_id="-100")
+        bot3 = Bot()
+        await tf.check(cfg, Col(order(ex=SZ * 0.6, minutes=30)), bot3)
+        assert "TWAP yarılandı</b> · ⚡ <b>HIZLI · 30 dk</b>" in bot3.sent[-1][1], bot3.sent
+        await tf.check(cfg, Col(order(status="finished", ex=SZ, minutes=30)), bot3)
+        assert "🏁 <b>TWAP bitti</b> · ⚡ <b>HIZLI · 30 dk</b>" in bot3.sent[-1][1], bot3.sent
+        print("✅ bildirim) iptal → ⛔, bitiş → 🏁, %50 → 👁 tek sefer; terminal durumda kapanır; ≤1 sa ⚡")
     asyncio.run(run())
 
 

@@ -82,7 +82,7 @@
       <td>{{ m.equity_cell(r.account_value, r.account_ts) }}</td>
       <td>{{ m.equity_pct(r.account_value, r.total) }}</td>
       <td class="dim">{{ '📡 canlı' if r.src == 'live' else '🗄 arşiv' }}</td>
-      <td class="dim">{% if r.ended_ts %}🏁 {{ r.ended_ts|age }}{% elif r.alerted_ts %}✅ {{ r.alerted_ts|age }}{% elif r.fast_ts %}⚡ {{ r.fast_ts|age }}{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.ended_ts %}🏁 {{ r.ended_ts|age }}{% elif r.alerted_ts %}✅ {{ r.alerted_ts|age }}{% elif r.fast_ts %}<span title="ilk dilimde bildirildi">🔎 {{ r.fast_ts|age }}</span>{% else %}—{% endif %}</td>
       <td>{% if r.active %}<b class="long">🔴 sürüyor</b>
           {%- else %}<span class="dim">bitti · {{ r.last_ts|age }}</span>{% endif %}</td>
     </tr>

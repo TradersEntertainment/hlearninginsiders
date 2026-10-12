@@ -394,17 +394,17 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   başlangıç–bitiş saati (TSİ), emirden kaç sn sonra bildirildiği, ilk dilim, dolan/kalan, pozisyon
   (en çok 2,5 sn beklenir), takip (`/takip_N`). Tahmin yok: emir HL'den okunamazsa bildirim yok
   (sıfır hash likidasyon dolumunda da görülebildiği için emir yoksa düşer, 5 dk yok sayılır).
-- **Bitiş:** hızlı yolun bildirdiği emir kendi kaydında izlenir; emir süresi dolunca (+30 sn) ya da
+- **Bitiş:** ilk dilim yolunun bildirdiği emir kendi kaydında izlenir; emir süresi dolunca (+30 sn) ya da
   dilimler 90 sn kesilince (iptal?) emir sorulur → 🏁/⛔ notu (HL hâlâ "activated" diyorsa beklenir,
   sessizlik bitiş sayılmaz). Not emir anahtarıyla tekil: eski yol aynı emrin notunu ayrıca yazmaz.
-- **"Bildirildi" = ana hedef aldı:** ana kanal (iki deneme) düşerse hızlı yol bildirdi saymaz ve aynaya
+- **"Bildirildi" = ana hedef aldı:** ana kanal (iki deneme) düşerse ilk dilim yolu bildirdi saymaz ve aynaya
   da yazmaz; eski yol 5 dk sonra ikisini eskisi gibi dener.
-- **Eski yol ve 🧪 laboratuvar:** hızlı yol eski yolun sayacına (`twaplive.REG`), emir önbelleğine ve
+- **Eski yol ve 🧪 laboratuvar:** ilk dilim yolu eski yolun sayacına (`twaplive.REG`), emir önbelleğine ve
   'twap' bekleme işaretine **dokunmaz** — eski yolun kararı ve `LOG-TWAP` kaydı (AKI-TWAP-F'nin
   örneklemi) değişmez. Eski yol aynı EMRİ (HL başlangıç anıyla) görürse tekrar yazmaz; aynı adresin
   başka emri eskisi gibi değerlendirilir. İki yol aynı emri aynı anda gönderemez (bellek içi talep).
-  Hızlı karar ayrı aile: **LOG-TWAPF** (ilk dilim anı; geçen + kalan). Hızlı yolun kendi 6 sa beklemesi
-  (aynı adres+coin+yön) yalnız hızlı yolu susturur.
+  İlk dilim kararı ayrı aile: **LOG-TWAPF** (ilk dilim anı; geçen + kalan). İlk dilim yolunun kendi 6 sa beklemesi
+  (aynı adres+coin+yön) yalnız ilk dilim yoluu susturur.
 - **Kapsam:** eski yolla aynı (WS'in dinlediği coinler: hisseler + hacimce ilk `crypto_watch_top`
   kripto). Dilimi `twap_fast_min_slice_usd`'nin ($1.000) altındaki uzun TWAP'lar (ör. $1M / 24 sa ≈
   $350 dilim) eski yoldan gelir.
