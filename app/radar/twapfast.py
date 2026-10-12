@@ -50,6 +50,8 @@ SEND_RETRY = 5
 SHORT_LEFT_MIN = 0.3        # ⚡ hızlı TWAP: planın en az bu payı kalmış olmalı
 POS_TIMEOUT = 2.5           # pozisyon satırı bildirimi bundan fazla geciktirmez
 SILENT_SEC = 90             # bildirilmiş emrin dilimi bu kadar gelmezse (iptal?) emir yeniden sorulur
+QUICK_SILENT = 45           # ⚡ HIZLI (≤ 1 sa): bir dilim (30 sn) gecikince sorulur — iptal ⛔ ~1 dk içinde kanalda
+QUICK_RELOOK = 30
 END_GRACE = 30              # planlanan bitişten bu kadar sonra emir sorulur (🏁/⛔ notu)
 END_GIVEUP = 600            # HL bitişten bu kadar sonra hâlâ 'activated' diyorsa not yazılmadan kapatılır
 RELOOK_SEC = 60             # bildirilmiş emir için iki sorgu arası en az
@@ -415,7 +417,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
             return "cooldown"
         pos = await _pos(client, coin, addr)
         offer = None
-        if getattr(cfg, "twap_follow_enabled", True):
+        if getattr(cfg, "twap_follow_enabled", True) and not twaplive.is_quick(cfg, order):   # ⚡: kanala otomatik
             try:                                        # takip, emri başlangıç anıyla eşler (twapfollow)
                 offer = await twaplive._twap_offer(types.SimpleNamespace(
                     address=addr, coin=coin, side=side, total=float(order.get("planned_usd") or 0), first_ts=started))
@@ -476,7 +478,8 @@ def _end_measure(r: dict) -> dict:
 
 
 async def lifecycle(cfg, notifier, collector, t: int) -> int:
-    """Hızlı yolun bildirdiği emirler: planlanan bitiş + 30 sn'de (ya da dilimler 90 sn kesilince) emir bir kez
+    """İlk dilim yolunun bildirdiği emirler: planlanan bitiş + 30 sn'de (ya da dilimler 90 sn — ⚡ HIZLI'da 45 sn —
+    kesilince) emir bir kez
     sorulur → bitti/iptal → 🏁/⛔ notu (ana hedef + ayna). HL hâlâ 'activated' diyorsa beklenir (sessizlik bitiş
     sayılmaz); bitişten 10 dk sonra hâlâ öyleyse not yazılmadan kapatılır. Eski yolun bitiş notuyla emir
     anahtarı ('twap_endo') üzerinden tekil. Dönüş: yazılan not sayısı."""
@@ -489,10 +492,12 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
                 F.open.pop(key, None)
             continue
         end_at = int(r["end_at"])
-        due = t >= end_at + END_GRACE or t - int(r["last_ts"]) > SILENT_SEC
+        quick = twaplive.is_quick(cfg, r.get("order"))
+        due = t >= end_at + END_GRACE or t - int(r["last_ts"]) > (QUICK_SILENT if quick else SILENT_SEC)
         if not due:
             continue
-        if t - int(r["lookup_ts"]) < RELOOK_SEC and not (t >= end_at + END_GRACE > int(r["lookup_ts"])):
+        if t - int(r["lookup_ts"]) < (QUICK_RELOOK if quick else RELOOK_SEC) \
+                and not (t >= end_at + END_GRACE > int(r["lookup_ts"])):
             continue
         if fn is None:
             continue

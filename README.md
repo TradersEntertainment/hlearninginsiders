@@ -386,6 +386,10 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   ($250K) VE dakika hızı coinin 24s ortalama dakika hacminin ≥ `twap_fast_rate_x` (2) katı VE planın
   ≥ %30'u kalmış. 5 dk'lık $1M emir günün hacminin %2'si olsa da dakikada $200K'dır — eski %5 kuralı
   onu susturuyordu.
+- **⚡ HIZLI'da takip tuşu yok (kullanıcı 12.10):** ≤ 1 sa'lik emrin mesajında `/takip_N` yerine "🔔 iptal ⛔ /
+  bitiş 🏁 buraya otomatik yazılır" — iptal ve bitiş notu kanala (ve aynaya) kendiliğinden gider. İptal hızlı
+  fark edilir: ilk dilimde bildirilende bir dilim (45 sn) gecikince, eski yoldan bildirilende dakikada bir emir
+  sorulur (eski yolun emir önbelleğine yazılmadan). Uzun emirde takip tuşu ve 10 dk'lık düzen aynen.
 - **⚡ HIZLI rozeti (kullanıcı 12.10: "çok hızlı" = 1 saat):** emir süresi ≤ `twap_fast_short_max_min`
   (60 dk) olan TWAP'ın TÜM mesajlarında (ilk alarm, ilk dilim alarmı, yarı, 🏁/⛔) başlıkta
   `⚡ HIZLI · 5 dk` yazar. Süre HL emrinin kendi alanıdır (ölçüm). Sınır ayarlardan değişir; aynı sınır

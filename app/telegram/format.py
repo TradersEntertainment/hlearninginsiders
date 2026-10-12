@@ -3153,6 +3153,9 @@ def _fill_line(o: dict) -> str:
             + f" · kalan ≈ {usd(o.get('remaining_usd'))}")
 
 
+TWAP_AUTO_NOTE = "🔔 iptal ⛔ / bitiş 🏁 buraya otomatik yazılır"
+
+
 def twap_quick(ctx: dict, o: dict | None = None) -> str:
     """⚡ HIZLI rozeti: emir süresi ≤ ctx['quick_max'] dk (kullanıcı 12.10: "çok hızlı" = 1 saat). Süre HL
     emrinin kendi alanı (ölçüm, tahmin değil). Sınır verilmediyse rozet yok."""
@@ -3202,7 +3205,9 @@ def twap_alert(m: dict, ctx: dict) -> str:
         lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
     if klass == "hisse" and is_listed(sym):
         lines.append(PROPR_NOTE)
-    if ctx.get("offer"):
+    if quick:
+        lines.append(TWAP_AUTO_NOTE)                    # ⚡: takip tuşu yok, iptal/bitiş kanala kendiliğinden
+    elif ctx.get("offer"):
         # Bu emri izle: iptal edilirse ⛔, bitince 🏁 haber gelir (yalnız basana).
         lines.append(f"👁 emri takip et → /takip_{ctx['offer']}")
     lines.append(DISCLAIMER)
@@ -3266,7 +3271,9 @@ def twap_fast(o: dict, ctx: dict) -> str:
         lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
     if (ctx.get("klass") or "") == "hisse" and is_listed(sym):
         lines.append(PROPR_NOTE)
-    if ctx.get("offer"):
+    if quick:
+        lines.append(TWAP_AUTO_NOTE)
+    elif ctx.get("offer"):
         lines.append(f"👁 emri takip et → /takip_{ctx['offer']}")
     lines.append(DISCLAIMER)
     return "\n".join(lines)

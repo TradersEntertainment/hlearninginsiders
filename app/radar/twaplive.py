@@ -58,6 +58,7 @@ VOL_MAX_AGE = 3600          # hacim ölçümü bundan eskiyse kapı geçmez (tah
 LOOKUP_MIN_DUR = 300        # sorgudan önce dizi en az 5 dk sürmüş olmalı
 LOOKUP_MAX_PER_EVAL = 20    # bir turda en çok bu kadar WS sorgusu
 REFRESH_SEC = 600           # bildirilmiş tur: emir 10 dk'da bir yeniden sorgulanır
+QUICK_REFRESH = 60          # ⚡ HIZLI (≤ 1 sa) bildirilmiş emir: dakikada bir — iptal ⛔ kanala hızla yazılsın
 HALF_PCT = 50               # ilerleme notu: emrin yarısı dolunca
 NATIVE_GAP = (25, 35)       # ortanca aralık bu banttaysa "HL TWAP düzenine uyuyor"
 STATS_KV = "twaplive_stats"
@@ -542,6 +543,35 @@ def quick_max(cfg) -> float:
     return float(getattr(cfg, "twap_fast_short_max_min", 60) or 0)
 
 
+def is_quick(cfg, order: dict | None) -> bool:
+    """⚡ HIZLI: emir süresi ≤ 1 sa. Bunlarda takip tuşu yok — iptal ⛔ / bitiş 🏁 kanala kendiliğinden yazılır
+    (kullanıcı 12.10: "hızlılar için iptal tuşuna basmama gerek kalmasın")."""
+    mins = float((order or {}).get("minutes") or 0)
+    qm = quick_max(cfg)
+    return 0 < mins <= qm if qm > 0 else False
+
+
+async def _quick_refresh(collector, run: "Run", ts: int, out: dict) -> None:
+    """Bildirilmiş ⚡ HIZLI emrin durumu (iptal mi?): eski yolun emir önbelleğine YAZMADAN tek sorgu (önbellek
+    ilk alarm kararlarını ve 🧪 LOG-TWAP'ı besler — sıklaşan sorgu onu değiştirmesin)."""
+    fn = getattr(collector, "fetch_twap_history", None)
+    run.lookup_ts = ts
+    if fn is None:
+        return
+    out["quick_lookups"] = out.get("quick_lookups", 0) + 1
+    try:
+        hist = await fn(run.address)
+    except Exception:                                  # noqa: BLE001
+        hist = None
+    if hist is None:
+        return
+    orders = parse_twap_orders(hist, run.coin, run.side, run.px_last, ts)
+    started = int((run.order or {}).get("started_ts") or 0)
+    got = next((o for o in orders if started and abs(int(o.get("started_ts") or 0) - started) <= 2), None)
+    if got is not None:
+        run.order = got
+
+
 def mirror_chat(cfg) -> str:
     return (getattr(cfg, "twap_mirror_chat_id", "") or "").strip()
 
@@ -670,7 +700,11 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             key = f"{run.coin}:{run.address}:{run.side}"
             # --- bildirilmiş tur: yeniden sorgu → ilerleme / bitiş ---
             if run.alerted_ts and not run.ended_ts:
-                if collector is not None and ts - int(run.lookup_ts or 0) >= REFRESH_SEC:
+                cur = run.order or {}
+                if collector is not None and cur.get("status") == "activated" and is_quick(cfg, cur) \
+                        and ts - int(run.lookup_ts or 0) >= QUICK_REFRESH:
+                    await _quick_refresh(collector, run, ts, out)
+                elif collector is not None and ts - int(run.lookup_ts or 0) >= REFRESH_SEC:
                     await lookup_order(collector, run, ts, cfg, out, force=True)
                 order = run.order
                 mm = m or _scalar_measure(run)
@@ -812,7 +846,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 # edilince haber gider. Teklif yazılamazsa mesaj eskisi gibi gider —
                 # düğme süs değil ama mesajı bloke de etmez.
                 offer = None
-                if getattr(cfg, "twap_follow_enabled", True):
+                if getattr(cfg, "twap_follow_enabled", True) and not is_quick(cfg, order):   # ⚡: kanala otomatik
                     try:
                         offer = await _twap_offer(run)
                     except Exception:

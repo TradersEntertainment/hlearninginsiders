@@ -194,7 +194,10 @@ def test_first_slice_alert_mirror_and_end_note():
         text = bot.sent[0][1]
         assert bot.sent[1][1] == text, "ayna = birebir kopya"
         assert "⏳ <b>TWAP başladı</b> · ⚡ <b>HIZLI · 5 dk</b> · <b>PUMP</b>" in text and "plan <b>$600K</b>" in text
-        assert "katı</b>" in text and "dakikada ~<b>$120K</b>" in text and "/takip_" in text
+        assert "katı</b>" in text and "dakikada ~<b>$120K</b>" in text
+        assert "🔔 iptal ⛔ / bitiş 🏁 buraya otomatik yazılır" in text and "/takip_" not in text, "⚡: tuş yok"
+        async with dbm.db() as c:
+            assert (await (await c.execute("SELECT COUNT(*) n FROM track_offers")).fetchone())["n"] == 0
         assert "⚡ dakika hızı kuralıyla" in text and "bu hızla" not in text
         run_ = tl.REG.runs[("PUMP", A, "buy")]
         assert not hasattr(run_, "fast_ts") and run_.order is None and run_.alerted_ts is None \
@@ -219,7 +222,7 @@ def test_first_slice_alert_mirror_and_end_note():
         state["st"] = "finished"
         rec["lookup_ts"] = 0                                       # zaman geçti (hızlı sorgu 5 dk önceydi)
         assert await tf.lifecycle(cfg, notifier, col, now) == 1
-        ends = [(c, t) for c, t in bot.sent if "🏁" in t]
+        ends = [(c, t) for c, t in bot.sent if "TWAP bitti" in t]
         assert [c for c, _ in ends] == ["-100", "-200"], bot.sent
         assert "+10.0%" in ends[0][1] and "🏁 <b>TWAP bitti</b> · ⚡ <b>HIZLI · 5 dk</b>" in ends[0][1], ends[0][1]
         assert ("PUMP", A, "buy") not in tf.F.known, "biten emrin yerine yeni emir sorulabilir"
@@ -255,13 +258,49 @@ def test_cancel_note_and_wait_while_activated():
         rec["lookup_ts"] = 0
         assert await tf.lifecycle(cfg, notifier, col, now) == 0 and not rec["ended"], "activated: bekle"
         state["st"] = "terminated"
-        rec["lookup_ts"] = 0
+        # ⚡ HIZLI: son dilimden 46 sn sonra (bir dilim gecikti) ve son sorgudan 31 sn sonra yeniden sorulur
+        rec["last_ts"], rec["lookup_ts"] = now - 46, now - 31
         assert await tf.lifecycle(cfg, notifier, col, now) == 1
-        ends = [(c, t) for c, t in bot.sent if "⛔" in t]
+        ends = [(c, t) for c, t in bot.sent if "TWAP iptal edildi" in t]
         assert [c for c, _ in ends] == ["-100", "-200"], bot.sent
+        assert "⛔ <b>TWAP iptal edildi</b> · ⚡ <b>HIZLI · 10 dk</b>" in ends[0][1], ends[0][1]
         assert not _q("LOG-TWAP"), "eski yol aday değil → kaydı yok (bugünkü gibi)"
     asyncio.run(run())
-    print("✅ hızlı twap) iptal: dilim kesilince sorulur; activated iken bekler; terminated → ⛔ (ana + ayna)")
+    print("✅ hızlı twap) iptal: ⚡ HIZLI'da dilim 45 sn gecikince sorulur; activated iken bekler; terminated → ⛔")
+
+
+def test_quick_cancel_slow_path_refresh():
+    """Eski yolun bildirdiği ⚡ HIZLI emir: dakikada bir durum sorgusu (önbelleğe YAZMADAN) → iptal → ⛔ kanal + ayna.
+    Uzun emirde 10 dk'lık eski düzen sürer."""
+    async def run():
+        cfg = _cfg()
+        cfg.twap_fast_enabled = False                            # yalnız eski yol
+        await _fresh(cfg)
+        now = dbm.now()
+        started = now - 400
+        state = {"st": "activated"}
+        col = Col(lambda: [twap_order(started, minutes=45, plan=3_000_000, ex_frac=0.2, status=state["st"])])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, started + 2 + 30 * i, 1)
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert out["alerted"] == 1 and [c for c, _ in bot.sent] == ["-100", "-200"]
+        assert "⚡ <b>HIZLI · 45 dk</b>" in bot.sent[0][1] and "🔔 iptal ⛔" in bot.sent[0][1]
+        assert "/takip_" not in bot.sent[0][1]
+        cache = dict(tl._lookup_cache)
+        run_ = tl.REG.runs[("PUMP", A, "buy")]
+        state["st"] = "terminated"
+        run_.lookup_ts = now - 30
+        await tl.evaluate(cfg, notifier, None, col)
+        assert len(bot.sent) == 2, "60 sn dolmadan sorgu yok"
+        run_.lookup_ts = now - 61
+        out = await tl.evaluate(cfg, notifier, None, col)
+        ends = [(c, t) for c, t in bot.sent if "TWAP iptal edildi" in t]
+        assert [c for c, _ in ends] == ["-100", "-200"] and out.get("quick_lookups") == 1, (bot.sent, out)
+        assert tl._lookup_cache == cache, "eski yolun emir önbelleği değişmedi"
+    asyncio.run(run())
+    print("✅ ⚡ HIZLI) eski yoldan bildirilen kısa emir: dakikada bir sorgu → iptal ⛔ kanal + ayna; önbellek aynı")
 
 
 def test_slow_path_after_fast_same_lab_event_no_resend():
@@ -362,7 +401,7 @@ def test_review_fixes_order_keyed_skip_primary_fail_race_end_dedupe():
         tl._lookup_cache.clear()
         tl.REG.runs[("PUMP", A, "buy")].lookup_ts = 0
         await tl.evaluate(cfg, notifier, None, done)
-        assert not [t for _, t in bot.sent if "🏁" in t] and tl.REG.runs[("PUMP", A, "buy")].ended_ts
+        assert not [t for _, t in bot.sent if "TWAP bitti" in t] and tl.REG.runs[("PUMP", A, "buy")].ended_ts
     asyncio.run(run())
     print("✅ inceleme) eski yol atlaması emre bağlı; ana kanal düşerse hızlı yol saymaz; yarışta tek mesaj; bitiş tekil")
 
