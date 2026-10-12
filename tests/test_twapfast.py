@@ -86,7 +86,7 @@ def _cfg(chat="-100", mirror="-200"):
     cfg.twap_lookup_min_usd = 50_000
     cfg.twap_alert_cooldown = 21600
     cfg.twap_fast_min_slice_usd = 1000
-    cfg.twap_fast_short_max_min = 30
+    cfg.twap_fast_short_max_min = 60
     cfg.twap_fast_short_min_usd = 250_000
     cfg.twap_fast_rate_x = 2.0
     cfg.twap_fast_lookups_min = 30
@@ -193,9 +193,9 @@ def test_first_slice_alert_mirror_and_end_note():
         assert [c for c, _ in bot.sent] == ["-100", "-200"], bot.sent
         text = bot.sent[0][1]
         assert bot.sent[1][1] == text, "ayna = birebir kopya"
-        assert "⚡ <b>TWAP başladı</b>" in text and "<b>5 dk</b>" in text and "plan <b>$600K</b>" in text
+        assert "⏳ <b>TWAP başladı</b> · ⚡ <b>HIZLI · 5 dk</b> · <b>PUMP</b>" in text and "plan <b>$600K</b>" in text
         assert "katı</b>" in text and "dakikada ~<b>$120K</b>" in text and "/takip_" in text
-        assert "kısa TWAP: dakika hızı kuralıyla" in text and "bu hızla" not in text
+        assert "⚡ dakika hızı kuralıyla" in text and "bu hızla" not in text
         run_ = tl.REG.runs[("PUMP", A, "buy")]
         assert not hasattr(run_, "fast_ts") and run_.order is None and run_.alerted_ts is None \
             and run_.lookup_ts is None, "eski yolun sayacına dokunulmaz"
@@ -221,7 +221,7 @@ def test_first_slice_alert_mirror_and_end_note():
         assert await tf.lifecycle(cfg, notifier, col, now) == 1
         ends = [(c, t) for c, t in bot.sent if "🏁" in t]
         assert [c for c, _ in ends] == ["-100", "-200"], bot.sent
-        assert "+10.0%" in ends[0][1], ends[0][1]
+        assert "+10.0%" in ends[0][1] and "🏁 <b>TWAP bitti</b> · ⚡ <b>HIZLI · 5 dk</b>" in ends[0][1], ends[0][1]
         assert ("PUMP", A, "buy") not in tf.F.known, "biten emrin yerine yeni emir sorulabilir"
         # eski yol: 11 dilim + 5 dk → aday → emir 'finished' → LOG-TWAP eskisi gibi (st=finished, order_done),
         # mesaj yok (bildirmediği turun bitiş notu yok)
@@ -279,7 +279,7 @@ def test_slow_path_after_fast_same_lab_event_no_resend():
         if fast:
             tf.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, started + 2, 1000)
             await _drain(cfg, notifier, col)
-            assert len(bot.sent) == 2 and "⚡" in bot.sent[0][1]
+            assert len(bot.sent) == 2 and "TWAP başladı" in bot.sent[0][1] and "⚡ <b>HIZLI · 30 dk</b>" in bot.sent[0][1]
         for i in range(1, 13):
             tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, started + 2 + 30 * i, 1)
         n0 = len(bot.sent)
@@ -495,7 +495,7 @@ def test_wiring_and_wording():
     from app.lab import specs
     cfg = Config()
     assert cfg.twap_fast_enabled and cfg.twap_fast_min_slice_usd == 1000 and cfg.twap_fast_lookups_min == 30
-    assert cfg.twap_fast_short_max_min == 30 and cfg.twap_fast_short_min_usd == 250_000 and cfg.twap_fast_rate_x == 2
+    assert cfg.twap_fast_short_max_min == 60 and cfg.twap_fast_short_min_usd == 250_000 and cfg.twap_fast_rate_x == 2
     for k in ("twap_fast_enabled", "twap_fast_min_slice_usd", "twap_fast_lookups_min", "twap_fast_short_max_min",
               "twap_fast_short_min_usd", "twap_fast_rate_x"):
         assert EDITABLE_FIELDS[k]["group"] == "TWAP radarı" and EDITABLE_FIELDS[k]["desc"], k
@@ -511,7 +511,7 @@ def test_wiring_and_wording():
     colsrc = open(os.path.join(ROOT, "app/hl/collector.py"), encoding="utf-8").read()
     assert "twapfast.is_twap_hash" in colsrc and "twapfast.observe" in colsrc
     readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
-    assert "TWAP_MIRROR_CHAT_ID" in readme and "Hızlı TWAP" in readme
+    assert "TWAP_MIRROR_CHAT_ID" in readme and "İlk dilimde TWAP" in readme and "⚡ HIZLI" in readme
     from app.health import periods
     assert "twapfast" in periods(cfg)
     # mesaj: ölçülü dil
@@ -526,6 +526,28 @@ def test_wiring_and_wording():
         assert not tw.hits(txt), tw.hits(txt)
         assert "emirden 3 sn sonra" in txt and "/takip_7" in txt
     print("✅ bağlantı) ayarlar + açıklamalar; ayna env-only; tür anahtarı; LOG-TWAPF; README/.env; ölçülü mesaj")
+
+
+def test_quick_badge_one_hour():
+    """⚡ HIZLI = emir süresi ≤ 1 sa (kullanıcı 12.10): ilk dilim, eski yol, yarı, bitiş mesajlarında; üstünde yok;
+    sınır ayardan; dakika hızı kuralı aynı sınırla (45 dk'lık emir artık o kuralla geçebilir, 90 dk geçemez)."""
+    now = dbm.now()
+    cfg = _cfg()
+    mk = lambda mins: tl.parse_twap_orders([twap_order(now - 3, minutes=mins)], "PUMP", "buy", PX, now)[0]  # noqa: E731
+    base = {"coin": "PUMP", "address": A, "side": "buy", "gate": "ok", "day_vol": DV, "pos": None,
+            "klass": "kripto", "now": now, "quick_max": tl.quick_max(cfg)}
+    assert "⚡ <b>HIZLI · 1 s 0 dk</b>" in fmt.twap_fast(mk(60), base)
+    assert "⚡" not in fmt.twap_fast(mk(61), base).split("\n")[0] and "<b>1 s 1 dk</b>" in fmt.twap_fast(mk(61), base)
+    assert "⚡" not in fmt.twap_fast(mk(5), {**base, "quick_max": 0}).split("\n")[0], "sınır yoksa rozet yok"
+    m = {"coin": "PUMP", "address": A, "side": "buy", "n": 12, "total": 1e5, "sz_total": 2e7, "avg_slice": 8e3,
+         "median_gap": 30, "px_first": PX, "px_last": PX, "px_chg_pct": 0.0, "dur": 360, "taker_pct": 100}
+    for f, extra in ((fmt.twap_alert, {"vol_pct": 7.0}), (fmt.twap_progress, {}), (fmt.twap_end, {})):
+        assert "⚡ <b>HIZLI · 45 dk</b>" in f(m, {"order": mk(45), "quick_max": 60, **extra}).split("\n")[0], f
+        assert "⚡" not in f(m, {"order": mk(240), "quick_max": 60, **extra}).split("\n")[0], f
+    g45, _ = tf.decide_gate(cfg, "PUMP", mk(45), 2e6, now, now)        # $600K / 45 dk vs $2M günlük → hızlı kural
+    g90, _ = tf.decide_gate(cfg, "PUMP", mk(90), 20e6, now, now)
+    assert g45 == "short" and g90 == "order_small", (g45, g90)
+    print("✅ ⚡ HIZLI) ≤ 1 sa: dört mesaj türünde rozet; üstünde yok; dakika hızı kuralı aynı sınırla")
 
 
 if __name__ == "__main__":

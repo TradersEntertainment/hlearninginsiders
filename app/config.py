@@ -60,7 +60,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "track_expire_days": {"type": "int", "label": "Takip yoklama aralığı (gün)", "group": "Bildirimler",
                           "desc": "Poz hâlâ açıkken kaç günde bir 'takipteyim, bırakayım mı?' densin. Takip bu süreyle BİTMEZ — yalnız pozisyon kapanınca ya da /birak_N ile biter"},
     "notify_twap": {"type": "bool", "label": "⏳ TWAP (düşük hacimli coinde büyük)", "group": "Bildirimler",
-                    "desc": "Adresin HL TWAP emri sorgulanır: emir ≥ $1M, kalan ≥ $1M (ya da planın yarısı) ve coinin 24s hacminin ≥ %5'i ise (BTC/ETH %20); kısa TWAP (≤ 30 dk) ayrıca dakika hızıyla. Tahmin yok. Kripto → CRYPTO_CHAT_ID (tanımsızsa gönderilmez), hisse/endeks → ana sohbet; TWAP_MIRROR_CHAT_ID tanımlıysa her TWAP mesajının kopyası oraya da gider. Eşikler 'TWAP radarı' grubunda"},
+                    "desc": "Adresin HL TWAP emri sorgulanır: emir ≥ $1M, kalan ≥ $1M (ya da planın yarısı) ve coinin 24s hacminin ≥ %5'i ise (BTC/ETH %20); ⚡ hızlı TWAP (süresi ≤ 1 sa) mesajda işaretlenir ve ayrıca dakika hızıyla da geçebilir. Tahmin yok. Kripto → CRYPTO_CHAT_ID (tanımsızsa gönderilmez), hisse/endeks → ana sohbet; TWAP_MIRROR_CHAT_ID tanımlıysa her TWAP mesajının kopyası oraya da gider. Eşikler 'TWAP radarı' grubunda"},
     "notify_lowvol": {"type": "bool", "label": "🐘 Sessiz su devi", "group": "Bildirimler",
                       "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
     "notify_listing": {"type": "bool", "label": "🆕 Yeni hisse listelendi", "group": "Bildirimler",
@@ -547,17 +547,17 @@ EDITABLE_FIELDS: dict[str, dict] = {
                                 "desc": "Bu süre sonunda takip sessizce kapanır — emir çoktan bitmiş de olabilir, sonsuza kadar sorgulanmasın"},
     "twap_follow_progress": {"type": "bool", "label": "Takip: yarılanma notu", "group": "TWAP radarı",
                              "desc": "İzlenen emrin yarısı dolunca da tek not gelir. Kapatırsan yalnız iptal (⛔) ve bitiş (🏁) haber edilir"},
-    "twap_fast_enabled": {"type": "bool", "label": "⚡ Hızlı TWAP (ilk dilimde)", "group": "TWAP radarı",
+    "twap_fast_enabled": {"type": "bool", "label": "🔎 İlk dilimde yakalama", "group": "TWAP radarı",
                           "desc": "HL TWAP dilimleri işlem akışında sıfır hash'le gelir: ilk dilim (emirden ~1-2 sn sonra) görülünce adresin emri tek sorguyla okunur (toplam, süre, başlangıç) ve kapıdan geçerse saniyeler içinde bildirilir. Kapatılırsa yalnız eski yol (10 dilim / 5 dk sonra) çalışır"},
-    "twap_fast_min_slice_usd": {"type": "float", "label": "Hızlı TWAP: sorgu için en küçük dilim ($)", "group": "TWAP radarı",
+    "twap_fast_min_slice_usd": {"type": "float", "label": "İlk dilim: sorgu için en küçük dilim ($)", "group": "TWAP radarı",
                                 "desc": "Dilim ≈ emir / (2 × dakika + 1): $1M / 5 dk ≈ $91K, $1M / 4 sa ≈ $2K, $1M / 24 sa ≈ $350. Bu tutarın altındaki dilim için sorgu yapılmaz (eski yol 5 dk sonra yine bakar). Sorgular dakika tavanıyla sınırlı; büyük ve coinin hacmine göre yoğun dilim önce sorulur"},
-    "twap_fast_lookups_min": {"type": "int", "label": "Hızlı TWAP: dakikada en çok sorgu", "group": "TWAP radarı",
+    "twap_fast_lookups_min": {"type": "int", "label": "İlk dilim: dakikada en çok sorgu", "group": "TWAP radarı",
                               "desc": "HL WS emir sorgusu (kısa abonelik). Aynı anda en çok 3; bilinen (önceden okunmuş) emrin dilimleri yeniden sorulmaz"},
-    "twap_fast_short_max_min": {"type": "int", "label": "Kısa TWAP: en uzun süre (dk)", "group": "TWAP radarı",
-                                "desc": "Bu süreye kadar olan TWAP'lar (HL'de en kısa 5 dk) emir/24s hacim kuralı yerine DAKİKA HIZIYLA da geçebilir: 5 dk'lık $1M emir günün hacminin %2'si olsa da dakikada $200K alım/satımdır"},
-    "twap_fast_short_min_usd": {"type": "float", "label": "Kısa TWAP: en küçük emir ($)", "group": "TWAP radarı",
-                                "desc": "Kısa TWAP'ın dakika hızı kuralıyla bildirilmesi için emir toplamı en az bu kadar olmalı"},
-    "twap_fast_rate_x": {"type": "float", "label": "Kısa TWAP: dakika hızı / ortalama dakika hacmi (kat)", "group": "TWAP radarı",
+    "twap_fast_short_max_min": {"type": "int", "label": "⚡ Hızlı TWAP sınırı — emir süresi (dk)", "group": "TWAP radarı",
+                                "desc": "Süresi bu kadar ya da daha kısa TWAP ⚡ HIZLI sayılır (kullanıcı 12.10: 1 saat): mesajlarında ⚡ işareti olur ve emir/24s hacim kuralı yerine DAKİKA HIZIYLA da geçebilir — 5 dk'lık $1M emir günün hacminin %2'si olsa da dakikada $200K alım/satımdır. HL'de en kısa TWAP 5 dk"},
+    "twap_fast_short_min_usd": {"type": "float", "label": "⚡ Hızlı TWAP: en küçük emir ($)", "group": "TWAP radarı",
+                                "desc": "⚡ Hızlı TWAP'ın dakika hızı kuralıyla bildirilmesi için emir toplamı en az bu kadar olmalı"},
+    "twap_fast_rate_x": {"type": "float", "label": "⚡ Hızlı TWAP: dakika hızı / ortalama dakika hacmi (kat)", "group": "TWAP radarı",
                          "desc": "Emrin dakikadaki tutarı (toplam / dakika) coinin 24s hacminin dakika ortalamasının en az bu katı olmalı. 2 = emir her dakika coinin ortalama bir dakikalık hacminin iki katı kadar işlem yapıyor"},
     "twap_live_window_min": {"type": "int", "label": "Canlı pencere (dk)", "group": "TWAP radarı",
                              "desc": "Bildirilmemiş bir dizinin bellekte tutulduğu en uzun süre; boşta kalan dizi 30 dk'da düşer"},
@@ -911,11 +911,11 @@ class Config:
         self.twap_follow_poll_sec = int(os.getenv("TWAP_FOLLOW_POLL_SEC", "120"))
         self.twap_follow_expire_days = int(os.getenv("TWAP_FOLLOW_EXPIRE_DAYS", "7"))
         self.twap_follow_progress = True
-        # ⚡ Hızlı TWAP (bkz. app/radar/twapfast.py): sıfır hash'li ilk dilimde tek sorgu
+        # 🔎 İlk dilimde yakalama (bkz. app/radar/twapfast.py): sıfır hash'li ilk dilimde tek sorgu
         self.twap_fast_enabled = os.getenv("TWAP_FAST_ENABLED", "1") not in ("0", "false", "no")
         self.twap_fast_min_slice_usd = float(os.getenv("TWAP_FAST_MIN_SLICE_USD", "1000"))
         self.twap_fast_lookups_min = int(os.getenv("TWAP_FAST_LOOKUPS_MIN", "30"))
-        self.twap_fast_short_max_min = int(os.getenv("TWAP_FAST_SHORT_MAX_MIN", "30"))
+        self.twap_fast_short_max_min = int(os.getenv("TWAP_FAST_SHORT_MAX_MIN", "60"))   # ⚡ hızlı = ≤ 1 sa (12.10)
         self.twap_fast_short_min_usd = float(os.getenv("TWAP_FAST_SHORT_MIN_USD", "250000"))
         self.twap_fast_rate_x = float(os.getenv("TWAP_FAST_RATE_X", "2"))
         # TWAP ayna grubu: her TWAP mesajının (ilk, hızlı, yarı, bitiş) kopyası. Diğer

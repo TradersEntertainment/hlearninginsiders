@@ -3153,6 +3153,17 @@ def _fill_line(o: dict) -> str:
             + f" · kalan ≈ {usd(o.get('remaining_usd'))}")
 
 
+def twap_quick(ctx: dict, o: dict | None = None) -> str:
+    """⚡ HIZLI rozeti: emir süresi ≤ ctx['quick_max'] dk (kullanıcı 12.10: "çok hızlı" = 1 saat). Süre HL
+    emrinin kendi alanı (ölçüm, tahmin değil). Sınır verilmediyse rozet yok."""
+    o = o if o is not None else (ctx.get("order") or {})
+    mins = float((o or {}).get("minutes") or 0)
+    qm = float(ctx.get("quick_max") or 0)
+    if mins > 0 and qm > 0 and mins <= qm:
+        return f"⚡ <b>HIZLI · {dur_txt(mins * 60)}</b>"
+    return ""
+
+
 def twap_alert(m: dict, ctx: dict) -> str:
     """İlk bildirim — EMİR VERİSİYLE: plan, dolan, kalan süre; hacme oranı. Tahmin yok."""
     coin = m.get("coin") or ""
@@ -3162,7 +3173,9 @@ def twap_alert(m: dict, ctx: dict) -> str:
     o = ctx.get("order") or {}
     badge = (f"🐘 emir 24s hacmin <b>%{ctx['vol_pct']:.0f}</b>'i" if ctx.get("vol_pct") is not None
              else "💰 hacimden bağımsız büyük")
-    lines = [f"⏳ <b>TWAP</b> · {'🪙 ' if spot else ''}<b>{sym}</b> · {_twap_side(m.get('side'))} · {badge}",
+    quick = twap_quick(ctx)
+    lines = [f"⏳ <b>TWAP</b>{' · ' + quick if quick else ''} · {'🪙 ' if spot else ''}<b>{sym}</b> · "
+             f"{_twap_side(m.get('side'))} · {badge}",
              f"👤 {alink(m['address'])} · {_order_line(o, sym)}",
              f"{_fill_line(o)} · gördüğümüz {int(m.get('n') or 0)} dilim × ~{usd(m.get('avg_slice'))},"
              f" her {_gap_txt(m.get('median_gap'))}"]
@@ -3197,14 +3210,16 @@ def twap_alert(m: dict, ctx: dict) -> str:
 
 
 def twap_fast(o: dict, ctx: dict) -> str:
-    """⚡ İlk dilimde bildirim — EMİR VERİSİYLE: süre, plan, dakika hızı ve coinin ortalama dakika
+    """🔎 İlk dilimde bildirim — EMİR VERİSİYLE: süre (≤ 1 sa → ⚡ HIZLI), plan, dakika hızı ve coinin ortalama dakika
     hacmine oranı, başlangıç/bitiş saati, emirden kaç sn sonra bildirildiği. Tahmin yok."""
     coin = ctx.get("coin") or ""
     spot = assets.is_spot(coin)
     sym = esc(assets.label(coin))
     mins = float(o.get("minutes") or 0)
-    head = (f"⚡ <b>TWAP başladı</b> · {'🪙 ' if spot else ''}<b>{sym}</b> · {_twap_side(ctx.get('side'))}"
-            f" · <b>{dur_txt(mins * 60)}</b> · plan <b>{usd(o.get('planned_usd'))}</b>")
+    quick = twap_quick(ctx, o)
+    head = (f"⏳ <b>TWAP başladı</b>{' · ' + quick if quick else ''} · {'🪙 ' if spot else ''}<b>{sym}</b> · "
+            f"{_twap_side(ctx.get('side'))}" + ("" if quick else f" · <b>{dur_txt(mins * 60)}</b>")
+            + f" · plan <b>{usd(o.get('planned_usd'))}</b>")
     rate = []
     if ctx.get("per_min"):
         rate.append(f"dakikada ~<b>{usd(ctx['per_min'])}</b>")
@@ -3242,7 +3257,7 @@ def twap_fast(o: dict, ctx: dict) -> str:
     if ctx.get("day_vol"):
         extra.append(f"24s hacim {usd(ctx['day_vol'])}")
     if ctx.get("gate") == "short":
-        extra.append("kısa TWAP: dakika hızı kuralıyla")
+        extra.append("⚡ dakika hızı kuralıyla (emir/24s hacim eşiğinin altında)")
     if extra:
         lines.append(" · ".join(extra))
     if ctx.get("entity"):
@@ -3260,7 +3275,8 @@ def twap_progress(m: dict, ctx: dict) -> str:
     sym = esc(assets.label(m.get("coin") or ""))
     o = ctx.get("order") or {}
     fp = o.get("filled_pct")
-    line = (f"⏳ <b>TWAP yarılandı</b> · <b>{sym}</b> · {_twap_side(m.get('side'))}"
+    quick = twap_quick(ctx)
+    line = (f"⏳ <b>TWAP yarılandı</b>{' · ' + quick if quick else ''} · <b>{sym}</b> · {_twap_side(m.get('side'))}"
             f" · doldu <b>{usd(o.get('executed_usd'))}</b> / {usd(o.get('planned_usd'))}"
             + (f" (%{fp:.0f})" if fp is not None else ""))
     if o.get("left_sec") is not None:
@@ -3275,7 +3291,8 @@ def twap_end(m: dict, ctx: dict) -> str:
     sym = esc(assets.label(m.get("coin") or ""))
     o = ctx.get("order") or {}
     head = "⛔ <b>TWAP iptal edildi</b>" if ctx.get("cancelled") else "🏁 <b>TWAP bitti</b>"
-    lines = [f"{head} · <b>{sym}</b> · {_twap_side(m.get('side'))} · 👤 {alink(m['address'])}"]
+    quick = twap_quick(ctx)
+    lines = [f"{head}{' · ' + quick if quick else ''} · <b>{sym}</b> · {_twap_side(m.get('side'))} · 👤 {alink(m['address'])}"]
     if o.get("planned_usd"):
         done = float(o.get("executed_usd") or 0)
         fp = o.get("filled_pct")

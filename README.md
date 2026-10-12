@@ -367,7 +367,7 @@ bildirilmez.
 - **Restart:** bekleme (6 saat) `alerts_log`'da; bildirilmiş turlar açılışta
   geri yüklenir, bitiş notu kaybolmaz. Ayarlar → **TWAP radarı**.
 
-### ⚡ Hızlı TWAP — ilk dilimde (`app/radar/twapfast.py`)
+### 🔎 İlk dilimde TWAP + ⚡ HIZLI TWAP (`app/radar/twapfast.py`)
 
 Kullanıcı (12.10): "5 dk'lık TWAP coini çok sert oynatıyor, 1. dakikada yakalayabilir miyiz?" Eski yol
 10 dilim + 5 dk beklediği için 5 dk'lık bir TWAP ancak bittiğinde aday oluyordu ve hiç bildirilmiyordu.
@@ -380,13 +380,17 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   ön süzgeç (G/Ç yok: dilim ≈ plan / (2m+1), dakika hızı ≈ 2 × dilim; iki kapıdan birini geçemeyecek
   dilim sorulmaz — BTC'de $5K dilim gibi) → öncelik sırasıyla (dakika hızı ÷ coinin ortalama dakika
   hacmi) **tek emir sorgusu** (aynı anda ≤ 3, dakikada ≤ `twap_fast_lookups_min`) → kapı → bildirim.
-  Hedef: emirden **~3-8 sn** sonra; `/tani` "⚡ hızlı twap" satırı ortanca gecikmeyi yazar.
+  Hedef: emirden **~3-8 sn** sonra; `/tani` "🔎 ilk dilim twap" satırı ortanca gecikmeyi yazar.
 - **Kapı:** (1) eski kapı aynen (≥ $1M, kalan, 24s hacmin %5'i — BTC/ETH %20), yalnız saniyeler
-  içinde; (2) **kısa TWAP** (≤ `twap_fast_short_max_min` = 30 dk): emir ≥ `twap_fast_short_min_usd`
+  içinde; (2) **⚡ hızlı TWAP** (süresi ≤ `twap_fast_short_max_min` = 60 dk): emir ≥ `twap_fast_short_min_usd`
   ($250K) VE dakika hızı coinin 24s ortalama dakika hacminin ≥ `twap_fast_rate_x` (2) katı VE planın
   ≥ %30'u kalmış. 5 dk'lık $1M emir günün hacminin %2'si olsa da dakikada $200K'dır — eski %5 kuralı
   onu susturuyordu.
-- **Mesaj (⚡ TWAP başladı):** süre, plan, dakikada $, ortalama dakika hacminin katı, emir/24s hacim,
+- **⚡ HIZLI rozeti (kullanıcı 12.10: "çok hızlı" = 1 saat):** emir süresi ≤ `twap_fast_short_max_min`
+  (60 dk) olan TWAP'ın TÜM mesajlarında (ilk alarm, ilk dilim alarmı, yarı, 🏁/⛔) başlıkta
+  `⚡ HIZLI · 5 dk` yazar. Süre HL emrinin kendi alanıdır (ölçüm). Sınır ayarlardan değişir; aynı sınır
+  dakika hızı kuralında da kullanılır.
+- **Mesaj (⏳ TWAP başladı):** süre, plan, dakikada $, ortalama dakika hacminin katı, emir/24s hacim,
   başlangıç–bitiş saati (TSİ), emirden kaç sn sonra bildirildiği, ilk dilim, dolan/kalan, pozisyon
   (en çok 2,5 sn beklenir), takip (`/takip_N`). Tahmin yok: emir HL'den okunamazsa bildirim yok
   (sıfır hash likidasyon dolumunda da görülebildiği için emir yoksa düşer, 5 dk yok sayılır).
@@ -408,7 +412,7 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
 ### TWAP ayna grubu (`TWAP_MIRROR_CHAT_ID`)
 
 TWAP mesajları bugünkü yerlerine (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) gitmeye devam eder;
-**her TWAP mesajının birebir kopyası** (ilk alarm, ⚡ hızlı alarm, yarı, 🏁/⛔ bitiş) ayrıca bu gruba
+**her TWAP mesajının birebir kopyası** (ilk alarm, 🔎 ilk dilim alarmı, yarı, 🏁/⛔ bitiş) ayrıca bu gruba
 gider. Env-only (Railway Variables; diğer chat id'leri gibi ayarlar sayfasında yok); boş = kapalı.
 
 - Grup id'si: botu gruba ekle, grupta `/id` yaz (normal grup `-540…`, süper grup/kanal `-100…`).

@@ -19,8 +19,9 @@ VE kalan ≥ min(twap_alert_min_left_usd $1M, planın yarısı) VE emir 24s hacm
 twap_alert_vol_pct'i (%5; BTC/ETH %20). Emir yok / bitmiş / iptal / hacim bilinmiyor →
 bildirim YOK. "Bu hızla 24 saatte…" gibi ekstrapolasyon mesajlarda yer almaz.
 Kripto → CRYPTO_CHAT_ID (boşsa gönderilmez), hisse/endeks → ana sohbet; her TWAP
-mesajının kopyası TWAP_MIRROR_CHAT_ID'ye (mirror). ⚡ İlk dilimde yakalama ayrı
-modülde (twapfast.py); bu yolun kararına ve 🧪 LOG-TWAP kaydına dokunmaz.
+mesajının kopyası TWAP_MIRROR_CHAT_ID'ye (mirror). Emir süresi ≤ twap_fast_short_max_min (1 sa) →
+mesajlarda ⚡ HIZLI. 🔎 İlk dilimde yakalama ayrı modülde (twapfast.py); bu yolun kararına ve 🧪 LOG-TWAP
+kaydına dokunmaz.
 İlerleme notu emrin yarısı dolunca (tek sefer), bitiş/iptal notu emir
 finished/terminated olunca — gerçek dolan tutarla.
 
@@ -536,6 +537,11 @@ def chat_for(cfg, coin: str) -> tuple[str, bool]:
     return "", True
 
 
+def quick_max(cfg) -> float:
+    """⚡ HIZLI TWAP sınırı (dk) — mesaj rozeti ve hızlı TWAP dakika hızı kuralı aynı sınırı kullanır."""
+    return float(getattr(cfg, "twap_fast_short_max_min", 60) or 0)
+
+
 def mirror_chat(cfg) -> str:
     return (getattr(cfg, "twap_mirror_chat_id", "") or "").strip()
 
@@ -695,7 +701,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                             await alert_log("twap_endo", eo, "")
                         chat, can = chat_for(cfg, run.coin)
                         ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
-                               "cancelled": (order or {}).get("status") in ("terminated", "error")}
+                               "cancelled": (order or {}).get("status") in ("terminated", "error"),
+                               "quick_max": quick_max(cfg)}
                         text = fmt.twap_end(mm, ctx)
                         if can:
                             ok = await notifier.send("twap", text, priority="high", coin=run.coin,
@@ -713,7 +720,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                     if not await alert_recent("twap_prog", pkey, 86400):
                         await alert_log("twap_prog", pkey, "")
                         chat, can = chat_for(cfg, run.coin)
-                        ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin)}
+                        ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
+                               "quick_max": quick_max(cfg)}
                         text = fmt.twap_progress(mm, ctx)
                         if can:
                             ok = await notifier.send("twap", text, priority="high", coin=run.coin,
@@ -811,7 +819,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         log.debug("twap takip teklifi yazılamadı (%s)", run.coin, exc_info=True)
                 ctx = {"order": order, "day_vol": day_vol, "vol_pct": det["vol_pct"],
                        "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or "",
-                       "offer": offer}
+                       "offer": offer, "quick_max": quick_max(cfg)}
                 text = fmt.twap_alert(m, ctx)
                 mkey = f"alert:{key}:{run.first_ts}"
                 if not can:                                   # ana kanal tanımsız (kripto) — yalnız ayna; durum eskisi gibi

@@ -1,4 +1,4 @@
-"""⚡ Hızlı TWAP — HL TWAP emrini İLK dilimde yakalar.
+"""🔎 İlk dilimde TWAP — HL TWAP emrini İLK dilimde yakalar (⚡ HIZLI = emir süresi ≤ 1 sa, mesaj rozeti).
 
 Kullanıcı (12.10): "bazı TWAP'lar 5 dk'lık oluyor ve coini çok sert oynatıyor; 1. dakikada en geç
 yakalama şansımız var mı?" Eski yol (twaplive) 10 dilim + 5 dk bekliyordu: 5 dk'lık TWAP o eşiğe
@@ -17,7 +17,7 @@ sıra. Bu döngü öncelik sırasıyla (dilimin dakika hızı ÷ coinin ortalama
 ve en çok 3 eşzamanlı sorguyla emri okur → kapı → bildirim (ana grup + ayna grubu). Kapı:
   1) eski kapı (twaplive.order_gate: plan ≥ $1M · kalan · 24s hacmin %5'i, BTC/ETH %20) — aynı eşik,
      yalnız saniyeler içinde
-  2) kısa TWAP (≤ twap_fast_short_max_min dk): plan ≥ twap_fast_short_min_usd VE emrin dakika hızı ≥
+  2) ⚡ hızlı TWAP (süresi ≤ twap_fast_short_max_min = 60 dk): plan ≥ twap_fast_short_min_usd VE dakika hızı ≥
      coinin 24s dakika ortalamasının twap_fast_rate_x katı VE planın ≥ %30'u kalmış
 TAHMİN YOK: emir HL'den okunamazsa bildirim yok (sıfır hash likidasyonda da görülebilir → emir yoksa düşer).
 
@@ -47,7 +47,7 @@ RETRY_NO_ORDER = 4          # emir geçmişte yok → bir kez daha (snapshot gec
 RETRY_FAIL = 30             # sorgu başarısız → bu kadar sonra yeniden sıraya girebilir
 NO_ORDER_IGNORE = 300       # emir bulunmadı (likidasyon/ADL) → bu adres+coin+yön bu kadar yok sayılır
 SEND_RETRY = 5
-SHORT_LEFT_MIN = 0.3        # kısa TWAP: planın en az bu payı kalmış olmalı
+SHORT_LEFT_MIN = 0.3        # ⚡ hızlı TWAP: planın en az bu payı kalmış olmalı
 POS_TIMEOUT = 2.5           # pozisyon satırı bildirimi bundan fazla geciktirmez
 SILENT_SEC = 90             # bildirilmiş emrin dilimi bu kadar gelmezse (iptal?) emir yeniden sorulur
 END_GRACE = 30              # planlanan bitişten bu kadar sonra emir sorulur (🏁/⛔ notu)
@@ -58,8 +58,8 @@ WS_CEILING = 6              # collector'da bekleyen emir sorgusu bundan azsa ba�
 PRE_SLACK = 0.7             # ilk dilim nominalin 0.8-1.2'si (randomize): ön süzgeç bu payla gevşek
 LONG_HORIZON_MIN = 1440     # uzun TWAP ön süzgeci: en çok 24 saatlik emir varsayılır (daha uzunu eski yola kalır)
 FAST_CD = "twap_fastcd"     # hızlı yolun bekleme işareti (eski yolun 'twap' işaretinden AYRI)
-REASON_TR = {**twaplive.REASON_TR, "short": "kısa TWAP · dakika hızı", "slow": "dakika hızı düşük",
-             "short_small": "kısa TWAP eşik altı", "short_left": "kısa TWAP: kalan az",
+REASON_TR = {**twaplive.REASON_TR, "short": "⚡ hızlı TWAP · dakika hızı", "slow": "dakika hızı düşük",
+             "short_small": "⚡ hızlı TWAP eşik altı", "short_left": "⚡ hızlı TWAP: kalan az",
              "lookup_fail": "emir sorgusu başarısız", "no_order": "HL'de aktif TWAP emri yok",
              "cooldown": "bekleme içinde", "failed": "gönderilemedi", "alerted": "bildirildi"}
 
@@ -202,7 +202,7 @@ def prefilter(cfg, coin: str, slice_usd: float, vol, now_ts: int) -> str:
         return "pre_novol"
     dv = float(vol[0])
     pre_x = 2.0 * slice_usd / (dv / 1440.0)
-    short_max = float(getattr(cfg, "twap_fast_short_max_min", 30) or 0)
+    short_max = twaplive.quick_max(cfg)
     short_min = float(getattr(cfg, "twap_fast_short_min_usd", 250_000) or 0)
     rx_min = float(getattr(cfg, "twap_fast_rate_x", 2.0) or 0)
     spot_min = float(getattr(cfg, "spot_twap_min_day_vol", 0) or 0)
@@ -230,10 +230,10 @@ def rate_x(order: dict, day_vol, vol_ts, now_ts: int) -> tuple[float | None, flo
 
 
 def short_gate(cfg, order: dict, rx: float | None) -> str:
-    """Kısa TWAP kuralı: 'short' geçer; diğerleri neden. Durum/hacim kontrolleri order_gate'te yapılmış olur."""
+    """⚡ Hızlı TWAP kuralı (süre ≤ 1 sa): 'short' geçer; diğerleri neden. Durum/hacim order_gate'te yoklanmış olur."""
     minutes = float(order.get("minutes") or 0)
-    if not minutes or minutes > float(getattr(cfg, "twap_fast_short_max_min", 30) or 0):
-        return ""                                       # kısa değil → eski kapının nedeni geçerli
+    if not minutes or minutes > twaplive.quick_max(cfg):
+        return ""                                       # hızlı değil → eski kapının nedeni geçerli
     plan = float(order.get("planned_usd") or 0)
     if plan < float(getattr(cfg, "twap_fast_short_min_usd", 250_000) or 0):
         return "short_small"
@@ -424,7 +424,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
         ctx = {"coin": coin, "address": addr, "side": side, "gate": g, "day_vol": day_vol,
                "vol_pct": det.get("vol_pct"), "per_min": det.get("per_min"), "rate_x": det.get("rate_x"),
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
-               "entity": entity, "offer": offer, "now": now()}
+               "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg)}
         text = fmt.twap_fast(order, ctx)
         ok = False
         if can:
@@ -532,7 +532,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
         await alert_log("twap_endo", okey, "")
         vol = (twaplive.VOL_CACHE.get("v") or {}).get(r["coin"])
         ctx = {"order": o, "day_vol": vol[0] if vol else None, "klass": twaplive.klass_of(r["coin"]),
-               "cancelled": st in ("terminated", "error")}
+               "cancelled": st in ("terminated", "error"), "quick_max": twaplive.quick_max(cfg)}
         text = fmt.twap_end(_end_measure(r), ctx)
         chat, can = twaplive.chat_for(cfg, r["coin"])
         if can:
@@ -643,9 +643,9 @@ async def diag_line() -> str:
     """/tani ve /twap için tek satır."""
     st = await kv_get(STATS_KV) or {}
     if not st.get("ts"):
-        return "⚡ hızlı twap: tur HENÜZ ÇALIŞMADI"
+        return "🔎 ilk dilim twap: tur HENÜZ ÇALIŞMADI"
     if st.get("error"):
-        return f"⚡ hızlı twap: ⚠️ {st['error']}"
+        return f"🔎 ilk dilim twap: ⚠️ {st['error']}"
     m = st.get("mirror") or {}
     parts = [f"{st.get('zero', 0)} sıfır hash'li dolum", f"{st.get('queued', 0)} dilim sıraya",
              f"{st.get('lookups', 0)} sorgu", f"{st.get('alerts', 0)} bildirim"]
@@ -653,7 +653,7 @@ async def diag_line() -> str:
         parts.append(f"emirden bildirime ortanca {st['lat_med']} sn (en çok {st.get('lat_max')} sn)")
     for k, lab in (("pre_low", "ön süzgeçte küçük"), ("pre_novol", "hacim bilinmiyor"),
                    ("no_order", "emir yok"), ("slow", "dakika hızı düşük"), ("vol_small", "hacme göre küçük"),
-                   ("order_small", "eşik altı"), ("short_small", "kısa eşik altı"), ("cooldown", "bekleme"),
+                   ("order_small", "eşik altı"), ("short_small", "⚡ hızlı eşik altı"), ("cooldown", "bekleme"),
                    ("dropped_old", "sırada eskidi"), ("capped", "dakika tavanı"), ("no_ws", "soket dolu"),
                    ("mm", "mm/vault"), ("notify_off", "TWAP bildirimi kapalı"), ("no_chat", "kanal yok"),
                    ("ends", "bitiş notu")):
@@ -664,7 +664,7 @@ async def diag_line() -> str:
             parts.append(f"⚠️ {st[k]} {lab}")
     if m.get("sent") or m.get("failed"):
         parts.append(f"ayna ✓{m.get('sent', 0)}" + (f" ⚠️✗{m['failed']}" if m.get("failed") else ""))
-    return "⚡ hızlı twap: " + " · ".join(parts)
+    return "🔎 ilk dilim twap: " + " · ".join(parts)
 
 
 def recent_line(d: dict) -> str:
