@@ -31,6 +31,12 @@ DONE = ("finished", "terminated", "error")
 CANCELLED = ("terminated", "error")
 
 
+def _quick_max(cfg) -> float:
+    """⚡ HIZLI sınırı (dk) — gerçek twaplive'dan (_one'a verilen twaplive testte sahte olabilir)."""
+    from .twaplive import quick_max
+    return quick_max(cfg)
+
+
 async def start(cfg, coin: str, address: str, side: str, first_ts: int,
                 chat_id: str = "") -> int:
     """Takibi aç, id döner. Aynı tur ikinci kez takip edilmez (UNIQUE)."""
@@ -139,7 +145,7 @@ async def _one(cfg, f: dict, hist: list, ts: int, notifier, fmt, twaplive, out: 
     if status in DONE:
         cancelled = status in CANCELLED
         ctx = {"order": o, "day_vol": m.get("day_volume"), "cancelled": cancelled,
-               "klass": twaplive.klass_of(f["coin"]), "follow": True, "quick_max": twaplive.quick_max(cfg)}
+               "klass": twaplive.klass_of(f["coin"]), "follow": True, "quick_max": _quick_max(cfg)}
         # Başlık `twap_end`'in kendisinde (⛔ / 🏁) — burada yalnız "neden bu mesajı
         # aldın" satırı. İkisini birden yazmak başlığı çiftliyordu.
         text = "👁 <b>takip ettiğin emir</b>\n" + fmt.twap_end(m, ctx)
@@ -158,7 +164,7 @@ async def _one(cfg, f: dict, hist: list, ts: int, notifier, fmt, twaplive, out: 
     if (getattr(cfg, "twap_follow_progress", True) and not f.get("half_ts")
             and filled >= HALF_PCT and status == "activated"):
         ctx = {"order": o, "day_vol": m.get("day_volume"), "klass": twaplive.klass_of(f["coin"]),
-               "quick_max": twaplive.quick_max(cfg)}
+               "quick_max": _quick_max(cfg)}
         text = "👁 <b>takip ettiğin emir</b>\n" + fmt.twap_progress(m, ctx)
         from .trackctl import still_active
         if not await still_active("twap", f["id"]):
