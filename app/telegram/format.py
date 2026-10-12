@@ -3205,7 +3205,7 @@ def twap_alert(m: dict, ctx: dict) -> str:
         lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
     if klass == "hisse" and is_listed(sym):
         lines.append(PROPR_NOTE)
-    if quick:
+    if ctx.get("auto_end"):
         lines.append(TWAP_AUTO_NOTE)                    # ⚡: takip tuşu yok, iptal/bitiş kanala kendiliğinden
     elif ctx.get("offer"):
         # Bu emri izle: iptal edilirse ⛔, bitince 🏁 haber gelir (yalnız basana).
@@ -3271,7 +3271,7 @@ def twap_fast(o: dict, ctx: dict) -> str:
         lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
     if (ctx.get("klass") or "") == "hisse" and is_listed(sym):
         lines.append(PROPR_NOTE)
-    if quick:
+    if ctx.get("auto_end"):
         lines.append(TWAP_AUTO_NOTE)
     elif ctx.get("offer"):
         lines.append(f"👁 emri takip et → /takip_{ctx['offer']}")

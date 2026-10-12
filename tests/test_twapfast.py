@@ -433,6 +433,118 @@ def test_prefilter_fragments_and_stray_snapshot():
     print("✅ inceleme) aynı saniyenin parçaları yeniden tartılır; big önce; başka adresin snapshot'ı düşmez")
 
 
+def test_quick_cancel_reliability():
+    """İnceleme: ⚡ HIZLI iptal notu her yolda gerçekten gelir — yeniden başlatma, kapı düşmesi, aynı anahtarda
+    başka TWAP, Telegram anlık hatası, iki yolun aynı anda yazması; bitiş notu kapalıyken 'otomatik' yazılmaz."""
+    async def run():
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        started = now - 120
+        state = {"st": "activated", "ex": 0.05}
+        col = Col(lambda: [twap_order(started, minutes=30, plan=900_000, ex_frac=state["ex"], status=state["st"])])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
+        await _drain(cfg, notifier, col)
+        assert len(bot.sent) == 2 and "🔔 iptal ⛔" in bot.sent[0][1]
+        assert [r["started"] for r in await dbm.kv_get(tf.OPEN_KV)] == [started], "kayıt kv'de"
+        # (1) yeniden başlatma: bellek gider, kv'den yüklenir; ilk turda sorulur → kapalıyken iptal → ⛔
+        tf.F.clear()
+        assert await tf.load_open(now) == 1 and ("PUMP", A, "buy") in tf.F.known
+        state["st"] = "terminated"
+        assert await tf.lifecycle(cfg, notifier, col, now) == 1
+        ends = [c for c, t in bot.sent if "TWAP iptal edildi" in t]
+        assert ends == ["-100", "-200"], bot.sent
+        assert await dbm.kv_get(tf.OPEN_KV) == [], "biten emir kayıttan düşer"
+        # (2) kapı düşse de (kalan az) aynı emir yeniden sahiplenilir
+        await _fresh(cfg)
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        state.update(st="activated", ex=0.05)
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
+        await _drain(cfg, notifier, col)
+        tf.F.clear()
+        state["ex"] = 0.8                                       # %80 doldu → kısa TWAP kapısı 'short_left'
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, now - 1, 1000)
+        await _drain(cfg, notifier, col)
+        assert ("PUMP", A, "buy") in tf.F.open and len(bot.sent) == 2, "yeniden sahiplenildi, mesaj tekrar yok"
+        # (3) aynı anahtarda başka TWAP dilim atıyor (sessizlik yok) → dakikada bir sorgu yine iptali yakalar
+        rec = tf.F.open[("PUMP", A, "buy")]
+        rec["lookup_ts"], rec["last_ts"] = now - 61, now - 5
+        state["st"] = "terminated"
+        # (4) Telegram anlık hatası: ana kanal bir kez düşer → işaret yok, sonraki turda yeniden; ayna bir kez
+        bot.fail = {"-100"}
+        assert await tf.lifecycle(cfg, notifier, col, now) == 0 and not rec["ended"]
+        assert await _kind("twap_endo") == 0
+        bot.fail = set()
+        assert await tf.lifecycle(cfg, notifier, col, now + 31) == 1
+        ends = [c for c, t in bot.sent if "TWAP iptal edildi" in t]
+        assert ends == ["-100", "-200"], bot.sent
+        # (5) iki yol aynı anda: eski yol yazıyorsa hızlı yol bekler
+        await _fresh(cfg)
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        state.update(st="activated", ex=0.05)
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
+        await _drain(cfg, notifier, col)
+        state["st"] = "terminated"
+        rec = tf.F.open[("PUMP", A, "buy")]
+        rec["lookup_ts"] = 0
+        tl.ENDING.add(f"PUMP:{A}:buy:{started}")
+        assert await tf.lifecycle(cfg, notifier, col, now) == 0 and not rec["ended"]
+        tl.ENDING.clear()
+        rec["lookup_ts"] = 0
+        assert await tf.lifecycle(cfg, notifier, col, now) == 1
+        # (6) bitiş notu kapalıysa 'otomatik yazılır' denmez, takip satırı kalır
+        cfg2 = _cfg()
+        cfg2.twap_alert_end_note = False
+        await _fresh(cfg2)
+        b2 = Bot()
+        state.update(st="activated", ex=0.05)
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
+        await _drain(cfg2, Notifier(cfg2, b2), col)
+        assert "🔔" not in b2.sent[0][1] and "/takip_" in b2.sent[0][1]
+    asyncio.run(run())
+    print("✅ ⚡ iptal) yeniden başlatma, kapı düşmesi, aynı anahtarda başka TWAP, Telegram hatası, iki yol → ⛔ bir kez")
+
+
+def test_slow_quick_end_retry_and_rehydrate_merge():
+    async def run():
+        cfg = _cfg()
+        cfg.twap_fast_enabled = False
+        await _fresh(cfg)
+        now = dbm.now()
+        started = now - 400
+        state = {"st": "activated"}
+        col = Col(lambda: [twap_order(started, minutes=45, plan=3_000_000, ex_frac=0.2, status=state["st"])])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, started + 2 + 30 * i, 1)
+        await tl.evaluate(cfg, notifier, None, col)
+        assert len(bot.sent) == 2
+        # yeniden başlatma: yeni dilimler taze tur kurdu → kayıtlı (bildirilmiş) tur onun üzerine yüklenir
+        tl.REG.clear()
+        tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, now - 20, 1)
+        assert await tl._rehydrate(4 * 3600) == 1
+        run_ = tl.REG.runs[("PUMP", A, "buy")]
+        assert run_.alerted_ts and run_.order and run_.order["minutes"] == 45 and run_.n == 14
+        # iptal: ana kanal bir kez düşer → işaret yok, sonraki tur yeniden; sonra ⛔ kanal + ayna bir kez
+        state["st"] = "terminated"
+        run_.lookup_ts = now - 61
+        bot.fail = {"-100"}
+        await tl.evaluate(cfg, notifier, None, col)
+        assert not run_.ended_ts and await _kind("twap_end") == 0
+        bot.fail = set()
+        run_.lookup_ts = now - 61
+        await tl.evaluate(cfg, notifier, None, col)
+        ends = [c for c, t in bot.sent if "TWAP iptal edildi" in t]
+        assert ends == ["-100", "-200"] and run_.ended_ts, bot.sent
+    asyncio.run(run())
+    print("✅ ⚡ iptal) eski yol: yeniden başlatmada tur birleşir; ana kanal hatasında sonraki tur yeniden; ⛔ bir kez")
+
+
 def test_gates_and_skips():
     async def run():
         cfg = _cfg()

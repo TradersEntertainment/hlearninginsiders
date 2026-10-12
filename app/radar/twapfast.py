@@ -52,6 +52,8 @@ POS_TIMEOUT = 2.5           # pozisyon satırı bildirimi bundan fazla geciktirm
 SILENT_SEC = 90             # bildirilmiş emrin dilimi bu kadar gelmezse (iptal?) emir yeniden sorulur
 QUICK_SILENT = 45           # ⚡ HIZLI (≤ 1 sa): bir dilim (30 sn) gecikince sorulur — iptal ⛔ ~1 dk içinde kanalda
 QUICK_RELOOK = 30
+QUICK_POLL = 60             # ⚡ HIZLI emir dilim gelse de dakikada bir sorulur (aynı adresin başka TWAP'ı iptali gizlemesin)
+OPEN_KV = "twapfast_open"   # bildirilen emirlerin kaydı — yeniden başlatmada bitiş/iptal notu kaybolmasın
 END_GRACE = 30              # planlanan bitişten bu kadar sonra emir sorulur (🏁/⛔ notu)
 END_GIVEUP = 600            # HL bitişten bu kadar sonra hâlâ 'activated' diyorsa not yazılmadan kapatılır
 RELOOK_SEC = 60             # bildirilmiş emir için iki sorgu arası en az
@@ -349,6 +351,32 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
     return await _decide(cfg, client, notifier, key, p, order, vols, t, ents.get(addr) or "")
 
 
+async def save_open() -> None:
+    """F.open → kv (küçük: en çok birkaç düzine emir). Dilim sayaçları bir sonraki kayıtta güncellenir."""
+    try:
+        await kv_set(OPEN_KV, [{k: v for k, v in r.items()} for r in F.open.values() if not r.get("ended")])
+    except Exception:                                  # noqa: BLE001
+        log.debug("twapfast_open yazılamadı", exc_info=True)
+
+
+async def load_open(t: int) -> int:
+    """Açılış: bildirilmiş, bitmemiş emirler geri yüklenir; ilk turda (dakika aralığı dolmuş sayılır) sorulur —
+    kapalıyken iptal edilen emrin ⛔ notu da böylece yazılır."""
+    n = 0
+    for r in (await kv_get(OPEN_KV) or []):
+        try:
+            key = (r["coin"], r["addr"], r["side"])
+            if key in F.open or t > int(r["end_at"]) + END_GIVEUP:
+                continue
+            r["lookup_ts"], r["ended"] = 0, 0
+            F.open[key] = r
+            F.known[key] = int(r["end_at"]) + 120
+            n += 1
+        except (KeyError, TypeError, ValueError):
+            continue
+    return n
+
+
 def _adopt(key: tuple, p: dict, order: dict, t: int, alert_ts: int | None) -> dict:
     """Bildirilen emri hızlı yolun KENDİ kaydına al (eski yolun sayacına dokunmadan): bitiş/iptal notu buradan."""
     started = int(order.get("started_ts") or 0)
@@ -381,18 +409,22 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
     started = int(order.get("started_ts") or 0)
     info = {"planned": round(float(order.get("planned_usd") or 0)), "minutes": order.get("minutes"),
             "rate_x": det.get("rate_x"), "vol_pct": det.get("vol_pct"), "lag": t - started if started else None}
+    ckey = f"{coin}:{addr}:{side}"
+    fkey = f"{ckey}:{started}"
+    if await alert_recent("twap_fast", fkey, 86400):
+        # yeniden başlatma: AYNI emir zaten bildirildi — kapı şimdi ne derse desin (kalan azaldı, hız düştü)
+        # bitiş/iptal notu sözü sürer
+        if key not in F.open:
+            _adopt(key, p, order, t, None)
+            await save_open()
+        F.stats["cooldown"] += 1
+        F.note(p, "cooldown", **info)
+        return "cooldown"
     if g not in ("ok", "big", "short"):
         F.stats[g] = F.stats.get(g, 0) + 1
         F.note(p, g, **info)
         return g
-    ckey = f"{coin}:{addr}:{side}"
-    fkey = f"{ckey}:{started}"
     cool = int(getattr(cfg, "twap_alert_cooldown", 21600) or 0)
-    if await alert_recent("twap_fast", fkey, 86400):
-        _adopt(key, p, order, t, None)                  # yeniden başlatma: aynı emir — bitiş notu sözü sürer
-        F.stats["cooldown"] += 1
-        F.note(p, "cooldown", **info)
-        return "cooldown"
     if cool and (await alert_recent("twap", ckey, cool) or await alert_recent(FAST_CD, ckey, cool)):
         F.stats["cooldown"] += 1
         F.note(p, "cooldown", **info)
@@ -417,7 +449,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
             return "cooldown"
         pos = await _pos(client, coin, addr)
         offer = None
-        if getattr(cfg, "twap_follow_enabled", True) and not twaplive.is_quick(cfg, order):   # ⚡: kanala otomatik
+        if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):   # ⚡: kanala otomatik
             try:                                        # takip, emri başlangıç anıyla eşler (twapfollow)
                 offer = await twaplive._twap_offer(types.SimpleNamespace(
                     address=addr, coin=coin, side=side, total=float(order.get("planned_usd") or 0), first_ts=started))
@@ -427,6 +459,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
                "vol_pct": det.get("vol_pct"), "per_min": det.get("per_min"), "rate_x": det.get("rate_x"),
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
+               "auto_end": twaplive.auto_end(cfg, order),
                "why": det.get("reason")}
         text = fmt.twap_fast(order, ctx)
         ok = False
@@ -455,6 +488,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
     finally:
         twaplive.SENDING.discard(fkey)
     _adopt(key, p, order, t, t)
+    await save_open()
     F.stats["alerts"] += 1
     if started:
         F.lat.append(now() - started)
@@ -478,13 +512,15 @@ def _end_measure(r: dict) -> dict:
 
 
 async def lifecycle(cfg, notifier, collector, t: int) -> int:
-    """İlk dilim yolunun bildirdiği emirler: planlanan bitiş + 30 sn'de (ya da dilimler 90 sn — ⚡ HIZLI'da 45 sn —
-    kesilince) emir bir kez
-    sorulur → bitti/iptal → 🏁/⛔ notu (ana hedef + ayna). HL hâlâ 'activated' diyorsa beklenir (sessizlik bitiş
-    sayılmaz); bitişten 10 dk sonra hâlâ öyleyse not yazılmadan kapatılır. Eski yolun bitiş notuyla emir
-    anahtarı ('twap_endo') üzerinden tekil. Dönüş: yazılan not sayısı."""
+    """İlk dilim yolunun bildirdiği emirler → 🏁/⛔ notu (ana hedef + ayna). Emir sorulur: planlanan bitiş + 30 sn'de,
+    dilimler kesilince (90 sn; ⚡ HIZLI'da 45 sn) ve ⚡ HIZLI'da ayrıca dakikada bir (aynı adres+coin+yönün başka
+    TWAP'ı dilim atmaya devam etse de iptal kaçmasın). HL 'activated' diyorsa beklenir; bitişten 10 dk sonra hâlâ
+    öyleyse not yazılmadan kapatılır. Not ana hedefe gidemezse sonraki turlarda yeniden denenir (en çok 3 kez).
+    Eski yolla emir anahtarı üzerinden tekil ('twap_endo' + aynı anda yazmayı önleyen talep). Dönüş: yazılan not."""
+    from ..notify import in_quiet_hours
     from ..telegram import format as fmt
     sent = 0
+    changed = False
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
     for key, r in list(F.open.items()):
         if r["ended"]:
@@ -493,7 +529,8 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
             continue
         end_at = int(r["end_at"])
         quick = twaplive.is_quick(cfg, r.get("order"))
-        due = t >= end_at + END_GRACE or t - int(r["last_ts"]) > (QUICK_SILENT if quick else SILENT_SEC)
+        due = (t >= end_at + END_GRACE or t - int(r["last_ts"]) > (QUICK_SILENT if quick else SILENT_SEC)
+               or (quick and t - int(r["lookup_ts"]) >= QUICK_POLL))
         if not due:
             continue
         if t - int(r["lookup_ts"]) < (QUICK_RELOOK if quick else RELOOK_SEC) \
@@ -511,7 +548,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
         except Exception:                              # noqa: BLE001
             hist = None
         if hist is None:
-            continue                                    # sorgu başarısız: sonraki tur (RELOOK_SEC)
+            continue                                    # sorgu başarısız: sonraki tur
         o = None
         for x in twaplive.parse_twap_orders(hist, r["coin"], r["side"], r["px_last"], t):
             if abs(int(x.get("started_ts") or 0) - int(r["started"])) <= 2:
@@ -523,29 +560,43 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
         if st == "activated":
             if t < end_at + END_GIVEUP:
                 continue                                # HL kapatmadı (iptal değil, sürüyor) — bekle
-            r["ended"] = t
+            r["ended"], changed = t, True
             F.known.pop(key, None)
             continue
         if o is None and t < end_at + END_GRACE:
             continue                                    # geçmişte görünmüyor ama süresi dolmadı — bekle
-        r["ended"] = t
-        F.known.pop(key, None)                          # aynı adres+coin+yönün YENİ emri yeniden sorulabilsin
         if o is None or not getattr(cfg, "twap_alert_end_note", True):
+            r["ended"], changed = t, True
+            F.known.pop(key, None)
             continue
         okey = f"{key[0]}:{key[1]}:{key[2]}:{int(r['started'])}"
-        if await alert_recent("twap_endo", okey, 86400):
-            continue                                    # eski yol bu emrin notunu yazdı
-        await alert_log("twap_endo", okey, "")
-        vol = (twaplive.VOL_CACHE.get("v") or {}).get(r["coin"])
-        ctx = {"order": o, "day_vol": vol[0] if vol else None, "klass": twaplive.klass_of(r["coin"]),
-               "cancelled": st in ("terminated", "error"), "quick_max": twaplive.quick_max(cfg)}
-        text = fmt.twap_end(_end_measure(r), ctx)
-        chat, can = twaplive.chat_for(cfg, r["coin"])
-        if can:
-            await notifier.send("twap", text, priority="high", coin=r["coin"], key=f"twap_endf:{okey}", chat_id=chat)
-        await twaplive.mirror(cfg, notifier, text, f"end:{okey}", r["coin"], primary=chat if can else None)
-        F.stats["ends"] += 1
-        sent += 1
+        if okey in twaplive.ENDING:
+            continue                                    # eski yol bu emrin notunu ŞU AN yazıyor — sonraki tur
+        twaplive.ENDING.add(okey)
+        try:
+            if not await alert_recent("twap_endo", okey, 86400):
+                vol = (twaplive.VOL_CACHE.get("v") or {}).get(r["coin"])
+                ctx = {"order": o, "day_vol": vol[0] if vol else None, "klass": twaplive.klass_of(r["coin"]),
+                       "cancelled": st in ("terminated", "error"), "quick_max": twaplive.quick_max(cfg)}
+                text = fmt.twap_end(_end_measure(r), ctx)
+                chat, can = twaplive.chat_for(cfg, r["coin"])
+                if can:
+                    ok = await notifier.send("twap", text, priority="high", coin=r["coin"], key=f"twap_endf:{okey}",
+                                             chat_id=chat)
+                    if not ok and not (not chat and in_quiet_hours(cfg)):
+                        r["end_tries"] = int(r.get("end_tries") or 0) + 1
+                        F.stats["failed"] += 1
+                        if r["end_tries"] < twaplive.END_MAX_TRIES:
+                            r["lookup_ts"] = t - QUICK_RELOOK   # işaret YOK: bir sonraki turda yeniden
+                            continue
+                await alert_log("twap_endo", okey, "")
+                await twaplive.mirror(cfg, notifier, text, f"end:{okey}", r["coin"], primary=chat if can else None)
+                F.stats["ends"] += 1
+                sent += 1
+            r["ended"], changed = t, True
+            F.known.pop(key, None)                      # aynı adres+coin+yönün YENİ emri yeniden sorulabilsin
+        finally:
+            twaplive.ENDING.discard(okey)
         try:                                            # /twaplar sekmesinde 🔎 işareti (eski yolun satırı varsa)
             from ..db import db
             async with db() as conn:
@@ -553,6 +604,8 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
                                    " AND order_ts=?", (r["alert_ts"], r["coin"], r["addr"], r["side"], r["started"]))
         except Exception:                              # noqa: BLE001
             log.debug("twap_runs fast_ts", exc_info=True)
+    if changed:
+        await save_open()
     return sent
 
 
@@ -617,6 +670,12 @@ async def loop(cfg, client, notifier, collector=None) -> None:
     tasks: set = set()
     last = vol_last = life_last = 0
     await asyncio.sleep(20)
+    try:
+        n = await load_open(now())
+        if n:
+            log.info("ilk dilim twap: %d bildirilmiş emir geri yüklendi (bitiş/iptal notu için)", n)
+    except Exception:                                  # noqa: BLE001
+        log.debug("twapfast_open okunamadı", exc_info=True)
     while True:
         try:
             await asyncio.wait_for(F.event.wait(), timeout=1.0)

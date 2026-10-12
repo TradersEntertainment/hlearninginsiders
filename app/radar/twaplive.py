@@ -501,14 +501,25 @@ async def _rehydrate(window_sec: int) -> int:
     n = 0
     for r in rows:
         key = (r["coin"], r["address"], r["side"])
-        if key in REG.runs:
+        cur = REG.runs.get(key)
+        if cur is not None and cur.alerted_ts:
             continue
-        run = Run(r["coin"], r["address"], r["side"], int(r["first_ts"]), float(r.get("px_first") or 0))
-        run.last_ts = int(r["last_ts"])
-        run.n = int(r.get("n_slices") or 0)
-        run.total = float(r.get("total") or 0)
-        run.sz_total = float(r.get("sz_total") or 0)
-        run.px_last = float(r.get("px_last") or run.px_first)
+        if cur is not None:
+            # Açılışta yeni dilimler bu anahtar için bildirilmemiş taze bir tur kurmuş: kayıtlı (bildirilmiş) turu
+            # onun ÜZERİNE yükle — yoksa bitiş/iptal notu (⚡ HIZLI'da kanala otomatik) kaybolurdu.
+            run = cur
+            run.first_ts = min(int(run.first_ts), int(r["first_ts"]))
+            run.n += int(r.get("n_slices") or 0)
+            run.total += float(r.get("total") or 0)
+            run.sz_total += float(r.get("sz_total") or 0)
+            run.px_first = float(r.get("px_first") or run.px_first)
+        else:
+            run = Run(r["coin"], r["address"], r["side"], int(r["first_ts"]), float(r.get("px_first") or 0))
+            run.last_ts = int(r["last_ts"])
+            run.n = int(r.get("n_slices") or 0)
+            run.total = float(r.get("total") or 0)
+            run.sz_total = float(r.get("sz_total") or 0)
+            run.px_last = float(r.get("px_last") or run.px_first)
         run.alerted_ts = int(r["alerted_ts"])
         run.alert_total = run.total
         run.day_volume = r.get("day_volume")
@@ -549,6 +560,12 @@ def is_quick(cfg, order: dict | None) -> bool:
     mins = float((order or {}).get("minutes") or 0)
     qm = quick_max(cfg)
     return 0 < mins <= qm if qm > 0 else False
+
+
+def auto_end(cfg, order: dict | None) -> bool:
+    """Mesajda '🔔 iptal ⛔ / bitiş 🏁 buraya otomatik yazılır' (ve takip tuşu yok) yalnız gerçekten yazılacaksa:
+    ⚡ HIZLI emir VE bitiş notu açık."""
+    return is_quick(cfg, order) and bool(getattr(cfg, "twap_alert_end_note", True))
 
 
 async def _quick_refresh(collector, run: "Run", ts: int, out: dict) -> None:
@@ -621,6 +638,9 @@ async def volumes_cached(client=None, max_age: int = 300) -> dict:
 
 
 SENDING: set[str] = set()   # emir anahtarı (coin:adres:yön:başlangıç) — şu an gönderiliyor (iki yol aynı emri iki kez yazmasın)
+ENDING: set[str] = set()    # aynı emrin 🏁/⛔ notu şu an yazılıyor (iki yol aynı anda yazmasın)
+END_TRIES: dict[str, int] = {}
+END_MAX_TRIES = 3           # bitiş/iptal notu ana hedefe gidemezse sonraki turlarda bu kadar dene
 
 
 def order_key(key: str, order: dict | None) -> str | None:
@@ -727,24 +747,40 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                     if vol:
                         run.day_volume = vol[0]
                     eo = order_key(key, order)
-                    if getattr(cfg, "twap_alert_end_note", True) and not await alert_recent(
-                            "twap_end", f"{key}:{run.first_ts}", 86400) and not (
-                            eo and await alert_recent("twap_endo", eo, 86400)):   # ⚡ hızlı yol bu emrin notunu yazdı
-                        await alert_log("twap_end", f"{key}:{run.first_ts}", "")
-                        if eo:
-                            await alert_log("twap_endo", eo, "")
-                        chat, can = chat_for(cfg, run.coin)
-                        ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
-                               "cancelled": (order or {}).get("status") in ("terminated", "error"),
-                               "quick_max": quick_max(cfg)}
-                        text = fmt.twap_end(mm, ctx)
-                        if can:
-                            ok = await notifier.send("twap", text, priority="high", coin=run.coin,
-                                                     key=f"twap_end:{key}", chat_id=chat)
-                            if not ok and not (not chat and in_quiet_hours(cfg)):
-                                out["failed"] += 1
-                        await mirror(cfg, notifier, text, f"end:{key}:{run.first_ts}", run.coin, out,
-                                     primary=chat if can else None)
+                    ekey = f"{key}:{run.first_ts}"
+                    if getattr(cfg, "twap_alert_end_note", True):
+                        claim = eo or ekey
+                        if claim in ENDING:               # hızlı yol bu emrin notunu ŞU AN yazıyor — sonraki tur bakar
+                            run.ended_ts = None
+                            out["ended"] -= 1
+                            continue
+                        ENDING.add(claim)
+                        try:
+                            if not await alert_recent("twap_end", ekey, 86400) and not (
+                                    eo and await alert_recent("twap_endo", eo, 86400)):   # hızlı yol yazdıysa yok
+                                chat, can = chat_for(cfg, run.coin)
+                                ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
+                                       "cancelled": (order or {}).get("status") in ("terminated", "error"),
+                                       "quick_max": quick_max(cfg)}
+                                text = fmt.twap_end(mm, ctx)
+                                if can:
+                                    ok = await notifier.send("twap", text, priority="high", coin=run.coin,
+                                                             key=f"twap_end:{key}", chat_id=chat)
+                                    if not ok and not (not chat and in_quiet_hours(cfg)):
+                                        out["failed"] += 1
+                                        tries = END_TRIES[ekey] = END_TRIES.get(ekey, 0) + 1
+                                        if tries < END_MAX_TRIES:   # işaret YOK: sonraki tur yeniden dener
+                                            run.ended_ts = None
+                                            out["ended"] -= 1
+                                            continue
+                                END_TRIES.pop(ekey, None)
+                                await alert_log("twap_end", ekey, "")
+                                if eo:
+                                    await alert_log("twap_endo", eo, "")
+                                await mirror(cfg, notifier, text, f"end:{eo}" if eo else f"end:{ekey}", run.coin, out,
+                                             primary=chat if can else None)
+                        finally:
+                            ENDING.discard(claim)
                     await persist(run, m)
                     continue
                 if (order and active and not run.half_ts and getattr(cfg, "twap_alert_progress", True)
@@ -846,14 +882,14 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 # edilince haber gider. Teklif yazılamazsa mesaj eskisi gibi gider —
                 # düğme süs değil ama mesajı bloke de etmez.
                 offer = None
-                if getattr(cfg, "twap_follow_enabled", True) and not is_quick(cfg, order):   # ⚡: kanala otomatik
+                if getattr(cfg, "twap_follow_enabled", True) and not auto_end(cfg, order):   # ⚡: kanala otomatik
                     try:
                         offer = await _twap_offer(run)
                     except Exception:
                         log.debug("twap takip teklifi yazılamadı (%s)", run.coin, exc_info=True)
                 ctx = {"order": order, "day_vol": day_vol, "vol_pct": det["vol_pct"],
                        "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or "",
-                       "offer": offer, "quick_max": quick_max(cfg)}
+                       "offer": offer, "quick_max": quick_max(cfg), "auto_end": auto_end(cfg, order)}
                 text = fmt.twap_alert(m, ctx)
                 mkey = f"alert:{key}:{run.first_ts}"
                 if not can:                                   # ana kanal tanımsız (kripto) — yalnız ayna; durum eskisi gibi

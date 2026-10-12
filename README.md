@@ -390,6 +390,10 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   bitiş 🏁 buraya otomatik yazılır" — iptal ve bitiş notu kanala (ve aynaya) kendiliğinden gider. İptal hızlı
   fark edilir: ilk dilimde bildirilende bir dilim (45 sn) gecikince, eski yoldan bildirilende dakikada bir emir
   sorulur (eski yolun emir önbelleğine yazılmadan). Uzun emirde takip tuşu ve 10 dk'lık düzen aynen.
+  Güvence: ⚡ emir dilim gelse de dakikada bir sorulur (aynı adresin başka TWAP'ı iptali gizlemez); bildirilen
+  emirler kv'de (`twapfast_open`) ve `twap_runs`'ta — yeniden başlatmada geri yüklenir, kapalıyken iptal
+  edilenin ⛔'si açılışta yazılır; not ana kanala gidemezse sonraki turlarda 3 kez denenir; iki yol aynı notu
+  aynı anda yazamaz. Bitiş notu kapalıysa "otomatik yazılır" denmez ve takip tuşu kalır.
 - **⚡ HIZLI rozeti (kullanıcı 12.10: "çok hızlı" = 1 saat):** emir süresi ≤ `twap_fast_short_max_min`
   (60 dk) olan TWAP'ın TÜM mesajlarında (ilk alarm, ilk dilim alarmı, yarı, 🏁/⛔) başlıkta
   `⚡ HIZLI · 5 dk` yazar. Süre HL emrinin kendi alanıdır (ölçüm). Sınır ayarlardan değişir; aynı sınır
