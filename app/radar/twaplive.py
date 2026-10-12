@@ -210,6 +210,31 @@ def measure(run: Run) -> dict | None:
             "px_chg_pct": ((run.px_last - run.px_first) / run.px_first * 100) if run.px_first else 0.0}
 
 
+def latest_per_twap(history) -> list:
+    """HL emir geçmişi her DURUM DEĞİŞİMİ için ayrı kayıt tutar: aynı emrin (twapId) 'activated' kaydı başlangıçta
+    yazılır ve bitince/iptalde SİLİNMEZ, yanına 'finished'/'terminated' kaydı eklenir (canlı, 12.10: FIL 2308272 —
+    activated 08:10:16, terminated 08:11:39). Emir başına yalnız EN SON kayıt kalır; yoksa eski 'activated' kaydı
+    iptal edilmiş emri sürüyor gösterirdi (⛔ notu hiç gelmezdi). twapId yoksa (coin, yön, başlangıç, adet) anahtarı."""
+    if not isinstance(history, (list, tuple)):
+        return []
+    best: dict = {}
+    for i, h in enumerate(history):
+        try:
+            st = h.get("state") or {}
+            tid = h.get("twapId")
+            k = ("id", tid) if tid is not None else ("st", st.get("coin"), st.get("side"), st.get("timestamp"),
+                                                        st.get("sz"))
+            tm = float(h.get("time") or 0)
+            terminal = str(((h.get("status") or {}).get("status")) or "").lower() != "activated"
+        except (AttributeError, TypeError, ValueError):
+            continue
+        cur = best.get(k)
+        # daha yeni kayıt kazanır; aynı anda yazılmışsa bitiş/iptal kaydı
+        if cur is None or (tm, terminal) > (cur[0], cur[1]):
+            best[k] = (tm, terminal, i, h)
+    return [v[3] for v in sorted(best.values(), key=lambda v: v[2])]
+
+
 def parse_twap_orders(history, coin: str, side: str, mark, now_ts: int) -> list[dict]:
     """HL `userTwapHistory` snapshot'ından bu coin + yön için TWAP emirleri. SAF ve
     savunmacı: şekil tutmayan kayıt atlanır. `side` bizim 'buy'/'sell'; HL
@@ -222,7 +247,7 @@ def parse_twap_orders(history, coin: str, side: str, mark, now_ts: int) -> list[
         mark = float(mark or 0)
     except (TypeError, ValueError):
         mark = 0.0
-    for h in history:
+    for h in latest_per_twap(history):
         try:
             st = h.get("state") or {}
             status = str(((h.get("status") or {}).get("status")) or "").lower()
@@ -1073,7 +1098,7 @@ async def diag_address(cfg, collector, addr: str) -> str:
             vols = await volumes()
             lines.append(f"HL TWAP emirleri ({len(hist)} kayıt, şimdi soruldu):")
             shown = 0
-            for h in hist:
+            for h in latest_per_twap(hist):
                 st = (h or {}).get("state") or {}
                 coin = str(st.get("coin") or "")
                 s = str(st.get("side") or "").upper()

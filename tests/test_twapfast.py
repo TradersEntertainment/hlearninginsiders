@@ -545,6 +545,77 @@ def test_slow_quick_end_retry_and_rehydrate_merge():
     print("✅ ⚡ iptal) eski yol: yeniden başlatmada tur birleşir; ana kanal hatasında sonraki tur yeniden; ⛔ bir kez")
 
 
+def _two_records(started, minutes, sz, end_status, end_t, ex_sz, ex_ntl, coin="FIL", twap_id=2308272):
+    """HL'nin GERÇEK şekli (12.10, FIL 0x2606…1a84): emir başına durum değişimi kaydı — 'activated' kaydı kalır,
+    yanına bitiş/iptal kaydı eklenir (aynı twapId, aynı state.timestamp)."""
+    base = {"coin": coin, "user": A, "side": "B", "sz": str(sz), "minutes": minutes, "reduceOnly": False,
+            "randomize": False, "timestamp": started * 1000 + 1, "trigger": None, "stopPx": None}
+    return [{"time": end_t, "state": {**base, "executedSz": str(ex_sz), "executedNtl": str(ex_ntl)},
+             "status": {"status": end_status}, "twapId": twap_id},
+            {"time": started, "state": {**base, "executedSz": "0.0", "executedNtl": "0.0"},
+             "status": {"status": "activated"}, "twapId": twap_id}]
+
+
+def test_real_history_two_records_per_order():
+    """Canlı vaka (12.10): FIL 25 dk $1M TWAP 83 sn sonra iptal (HL 'terminated', hypurrscan 'error') ama ⛔ gelmedi —
+    ayrıştırıcı eski 'activated' kaydını seçiyordu. Emir başına EN SON kayıt: iptal görülür, ⛔ kanal + ayna."""
+    async def run():
+        now = dbm.now()
+        started = now - 200
+        hist = _two_records(started, 25, 803019.3, "terminated", started + 83, 47236.0, 58990.36)
+        o = tl.parse_twap_orders(hist, "FIL", "buy", 1.25, now)
+        assert len(o) == 1 and o[0]["status"] == "terminated" and abs(o[0]["executed_usd"] - 58990.36) < 1e-6
+        assert len(tl.latest_per_twap(hist + [{"bozuk": 1}, "x"])) == 2, "bozuk kayıt atlanır, emir başına bir"
+        # aynı anda iki kayıt (aynı time): bitiş kaydı kazanır; twapId yoksa (coin, yön, başlangıç, adet) anahtarı
+        same = [{**h, "time": started} for h in hist]
+        assert tl.parse_twap_orders(same, "FIL", "buy", 1.25, now)[0]["status"] == "terminated"
+        noid = [{k: v for k, v in h.items() if k != "twapId"} for h in hist]
+        assert [x["status"] for x in tl.parse_twap_orders(noid, "FIL", "buy", 1.25, now)] == ["terminated"]
+        # ilk dilim yolu: bildirildi → iptal → ⛔ (önce 'activated' kaydı yüzünden hiç gelmiyordu)
+        cfg = _cfg()
+        await _fresh(cfg, coin="FIL", dv=6_000_000)
+        state = {"h": hist[1:]}                                   # başta yalnız 'activated' kaydı
+        col = Col(lambda: state["h"])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        tf.observe("FIL", A, "buy", 1.25, 16_000, 20_000, started + 1, 1000)
+        await _drain(cfg, notifier, col)
+        assert len(bot.sent) == 2 and "⚡ <b>HIZLI · 25 dk</b> · <b>FIL</b>" in bot.sent[0][1], bot.sent
+        state["h"] = hist                                         # iptal kaydı eklendi, eski kayıt duruyor
+        rec = tf.F.open[("FIL", A, "buy")]
+        rec["lookup_ts"] = now - 61
+        assert await tf.lifecycle(cfg, notifier, col, now) == 1
+        ends = [(c, t) for c, t in bot.sent if "TWAP iptal edildi" in t]
+        assert [c for c, _ in ends] == ["-100", "-200"] and "$59K" in ends[0][1], bot.sent
+        # eski yol: bitmiş 5 dk'lık emir (iki kayıt) bitmiş görülür — 'aktif' sanılıp uyarılmaz
+        cfg2 = _cfg()
+        cfg2.twap_fast_enabled = False
+        await _fresh(cfg2)
+        s5 = now - 330
+        h5 = _two_records(s5, 5, 120_000_000, "finished", s5 + 301, 120_000_000, 600_000, coin="PUMP", twap_id=7)
+        b2 = Bot()
+        for i in range(11):
+            tl.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, s5 + 1 + 30 * i, 1)
+        out = await tl.evaluate(cfg2, Notifier(cfg2, b2), None, Col(h5))
+        assert out["order_done"] == 1 and not b2.sent, (out, b2.sent)
+        # takip (/takip_N): iptal kaydı görülür → ⛔ (önce eski kayıt yüzünden sürüyor sanılıyordu)
+        from app.radar import twapfollow
+        await twapfollow.start(cfg, "FIL", A, "buy", started + 1, chat_id="-100")
+
+        class TB:
+            def __init__(self):
+                self.sent = []
+
+            async def send(self, kind, text, **kw):
+                self.sent.append(text)
+                return True
+        tb = TB()
+        r = await twapfollow.check(cfg, Col(hist), tb)
+        assert r["cancelled"] == 1 and "TWAP iptal edildi" in tb.sent[-1], (r, tb.sent)
+    asyncio.run(run())
+    print("✅ gerçek geçmiş) emir başına iki kayıt: en son kayıt — iptal ⛔ (ilk dilim, eski yol, takip); biten emir aktif sanılmaz")
+
+
 def test_gates_and_skips():
     async def run():
         cfg = _cfg()

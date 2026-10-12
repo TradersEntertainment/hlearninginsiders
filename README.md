@@ -359,6 +359,12 @@ bildirilmez.
   kolonları.
 - **Kapsam:** yalnız WS'in dinlediği coinler — hisseler + hacme göre ilk
   `crypto_watch_top` kripto; sekme ve `/tani` sayıyı yazar.
+- **Emir başına EN SON kayıt (12.10 canlı hata):** HL emir geçmişi her durum değişimi için ayrı kayıt tutar —
+  'activated' kaydı bitişte/iptalde silinmez, yanına 'finished'/'terminated' eklenir. Ayrıştırıcı önce eski
+  'activated' kaydını seçiyordu: iptal edilen emir sürüyor görünüyordu (FIL 25 dk $1M, 83 sn'de iptal, ⛔ gelmedi;
+  takip ve eski yolun bitiş notu da aynı sebeple körleşiyordu; biten emir 'aktif' sanılabiliyordu). Artık
+  `twapId` başına yalnız en son kayıt (`twaplive.latest_per_twap`). 🧪 LOG-TWAP olaylarının `st`/`left`
+  alanları bundan sonra emrin GERÇEK durumunu yazar (önceki olaylarda bitmiş emir 'activated' görünebilir).
 - **Şekil güvencesi:** snapshot mesaj şekli canlıda doğrulanır; ilk ham örnek
   `/tani`'da görünür. Şekil tutmazsa **sorgu başarısız** sayılır (emir "yok" değil)
   ve bildirim gitmez — uydurma yok. Hacim kv'si 30 dk'dan bayatsa tek istekle
