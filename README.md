@@ -315,7 +315,7 @@ fonksiyonu gölgeliyordu — taze pozisyon tam da sonda işe yaradığında mesa
 propr değişikliği tüm kuralları emekliye ayırırdı (K bütçesi dolu). Bunun yerine değişiklik
 `propr_changes`'e tarihli yazılır; örneklem o tarihten önce/sonra ayrılabilir. Liste yalnız büyüdüğü
 için evren yalnız GENİŞLER. 12.10'da (kurallar 08.10'da kaydedildi) eski 185'e 13 enstrüman eklendi:
-HAC-KRP'ye 10 kripto, HAC-HSS'ye IREN, SNXX, RKLB, CRWD (TSM zaten vardı), ACI'ya IREN, RKLB, CRWD. Aynı gün
+HAC-KRP'ye 10 kripto, HAC-HSS'ye IREN, SNXX, CRWD (TSM ve RKLB zaten vardı), ACI'ya IREN, CRWD. Aynı gün
 ~2 saat yayında kalan ara sürümde (12.10 ~13:04 TSİ'den yalnız-büyür sürümüne kadar) propr'ın kara
 listesi (57) evrenden çıkmıştı: o aralıkta bu coinlerin LOG-VOL / LOG-WFILL olayları yazılmadı.
 
