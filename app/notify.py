@@ -27,6 +27,8 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "track":     ("notify_track",     "👣 Pozisyon kapanış takibi",           "high"),
     "lowvol":    ("notify_lowvol",    "🐘 Sessiz su devi (düşük hacim)",      "high"),
     "twap":      ("notify_twap",      "⏳ TWAP (düşük hacimli coinde büyük)",  "high"),
+    # aynı anahtar (notify_twap): TWAP kapanırsa ayna da susar. PUBLIC_KINDS'te BİLEREK yok
+    "twap_mirror": ("notify_twap",    "⏳ TWAP — ayna grubu (TWAP_MIRROR_CHAT_ID)", "high"),
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "sticky":    ("notify_sticky",    "🧲 Yapışkan duvar (kripto kanalı)",    "high"),
     "acct":      ("notify_acct",      "👤 İzlenen hesaplar (hesap grubu)",     "high"),

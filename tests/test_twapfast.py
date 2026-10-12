@@ -1,0 +1,432 @@
+"""⚡ Hızlı TWAP (ilk dilim) + TWAP ayna grubu.
+
+Kullanıcı (12.10): "5 dk'lık TWAP coini çok sert oynatıyor, 1. dakikada yakalayabilir miyiz" ve "TWAP'lar
+normal kanallara gelmeye devam etsin, ayrıca bu gruba da gelsin" (TWAP_MIRROR_CHAT_ID).
+
+Pinlenenler:
+  • sıfır hash'li dolum TWAP dilimidir, sahibi TAKER; aynı saniyenin parçaları tek dilim; sıfırsız hash yok sayılır
+  • ön süzgeç (G/Ç yok): iki kapıdan birini geçemeyecek dilim için sorgu yok (BTC'de $5K dilim, hacim yok)
+  • ilk dilim → tek emir sorgusu → kapı → ana kanal + ayna; 5 dk'lık emir dakika hızı kuralıyla geçer
+  • eski yolun alanlarına (order / alerted_ts / lookup önbelleği / 'twap' işareti) DOKUNULMAZ:
+    🧪 LOG-TWAP olayı hızlı bildirim olsa da olmasa da AYNI; hızlı karar ayrı aile LOG-TWAPF
+  • eski yol aynı emri sonra aday görürse tekrar mesaj yok; kısa TWAP'ın 🏁 bitiş notu emir süresi dolunca
+  • emir yoksa (likidasyon) bildirim yok; mm/vault, bekleme, TWAP bildirimi kapalı → yok
+  • ayna: boşsa hiç gönderilmez; ana hedefle aynıysa ikinci kopya yok; ana gönderim başarısız olup her tur
+    yeniden denense de ayna BİR kez; ana kripto kanalı yokken yalnız ayna; ayna grubu botun kendi sohbeti
+"""
+import asyncio
+import json
+import os
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
+os.environ.setdefault("DB_PATH", "/tmp/hlr-test-twapfast.db")
+from app import db as dbm  # noqa: E402
+from app.config import EDITABLE_FIELDS, Config  # noqa: E402
+from app.hl import universe as uni  # noqa: E402
+from app.notify import KINDS, PUBLIC_KINDS, Notifier  # noqa: E402
+from app.radar import twapfast as tf  # noqa: E402
+from app.radar import twaplive as tl  # noqa: E402
+from app.telegram import format as fmt  # noqa: E402
+
+A, B = "0x" + "a" * 40, "0x" + "b" * 40
+ZERO = "0x" + "0" * 64
+PX = 0.005                                     # PUMP benzeri ucuz coin
+DV = 20_000_000                                # 24s hacim $20M → dakika ortalaması ~$13.9K
+
+
+class Bot:
+    def __init__(self, fail_chats=()):
+        self.sent, self.fail = [], set(fail_chats)
+
+    async def send(self, text, chat_id=None):
+        if (chat_id or "") in self.fail:
+            return False
+        self.sent.append((chat_id, text))
+        return True
+
+
+class Col:
+    def __init__(self, hist):
+        self.hist, self.calls, self._twap_waiters = hist, [], {}
+
+    async def fetch_twap_history(self, addr, timeout=6.0):
+        self.calls.append(addr)
+        return self.hist() if callable(self.hist) else self.hist
+
+
+def twap_order(started, minutes=5, plan=600_000, ex_frac=0.05, status="activated", coin="PUMP", side="B"):
+    sz = plan / PX
+    return {"state": {"coin": coin, "side": side, "sz": str(sz), "executedSz": str(sz * ex_frac),
+                      "executedNtl": str(sz * ex_frac * PX), "minutes": minutes, "timestamp": started * 1000,
+                      "randomize": False, "reduceOnly": False, "user": A},
+            "status": {"status": status}, "time": started * 1000}
+
+
+def _cfg(chat="-100", mirror="-200"):
+    cfg = Config()
+    cfg.telegram_chat_id = "111"
+    cfg.crypto_chat_id = chat
+    cfg.twap_mirror_chat_id = mirror
+    cfg.notify_twap = True
+    cfg.twap_live_enabled = True
+    cfg.twap_fast_enabled = True
+    cfg.twap_alert_min_usd = 1_000_000
+    cfg.twap_alert_min_left_usd = 1_000_000
+    cfg.twap_alert_vol_pct = 5
+    cfg.twap_alert_big_usd = 0
+    cfg.twap_alert_min_slices = 10
+    cfg.twap_lookup_min_usd = 50_000
+    cfg.twap_alert_cooldown = 21600
+    cfg.twap_fast_min_slice_usd = 1000
+    cfg.twap_fast_short_max_min = 30
+    cfg.twap_fast_short_min_usd = 250_000
+    cfg.twap_fast_rate_x = 2.0
+    cfg.twap_fast_lookups_min = 30
+    cfg.twap_follow_enabled = True
+    cfg.quiet_start_hour = cfg.quiet_end_hour = 0
+    cfg.lab_k_budget, cfg.lab_alpha, cfg.lab_epoch = 4, 0.05, 1
+    return cfg
+
+
+async def _fresh(cfg, coin="PUMP", dv=DV):
+    await dbm.init_db(os.path.join(tempfile.mkdtemp(), "tf.db"))
+    tl.REG.clear()
+    tl._lookup_cache.clear()
+    tl.VOL_CACHE.update(ts=0, v={})
+    for k in tl.MIRROR:
+        tl.MIRROR[k] = 0
+    tf.F.clear()
+    tf.F.cfg = cfg
+    await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {coin: {"m": PX, "oi": 1, "f": 0, "v": dv, "p": None},
+                                             "BTC": {"m": 60_000, "oi": 1, "f": 0, "v": 2e9, "p": None}},
+                                       "ts": dbm.now()})
+    tf.F.vols = await tl.volumes(None)
+    from app.lab import registry, specs
+    registry._Q.clear()
+    registry.ACTIVE.clear()
+    registry.DERIVED.clear()
+    registry._SEEN.clear()
+    registry._DAY.clear()
+    rules = [r for r in specs.RULES if r["id"] in ("LOG-TWAP", "LOG-TWAPF", "AKI-TWAP-F")]
+    await registry.sync(cfg, ts=dbm.now() - 86400, rules=rules)
+
+
+def _q(rid):
+    from app.lab import registry
+    return [e for e in registry._Q if e["rule_id"] == rid]
+
+
+async def _kind(kind):
+    async with dbm.db() as c:
+        return (await (await c.execute("SELECT COUNT(*) n FROM alerts_log WHERE kind=?", (kind,))).fetchone())["n"]
+
+
+async def _drain(cfg, notifier, col, t=None):
+    tasks: set = set()
+    n = await tf.dispatch(cfg, None, notifier, col, int(t or dbm.now()), tasks)
+    if tasks:
+        await asyncio.gather(*tasks)
+    return n
+
+
+def test_zero_hash_taker_and_prefilter():
+    async def run():
+        from app.hl.collector import Collector
+        cfg = _cfg()
+        await _fresh(cfg)
+        col = Collector(cfg, None)
+        col.valid_coins = {"PUMP", "BTC"}
+        col.crypto_coins = {"PUMP", "BTC"}
+        now = dbm.now()
+        sz1, sz2 = 6_000_000, 2_000_000                       # tek dilim iki seviyeye bölündü: $30K + $10K
+        data = [{"coin": "PUMP", "side": "B", "px": str(PX), "sz": str(sz1), "time": (now - 1) * 1000,
+                 "tid": "z1", "hash": ZERO, "users": [A, B]},
+                {"coin": "PUMP", "side": "B", "px": str(PX), "sz": str(sz2), "time": (now - 1) * 1000 + 200,
+                 "tid": "z2", "hash": ZERO, "users": [A, B]},
+                {"coin": "PUMP", "side": "A", "px": str(PX), "sz": "9000000", "time": now * 1000, "tid": "n1",
+                 "hash": "0x" + "1" * 64, "users": [A, B]},                    # imzalı işlem: TWAP değil
+                {"coin": "BTC", "side": "A", "px": "60000", "sz": "0.1", "time": now * 1000, "tid": "z3",
+                 "hash": ZERO, "users": [A, B]}]                                # BTC'de $6K dilim: hiçbir kapı
+        await col._handle(json.dumps({"channel": "trades", "data": data}))
+        p = tf.F.pending[("PUMP", A, "buy")]
+        assert p["n"] == 1 and abs(p["usd"] - (sz1 + sz2) * PX) < 1e-6 and p["queued"], p
+        assert ("PUMP", B, "sell") not in tf.F.pending, "maker TWAP sahibi değil"
+        assert ("BTC", B, "sell") in tf.F.pending and not tf.F.pending[("BTC", B, "sell")]["queued"]
+        assert tf.F.stats["pre_low"] == 1 and tf.F.stats["queued"] == 1 and tf.F.stats["zero"] == 3
+        assert tl.REG.runs[("PUMP", A, "buy")].n == 1, "eski sayaç eskisi gibi"
+        assert tf.is_twap_hash(ZERO) and not tf.is_twap_hash("0x" + "0" * 63 + "1") and not tf.is_twap_hash(None)
+        assert not tf.is_twap_hash("0x")
+        # ön süzgeç sayıları: hacim yok → sorgu yok; ince spot → yok; uzun TWAP olabilecek dilim → sorulur
+        assert tf.prefilter(cfg, "XYZ", 50_000, None, now) == "pre_novol"
+        assert tf.prefilter(cfg, "PUMP", 1_000, (DV, now), now) == ""            # 24 sa'lik $1M+ olabilir
+        assert tf.prefilter(cfg, "BTC", 50_000, (2e9, now), now) == "pre_low"
+        cfg.spot_twap_min_day_vol = 1_000_000
+        assert tf.prefilter(cfg, "@107", 50_000, (300_000, now), now) == "pre_spot_thin"
+    asyncio.run(run())
+    print("✅ hızlı twap) sıfır hash = TWAP dilimi, sahibi taker; aynı saniye tek dilim; ön süzgeç sorguyu ayıklar")
+
+
+def test_first_slice_alert_mirror_and_end_note():
+    """5 dk'lık $600K emir (dakikada $120K = ortalamanın ~8.6 katı): ilk dilimde ana kanal + ayna; eski
+    yolun alanları boş; bitişte 🏁 (ana + ayna) bir kez; 🧪 LOG-TWAPF; LOG-TWAP eski yolun kendi anında."""
+    async def run():
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        started = now - 340                                    # emir 5 dk 40 sn önce verildi
+        state = {"st": "activated"}
+        col = Col(lambda: [twap_order(started, status=state["st"],
+                                      ex_frac=0.05 if state["st"] == "activated" else 1.0)])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        tl.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1)    # eski sayaç (collector sırası)
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
+        assert await _drain(cfg, notifier, col) == 1
+        assert [c for c, _ in bot.sent] == ["-100", "-200"], bot.sent
+        text = bot.sent[0][1]
+        assert bot.sent[1][1] == text, "ayna = birebir kopya"
+        assert "⚡ <b>TWAP başladı</b>" in text and "<b>5 dk</b>" in text and "plan <b>$600K</b>" in text
+        assert "katı</b>" in text and "dakikada ~<b>$120K</b>" in text and "/takip_" in text
+        assert "kısa TWAP: dakika hızı kuralıyla" in text and "bu hızla" not in text
+        run_ = tl.REG.runs[("PUMP", A, "buy")]
+        assert run_.fast_ts and run_.fast_started == started and run_.fast_order["status"] == "activated"
+        assert run_.order is None and run_.alerted_ts is None and run_.lookup_ts is None, "eski yolun alanları"
+        assert tl._lookup_cache == {}, "eski yolun emir önbelleği"
+        assert await _kind("twap") == 0 and await _kind("twap_fast") == 1 and await _kind("twap_mirror") == 1
+        f = _q("LOG-TWAPF")
+        assert len(f) == 1 and f[0]["gated"] and json.loads(f[0]["features"])["kapi"] == "short", f
+        assert not _q("LOG-TWAP"), "eski yolun kaydı yalnız kendi anında"
+        st = tf.F.snapshot(now)
+        assert st["alerts"] == 1 and st["lat_med"] is not None and st["lat_med"] >= 340
+        # bilinen emir: sonraki dilimler yeniden sorgulanmaz
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 32, 1000)
+        assert tf.F.stats["known_skip"] == 1 and await _drain(cfg, notifier, col) == 0
+        # eski yol: 11 dilim (yeterli değil → aday değil değil — 10 dilim + 5 dk + $50K sağlanır) → emir
+        # 'finished' → LOG-TWAP eskisi gibi (st=finished, order_done); hızlı tur için bitiş notu bir kez
+        for i in range(1, 11):
+            tl.observe("PUMP", A, "buy", PX * (1 + i / 100), 12_000_000, 60_000, started + 2 + 30 * i, 1)
+        state["st"] = "finished"
+        run_.fast_lookup_ts = 0                                    # zaman geçti (hızlı sorgu 5 dk önceydi)
+        out = await tl.evaluate(cfg, notifier, None, col)
+        ends = [(c, t) for c, t in bot.sent if "🏁" in t]
+        assert [c for c, _ in ends] == ["-100", "-200"], bot.sent
+        lt = _q("LOG-TWAP")
+        assert len(lt) == 1 and json.loads(lt[0]["features"])["st"] == "finished", lt
+        assert out["order_done"] == 1 and await _kind("twap") == 0
+        n = len(bot.sent)
+        await tl.evaluate(cfg, notifier, None, col)
+        assert len(bot.sent) == n, "bitiş notu bir kez"
+    asyncio.run(run())
+    print("✅ hızlı twap) ilk dilimde ana + ayna; eski yolun alanları boş; 🏁 bir kez; LOG-TWAPF + LOG-TWAP ayrı")
+
+
+def test_fast_only_short_end_before_slow_candidate():
+    """Eski yol aday olmadan (iptal: 5 dilimde kesildi) kısa TWAP'ın süresi dolunca ⛔ notu hızlı yoldan gelir."""
+    async def run():
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        started = now - 340
+        state = {"st": "activated"}
+        col = Col(lambda: [twap_order(started, status=state["st"])])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        tl.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1)
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
+        await _drain(cfg, notifier, col)
+        assert len(bot.sent) == 2
+        for i in range(1, 5):                                    # 2 dk sonra kesildi (iptal)
+            tl.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2 + 30 * i, 1)
+        state["st"] = "activated"                                # HL henüz kapatmadı: bekle
+        await tl.evaluate(cfg, notifier, None, col)
+        assert not [t for _, t in bot.sent if "🏁" in t]
+        tl.REG.runs[("PUMP", A, "buy")].fast_lookup_ts = 0
+        state["st"] = "terminated"
+        await tl.evaluate(cfg, notifier, None, col)
+        ends = [(c, t) for c, t in bot.sent if "⛔" in t]
+        assert [c for c, _ in ends] == ["-100", "-200"], bot.sent
+        assert not _q("LOG-TWAP"), "eski yol aday değil → kaydı yok (bugünkü gibi)"
+    asyncio.run(run())
+    print("✅ hızlı twap) kısa TWAP: HL bitirene dek bekler; iptalde ⛔ (ana + ayna); eski yol aday değilse kayıt yok")
+
+
+def test_slow_path_after_fast_same_lab_event_no_resend():
+    """30 dk'lık $3M emir (hacmin %15'i): hızlı bildirim → eski yol 6 dk sonra aday: aynı LOG-TWAP olayı
+    (hızlı bildirim olmasaydı neyse o), mesaj YOK, 'twap' işareti ve alerted_ts eski yolun yazacağı gibi."""
+    async def scenario(fast: bool):
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        started = now - 365
+        col = Col(lambda: [twap_order(started, minutes=30, plan=3_000_000, ex_frac=0.2)])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, started + 2, 1)
+        if fast:
+            tf.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, started + 2, 1000)
+            await _drain(cfg, notifier, col)
+            assert len(bot.sent) == 2 and "⚡" in bot.sent[0][1]
+        for i in range(1, 13):
+            tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, started + 2 + 30 * i, 1)
+        n0 = len(bot.sent)
+        out = await tl.evaluate(cfg, notifier, None, col)
+        ev = _q("LOG-TWAP")
+        assert len(ev) == 1 and ev[0]["gated"], ev
+        run_ = tl.REG.runs[("PUMP", A, "buy")]
+        return {"feat": json.loads(ev[0]["features"]), "sent": len(bot.sent) - n0, "out": out,
+                "twap_marker": await _kind("twap"), "alerted": bool(run_.alerted_ts),
+                "aki": len(_q("AKI-TWAP-F"))}
+    async def run():
+        ctl = await scenario(False)
+        got = await scenario(True)
+        assert got["feat"] == ctl["feat"], (got["feat"], ctl["feat"])
+        assert got["aki"] == ctl["aki"], "türetilmiş kural örneklemi aynı"
+        assert ctl["sent"] == 2 and got["sent"] == 0, "eski yol hızlı bildirileni yeniden yazmaz"
+        assert got["out"].get("fast_already") == 1 and got["twap_marker"] == 1 and got["alerted"]
+        assert ctl["twap_marker"] == 1 and ctl["alerted"]
+    asyncio.run(run())
+    print("✅ hızlı twap) eski yol: aynı 🧪 LOG-TWAP olayı (+ türetilen), tekrar mesaj yok, işaretler aynı")
+
+
+def test_gates_and_skips():
+    async def run():
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        ok = lambda **kw: tl.parse_twap_orders([twap_order(now - 2, **kw)], "PUMP", "buy", PX, now)[0]  # noqa: E731
+        g, det = tf.decide_gate(cfg, "PUMP", ok(), DV, now, now)
+        assert g == "short" and 8 < det["rate_x"] < 9 and abs(det["per_min"] - 120_000) < 1
+        assert tf.decide_gate(cfg, "PUMP", ok(plan=200_000), DV, now, now)[0] == "short_small"
+        assert tf.decide_gate(cfg, "PUMP", ok(minutes=20, plan=300_000), DV, now, now)[0] == "slow"   # ~1.1 kat
+        assert tf.decide_gate(cfg, "PUMP", ok(minutes=240, plan=2_000_000), DV, now, now)[0] == "ok"   # %10
+        assert tf.decide_gate(cfg, "PUMP", ok(minutes=240, plan=600_000), DV, now, now)[0] == "order_small"
+        assert tf.decide_gate(cfg, "PUMP", ok(status="finished"), DV, now, now)[0] == "order_done"
+        assert tf.decide_gate(cfg, "PUMP", ok(), DV, now - 7200, now)[0] == "no_vol"
+        assert tf.decide_gate(cfg, "PUMP", ok(ex_frac=0.8), DV, now, now)[0] == "short_left"
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        # emir yok (likidasyon): iki deneme → no_order, 5 dk yok sayılır, mesaj yok
+        col = Col([])
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, now - 1, 1000)
+        await _drain(cfg, notifier, col)
+        assert tf.F.pending[("PUMP", A, "buy")]["tries"] == 1
+        await _drain(cfg, notifier, col, t=now + 10)
+        assert tf.F.stats["no_order"] == 1 and ("PUMP", A, "buy") in tf.F.known and not bot.sent
+        assert len(col.calls) == 2
+        # bekleme: eski yol 6 sa içinde bildirdiyse hızlı yol yazmaz
+        await dbm.alert_log("twap", f"PUMP:{B}:buy", "")
+        col2 = Col([dict(twap_order(now - 2), state={**twap_order(now - 2)["state"], "user": B})])
+        tf.observe("PUMP", B, "buy", PX, 12_000_000, 60_000, now - 1, 1000)
+        await _drain(cfg, notifier, col2)
+        assert tf.F.stats["cooldown"] == 1 and not bot.sent
+        # mm/vault: sorgu bile yok
+        c3 = "0x" + "c" * 40
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO addresses(address, first_seen, entity) VALUES(?,?,?)", (c3, now, "mm"))
+        col3 = Col([twap_order(now - 2)])
+        tf.observe("PUMP", c3, "buy", PX, 12_000_000, 60_000, now - 1, 1000)
+        await _drain(cfg, notifier, col3)
+        assert tf.F.stats["mm"] == 1 and col3.calls == []
+        # TWAP bildirimi kapalı: kayıt (🧪) var, mesaj yok
+        d4 = "0x" + "d" * 40
+        cfg.notify_twap = False
+        n_lab = len(_q("LOG-TWAPF"))
+        tf.observe("PUMP", d4, "buy", PX, 12_000_000, 60_000, now - 1, 1000)
+        await _drain(cfg, notifier, Col([twap_order(now - 2)]))
+        assert tf.F.stats["notify_off"] == 1 and not bot.sent and len(_q("LOG-TWAPF")) == n_lab + 1
+        # soket dolu: eski yol / takip sorguları önce
+        cfg.notify_twap = True
+        e5 = "0x" + "e" * 40
+        tf.observe("PUMP", e5, "buy", PX, 12_000_000, 60_000, now - 1, 1000)
+        busy = Col([twap_order(now - 2)])
+        busy._twap_waiters = {str(i): None for i in range(tf.WS_CEILING)}
+        assert await _drain(cfg, notifier, busy) == 0 and tf.F.stats["no_ws"] >= 1
+    asyncio.run(run())
+    print("✅ hızlı twap) kapı: kısa (dakika hızı) / uzun (eski eşik); emir yok, bekleme, mm, kapalı, soket dolu → yok")
+
+
+def test_mirror_rules_slow_path():
+    async def run():
+        from app.radar import twaplive
+        # ana kripto gönderimi başarısız → her tur yeniden dener, ayna BİR kez
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        col = Col([twap_order(now - 400, minutes=60, plan=3_000_000, ex_frac=0.2)])
+        bot = Bot(fail_chats={"-100"})
+        notifier = Notifier(cfg, bot)
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, now - 400 + 2 + 30 * i, 1)
+        await tl.evaluate(cfg, notifier, None, col)
+        tl._lookup_cache.clear()
+        await tl.evaluate(cfg, notifier, None, col)
+        assert [c for c, _ in bot.sent] == ["-200"], bot.sent
+        # ayna boş: hiç gönderilmez (bot.send boş id'de ana sohbete düşerdi)
+        cfg2 = _cfg(mirror="")
+        await _fresh(cfg2)
+        assert await twaplive.mirror(cfg2, Notifier(cfg2, bot), "x", "k") is None
+        # ayna = ana hedef → ikinci kopya yok
+        cfg3 = _cfg(mirror="-100")
+        assert await twaplive.mirror(cfg3, Notifier(cfg3, Bot()), "x", "k2", primary="-100") is None
+        cfg4 = _cfg(mirror="111")
+        assert await twaplive.mirror(cfg4, Notifier(cfg4, Bot()), "x", "k3", primary="") is None, "ana sohbet"
+        # ana kripto kanalı yok + ayna: yalnız ayna; durum eskisi gibi (no_chat, 'twap' işareti yok)
+        cfg5 = _cfg(chat="")
+        await _fresh(cfg5)
+        b5 = Bot()
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, now - 400 + 2 + 30 * i, 1)
+        out = await tl.evaluate(cfg5, Notifier(cfg5, b5), None, col)
+        assert [c for c, _ in b5.sent] == ["-200"] and out["no_chat"] == 1 and await _kind("twap") == 0
+        # ayna grubu botun kendi sohbeti (komutlar çalışır)
+        from app.telegram.bot import TelegramBot
+        assert "-200" in TelegramBot._own_chats(type("X", (), {"cfg": _cfg()})())
+    asyncio.run(run())
+    print("✅ ayna) ana başarısız olup yeniden denense de bir kez; boş/aynı hedef yok; kanalsızda yalnız ayna")
+
+
+def test_wiring_and_wording():
+    from app.lab import specs
+    cfg = Config()
+    assert cfg.twap_fast_enabled and cfg.twap_fast_min_slice_usd == 1000 and cfg.twap_fast_lookups_min == 30
+    assert cfg.twap_fast_short_max_min == 30 and cfg.twap_fast_short_min_usd == 250_000 and cfg.twap_fast_rate_x == 2
+    for k in ("twap_fast_enabled", "twap_fast_min_slice_usd", "twap_fast_lookups_min", "twap_fast_short_max_min",
+              "twap_fast_short_min_usd", "twap_fast_rate_x"):
+        assert EDITABLE_FIELDS[k]["group"] == "TWAP radarı" and EDITABLE_FIELDS[k]["desc"], k
+    assert "twap_mirror_chat_id" not in EDITABLE_FIELDS, "chat id env-only"
+    assert KINDS["twap_mirror"][0] == "notify_twap" and "twap_mirror" not in PUBLIC_KINDS
+    assert "$2M" not in EDITABLE_FIELDS["notify_twap"]["desc"]
+    log = next(r for r in specs.RULES if r["id"] == "LOG-TWAPF")
+    assert log["evidence"] == "log" and log["ver"] >= 2 and log["latency_s"] <= 60
+    env = open(os.path.join(ROOT, ".env.example"), encoding="utf-8").read()
+    assert "TWAP_MIRROR_CHAT_ID=" in env and "TWAP_FAST_MIN_SLICE_USD=" in env
+    main = open(os.path.join(ROOT, "app/main.py"), encoding="utf-8").read()
+    assert '_spawn("twapfast"' in main
+    colsrc = open(os.path.join(ROOT, "app/hl/collector.py"), encoding="utf-8").read()
+    assert "twapfast.is_twap_hash" in colsrc and "twapfast.observe" in colsrc
+    readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    assert "TWAP_MIRROR_CHAT_ID" in readme and "Hızlı TWAP" in readme
+    from app.health import periods
+    assert "twapfast" in periods(cfg)
+    # mesaj: ölçülü dil
+    sys.path.insert(0, HERE)
+    import test_wording as tw
+    now = dbm.now()
+    o = tl.parse_twap_orders([twap_order(now - 3)], "PUMP", "buy", PX, now)[0]
+    for g in ("short", "ok"):
+        txt = fmt.twap_fast(o, {"coin": "PUMP", "address": A, "side": "buy", "gate": g, "day_vol": DV,
+                                "vol_pct": 3.0, "per_min": 120_000, "rate_x": 8.6, "slice_usd": 60_000,
+                                "slice_px": PX, "pos": {"none": True}, "klass": "kripto", "offer": 7, "now": now})
+        assert not tw.hits(txt), tw.hits(txt)
+        assert "emirden 3 sn sonra" in txt and "/takip_7" in txt
+    print("✅ bağlantı) ayarlar + açıklamalar; ayna env-only; tür anahtarı; LOG-TWAPF; README/.env; ölçülü mesaj")
+
+
+if __name__ == "__main__":
+    for k, v in list(globals().items()):
+        if k.startswith("test_"):
+            v()

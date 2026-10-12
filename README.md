@@ -351,7 +351,7 @@ bildirilmez.
   özet + son 50 karar (`twaplive_last` kv'si, tur tur ezilmez). Emir henüz 5 dk /
   10 dilim olmadıysa aday bile değildir — tahmin yok, beklenir.
 - **Kanal:** kripto → `CRYPTO_CHAT_ID` (boşsa gönderilmez), hisse/endeks → ana
-  sohbet. Mesaj: emir (adet ≈ $, süre, başlangıç, kalan), dolan / kalan,
+  sohbet; `TWAP_MIRROR_CHAT_ID` tanımlıysa kopyası oraya da (aşağıda). Mesaj: emir (adet ≈ $, süre, başlangıç, kalan), dolan / kalan,
   gördüğümüz dilimler, adresin pozisyonu (canlı sorgu), fiyat ilk→son, taker %.
 - **İlerleme ve bitiş:** emrin yarısı dolunca tek not; emir bitince 🏁 / iptal
   edilince ⛔ gerçek dolan tutar, plan, süre, fiyat, hacme oran. Bildirilmiş tur
@@ -366,6 +366,53 @@ bildirilmez.
   bekleme yanmaz, sonraki tur yeniden dener.
 - **Restart:** bekleme (6 saat) `alerts_log`'da; bildirilmiş turlar açılışta
   geri yüklenir, bitiş notu kaybolmaz. Ayarlar → **TWAP radarı**.
+
+### ⚡ Hızlı TWAP — ilk dilimde (`app/radar/twapfast.py`)
+
+Kullanıcı (12.10): "5 dk'lık TWAP coini çok sert oynatıyor, 1. dakikada yakalayabilir miyiz?" Eski yol
+10 dilim + 5 dk beklediği için 5 dk'lık bir TWAP ancak bittiğinde aday oluyordu ve hiç bildirilmiyordu.
+HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de bir, alt emir sayısı
+2 × dakika + 1 (5 dk = 11 dilim), **ilk dilim emirden ~1-2 sn sonra** basılır ve işlem akışında
+**sıfır hash**'le gelir (emrin sahibi taker). Genel bir "tüm TWAP'lar" akışı yok; adresin
+`userTwapHistory`'si tek sorguda toplamı, süreyi, başlangıcı ve durumu verir.
+
+- **Akış:** collector sıfır hash'li dilimi taker adına biriktirir (aynı saniyenin parçaları tek dilim) →
+  ön süzgeç (G/Ç yok: dilim ≈ plan / (2m+1), dakika hızı ≈ 2 × dilim; iki kapıdan birini geçemeyecek
+  dilim sorulmaz — BTC'de $5K dilim gibi) → öncelik sırasıyla (dakika hızı ÷ coinin ortalama dakika
+  hacmi) **tek emir sorgusu** (aynı anda ≤ 3, dakikada ≤ `twap_fast_lookups_min`) → kapı → bildirim.
+  Hedef: emirden **~3-8 sn** sonra; `/tani` "⚡ hızlı twap" satırı ortanca gecikmeyi yazar.
+- **Kapı:** (1) eski kapı aynen (≥ $1M, kalan, 24s hacmin %5'i — BTC/ETH %20), yalnız saniyeler
+  içinde; (2) **kısa TWAP** (≤ `twap_fast_short_max_min` = 30 dk): emir ≥ `twap_fast_short_min_usd`
+  ($250K) VE dakika hızı coinin 24s ortalama dakika hacminin ≥ `twap_fast_rate_x` (2) katı VE planın
+  ≥ %30'u kalmış. 5 dk'lık $1M emir günün hacminin %2'si olsa da dakikada $200K'dır — eski %5 kuralı
+  onu susturuyordu.
+- **Mesaj (⚡ TWAP başladı):** süre, plan, dakikada $, ortalama dakika hacminin katı, emir/24s hacim,
+  başlangıç–bitiş saati (TSİ), emirden kaç sn sonra bildirildiği, ilk dilim, dolan/kalan, pozisyon
+  (en çok 2,5 sn beklenir), takip (`/takip_N`). Tahmin yok: emir HL'den okunamazsa bildirim yok
+  (sıfır hash likidasyon dolumunda da görülebildiği için emir yoksa düşer, 5 dk yok sayılır).
+- **Bitiş:** kısa TWAP'ın 🏁/⛔ notu emir süresi dolunca (+30 sn) bir kez sorulup yazılır (HL hâlâ
+  "activated" diyorsa beklenir). Uzun TWAP 5 dk sonra eski yola aday olunca tekrar mesaj gitmez;
+  yarı/bitiş notları oradan.
+- **Eski yol ve 🧪 laboratuvar:** hızlı yol eski yolun emir önbelleğine, `order`/`alerted_ts`
+  alanlarına ve 'twap' bekleme işaretine **dokunmaz** — eski yolun kararı ve `LOG-TWAP` kaydı
+  (AKI-TWAP-F'nin örneklemi) değişmez. Hızlı karar ayrı aile: **LOG-TWAPF** (ilk dilim anı; geçen +
+  kalan). Aynı adres+coin+yön için 6 sa bekleme iki yolda da geçerli.
+- **Kapsam:** eski yolla aynı (WS'in dinlediği coinler: hisseler + hacimce ilk `crypto_watch_top`
+  kripto). Dilimi `twap_fast_min_slice_usd`'nin ($1.000) altındaki uzun TWAP'lar (ör. $1M / 24 sa ≈
+  $350 dilim) eski yoldan gelir.
+
+### TWAP ayna grubu (`TWAP_MIRROR_CHAT_ID`)
+
+TWAP mesajları bugünkü yerlerine (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) gitmeye devam eder;
+**her TWAP mesajının birebir kopyası** (ilk alarm, ⚡ hızlı alarm, yarı, 🏁/⛔ bitiş) ayrıca bu gruba
+gider. Env-only (Railway Variables; diğer chat id'leri gibi ayarlar sayfasında yok); boş = kapalı.
+
+- Grup id'si: botu gruba ekle, grupta `/id` yaz (normal grup `-540…`, süper grup/kanal `-100…`).
+  Grup süper gruba dönüşürse id değişir — gönderim düşerse `/tani` "twap ayna grubu" satırı uyarır.
+- Kopya kendi tekrar kaydıyla gider (ana gönderim düşüp her tur yeniden denense de ayna bir kez);
+  ana hedefle aynıysa ikinci kopya yok; satılabilir bota fan-out edilmez. `notify_twap` kapanırsa
+  ayna da susar. Ayna grubu botun kendi sohbetidir: `/takip_N` orada da çalışır (takip haberi
+  ilk basılan sohbete gider). Sessiz saat ayrı gruplara uygulanmaz.
 
 ### TWAP emir defteri: `/twaplar` (spot dahil)
 

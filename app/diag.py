@@ -772,6 +772,17 @@ async def _subsystems(cfg, state=None) -> list[str]:
             out.append(f"       ilk emir snapshot örneği: {str(tl['sample'])[:300]}")
     else:
         out.append("  canlı twap: tur HENÜZ ÇALIŞMADI")
+    try:
+        from .radar import twapfast
+        out.append("  " + await twapfast.diag_line())
+    except Exception:                                  # noqa: BLE001
+        pass
+    if (getattr(cfg, "twap_mirror_chat_id", "") or "").strip():
+        from .radar.twaplive import MIRROR
+        out.append("  twap ayna grubu: " + (f"✓{MIRROR['sent']} kopya" + (
+            f" · ⚠️ {MIRROR['failed']} gönderilemedi (grup süper gruba dönüştüyse id değişir: grupta /id yaz,"
+            " TWAP_MIRROR_CHAT_ID'yi güncelle)" if MIRROR["failed"] else "")
+            if MIRROR["sent"] or MIRROR["failed"] else "tanımlı · bu açılıştan beri kopya yok"))
     # 🧲 Yapışkan duvar: akış tetiği + seyrek tarama. "0 alarm"ın sebebi (evren boş,
     # akış yok, kanal tanımsız, defter hatası) burada ayrışmalı.
     sw = await kv_get("sticky_stats") or {}

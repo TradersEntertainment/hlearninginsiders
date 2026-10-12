@@ -47,6 +47,10 @@ RULES: tuple[dict, ...] = (
     _log("LOG-OPEN", "akis", "Açılışın en hareketlisi (ilk 5 / 30 dk)", horizons=(30 * 60, 2 * H, 6 * H),
          max_day=40),
     _log("LOG-CLIQ", "akis", "Kripto likidasyon aşama geçişi (doğrulanmamış)", horizons=(15 * 60, H, 4 * H)),
+    # 12.10: ⚡ hızlı TWAP — ilk dilimde (sıfır hash) doğrulanan emir, kapıdan geçen + kalan. LOG-TWAP'ın
+    # üretim süreci DEĞİŞMEDİ (eski yolun kendi anı); bu ayrı aile ilk dilim anını kaydeder.
+    _log("LOG-TWAPF", "akis", "Hızlı TWAP kararı (ilk dilimde doğrulanan emir)",
+         horizons=(5 * 60, 15 * 60, H, 4 * H)),
 )
 
 

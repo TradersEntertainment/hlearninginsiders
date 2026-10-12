@@ -14,7 +14,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
-from ..radar import openmove, stickywall, twaplive
+from ..radar import openmove, stickywall, twapfast, twaplive
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -383,6 +383,9 @@ class Collector:
         trades = msg.get("data") or []
         rows = []                                  # fills'e yazılacak satırlar
         agg: dict[tuple, dict] = {}                # (coin, adres, yön) -> parti toplamı
+        # ⚡ Hızlı TWAP: HL TWAP alt emrinin dolumu SIFIR HASH'le gelir, sahibi taker (bkz. twapfast.py)
+        fast_on = bool(getattr(self.cfg, "twap_fast_enabled", True)) and bool(getattr(self.cfg, "twap_live_enabled", True))
+        fast_min = float(getattr(self.cfg, "twap_fast_min_slice_usd", 1000) or 0)
         for t in trades:
             try:
                 coin = t["coin"]
@@ -435,6 +438,11 @@ class Collector:
                     twaplive.observe(coin, addr, side, px, sz, notional, ts, taker)
                 except Exception:
                     twaplive.REG.errors += 1
+                if fast_on and taker and twapfast.is_twap_hash(t.get("hash")):
+                    try:
+                        twapfast.observe(coin, addr, side, px, sz, notional, ts, fast_min)
+                    except Exception:
+                        twapfast.F.stats["errors"] += 1
                 a = agg.setdefault((coin, addr, side), {
                     "ntl": 0.0, "sz": 0.0, "pxsz": 0.0, "tids": [],
                     "tk": 0.0, "known": 0.0, "ts": ts, "wrote": False})

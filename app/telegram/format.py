@@ -3196,6 +3196,65 @@ def twap_alert(m: dict, ctx: dict) -> str:
     return "\n".join(lines)
 
 
+def twap_fast(o: dict, ctx: dict) -> str:
+    """⚡ İlk dilimde bildirim — EMİR VERİSİYLE: süre, plan, dakika hızı ve coinin ortalama dakika
+    hacmine oranı, başlangıç/bitiş saati, emirden kaç sn sonra bildirildiği. Tahmin yok."""
+    coin = ctx.get("coin") or ""
+    spot = assets.is_spot(coin)
+    sym = esc(assets.label(coin))
+    mins = float(o.get("minutes") or 0)
+    head = (f"⚡ <b>TWAP başladı</b> · {'🪙 ' if spot else ''}<b>{sym}</b> · {_twap_side(ctx.get('side'))}"
+            f" · <b>{dur_txt(mins * 60)}</b> · plan <b>{usd(o.get('planned_usd'))}</b>")
+    rate = []
+    if ctx.get("per_min"):
+        rate.append(f"dakikada ~<b>{usd(ctx['per_min'])}</b>")
+    if ctx.get("rate_x") is not None:
+        rate.append(f"coinin 24s ortalama dakika hacminin <b>{float(ctx['rate_x']):.1f} katı</b>")
+    if ctx.get("vol_pct") is not None:
+        rate.append(f"emir 24s hacmin %{float(ctx['vol_pct']):.1f}'i")
+    lines = [head]
+    if rate:
+        lines.append("⏱ " + " · ".join(rate))
+    t0 = int(o.get("started_ts") or 0)
+    if t0:
+        tl = f"🕐 başladı {tr_time_s(t0)}"
+        if mins:
+            tl += f" · bitiş {tr_time_s(t0 + int(mins * 60))} TSİ"
+        tl += f" · emirden {max(0, int(ctx.get('now') or now()) - t0)} sn sonra"
+        lines.append(tl)
+    lines.append(f"👤 {alink(ctx.get('address') or '')} · {qty_txt(o.get('planned_sz'))} {sym}"
+                 + (f" · ilk dilim {px(ctx.get('slice_px'))} ({usd(ctx.get('slice_usd'))})" if ctx.get("slice_px") else ""))
+    lines.append(_fill_line(o))
+    pos = ctx.get("pos")
+    if spot:
+        lines.append("📍 spot çifti — pozisyon, likidasyon ve funding yok")
+    elif pos and not pos.get("none"):
+        src = pos.get("src") or ""
+        when = f" {age_str(pos['ts'])} önce" if src != "canlı" and pos.get("ts") else ""
+        lines.append(f"📍 pozisyon: {_side_badge(pos.get('side') or '')} <b>{usd(pos.get('notional'))}</b> · {src}{when}")
+    elif pos and pos.get("none"):
+        lines.append("📍 pozisyon: bu coinde açık perp pozisyonu yok (canlı)")
+    else:
+        lines.append("📍 pozisyon: bilinmiyor")
+    extra = []
+    if o.get("reduce_only"):
+        extra.append("reduce-only (pozisyon kapatıyor)")
+    if ctx.get("day_vol"):
+        extra.append(f"24s hacim {usd(ctx['day_vol'])}")
+    if ctx.get("gate") == "short":
+        extra.append("kısa TWAP: dakika hızı kuralıyla")
+    if extra:
+        lines.append(" · ".join(extra))
+    if ctx.get("entity"):
+        lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
+    if (ctx.get("klass") or "") == "hisse" and is_listed(sym):
+        lines.append(PROPR_NOTE)
+    if ctx.get("offer"):
+        lines.append(f"👁 emri takip et → /takip_{ctx['offer']}")
+    lines.append(DISCLAIMER)
+    return "\n".join(lines)
+
+
 def twap_progress(m: dict, ctx: dict) -> str:
     """Emrin yarısı doldu — tek not."""
     sym = esc(assets.label(m.get("coin") or ""))

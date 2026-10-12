@@ -14,11 +14,13 @@ yoksa aralık 0 olur ve düzenlilik hiç tutmaz.
 
 TAHMİN YOK (kullanıcı kuralı): düzenli dizi görülünce adresin HL TWAP EMRİ
 WS'ten sorgulanır (`userTwapHistory` snapshot — hypurrscan'in Orders sekmesi):
-planlanan boyut, dolan kısım, kalan süre. Kapı: emir ≥ twap_alert_min_usd ($2M)
-VE kalan ≥ twap_alert_min_left_usd ($1M) VE emir 24s hacmin ≥ twap_alert_vol_pct'i
-(%20). Emir yok / bitmiş / iptal / hacim bilinmiyor → bildirim YOK. "Bu hızla
-24 saatte…" gibi ekstrapolasyon mesajlarda yer almaz.
-Kripto → CRYPTO_CHAT_ID (boşsa gönderilmez), hisse/endeks → ana sohbet.
+planlanan boyut, dolan kısım, kalan süre. Kapı: emir ≥ twap_alert_min_usd ($1M)
+VE kalan ≥ min(twap_alert_min_left_usd $1M, planın yarısı) VE emir 24s hacmin ≥
+twap_alert_vol_pct'i (%5; BTC/ETH %20). Emir yok / bitmiş / iptal / hacim bilinmiyor →
+bildirim YOK. "Bu hızla 24 saatte…" gibi ekstrapolasyon mesajlarda yer almaz.
+Kripto → CRYPTO_CHAT_ID (boşsa gönderilmez), hisse/endeks → ana sohbet; her TWAP
+mesajının kopyası TWAP_MIRROR_CHAT_ID'ye (mirror). ⚡ İlk dilimde yakalama ayrı
+modülde (twapfast.py); bu yolun kararına ve 🧪 LOG-TWAP kaydına dokunmaz.
 İlerleme notu emrin yarısı dolunca (tek sefer), bitiş/iptal notu emir
 finished/terminated olunca — gerçek dolan tutarla.
 
@@ -74,7 +76,8 @@ class Run:
     __slots__ = ("coin", "address", "side", "first_ts", "last_ts", "n", "total", "sz_total",
                  "pxsz", "px_first", "px_last", "tk_n", "known_n", "slices", "alerted_ts",
                  "alert_total", "progress_ts", "progress_step", "ended_ts", "day_volume",
-                 "rate_day", "gate", "order", "lookup_ts", "half_ts")
+                 "rate_day", "gate", "order", "lookup_ts", "half_ts", "fast_ts", "fast_started",
+                 "fast_order", "fast_lookup_ts")
 
     def __init__(self, coin: str, address: str, side: str, ts: int, px: float):
         self.coin, self.address, self.side = coin, address, side
@@ -95,6 +98,12 @@ class Run:
         self.order = None          # son sorgudaki HL TWAP emri (parse_twap_orders çıktısı)
         self.lookup_ts = None
         self.half_ts = None
+        # ⚡ hızlı yol (twapfast.py) — eski yolun alanlarından (alerted_ts, order, lookup_ts) AYRI tutulur:
+        # eski yolun kararı ve 🧪 LOG-TWAP kaydı hızlı yoldan etkilenmesin
+        self.fast_ts = None        # ilk dilimde bildirildi
+        self.fast_started = None   # o emrin HL başlangıç anı (bitiş notunda emir eşlemesi)
+        self.fast_order = None
+        self.fast_lookup_ts = None
 
     @property
     def key(self) -> tuple:
@@ -152,6 +161,8 @@ class Registry:
         dead = []
         for key, r in self.runs.items():
             idle = ref_ts - r.last_ts
+            if r.fast_ts and not r.ended_ts and ref_ts - r.fast_ts < 2 * 3600:
+                continue                               # ⚡ hızlı bildirilmiş: bitiş notu yazılana dek tutulur
             if idle > (IDLE_SHORT_SEC if r.n < 5 else IDLE_SEC):
                 dead.append(key)
             elif r.ended_ts and ref_ts - r.ended_ts > IDLE_SEC:
@@ -452,18 +463,19 @@ async def position_ctx(client, coin: str, addr: str) -> dict | None:
     return None
 
 
-async def persist(run: Run, m: dict | None, src: str = "live") -> None:
+async def persist(run: Run, m: dict | None, src: str = "live", order: dict | None = None) -> None:
     """twap_runs'a yaz/güncelle (PK coin,address,side,first_ts). Arşiv taraması
-    aynı PK'ya rastlarsa kendi kolonlarını günceller, bizimkilere dokunmaz."""
+    aynı PK'ya rastlarsa kendi kolonlarını günceller, bizimkilere dokunmaz. `order`: hızlı yolun
+    emri (eski yolun run.order'ına yazılmaz)."""
     m = m or {}
-    o = run.order or {}
+    o = order or run.order or {}
     async with db() as conn:
         await conn.execute(
             """INSERT INTO twap_runs(coin,address,side,first_ts,last_ts,n_slices,total,avg_slice,
                  avg_gap,cv_gap,cv_size,taker_pct,ts,day_volume,rate_day,src,alerted_ts,ended_ts,
                  px_first,px_last,sz_total,planned_usd,planned_sz,executed_usd,remaining_usd,
-                 order_ts,order_min,order_status,lookup_ts)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 order_ts,order_min,order_status,lookup_ts,fast_ts)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(coin,address,side,first_ts) DO UPDATE SET
                  last_ts=excluded.last_ts, n_slices=excluded.n_slices, total=excluded.total,
                  avg_slice=excluded.avg_slice, avg_gap=excluded.avg_gap, cv_gap=excluded.cv_gap,
@@ -474,13 +486,15 @@ async def persist(run: Run, m: dict | None, src: str = "live") -> None:
                  planned_usd=excluded.planned_usd, planned_sz=excluded.planned_sz,
                  executed_usd=excluded.executed_usd, remaining_usd=excluded.remaining_usd,
                  order_ts=excluded.order_ts, order_min=excluded.order_min,
-                 order_status=excluded.order_status, lookup_ts=excluded.lookup_ts""",
+                 order_status=excluded.order_status, lookup_ts=excluded.lookup_ts,
+                 fast_ts=COALESCE(excluded.fast_ts, twap_runs.fast_ts)""",
             (run.coin, run.address, run.side, run.first_ts, run.last_ts, run.n, run.total,
              (run.total / run.n) if run.n else 0.0, m.get("avg_gap"), m.get("cv_gap"), m.get("cv_size"),
              m.get("taker_pct"), now(), run.day_volume, run.rate_day, src, run.alerted_ts,
              run.ended_ts, run.px_first, run.px_last, run.sz_total,
              o.get("planned_usd"), o.get("planned_sz"), o.get("executed_usd"), o.get("remaining_usd"),
-             o.get("started_ts"), o.get("minutes"), o.get("status"), run.lookup_ts))
+             o.get("started_ts"), o.get("minutes"), o.get("status"),
+             run.fast_lookup_ts if order else run.lookup_ts, run.fast_ts))
 
 
 async def _rehydrate(window_sec: int) -> int:
@@ -532,6 +546,70 @@ def chat_for(cfg, coin: str) -> tuple[str, bool]:
     return "", True
 
 
+def mirror_chat(cfg) -> str:
+    return (getattr(cfg, "twap_mirror_chat_id", "") or "").strip()
+
+
+MIRROR: dict = {"sent": 0, "failed": 0, "last_fail_ts": 0, "last_ok_ts": 0}
+
+
+async def mirror(cfg, notifier, text: str, key: str, coin: str = "", out: dict | None = None,
+                 primary: str | None = None) -> bool | None:
+    """TWAP ayna grubu (TWAP_MIRROR_CHAT_ID): her TWAP mesajının kopyası. Ana gönderimden BAĞIMSIZ —
+    sonucu ana yolun işaretini, tekrar denemesini, sayaçlarını değiştirmez. Kendi tekrar kaydı
+    (alerts_log 'twap_mirror', 24 sa): ana yol başarısız olup her tur yeniden denese de kopya BİR kez
+    gider. Boş id → hiçbir şey (bot.send boş id'de ana sohbete düşerdi). Fan-out yok (public=False)."""
+    chat = mirror_chat(cfg)
+    if not chat or notifier is None or not text:
+        return None
+    if primary is not None and chat == ((primary or "").strip() or (getattr(cfg, "telegram_chat_id", "") or "").strip()):
+        return None                                    # ayna = ana hedef → aynı sohbete ikinci kopya olmaz
+    ok = False
+    try:
+        if await alert_recent("twap_mirror", key, 86400):
+            return None
+        ok = bool(await notifier.send("twap_mirror", text, priority="high", key=f"mirror:{key}",
+                                      chat_id=chat, coin=coin, public=False))
+        if ok:
+            await alert_log("twap_mirror", key, "")
+    except Exception:                                  # noqa: BLE001 — ayna asla ana yolu düşürmez
+        log.debug("twap ayna gönderimi %s", key, exc_info=True)
+        ok = False
+    MIRROR["sent" if ok else "failed"] += 1
+    MIRROR["last_ok_ts" if ok else "last_fail_ts"] = now()
+    if out is not None:
+        k = "mirror_sent" if ok else "mirror_failed"
+        out[k] = out.get(k, 0) + 1
+    return ok
+
+
+VOL_CACHE: dict = {"ts": 0, "v": {}}       # son tur hacimleri — hızlı yol aynı sorguyu tekrarlamasın
+
+
+async def volumes_cached(client=None, max_age: int = 300) -> dict:
+    if VOL_CACHE["v"] and 0 <= now() - VOL_CACHE["ts"] < max_age:
+        return VOL_CACHE["v"]
+    v = await volumes(None)          # SALT OKUNUR: hızlı yol paylaşılan hacim kaydını (kv) tazelemez
+    VOL_CACHE.update(ts=now(), v=v)
+    return v
+
+
+def slow_candidate(run: "Run", min_slices: int, lookup_min: float) -> bool:
+    """Eski yolun aday ölçütü (10 dilim · 5 dk · $50K) — hızlı yol bunu DEĞİŞTİRMEZ."""
+    return run.n >= min_slices and run.last_ts - run.first_ts >= LOOKUP_MIN_DUR and run.total >= lookup_min
+
+
+def match_order(hist, run: "Run", started: int | None, now_ts: int) -> dict | None:
+    """Emir geçmişinden bu turun emri: başlangıcı biliniyorsa (hızlı yol) aynı başlangıç, yoksa ilk sıradaki."""
+    orders = parse_twap_orders(hist, run.coin, run.side, run.px_last, now_ts)
+    if started:
+        for o in orders:
+            if abs(int(o.get("started_ts") or 0) - int(started)) <= 2:
+                return o
+        return None
+    return orders[0] if orders else None
+
+
 # ---------------- değerlendirme turu ----------------
 
 def _lab_twap(run: "Run", order: dict, det: dict, gate: str, ts: int, lookup_min: float = 0.0,
@@ -550,6 +628,57 @@ def _lab_twap(run: "Run", order: dict, det: dict, gate: str, ts: int, lookup_min
                     gated=gate in ("ok", "big"))
     except Exception:                                  # noqa: BLE001
         return False
+
+
+async def _fast_end(cfg, notifier, collector, run: "Run", m: dict | None, vols: dict, ts: int, out: dict,
+                    fmt) -> None:
+    """⚡ Yalnız hızlı yolun bildirdiği turun bitişi (ör. 5 dk'lık TWAP eski yolun adayı hiç olmaz):
+    emrin süresi dolunca (+30 sn) ya da dilimler kesilince emir BİR kez zorla sorgulanır; bitti/iptal →
+    🏁/⛔ notu (ana grup + ayna). Eski yolun bitiş anahtarı (twap_end) — iki yol aynı notu iki kez yazmaz.
+    Eski yolun emir önbelleğine (_lookup_cache) dokunmaz: onun kararı (ve 🧪 LOG-TWAP) değişmesin."""
+    if run.ended_ts:
+        return
+    o = run.fast_order or {}
+    end_at = int(o.get("started_ts") or 0) + int(float(o.get("minutes") or 0) * 60)
+    mm = m or _scalar_measure(run)
+    silent = is_ended(run, mm, ts)
+    if not ((end_at and ts >= end_at + 30) or silent):
+        return
+    order = run.fast_order
+    fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
+    if fn is not None and ts - int(run.fast_lookup_ts or 0) >= 20:
+        out["fast_lookups"] = out.get("fast_lookups", 0) + 1
+        try:
+            hist = await fn(run.address)
+        except Exception:                              # noqa: BLE001
+            hist = None
+        if hist is not None:
+            got = match_order(hist, run, run.fast_started, ts)
+            if got:
+                order = run.fast_order = got
+        run.fast_lookup_ts = ts
+    st = (order or {}).get("status")
+    if st == "activated" and end_at and ts < end_at + 600:
+        return                                         # HL henüz kapatmadı — sonraki tur
+    run.ended_ts = ts
+    out["ended"] += 1
+    vol = vols.get(run.coin)
+    if vol:
+        run.day_volume = vol[0]
+    key = f"{run.coin}:{run.address}:{run.side}"
+    ekey = f"{key}:{run.first_ts}"
+    if getattr(cfg, "twap_alert_end_note", True) and not await alert_recent("twap_end", ekey, 86400):
+        await alert_log("twap_end", ekey, "")
+        ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
+               "cancelled": st in ("terminated", "error")}
+        text = fmt.twap_end(mm, ctx)
+        chat, can = chat_for(cfg, run.coin)
+        if can:
+            ok = await notifier.send("twap", text, priority="high", coin=run.coin, key=f"twap_end:{key}", chat_id=chat)
+            if not ok and not (not chat and in_quiet_hours(cfg)):
+                out["failed"] += 1
+        await mirror(cfg, notifier, text, f"end:{ekey}", run.coin, out, primary=chat if can else None)
+    await persist(run, m, order=order)
 
 
 async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
@@ -582,8 +711,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     min_slices = int(getattr(cfg, "twap_alert_min_slices", 10) or 0)
     lookup_min = float(getattr(cfg, "twap_lookup_min_usd", 50_000) or 0)
     cands = [r for r in REG.runs.values()
-             if r.alerted_ts or (r.n >= min_slices and r.last_ts - r.first_ts >= LOOKUP_MIN_DUR
-                                 and r.total >= lookup_min)]
+             if r.alerted_ts or (r.fast_ts and not r.ended_ts) or slow_candidate(r, min_slices, lookup_min)]
     out["cands"] = len(cands)
     sample = getattr(collector, "twap_sample", None) if collector is not None else None
     if sample:
@@ -595,6 +723,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
         await kv_set(STATS_KV, {**out, "ts": ts})
         return out
     vols = await volumes(client)
+    VOL_CACHE.update(ts=ts, v=vols)
     ents = await entities(list({r.address for r in cands}))
     from ..telegram import format as fmt
     for run in cands:
@@ -629,13 +758,16 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                             "twap_end", f"{key}:{run.first_ts}", 86400):
                         await alert_log("twap_end", f"{key}:{run.first_ts}", "")
                         chat, can = chat_for(cfg, run.coin)
+                        ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
+                               "cancelled": (order or {}).get("status") in ("terminated", "error")}
+                        text = fmt.twap_end(mm, ctx)
                         if can:
-                            ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin),
-                                   "cancelled": (order or {}).get("status") in ("terminated", "error")}
-                            ok = await notifier.send("twap", fmt.twap_end(mm, ctx), priority="high", coin=run.coin,
+                            ok = await notifier.send("twap", text, priority="high", coin=run.coin,
                                                      key=f"twap_end:{key}", chat_id=chat)
                             if not ok and not (not chat and in_quiet_hours(cfg)):
                                 out["failed"] += 1
+                        await mirror(cfg, notifier, text, f"end:{key}:{run.first_ts}", run.coin, out,
+                                     primary=chat if can else None)
                     await persist(run, m)
                     continue
                 if (order and active and not run.half_ts and getattr(cfg, "twap_alert_progress", True)
@@ -645,19 +777,30 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                     if not await alert_recent("twap_prog", pkey, 86400):
                         await alert_log("twap_prog", pkey, "")
                         chat, can = chat_for(cfg, run.coin)
+                        ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin)}
+                        text = fmt.twap_progress(mm, ctx)
                         if can:
-                            ctx = {"order": order, "day_vol": run.day_volume, "klass": klass_of(run.coin)}
-                            ok = await notifier.send("twap", fmt.twap_progress(mm, ctx), priority="high", coin=run.coin,
+                            ok = await notifier.send("twap", text, priority="high", coin=run.coin,
                                                      key=f"twap_prog:{key}", chat_id=chat)
                             out["progress"] += 1
                             if not ok and not (not chat and in_quiet_hours(cfg)):
                                 out["failed"] += 1
+                        await mirror(cfg, notifier, text, f"prog:{pkey}", run.coin, out,
+                                     primary=chat if can else None)
                     await persist(run, m)
+                continue
+            # --- ⚡ yalnız hızlı yolun bildirdiği tur (eski yol aday değil: kısa TWAP ya da henüz 5 dk
+            # dolmadı): emir süresi dolunca bitiş notu. Aday olunca aşağıdaki eski yol işler (🧪 LOG-TWAP
+            # kaydı eskisi gibi), gönderimde hızlı bildirimi görüp tekrar yazmaz.
+            if run.fast_ts and not run.alerted_ts and not slow_candidate(run, min_slices, lookup_min):
+                await _fast_end(cfg, notifier, collector, run, m, vols, ts, out, fmt)
                 continue
             # --- ilk alarm: düzenli dizi → emir sorgusu → kapı ---
             if not m:
                 out["irregular"] += 1
                 decide(run, "irregular")
+                if run.fast_ts:
+                    await _fast_end(cfg, notifier, collector, run, m, vols, ts, out, fmt)
                 continue
             out["regular"] += 1
             if ents.get(run.address) in ("mm", "vault"):
@@ -697,16 +840,30 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                     run.day_volume = day_vol
                     await persist(run, m)
                     out["seen"] = out.get("seen", 0) + 1
+                if run.fast_ts:                           # hızlı bildirilmişti: bitiş notu yine gelsin
+                    await _fast_end(cfg, notifier, collector, run, m, vols, ts, out, fmt)
                 continue
             chat, can = chat_for(cfg, run.coin)
             run.alerted_ts, run.alert_total, run.gate = ts, run.total, g
             run.day_volume = day_vol
-            if not can:
+            if run.fast_ts or await alert_recent("twap_fastcd", key, int(getattr(cfg, "twap_alert_cooldown", 21600) or 0)):
+                # ⚡ Bu emir (ya da bekleme içindeki önceki emir) ilk dilimde zaten bildirildi (ana grup + ayna).
+                # 🧪 kayıt yukarıda eski yolun kendi anında yapıldı; tekrar mesaj yok. 'twap' işareti eski
+                # yolun gönderseydi yazacağı gibi YALNIZ ana kanal varken (kanalsız kurulumun örneklemi aynı kalsın).
+                # Bundan sonra yarı/bitiş notları eski yoldan.
+                if can:
+                    await alert_log("twap", key, "")
+                out["fast_already"] = out.get("fast_already", 0) + 1
+                decide(run, "fast", det)
+                await persist(run, m)
+                continue
+            mirror_on = bool(mirror_chat(cfg))
+            if not can and not mirror_on:
                 out["no_chat"] += 1
                 decide(run, "no_chat", det)
                 await persist(run, m)
                 continue
-            if not chat:
+            if can and not chat:
                 await alert_log("twap", key, "")          # hisse yolu: sessiz saat özeti için işaret ÖNCE
             pos = await position_ctx(client, run.coin, run.address)
             # Takip teklifi (/takip_N): kullanıcı basarsa BU EMİR izlenir ve iptal
@@ -722,7 +879,15 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                    "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or "",
                    "offer": offer}
             text = fmt.twap_alert(m, ctx)
+            mkey = f"alert:{key}:{run.first_ts}"
+            if not can:                                   # ana kanal tanımsız (kripto) — yalnız ayna; durum eskisi gibi
+                out["no_chat"] += 1
+                await mirror(cfg, notifier, text, mkey, run.coin, out)
+                decide(run, "no_chat", det)
+                await persist(run, m)
+                continue
             ok = await notifier.send("twap", text, priority="high", key=f"twap:{key}", chat_id=chat, coin=run.coin)
+            await mirror(cfg, notifier, text, mkey, run.coin, out, primary=chat)
             if ok:
                 await alert_log("twap", key, text)
                 out["alerted"] += 1
@@ -967,6 +1132,15 @@ async def diag_summary(cfg) -> str:
              f"{st.get('regular', 0)} düzenli · {st.get('irregular', 0)} düzensiz · {st.get('alerted', 0)} bildirim"
              + (f" · sorgu ✓{st.get('lookups_ok', 0)}/⏱{st.get('lookups_timeout', 0)}/✗{st.get('lookups_err', 0)}"
                 if "lookups_ok" in st else "")]
+    try:
+        from . import twapfast
+        lines.append(esc(await twapfast.diag_line()))
+        fs = await kv_get(twapfast.STATS_KV) or {}
+        rec = [d for d in (fs.get("recent") or []) if d.get("reason") != "retry"][:5]
+        if rec:
+            lines.append("Hızlı yol son kararlar:\n" + "\n".join("• " + esc(twapfast.recent_line(d)) for d in rec))
+    except Exception:                                  # noqa: BLE001
+        log.debug("hızlı twap özeti", exc_info=True)
     last = await kv_get(LAST_KV) or []
     if last:
         lines.append("Son kararlar:\n" + "\n".join("• " + esc(decision_line(d)) for d in last[:10]))

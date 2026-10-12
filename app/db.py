@@ -598,6 +598,8 @@ MIGRATIONS = [
     "ALTER TABLE twap_runs ADD COLUMN order_min REAL",
     "ALTER TABLE twap_runs ADD COLUMN order_status TEXT",
     "ALTER TABLE twap_runs ADD COLUMN lookup_ts INTEGER",
+    # ⚡ hızlı yol (twapfast) ilk dilimde bildirdi — alerted_ts'ten AYRI (eski yolun geri yüklemesi karışmasın)
+    "ALTER TABLE twap_runs ADD COLUMN fast_ts INTEGER",
     "ALTER TABLE positions_current ADD COLUMN last_add_ts INTEGER",
     "ALTER TABLE positions_current ADD COLUMN last_trim_ts INTEGER",
     "ALTER TABLE position_snapshots ADD COLUMN last_add_ts INTEGER",
