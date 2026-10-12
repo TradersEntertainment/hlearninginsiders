@@ -398,7 +398,7 @@ TASK_TR = {
     "seans": "ABD seans karnesi (mum arşivi)", "wake": "uyandırma alarmı",
     "openmove": "açılışın en hareketlileri",
     "lab": "strateji laboratuvarı",
-    "propr": "PROPR listesi (canlı senkron)",
+    "propr": "PROPR listesi (yalnız ekler)",
 }
 
 
@@ -512,28 +512,6 @@ def new_listing_alert(items: list[dict]) -> str:
     if n > 12:
         lines.append(f"…ve {n - 12} tane daha")
     lines.append("\n<i>Yeni listeleme — bu sembolde geçmiş mum ve sicil verisi henüz az.</i>")
-    return "\n".join(lines)
-
-
-def propr_change(added: list[str], removed: list[str], n: int) -> str:
-    """PROPR listesi değişti (canlı senkron, propr.xyz/api/universe/config). Kimlikler dex'li:
-    ana dex kripto öneksiz, HIP-3 'xyz:IREN' → 'IREN (hisse/endeks)'."""
-    def grp(ids: list[str]) -> str:
-        cr = [i for i in ids if ":" not in i]
-        eq = [i.split(":")[-1] for i in ids if ":" in i]
-        out = []
-        if cr:
-            out.append("kripto: " + ", ".join(esc(x) for x in cr[:40]) + (f" … +{len(cr) - 40}" if len(cr) > 40 else ""))
-        if eq:
-            out.append("hisse/endeks: " + ", ".join(esc(x) for x in eq[:40]) + (f" … +{len(eq) - 40}" if len(eq) > 40 else ""))
-        return " · ".join(out)
-    lines = [f"✅ <b>PROPR listesi değişti</b> · propr.xyz · şimdi {n} enstrüman"]
-    if added:
-        lines.append(f"➕ <b>eklendi ({len(added)})</b> — {grp(added)}")
-    if removed:
-        lines.append(f"➖ <b>çıkarıldı ({len(removed)})</b> — {grp(removed)}")
-    lines.append("<i>PROPR'a bağlı taramalar (hacim rekoru, açılış, kapalı seans, 🧪 evren) bir sonraki"
-                 " turda bu listeyle çalışır. TWAP / balina / likidasyon radarları listeden bağımsız.</i>")
     return "\n".join(lines)
 
 

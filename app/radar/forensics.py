@@ -484,7 +484,10 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
     top = max(0, int(top))
     head = rows[:top]
 
-    probed, probe_err = 0, ""
+    # DİKKAT: yerel ad `probed` OLAMAZ — aynı adlı modül fonksiyonunu gölgeliyordu ve sonda başarılı
+    # olunca `await probed(ha)` sayıyı çağırıyordu ("canlı profil çekilemedi: TypeError: 'int' object
+    # is not callable", 12.10 canlı mesaj).
+    n_probed, probe_err = 0, ""
     if probe and client and head:
         cap = int(getattr(cfg, "alert_forensics_probe", 3) or 0)
         # Yalnız GERÇEKTEN eksik olanı sonda: pozisyonu taze bilinen ya da
@@ -497,7 +500,7 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
         if cap > 0 and stale:
             try:
                 res = await refresh_profiles(cfg, client, coin, stale, cap=cap)
-                probed, probe_err = res["ok"], res["err_msg"]
+                n_probed, probe_err = res["ok"], res["err_msg"]
                 if res["ok"]:
                     ha = [r["address"] for r in head]
                     fresh = await _positions(coin, ha)
@@ -528,7 +531,7 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
         "net": rep["buy"] - rep["sell"],
         "taker_pct": (tk[0] / tk[1] * 100) if tk[1] > 0 else None,
         "top": head, "listening": listen, "floor": floor,
-        "probed": probed, "probe_err": probe_err, "empty_reason": empty,
+        "probed": n_probed, "probe_err": probe_err, "empty_reason": empty,
         "before_records": rep["before_records"],
     }
 

@@ -342,7 +342,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.debug("kripto dex sembolleri yüklenemedi", exc_info=True)
 
-    # PROPR listesi (canlı senkron): ilk çekime kadar kv'deki son iyi liste geçerli (yoksa gömülü 12.10)
+    # PROPR listesi (yalnız büyür): kv'deki birleşik küme ∪ koddaki liste — ilk okumaya kadar bu geçerli
     from . import propr as _propr
     try:
         n_pr = await _propr.load_live()
@@ -391,7 +391,7 @@ async def lifespan(app: FastAPI):
     await dbm.kv_set("boot_ts", dbm.now())  # bekçinin açılış toleransı
     _spawn("universe", lambda: universe_loop(cfg, client, notifier), notifier)
     _spawn("calendar", lambda: calendar_loop(cfg, session), notifier)
-    _spawn("propr", lambda: _propr.loop(cfg, session, notifier), notifier)
+    _spawn("propr", lambda: _propr.loop(cfg, session), notifier)
     _spawn("metrics", lambda: metrics_loop(cfg, client, notifier), notifier)
     from .radar.cryptovol import loop as cryptovol_loop
     _spawn("cryptovol", lambda: cryptovol_loop(cfg, client, notifier), notifier)

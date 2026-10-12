@@ -13,8 +13,8 @@ EVREN: xyz dex tickers ∩ PROPR listesi. Kripto tarafından farklı olarak hacm
 API'den ÇEKMİYOR — `asset_metrics.day_volume` zaten `metrics.poll_metrics`
 tarafından her turda dolduruluyor, tekrar sormak boşuna istek olurdu.
 
-LİSTE DIŞI: PROPR listesi 12.10'dan beri propr'dan CANLI çekiliyor (app/propr.py; eskiden elle
-yazılmış kopyaydı ve eskiyordu — SHEIN/MRNA vakası). `not_listed()` dexte olup propr'ın
+LİSTE DIŞI: PROPR listesi 12.10'dan beri propr'dan okunur ve yalnız büyür (app/propr.py; eskiden elle
+yazılmış kopyaydı ve eskiyordu — SHEIN/MRNA vakası). `not_listed()` dexte olup propr'ın hiç
 listelemediklerini döndürür; sayfa ve /tani bunu gösterir ki "neden taranmadı" cevapsız kalmasın.
 Eşleşme coin kimliğiyle: propr 'xyz:IREN'i listeler, 'para:IREN'i listelemez.
 """

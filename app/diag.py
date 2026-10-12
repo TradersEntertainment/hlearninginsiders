@@ -359,7 +359,7 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f"{_dur(now() - int(last_full))} önce" if last_full else "YOK (ilk tur sürüyor)")
                    + (f" · hl yazma hatası {sw['hl_err']}" if sw.get("hl_err") else "")
                    + (f"\n       ⚠️ HATA: {sw['err_msg']}" if sw.get("err_msg") else ""))
-    # PROPR listesi (canlı senkron): kaynak, sayılar, son çekim, son değişiklik
+    # PROPR listesi (yalnız büyür): kaynak, sayılar, son çekim, son ekleme
     try:
         from . import propr as _propr_d
         out.append("  " + await _propr_d.diag_line(cfg))
@@ -418,8 +418,8 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f" · ⚠️ birim şüpheli: {', '.join(vs['unit_bad'][:5])}"
                       if vs.get("unit_bad") else "")
                    + (f"\n       ⏸ {vs['skipped']}" if vs.get("skipped") else ""))
-        # propr'ın listelemediği perp'ler taranmaz — görünmezse "neden bildirim
-        # gelmedi" sorusu cevapsız kalır (liste 12.10'dan beri propr'dan canlı).
+        # propr'ın hiç listelemediği perp'ler taranmaz — görünmezse "neden bildirim
+        # gelmedi" sorusu cevapsız kalır (liste 12.10'dan beri propr'dan okunur, yalnız büyür).
         if vs.get("n_missing"):
             out.append(f"       📋 propr'ın listelemediği {vs['n_missing']} perp"
                        f" taranmıyor: {', '.join(vs.get('missing', [])[:15])}")

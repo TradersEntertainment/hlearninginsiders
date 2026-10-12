@@ -465,8 +465,7 @@ def test_archive_all_separate_from_tabs():
         cfg.seans_archive_all = True
         got = await seans.archive_set(cfg)
         assert got[:2] == ["XYZ100", "SP500"] and seans.default_symbols(cfg) == ["XYZ100", "SP500"]
-        assert {"NVDA", "SPCX"} <= set(got) and "GOLD" not in got and "THIN" not in got, got
-        assert "KIOXIA" not in got, "propr 12.10'da KIOXIA'yı kara listeye aldı (canlı liste)"
+        assert {"NVDA", "KIOXIA", "SPCX"} <= set(got) and "GOLD" not in got and "THIN" not in got, got
         assert len(got) == len(set(got))
 
         class Busy:

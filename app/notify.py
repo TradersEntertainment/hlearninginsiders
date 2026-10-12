@@ -44,7 +44,6 @@ KINDS: dict[str, tuple[str, str, str]] = {
     # 🧪 yalnız sahibe (PUBLIC_KINDS'te BİLEREK yok): kapıyı geçip onaylanan kuralların olayları
     "strat":     ("notify_strat",     "🧪 Strateji laboratuvarı (onaylı kural)", "high"),
     "listing":   ("notify_listing",   "🆕 Yeni hisse listelendi",             "high"),
-    "propr":     ("notify_propr",     "✅ PROPR listesi değişti",             "normal"),
     "health":    ("notify_health",    "⚕️ Sistem sağlığı",                    "high"),
     "digest":    ("notify_digest",    "🌅 Günlük özet",                       "normal"),
     "test":      ("",                 "🔧 Test",                              "critical"),

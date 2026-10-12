@@ -94,11 +94,11 @@
 
   {% if n_missing %}
   <p class="alert warn">📋 <b>{{ n_missing }} perp taranmıyor</b> — izlenen HIP-3 dex'lerinde listeli
-    ama propr listelemiyor:
+    ama propr hiç listelemedi:
     <span class="dim">{{ missing|join(', ') }}</span>.
-    PROPR listesi propr.xyz'den saatte bir <b>canlı</b> çekilir (yeni eklenen kendiliğinden girer;
-    <i>IREN (para)</i> = sembolün listeli eşi başka dex'te). Yine de taranmasını istediğin bir sembol
-    buradaysa <b>Ayarlar → propr.xyz ek semboller</b> alanına virgülle ekle.</p>
+    PROPR listesi yalnız büyür: propr'ın yeni listelediği saatte bir kendiliğinden girer, kara listeye
+    aldığı çıkmaz (<i>IREN (para)</i> = sembolün listeli eşi başka dex'te). Yine de taranmasını
+    istediğin bir sembol buradaysa <b>Ayarlar → propr.xyz ek semboller</b> alanına virgülle ekle.</p>
   {% endif %}
 
   {% if eq_events %}
