@@ -13,6 +13,10 @@ Pinlenenler:
   • emir yoksa (likidasyon) bildirim yok; mm/vault, bekleme, TWAP bildirimi kapalı → yok
   • ayna: boşsa hiç gönderilmez; ana hedefle aynıysa ikinci kopya yok; ana gönderim başarısız olup her tur
     yeniden denense de ayna BİR kez; ana kripto kanalı yokken yalnız ayna; ayna grubu botun kendi sohbeti
+  • inceleme düzeltmeleri: eski yolun atlaması EMRE bağlı (aynı adresin sonraki farklı emri eski yoldan yine
+    gider); ana kanal düşerse hızlı yol "bildirildi" saymaz ve aynaya da yazmaz (eski yol ikisini dener);
+    iki yol aynı emri aynı anda gönderemez; bitiş notu emir anahtarıyla tekil; aynı saniyenin parçaları ön
+    süzgeçte yeniden tartılır; geç gelen başka adresin snapshot'ı bekleyen sorguya düşmez
 """
 import asyncio
 import json
@@ -193,9 +197,11 @@ def test_first_slice_alert_mirror_and_end_note():
         assert "katı</b>" in text and "dakikada ~<b>$120K</b>" in text and "/takip_" in text
         assert "kısa TWAP: dakika hızı kuralıyla" in text and "bu hızla" not in text
         run_ = tl.REG.runs[("PUMP", A, "buy")]
-        assert run_.fast_ts and run_.fast_started == started and run_.fast_order["status"] == "activated"
-        assert run_.order is None and run_.alerted_ts is None and run_.lookup_ts is None, "eski yolun alanları"
+        assert not hasattr(run_, "fast_ts") and run_.order is None and run_.alerted_ts is None \
+            and run_.lookup_ts is None, "eski yolun sayacına dokunulmaz"
         assert tl._lookup_cache == {}, "eski yolun emir önbelleği"
+        rec = tf.F.open[("PUMP", A, "buy")]
+        assert rec["started"] == started and rec["end_at"] == started + 300 and rec["n"] == 1
         assert await _kind("twap") == 0 and await _kind("twap_fast") == 1 and await _kind("twap_mirror") == 1
         f = _q("LOG-TWAPF")
         assert len(f) == 1 and f[0]["gated"] and json.loads(f[0]["features"])["kapi"] == "short", f
@@ -205,53 +211,57 @@ def test_first_slice_alert_mirror_and_end_note():
         # bilinen emir: sonraki dilimler yeniden sorgulanmaz
         tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 32, 1000)
         assert tf.F.stats["known_skip"] == 1 and await _drain(cfg, notifier, col) == 0
-        # eski yol: 11 dilim (yeterli değil → aday değil değil — 10 dilim + 5 dk + $50K sağlanır) → emir
-        # 'finished' → LOG-TWAP eskisi gibi (st=finished, order_done); hızlı tur için bitiş notu bir kez
+        # kalan 10 dilim (hızlı kayıt sayar, sorgu yok); emir 'finished' → hızlı yolun 🏁 notu bir kez
         for i in range(1, 11):
             tl.observe("PUMP", A, "buy", PX * (1 + i / 100), 12_000_000, 60_000, started + 2 + 30 * i, 1)
+            tf.observe("PUMP", A, "buy", PX * (1 + i / 100), 12_000_000, 60_000, started + 2 + 30 * i, 1000)
+        assert rec["n"] == 11 and abs(rec["px_last"] - PX * 1.1) < 1e-12
         state["st"] = "finished"
-        run_.fast_lookup_ts = 0                                    # zaman geçti (hızlı sorgu 5 dk önceydi)
-        out = await tl.evaluate(cfg, notifier, None, col)
+        rec["lookup_ts"] = 0                                       # zaman geçti (hızlı sorgu 5 dk önceydi)
+        assert await tf.lifecycle(cfg, notifier, col, now) == 1
         ends = [(c, t) for c, t in bot.sent if "🏁" in t]
         assert [c for c, _ in ends] == ["-100", "-200"], bot.sent
+        assert "+10.0%" in ends[0][1], ends[0][1]
+        assert ("PUMP", A, "buy") not in tf.F.known, "biten emrin yerine yeni emir sorulabilir"
+        # eski yol: 11 dilim + 5 dk → aday → emir 'finished' → LOG-TWAP eskisi gibi (st=finished, order_done),
+        # mesaj yok (bildirmediği turun bitiş notu yok)
+        n = len(bot.sent)
+        out = await tl.evaluate(cfg, notifier, None, col)
         lt = _q("LOG-TWAP")
         assert len(lt) == 1 and json.loads(lt[0]["features"])["st"] == "finished", lt
-        assert out["order_done"] == 1 and await _kind("twap") == 0
-        n = len(bot.sent)
-        await tl.evaluate(cfg, notifier, None, col)
-        assert len(bot.sent) == n, "bitiş notu bir kez"
+        assert out["order_done"] == 1 and await _kind("twap") == 0 and len(bot.sent) == n
+        assert await tf.lifecycle(cfg, notifier, col, now + 60) == 0, "bitiş notu bir kez"
     asyncio.run(run())
     print("✅ hızlı twap) ilk dilimde ana + ayna; eski yolun alanları boş; 🏁 bir kez; LOG-TWAPF + LOG-TWAP ayrı")
 
 
-def test_fast_only_short_end_before_slow_candidate():
-    """Eski yol aday olmadan (iptal: 5 dilimde kesildi) kısa TWAP'ın süresi dolunca ⛔ notu hızlı yoldan gelir."""
+def test_cancel_note_and_wait_while_activated():
+    """İptal: dilimler 90 sn kesilince emir sorulur; HL 'activated' derken not yok (bekler), 'terminated' → ⛔."""
     async def run():
         cfg = _cfg()
         await _fresh(cfg)
         now = dbm.now()
-        started = now - 340
+        started = now - 200
         state = {"st": "activated"}
-        col = Col(lambda: [twap_order(started, status=state["st"])])
+        col = Col(lambda: [twap_order(started, minutes=10, status=state["st"])])
         bot = Bot()
         notifier = Notifier(cfg, bot)
-        tl.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1)
         tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
         await _drain(cfg, notifier, col)
         assert len(bot.sent) == 2
-        for i in range(1, 5):                                    # 2 dk sonra kesildi (iptal)
-            tl.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2 + 30 * i, 1)
-        state["st"] = "activated"                                # HL henüz kapatmadı: bekle
-        await tl.evaluate(cfg, notifier, None, col)
-        assert not [t for _, t in bot.sent if "🏁" in t]
-        tl.REG.runs[("PUMP", A, "buy")].fast_lookup_ts = 0
+        for i in range(1, 4):                                    # 1.5 dk sonra kesildi
+            tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2 + 30 * i, 1000)
+        rec = tf.F.open[("PUMP", A, "buy")]
+        rec["lookup_ts"] = 0
+        assert await tf.lifecycle(cfg, notifier, col, now) == 0 and not rec["ended"], "activated: bekle"
         state["st"] = "terminated"
-        await tl.evaluate(cfg, notifier, None, col)
+        rec["lookup_ts"] = 0
+        assert await tf.lifecycle(cfg, notifier, col, now) == 1
         ends = [(c, t) for c, t in bot.sent if "⛔" in t]
         assert [c for c, _ in ends] == ["-100", "-200"], bot.sent
         assert not _q("LOG-TWAP"), "eski yol aday değil → kaydı yok (bugünkü gibi)"
     asyncio.run(run())
-    print("✅ hızlı twap) kısa TWAP: HL bitirene dek bekler; iptalde ⛔ (ana + ayna); eski yol aday değilse kayıt yok")
+    print("✅ hızlı twap) iptal: dilim kesilince sorulur; activated iken bekler; terminated → ⛔ (ana + ayna)")
 
 
 def test_slow_path_after_fast_same_lab_event_no_resend():
@@ -290,6 +300,98 @@ def test_slow_path_after_fast_same_lab_event_no_resend():
         assert ctl["twap_marker"] == 1 and ctl["alerted"]
     asyncio.run(run())
     print("✅ hızlı twap) eski yol: aynı 🧪 LOG-TWAP olayı (+ türetilen), tekrar mesaj yok, işaretler aynı")
+
+
+def test_review_fixes_order_keyed_skip_primary_fail_race_end_dedupe():
+    async def run():
+        # (1) hızlı bildirim (5 dk'lık) sonrası AYNI adresin FARKLI uzun emri: hızlı yol beklemede, eski yol yine gönderir
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        s1 = now - 2000
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, s1 + 2, 1000)
+        await _drain(cfg, notifier, Col([twap_order(s1)]))
+        assert len(bot.sent) == 2
+        s2 = now - 400
+        long_ = Col([twap_order(s2, minutes=60, plan=3_000_000, ex_frac=0.2)])
+        tf.F.known.clear()
+        tf.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, s2 + 2, 1000)
+        await _drain(cfg, notifier, long_)
+        assert tf.F.stats["cooldown"] == 1 and len(bot.sent) == 2, "hızlı yol: 6 sa bekleme"
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, s2 + 2 + 30 * i, 1)
+        out = await tl.evaluate(cfg, notifier, None, long_)
+        assert out["alerted"] == 1 and [c for c, _ in bot.sent[2:]] == ["-100", "-200"], bot.sent
+        assert "⏳ <b>TWAP</b>" in bot.sent[2][1]
+        # (2) ana kanal düşer + ayna başarılı → "bildirildi" sayılmaz, ayna da yazmaz; eski yol ikisini gönderir
+        cfg = _cfg()
+        await _fresh(cfg)
+        tf.SEND_RETRY = 0
+        bot = Bot(fail_chats={"-100"})
+        notifier = Notifier(cfg, bot)
+        s3 = now - 365
+        col = Col([twap_order(s3, minutes=30, plan=3_000_000, ex_frac=0.2)])
+        tf.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, s3 + 2, 1000)
+        await _drain(cfg, notifier, col)
+        assert bot.sent == [] and await _kind("twap_fast") == 0 and await _kind("fail:twap_fast") == 1
+        bot.fail.clear()
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, s3 + 2 + 30 * i, 1)
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert out["alerted"] == 1 and [c for c, _ in bot.sent] == ["-100", "-200"], bot.sent
+        tf.SEND_RETRY = 5
+        # (3) yarış: hızlı yol aynı emri gönderirken eski yol bekler (sonraki tur karar verir), çift mesaj yok
+        cfg = _cfg()
+        await _fresh(cfg)
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, s3 + 2 + 30 * i, 1)
+        tl.SENDING.add(f"PUMP:{A}:buy:{s3}")
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert out.get("fast_inflight") == 1 and bot.sent == [] and not tl.REG.runs[("PUMP", A, "buy")].alerted_ts
+        tl.SENDING.clear()
+        await dbm.alert_log("twap_fast", f"PUMP:{A}:buy:{s3}", "x")      # hızlı yol gönderdi
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert out.get("fast_already") == 1 and bot.sent == []
+        # (4) bitiş notu emir anahtarıyla tekil: hızlı yol yazdıysa eski yolun bitiş dalı yazmaz
+        await dbm.alert_log("twap_endo", f"PUMP:{A}:buy:{s3}", "")
+        done = Col([twap_order(s3, minutes=30, plan=3_000_000, ex_frac=1.0, status="finished")])
+        tl._lookup_cache.clear()
+        tl.REG.runs[("PUMP", A, "buy")].lookup_ts = 0
+        await tl.evaluate(cfg, notifier, None, done)
+        assert not [t for _, t in bot.sent if "🏁" in t] and tl.REG.runs[("PUMP", A, "buy")].ended_ts
+    asyncio.run(run())
+    print("✅ inceleme) eski yol atlaması emre bağlı; ana kanal düşerse hızlı yol saymaz; yarışta tek mesaj; bitiş tekil")
+
+
+def test_prefilter_fragments_and_stray_snapshot():
+    async def run():
+        from app.hl.collector import Collector
+        cfg = _cfg()
+        await _fresh(cfg, dv=200_000_000)                         # dakika ortalaması ~$139K
+        now = dbm.now()
+        # aynı saniyede iki parça: ilki ($1.5K) ön süzgeçte kalır ($200M hacimde 24 sa'lik emir bile < %5), toplam
+        # ($3K → ≤ 24 sa'lik emir ≥ $10.8M ≥ hacmin %5'i) uzun TWAP olabilir → sıraya
+        tf.observe("PUMP", A, "buy", PX, 300_000, 1_500, now, 1000)
+        assert not tf.F.pending[("PUMP", A, "buy")]["queued"] and tf.F.stats["pre_low"] == 1
+        tf.observe("PUMP", A, "buy", PX, 300_000, 1_500, now, 1000)
+        assert tf.F.pending[("PUMP", A, "buy")]["queued"] and tf.F.stats["pre_low"] == 1, "dilim başına bir sayaç"
+        # hacimden bağımsız eşik açıkken ince spot da sorulur (order_gate 'big'i önce yoklar)
+        cfg.twap_alert_big_usd, cfg.spot_twap_min_day_vol = 5e6, 1e6
+        assert tf.prefilter(cfg, "@107", 10e6 / 2881, (500_000, now), now) == ""
+        # geç gelen BAŞKA adresin snapshot'ı tek bekleyen sorguya düşmez
+        col = Collector(cfg, None)
+        fut = asyncio.get_running_loop().create_future()
+        col._twap_waiters[A] = fut
+        col._on_twap_history({"user": B, "isSnapshot": True, "history": [twap_order(now)]})
+        assert not fut.done(), "başka adresin cevabı"
+        col._on_twap_history({"isSnapshot": True, "history": []})
+        assert fut.done() and fut.result() == [], "kullanıcısız mesaj tek bekleyene (eski davranış)"
+    asyncio.run(run())
+    print("✅ inceleme) aynı saniyenin parçaları yeniden tartılır; big önce; başka adresin snapshot'ı düşmez")
 
 
 def test_gates_and_skips():

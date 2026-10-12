@@ -324,7 +324,9 @@ class Collector:
         elif isinstance(data, list):
             hist = data
         fut = self._twap_waiters.get(user) if user else None
-        if fut is None and len(self._twap_waiters) == 1:
+        # Tek bekleyene düşme YALNIZ mesajda kullanıcı yoksa: zaman aşımına uğramış eski bir sorgunun geç gelen
+        # snapshot'ı (user = başka adres) şimdi bekleyen BAŞKA adresin cevabı sanılmasın (⚡ hızlı yolla sorgu arttı)
+        if fut is None and not user and len(self._twap_waiters) == 1:
             fut = next(iter(self._twap_waiters.values()))
         if fut is not None and not fut.done():
             # Liste değilse (alan adı değişti / abonelik reddi) → None = sorgu başarısız;
