@@ -206,7 +206,10 @@ async def ensure_universe(cfg, ts: int) -> None:
     İlk yüklemede `obs_since` = bu süreçte gözlemin başladığı an."""
     # Açılış penceresinde (referans öncesi → 30. dk) evren DONAR: propr listesi pencerede değişirse
     # çıkan hisse donmuş son fiyatla rapora girer, giren hissenin açılış öncesi referansı olmaz.
-    frozen = bool(REG.coins and REG.open_ts and REG.open_ts - COVER_LEAD * 5 <= ts <= REG.open_ts + WINDOW)
+    # Aynı sebeple açık bir ⏱ pencere (/5dk…/60dk) sürerken de donar.
+    frozen = bool(REG.coins and (
+        (REG.open_ts and REG.open_ts - COVER_LEAD * 5 <= ts <= REG.open_ts + WINDOW)
+        or any(int(w.get("t0") or 0) - KEEP <= ts <= int(w.get("t1") or 0) for w in (REG.wins or []))))
     if (ts - REG.universe_ts >= UNIVERSE_TTL or not REG.coins) and not frozen:
         try:
             REG.coins = await universe(cfg)

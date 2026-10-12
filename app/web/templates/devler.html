@@ -123,9 +123,9 @@
         <th title="Pozisyon, günlük hacmin kaç katı — yüksekse çıkış çok zor">Hacim katı</th>
         <th class="mh">Giriş</th><th class="mh">Fiyat</th><th class="mh" title="Pozisyon ne zaman açıldı">Açılış</th><th>Skor</th></tr>
     {% for p in humans %}
-    <tr data-propr="{{ 1 if p.symbol in propr else 0 }}">
+    <tr data-propr="{{ 1 if p.coin in propr else 0 }}">
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}"><b>{{ p.symbol }}</b></a>
-        {% if p.symbol in propr %}<span class="pbadge" title="propr.xyz'de listeli">✅</span>{% endif %}
+        {% if p.coin in propr %}<span class="pbadge" title="propr.xyz'de listeli">✅</span>{% endif %}
         {% if p.low_volume %}<span class="dim" title="günlük hacim eşiğin altında">🤫</span>{% endif %}</td>
       <td class="l">{{ m.addr(p.address, k) }}{% if p.watchlist %} ⭐{% endif %}
         {% if p.hits %}<span class="dim">{{ p.hits }}✓/{{ p.misses }}✗</span>{% endif %}</td>
@@ -171,7 +171,7 @@
     <tr><th class="l">Hisse</th><th class="l">Adres</th><th>Tür</th><th>Yön</th><th>Boyut</th>
         <th>OI payı</th><th>24h hacim</th></tr>
     {% for p in bots %}
-    <tr class="dimrow" data-propr="{{ 1 if p.symbol in propr else 0 }}">
+    <tr class="dimrow" data-propr="{{ 1 if p.coin in propr else 0 }}">
       <td class="l"><a href="/t/{{ p.symbol }}{{ k }}">{{ p.symbol }}</a></td>
       <td class="l">{{ m.addr(p.address, k) }}</td>
       <td>{{ '🤖 MM' if p.entity=='mm' else ('🏦 vault' if p.entity=='vault' else '🚫 elendi') }}</td>

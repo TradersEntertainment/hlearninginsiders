@@ -73,13 +73,15 @@ async def not_listed() -> list[str]:
 
     Sayfada gösteriliyor ki "neden bildirim gelmedi" sorusunun cevabı kodun içinde
     saklı kalmasın. Aynı sembolün listeli bir eşi varsa (xyz:IREN ✓, para:IREN ✗)
-    satır dex'iyle yazılır: 'IREN (para)'.
+    satır dex'iyle yazılır: 'IREN (para)'. Sembol birden çok dex'teyse her perp ayrı satır
+    ('SMH (xyz)', 'SMH (para)') — sayı perp sayısıdır.
     """
+    from collections import Counter
     from ..propr import is_listed as propr_listed
     tick = await _tickers()
-    listed_syms = {str(t["symbol"]).upper() for t in tick if propr_listed(t["coin"])}
+    n_sym = Counter(str(t["symbol"]).upper() for t in tick)
     return sorted({(f"{t['symbol']} ({t['coin'].split(':')[0]})"
-                    if str(t["symbol"]).upper() in listed_syms else t["symbol"])
+                    if n_sym[str(t["symbol"]).upper()] > 1 and ":" in t["coin"] else t["symbol"])
                    for t in tick if not propr_listed(t["coin"])})
 
 

@@ -266,7 +266,7 @@ async def _upsert_and_alert(cfg: Config, client: HLClient, notifier,
                                 w["px_lo"], w["px_hi"], w["notional"])
     except Exception:
         log.exception("duvar sahipliği aranamadı: %s", coin)
-    text = fmt.wall_alert({**w, "symbol": symbol, "address": addr}, day_vol)
+    text = fmt.wall_alert({**w, "coin": coin, "symbol": symbol, "address": addr}, day_vol)
     # alerted=1'i YALNIZ başarılı gönderimden sonra yaz — 429/400'de duvar aktif
     # kaldığı sürece bir daha bildirilmiyordu (send'den ÖNCE işaretleniyordu).
     if await notifier.send("wall", text, key=key, coin=coin):

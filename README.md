@@ -303,7 +303,13 @@ whitelisted/blacklisted). O gün: **140 listeli** (89 ana dex kripto + 51 xyz) �
 **Yan düzeltmeler (aynı inceleme):** aynı sembol hem xyz hem para'daysa (IREN, AVGO, CRWD, NET, RDDT,
 LRCX, GLW, AAOI) bilanço takvimi **hisse dex'inden** sorulur — öneksiz sembol para yüzünden kripto
 sayılıp takvimi hiç aranmıyordu. `find_ticker` aynı sembolde hisse dex'ini seçer (eskiden satır
-sırasına göre para'ya düşebiliyordu); öneksiz `STX` ana dex'teki Stacks'i açar (`para:STX` açıkça yazılır).
+sırasına göre para'ya düşebiliyordu) ve tam kimliği büyük/küçük harf duyarsız eşler; öneksiz `STX` ana
+dex'teki Stacks'i açar (`para:STX` açıkça yazılır — `/alarm PARA:STX` de bulur); kripto dex coininin sayfası
+(grafik, tara, gönder, tazele) tam kimlikle çalışır, öneksiz sembole düşüp başka coinin verisini çizmez.
+Duvar uyarısı, `/scan`, sayfadan "Telegram'a gönder", bilanço kartları ve `/devler` rozeti de coin
+kimliğiyle sorar (para:IREN ✅ almaz). Senkron güvencesi incelemeyle sıkılaştı: hiç listeli satır yoksa
+(durum adı değişti / bakım) şekil hatası sayılır; kabul edilmiş küçük liste aynen gelince yeniden şüpheli
+sayılmaz; ağ hatası şüpheli-liste sayacını sıfırlamaz. ⏱ /5dk…/60dk penceresi sürerken de açılış evreni donar.
 
 **🧪 Laboratuvar ve evren değişimi:** evren (PROPR) kuralın `spec_sha`'sına girmez — girseydi her
 propr değişikliği tüm kuralları emekliye ayırırdı (K bütçesi dolu). Bunun yerine değişiklik

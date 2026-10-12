@@ -54,7 +54,7 @@
     {% if kind == 'crypto' %}
     {# Tarama/gönderme hisse hattı (autoscan, earnings raporu) — kriptoda 404
        verirdi. Kripto satırları süpürmeden gelir; tek eylem defterleri tazelemek. #}
-    <form method="post" action="/t/{{ symbol }}/tazele{{ k }}">
+    <form method="post" action="/t/{{ ref or symbol }}/tazele{{ k }}">
       <button type="submit" class="btn sm">🔄 Defterleri tazele</button>
     </form>
     {% if tz == 'ok' %}<span class="long">✓ Defterler tazelendi</span>
@@ -63,16 +63,16 @@
     {% elif tz == 'err' %}<span class="bad">✗ HL'ye ulaşılamadı — logları kontrol et</span>{% endif %}
     <span class="hint">Pozisyonlar süpürmeden gelir (tur 75–125 dk); tazele en büyük 15 adresin defterini şimdi çeker</span>
     {% else %}
-    <form method="post" action="/t/{{ symbol }}/scan{{ k }}">
+    <form method="post" action="/t/{{ ref or symbol }}/scan{{ k }}">
       <button type="submit" class="btn sm">⟳ Yeniden tara</button>
     </form>
     {% if is_admin %}
-    <form method="post" action="/t/{{ symbol }}/send{{ k }}">
+    <form method="post" action="/t/{{ ref or symbol }}/send{{ k }}">
       <button type="submit" class="btn sm" {% if not has_bot %}disabled{% endif %}>📨 Telegram'a gönder</button>
     </form>
     {% if not has_bot %}<span class="hint">bot yok — <code>TELEGRAM_BOT_TOKEN</code> tanımlı değil</span>{% endif %}
     {% else %}
-    <a href="/login{{ '?nxt=/t/' + symbol if not k else k + '&nxt=/t/' + symbol }}" class="btn ghost sm">🔐 giriş yap</a>
+    <a href="/login{{ '?nxt=/t/' + (ref or symbol) if not k else k + '&nxt=/t/' + (ref or symbol) }}" class="btn ghost sm">🔐 giriş yap</a>
     {% endif %}
     {% if tg == 'ok' %}<span class="long">✓ Telegram'a gitti!</span>
     {% elif tg == 'err' %}<span class="bad">✗ Gönderilemedi — token/chat id'yi ve logları kontrol et</span>{% endif %}
@@ -179,7 +179,7 @@
   patlayacak toplam $ (altta long, üstte short); ayrıntı ve adresler aşağıdaki 💥 haritada.
   Alttaki ince şerit o saatin tarihsel karnesi (yeşil = güçlü saat, kırmızı = zayıf).
   {% if kind != 'crypto' and klass != 'kripto' %}📊 işaretli mumlar geçmiş bilanço günleri.{% endif %}</p>
-  <div id="pxchart" data-sym="{{ symbol }}{{ k }}"
+  <div id="pxchart" data-sym="{{ ref or symbol }}{{ k }}"
        data-pending="{{ 0 if pxchart else 1 }}"
       >
     <p class="dim" id="pxmsg">{% if pxchart %}Grafik çiziliyor…{% else %}Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.{% endif %}</p>

@@ -186,6 +186,10 @@ def parse(payload) -> tuple[list[str], int, int]:
             other += 1
     if bad * 10 > len(rows):
         raise ValueError(f"{bad}/{len(rows)} satırda varlık adı yok")
+    if not white:                 # durum adı değişti / bakım: hiç listeli yok = şekil hatası, 'boş liste' değil
+        raise ValueError(f"listeli (whitelisted) satır yok ({len(rows)} satır, {other} tanınmayan durum)")
+    if other * 2 > len(rows):
+        raise ValueError(f"{other}/{len(rows)} satırın durumu tanınmıyor")
     return sorted(white), black, other
 
 
@@ -215,9 +219,11 @@ async def refresh(session, fetcher=None) -> dict:
     prev_rec = await kv_get(LIVE_KV) or {}
     prev = {norm(i) for i in (prev_rec.get("ids") or [])} or set(DEFAULT_PROPR)
     st = await kv_get(STATS_KV) or {}
+    # Şüpheli liste sayacı: farklı ya da şüphesiz liste gelince sıfırlanır; ağ/şekil hatası ne ilerletir
+    # ne sıfırlar (aralıklı 403/503 kabulü sonsuza ertelemesin).
     out = {"ts": ts, "ok": False, "http": None, "err": "", "n": len(prev), "n_black": None,
            "added": [], "removed": [], "notify": False,
-           "last_ok": st.get("last_ok"), "sus_sig": "", "sus_n": 0}
+           "last_ok": st.get("last_ok"), "sus_sig": st.get("sus_sig") or "", "sus_n": int(st.get("sus_n") or 0)}
     try:
         http, payload = await (fetcher or fetch)(session)
         out["http"] = http
@@ -226,7 +232,7 @@ async def refresh(session, fetcher=None) -> dict:
         ids, out["n_black"], other = parse(payload)
         if other:
             out["other"] = other
-        why = _suspicious(ids, prev)
+        why = _suspicious(ids, prev) if set(ids) != prev else ""     # uygulanacak bir şey yoksa şüphe de yok
         if why:
             sig = hashlib.sha1(",".join(ids).encode()).hexdigest()[:12]
             n = int(st.get("sus_n") or 0) + 1 if st.get("sus_sig") == sig else 1
@@ -235,6 +241,7 @@ async def refresh(session, fetcher=None) -> dict:
                            sus_sig=sig, sus_n=n)
                 raise _Hold()
             log.warning("propr: %s — art arda %d kez aynı geldi, kabul edildi", why, n)
+        out.update(sus_sig="", sus_n=0)
         new = set(ids)
         added, removed = sorted(new - prev), sorted(prev - new)
         set_live(new)

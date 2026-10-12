@@ -454,7 +454,7 @@ async def index(request: Request):
         except ValueError:
             days_left = None
         ecards.append({"symbol": e["symbol"], "date_et": e["date_et"],
-                       "propr": propr_listed(e["symbol"]),
+                       "propr": propr_listed(e.get("coin") or e["symbol"]),
                        "icon": e["icon"], "when_txt": e["when_txt"], "tsi": e["tsi"],
                        "et": e.get("et"),
                        "exact": e["exact"], "countdown": e["countdown"],
@@ -817,7 +817,7 @@ async def coin_page(request: Request, symbol: str):
         "coverage": cov,
         "hmeta": hmeta, "hchart": hchart, "panel_err": panel_err,
         "hstats_pending": hstats_pending, "now_verdict": now_verdict,
-        "ticker": t, "symbol": t["symbol"], "coin": coin, "summ": summ,
+        "ticker": t, "symbol": t["symbol"], "ref": _page_ref(t), "coin": coin, "summ": summ,
         "kind": kind, "mark_src": mark_src,
         "rows": rows[:50], "liq_rows": liq_rows, "fills": fills, "event": ev,
         "long_total": lo, "short_total": sh, "scanned_ts": scanned_ts, "scan_info": scan_info,
@@ -840,6 +840,14 @@ async def coin_page(request: Request, symbol: str):
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
     })
+
+
+def _page_ref(t: dict) -> str:
+    """Coin sayfasının alt adresleri (grafik, tara, gönder, tazele) için kimlik. Kripto dex coini
+    (para:STX = Seagate) öneksiz sembolle açılırsa başka coine düşer (öneksiz STX → ana dex Stacks):
+    ona tam kimlik, diğerlerine okunur sembol."""
+    c = t.get("coin") or ""
+    return c if (":" in c and assets.is_crypto_dex(c)) else (t.get("symbol") or c)
 
 
 @router.get("/t/{symbol}/chart.json")
@@ -949,7 +957,7 @@ async def coin_refresh_books(request: Request, symbol: str):
             out = await forensics.refresh_profiles(cfg, client, coin, addrs)
             res = "ok" if out.get("ok") else "err"
     q = f"?key={key}&tz={res}" if key else f"?tz={res}"
-    return RedirectResponse(f"/t/{t['symbol']}{q}", status_code=303)
+    return RedirectResponse(f"/t/{_page_ref(t)}{q}", status_code=303)
 
 
 @router.post("/t/{symbol}/send")
@@ -972,7 +980,7 @@ async def coin_send_telegram(request: Request, symbol: str):
                 (coin,))
             rows = [dict(r) for r in await cur.fetchall()]
         cluster_list = await clusters.find_clusters(rows)
-        text = fmt.earnings_report({"symbol": t["symbol"]}, "ondemand", summ, rows,
+        text = fmt.earnings_report({"symbol": t["symbol"], "coin": coin}, "ondemand", summ, rows,
                                    request.app.state.cfg, cluster_list=cluster_list)
         notifier = getattr(request.app.state, "notifier", None)
         if notifier and await notifier.send("earnings", text, priority="critical",
@@ -980,7 +988,7 @@ async def coin_send_telegram(request: Request, symbol: str):
             tg = "ok"
     sep = "&" if key else "?"
     return RedirectResponse(
-        f"/t/{t['symbol']}" + (f"?key={key}" if key else "") + f"{sep}tg={tg}",
+        f"/t/{_page_ref(t)}" + (f"?key={key}" if key else "") + f"{sep}tg={tg}",
         status_code=303)
 
 
@@ -1009,7 +1017,7 @@ async def coin_scan(request: Request, symbol: str):
     cfg = request.app.state.cfg
     client = request.app.state.client
     await build_scan(cfg, client, t["coin"], coin_dex(t["coin"]), quick=True)
-    return RedirectResponse(f"/t/{t['symbol']}" + (f"?key={key}" if key else ""),
+    return RedirectResponse(f"/t/{_page_ref(t)}" + (f"?key={key}" if key else ""),
                             status_code=303)
 
 
@@ -1852,7 +1860,7 @@ async def lowvol_page(request: Request):
         "min_share": cfg.lowvol_min_oi_share,
         "min_ntl": cfg.lowvol_min_notional,
         "alert_min": cfg.lowvol_alert_min_usd,
-        "propr": {p["symbol"] for p in rows if propr_listed(p.get("coin") or p["symbol"])},
+        "propr": {p["coin"] for p in rows if propr_listed(p.get("coin") or p["symbol"])},   # coin kimliği: para:IREN ≠ xyz:IREN
     })
 
 

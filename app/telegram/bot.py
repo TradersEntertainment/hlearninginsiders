@@ -1009,7 +1009,7 @@ class TelegramBot:
             summ, rows = await build_scan(self.cfg, self.client, t["coin"],
                                           coin_dex(t["coin"]), quick=True)
             cluster_list = await clusters.find_clusters(rows)
-            ev = {"symbol": t["symbol"]}
+            ev = {"symbol": t["symbol"], "coin": t["coin"]}
             text = fmt.earnings_report(ev, "ondemand", summ, rows, self.cfg,
                                        cluster_list=cluster_list)
             await self.send(text, chat_id)

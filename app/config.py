@@ -66,7 +66,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "notify_listing": {"type": "bool", "label": "🆕 Yeni hisse listelendi", "group": "Bildirimler",
                        "desc": "HL yeni bir hisse perp'i listelediğinde haber ver (ilk açılışta susar)"},
     "notify_propr": {"type": "bool", "label": "✅ PROPR listesi değişti", "group": "Bildirimler",
-                     "desc": "propr.xyz listesine coin/hisse eklenince ya da çıkarılınca tek mesaj (canlı senkron, saatte bir). İlk çekimde susar"},
+                     "desc": "propr.xyz listesine coin/hisse eklenince ya da çıkarılınca tek mesaj (canlı senkron, saatte bir). İlk çekimde koddaki listeyle fark küçükse (≤20) bildirilir, büyükse susar"},
     "channel_auto_hours": {"type": "str", "label": "📣 Otomatik kanal yayını saatleri (TSİ)",
                            "group": "Bildirimler",
                            "desc": "Bu saatlerde 'bu saatin geçmiş karnesi' otomatik olarak yayın kanalına gönderilir. Virgülle: 10,14,17 · boş = kapalı (TELEGRAM_CHANNEL_ID gerekir)"},

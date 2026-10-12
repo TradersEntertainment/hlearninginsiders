@@ -250,7 +250,8 @@ async def lab_coins(cfg=None, ts: int | None = None) -> dict[str, str]:
     from ..hl.universe import MAIN_CTX_KV
     from ..propr import is_listed, version
     ts = int(ts or now())
-    if _UNIV["coins"] and ts - _UNIV["ts"] < UNIV_TTL and _UNIV.get("pv") in (None, version()):
+    pv = version()                     # await'lerden ÖNCE: kurulum sırasında liste değişirse bir sonraki çağrı yeniden kurar
+    if _UNIV["coins"] and ts - _UNIV["ts"] < UNIV_TTL and _UNIV.get("pv") in (None, pv):
         return _UNIV["coins"]
     order = [str(x).strip().lower() for x in (getattr(cfg, "equity_dexes", None) or ["xyz"])]
     rank = lambda c: order.index(c.split(":")[0]) if c.split(":")[0] in order else len(order)   # noqa: E731
@@ -278,7 +279,7 @@ async def lab_coins(cfg=None, ts: int | None = None) -> dict[str, str]:
             out[coin] = "kripto"
     out.setdefault(BENCH_KRIPTO, "kripto")
     out.setdefault(BENCH_ABD, "endeks")
-    _UNIV.update(ts=ts, coins=out, pv=version())
+    _UNIV.update(ts=ts, coins=out, pv=pv)
     return out
 
 
@@ -288,7 +289,10 @@ def in_universe(coin: str) -> bool:
     from ..propr import is_listed, version
     if _UNIV["coins"] and _UNIV.get("pv") in (None, version()):
         return coin in _UNIV["coins"]
-    return is_listed(coin) or coin in (BENCH_KRIPTO, BENCH_ABD)
+    if coin in (BENCH_KRIPTO, BENCH_ABD):
+        return True
+    from .. import assets
+    return is_listed(coin) and not assets.is_excluded(coin)
 
 
 def bench_of(coin: str, klass: str) -> str | None:

@@ -115,6 +115,16 @@ def test_parse():
         raise AssertionError("adı olmayan satırlar (>%10) kabul edildi")
     except ValueError:
         pass
+    # durum adı değişti / herkes kara listede → şekil hatası (inceleme: boş liste 3 turda kabul edilip
+    # her 3 saatte '−140, şimdi 0' mesajı atıyordu)
+    for bad in ({"data": [{"asset": "BTC", "status": "active"}, {"asset": "ETH", "status": "active"}]},
+                {"data": [{"asset": "BTC", "status": "blacklisted"}]},
+                {"data": [{"asset": "BTC", "status": "whitelisted"}] + [{"asset": f"X{i}", "status": "x"} for i in range(3)]}):
+        try:
+            propr.parse(bad)
+            raise AssertionError(f"kabul edildi: {bad!r}")
+        except ValueError:
+            pass
     print("✅ ayrıştırma) whitelisted → kimlik (kPEPE → KPEPE, XYZ:iren → xyz:IREN), kara/diğer sayılır;"
           " şekil tutmazsa ValueError (boş liste sanılmaz)")
 
@@ -177,6 +187,21 @@ def test_refresh_change_and_guards():
         for _ in range(propr.SUS_ACCEPT - 1):
             r = await propr.refresh(None, _fetcher([half]))
         assert r["ok"] and r["n"] == 60 and not propr.is_listed("NEWC"), "art arda aynı gelince gerçek sayılır"
+        # kabul edilen küçük liste aynen tekrar gelirse artık şüpheli değil (her 3 turda 2 'başarısız' yok)
+        small = (200, _payload(base[:35]))
+        for _ in range(propr.SUS_ACCEPT):
+            r = await propr.refresh(None, _fetcher([small]))
+        assert r["ok"] and r["n"] == 35
+        for _ in range(3):
+            r = await propr.refresh(None, _fetcher([small]))
+            assert r["ok"] and not r["err"] and r["sus_n"] == 0, r
+        # şüpheli sayaç ağ hatasında ne ilerler ne sıfırlanır: küçülme, 503, küçülme, 503, küçülme → kabul
+        shrink = (200, _payload(base[:15]))
+        seq = [shrink, (503, None), shrink, (503, None), shrink]
+        oks = [(await propr.refresh(None, _fetcher([x])))["ok"] for x in seq]
+        assert oks == [False, False, False, False, True] and propr.source() == "canlı" and len(propr._LIVE) == 15, oks
+        r = await propr.refresh(None, _fetcher([(200, _payload(base[:60]))]))
+        assert r["ok"] and r["n"] == 60, "büyüme şüpheli değil"
         # açılış: kv'den yüklenir
         propr.set_live([])
         assert propr.source().startswith("gömülü") and await propr.load_live() == 60 and propr.source() == "canlı"
@@ -292,6 +317,37 @@ def test_consumers_use_coin_ids():
             assert labdata.in_universe("BTC") and labdata.in_universe("xyz:XYZ100"), "kıyas serileri"
             u2 = await labdata.lab_coins(cfg, dbm.now())
             assert "xyz:TSM" in u2 and "xyz:IREN" not in u2, "TTL dolmadan yeniden kuruldu"
+            # tam kimlik büyük/küçük harf duyarsız ('/alarm para:STX' büyük harfe çevrilip gelir)
+            assert (await uni.find_ticker("PARA:STX"))["coin"] == "para:STX"
+            assert (await uni.resolve_coin("PARA:STX"))["coin"] == "para:STX"
+            # rozetler coin kimliğiyle: para:STX / para:IREN duvarı ve taraması '✅ PROPR' almaz
+            propr.set_live([])                              # gömülü 12.10 listesi (xyz:IREN listeli)
+            from app.telegram import format as fmt
+            from app.web import routes
+            wall = {"side": "bid", "px_lo": 1.0, "px_hi": 1.1, "sz": 1, "notional": 2e6, "dist_pct": 0.5,
+                    "mark": 1.05, "opp_notional": 0, "address": None}
+            assert propr.PROPR_NOTE not in fmt.wall_alert({**wall, "coin": "para:STX", "symbol": "STX"}, 1e7)
+            assert propr.PROPR_NOTE in fmt.wall_alert({**wall, "coin": "xyz:IREN", "symbol": "IREN"}, 1e7)
+            assert propr.PROPR_NOTE not in fmt.earnings_report({"symbol": "IREN", "coin": "para:IREN"}, "ondemand", {}, [], cfg)
+            assert propr.PROPR_NOTE in fmt.earnings_report({"symbol": "IREN", "coin": "xyz:IREN"}, "ondemand", {}, [], cfg)
+            # coin sayfası alt adresleri: kripto dex coini tam kimlikle (öneksiz STX artık Stacks'i açar)
+            assert routes._page_ref({"coin": "para:STX", "symbol": "STX"}) == "para:STX"
+            assert routes._page_ref({"coin": "xyz:IREN", "symbol": "IREN"}) == "IREN"
+            assert routes._page_ref({"coin": "STX", "symbol": "STX"}) == "STX"
+            # aynı sembol iki dex'te listesizse her perp ayrı satır (sayı = perp sayısı)
+            async with dbm.db() as c:
+                await c.execute("INSERT INTO tickers(coin,dex,symbol) VALUES('xyz:SMH','xyz','SMH')")
+                await c.execute("INSERT INTO tickers(coin,dex,symbol) VALUES('para:SMH','para','SMH')")
+                await c.commit()
+            nl = await equityvol.not_listed()
+            assert "SMH (xyz)" in nl and "SMH (para)" in nl and "SMH" not in nl, nl
+            # 🧪 evren yedeği (liste değişti, lab turu henüz kurmadı) hariç tutulanı almaz
+            old_exc, cfg.exclude_symbols = cfg.exclude_symbols, "HYPE"
+            try:
+                propr.set_live(_live_ids())
+                assert not labdata.in_universe("HYPE") and labdata.in_universe("ETH")
+            finally:
+                cfg.exclude_symbols = old_exc
         finally:
             cfg.crypto_dexes = old_cd
             assets.set_crypto_dex_symbols(set())
@@ -319,6 +375,18 @@ def test_openmove_freezes_universe_in_window():
         assert om.REG.coins == {"xyz:OLD"}, "açılış penceresinde evren donar"
         await om.ensure_universe(cfg, O + om.WINDOW + 60)
         assert om.REG.coins == {"xyz:MU"}, "pencere bitince tazelenir"
+        # açık bir ⏱ pencere (/15dk) sürerken de donar
+        T = O + 5 * 3600
+        saved_wins = om.REG.wins
+        om.REG.coins, om.REG.universe_ts = {"xyz:OLD"}, T - 3600
+        om.REG.wins = [{"chat": "1", "t0": T - 300, "t1": T + 600, "mins": 15}]
+        try:
+            await om.ensure_universe(cfg, T)
+            assert om.REG.coins == {"xyz:OLD"}, "pencere sürerken evren donar"
+            await om.ensure_universe(cfg, T + 700)
+            assert om.REG.coins == {"xyz:MU"}, "pencere bitince tazelenir"
+        finally:
+            om.REG.wins = saved_wins
         for k, v in saved.items():
             setattr(om.REG, k, v)
         print("✅ açılış) liste pencere içinde değişse de evren donar (çıkan hisse donmuş fiyatla, giren"
