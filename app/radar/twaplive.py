@@ -587,10 +587,20 @@ def is_quick(cfg, order: dict | None) -> bool:
     return 0 < mins <= qm if qm > 0 else False
 
 
-def auto_end(cfg, order: dict | None) -> bool:
-    """Mesajda '🔔 iptal ⛔ / bitiş 🏁 buraya otomatik yazılır' (ve takip tuşu yok) yalnız gerçekten yazılacaksa:
-    ⚡ HIZLI emir VE bitiş notu açık."""
-    return is_quick(cfg, order) and bool(getattr(cfg, "twap_alert_end_note", True))
+def auto_end(cfg, order: dict | None) -> str:
+    """⚡ HIZLI emirde kanala kendiliğinden ne yazılır: '' (hiçbiri → takip tuşu kalır) | 'cancel' | 'both'.
+    Mesajdaki 🔔 satırı ve takip tuşunun yokluğu buna göre — yalnız gerçekten yazılacak olan vaat edilir."""
+    if not is_quick(cfg, order) or not getattr(cfg, "twap_alert_end_note", True):
+        return ""
+    return "both" if getattr(cfg, "twap_alert_finish_note", False) else "cancel"
+
+
+def end_note_wanted(cfg, cancelled: bool) -> bool:
+    """Kanala bitiş notu gidecek mi: iptal → ⛔ (twap_alert_end_note); normal bitiş → 🏁 yalnız
+    twap_alert_finish_note açıksa (kullanıcı 12.10: 'iptal etmedikçe bildirim atma')."""
+    if not getattr(cfg, "twap_alert_end_note", True):
+        return False
+    return True if cancelled else bool(getattr(cfg, "twap_alert_finish_note", False))
 
 
 async def _quick_refresh(collector, run: "Run", ts: int, out: dict) -> None:
@@ -773,7 +783,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         run.day_volume = vol[0]
                     eo = order_key(key, order)
                     ekey = f"{key}:{run.first_ts}"
-                    if getattr(cfg, "twap_alert_end_note", True):
+                    if end_note_wanted(cfg, (order or {}).get("status") in ("terminated", "error")):
                         claim = eo or ekey
                         if claim in ENDING:               # hızlı yol bu emrin notunu ŞU AN yazıyor — sonraki tur bakar
                             run.ended_ts = None

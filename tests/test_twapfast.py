@@ -195,7 +195,8 @@ def test_first_slice_alert_mirror_and_end_note():
         assert bot.sent[1][1] == text, "ayna = birebir kopya"
         assert "⏳ <b>TWAP başladı</b> · ⚡ <b>HIZLI · 5 dk</b> · <b>PUMP</b>" in text and "plan <b>$600K</b>" in text
         assert "katı</b>" in text and "dakikada ~<b>$120K</b>" in text
-        assert "🔔 iptal ⛔ / bitiş 🏁 buraya otomatik yazılır" in text and "/takip_" not in text, "⚡: tuş yok"
+        assert "🔔 iptal edilirse ⛔ buraya otomatik yazılır" in text and "/takip_" not in text, "⚡: tuş yok"
+        assert "🏁" not in text, "12.10: normal bitiş kanala yazılmaz (varsayılan)"
         async with dbm.db() as c:
             assert (await (await c.execute("SELECT COUNT(*) n FROM track_offers")).fetchone())["n"] == 0
         assert "⚡ dakika hızı kuralıyla" in text and "bu hızla" not in text
@@ -221,11 +222,18 @@ def test_first_slice_alert_mirror_and_end_note():
         assert rec["n"] == 11 and abs(rec["px_last"] - PX * 1.1) < 1e-12
         state["st"] = "finished"
         rec["lookup_ts"] = 0                                       # zaman geçti (hızlı sorgu 5 dk önceydi)
+        # 12.10 kullanıcı: "iptal etmedikçe bildirim atma" — normal bitiş varsayılan olarak SESSİZ
+        assert await tf.lifecycle(cfg, notifier, col, now) == 0 and rec["ended"]
+        assert not [t for _, t in bot.sent if "TWAP bitti" in t] and len(bot.sent) == 2
+        assert ("PUMP", A, "buy") not in tf.F.known, "biten emrin yerine yeni emir sorulabilir"
+        # ayar açılırsa (🏁 bitti notu) bir kez yazılır — ⚡ rozetli, fiyat değişimiyle
+        cfg.twap_alert_finish_note = True
+        rec["ended"], rec["lookup_ts"] = 0, 0
         assert await tf.lifecycle(cfg, notifier, col, now) == 1
         ends = [(c, t) for c, t in bot.sent if "TWAP bitti" in t]
         assert [c for c, _ in ends] == ["-100", "-200"], bot.sent
         assert "+10.0%" in ends[0][1] and "🏁 <b>TWAP bitti</b> · ⚡ <b>HIZLI · 5 dk</b>" in ends[0][1], ends[0][1]
-        assert ("PUMP", A, "buy") not in tf.F.known, "biten emrin yerine yeni emir sorulabilir"
+        cfg.twap_alert_finish_note = False
         # eski yol: 11 dilim + 5 dk → aday → emir 'finished' → LOG-TWAP eskisi gibi (st=finished, order_done),
         # mesaj yok (bildirmediği turun bitiş notu yok)
         n = len(bot.sent)
@@ -286,7 +294,7 @@ def test_quick_cancel_slow_path_refresh():
             tl.observe("PUMP", A, "buy", PX, 10_000_000, 50_000, started + 2 + 30 * i, 1)
         out = await tl.evaluate(cfg, notifier, None, col)
         assert out["alerted"] == 1 and [c for c, _ in bot.sent] == ["-100", "-200"]
-        assert "⚡ <b>HIZLI · 45 dk</b>" in bot.sent[0][1] and "🔔 iptal ⛔" in bot.sent[0][1]
+        assert "⚡ <b>HIZLI · 45 dk</b>" in bot.sent[0][1] and "🔔 iptal edilirse ⛔" in bot.sent[0][1]
         assert "/takip_" not in bot.sent[0][1]
         cache = dict(tl._lookup_cache)
         run_ = tl.REG.runs[("PUMP", A, "buy")]
@@ -447,7 +455,7 @@ def test_quick_cancel_reliability():
         notifier = Notifier(cfg, bot)
         tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
         await _drain(cfg, notifier, col)
-        assert len(bot.sent) == 2 and "🔔 iptal ⛔" in bot.sent[0][1]
+        assert len(bot.sent) == 2 and "🔔 iptal edilirse ⛔" in bot.sent[0][1]
         assert [r["started"] for r in await dbm.kv_get(tf.OPEN_KV)] == [started], "kayıt kv'de"
         # (1) yeniden başlatma: bellek gider, kv'den yüklenir; ilk turda sorulur → kapalıyken iptal → ⛔
         tf.F.clear()

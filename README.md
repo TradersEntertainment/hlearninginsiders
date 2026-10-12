@@ -353,10 +353,12 @@ bildirilmez.
 - **Kanal:** kripto → `CRYPTO_CHAT_ID` (boşsa gönderilmez), hisse/endeks → ana
   sohbet; `TWAP_MIRROR_CHAT_ID` tanımlıysa kopyası oraya da (aşağıda). Mesaj: emir (adet ≈ $, süre, başlangıç, kalan), dolan / kalan,
   gördüğümüz dilimler, adresin pozisyonu (canlı sorgu), fiyat ilk→son, taker %.
-- **İlerleme ve bitiş:** emrin yarısı dolunca tek not; emir bitince 🏁 / iptal
-  edilince ⛔ gerçek dolan tutar, plan, süre, fiyat, hacme oran. Bildirilmiş tur
-  10 dk'da bir yeniden sorgulanır. Sekmede 📡 satırlar; Emir / Doldu / Kalan
-  kolonları.
+- **Sonrası: yalnız iptal (kullanıcı 12.10: "iptal etmedikçe bildirim atma" — 🏁 bitti notu yeni TWAP
+  sanılıyordu):** kanala ilk uyarıdan sonra yalnız emir **iptal** edilince (HL 'terminated', hypurrscan'de
+  'error') ⛔ gider: gerçek dolan tutar, plan, süre, fiyat, hacme oran. Normal bitiş (🏁) ve yarılandı (⏳)
+  notları varsayılan **kapalı**; Ayarlar → TWAP radarı → "🏁 Bitti notu" / "⏳ Yarılandı notu" ile açılır
+  ("⛔ İptal notu" kapatılırsa hiçbiri gitmez). Bildirilmiş tur 10 dk'da bir yeniden sorgulanır. Sekmede
+  📡 satırlar; Emir / Doldu / Kalan kolonları.
 - **Kapsam:** yalnız WS'in dinlediği coinler — hisseler + hacme göre ilk
   `crypto_watch_top` kripto; sekme ve `/tani` sayıyı yazar.
 - **Emir başına EN SON kayıt (12.10 canlı hata):** HL emir geçmişi her durum değişimi için ayrı kayıt tutar —
@@ -392,16 +394,17 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   ($250K) VE dakika hızı coinin 24s ortalama dakika hacminin ≥ `twap_fast_rate_x` (2) katı VE planın
   ≥ %30'u kalmış. 5 dk'lık $1M emir günün hacminin %2'si olsa da dakikada $200K'dır — eski %5 kuralı
   onu susturuyordu.
-- **⚡ HIZLI'da takip tuşu yok (kullanıcı 12.10):** ≤ 1 sa'lik emrin mesajında `/takip_N` yerine "🔔 iptal ⛔ /
-  bitiş 🏁 buraya otomatik yazılır" — iptal ve bitiş notu kanala (ve aynaya) kendiliğinden gider. İptal hızlı
+- **⚡ HIZLI'da takip tuşu yok (kullanıcı 12.10):** ≤ 1 sa'lik emrin mesajında `/takip_N` yerine "🔔 iptal
+  edilirse ⛔ buraya otomatik yazılır" — iptal notu kanala (ve aynaya) kendiliğinden gider (🏁 bitti notu
+  açıksa satır "iptal ⛔ / bitiş 🏁" der). İptal hızlı
   fark edilir: ilk dilimde bildirilende bir dilim (45 sn) gecikince, eski yoldan bildirilende dakikada bir emir
   sorulur (eski yolun emir önbelleğine yazılmadan). Uzun emirde takip tuşu ve 10 dk'lık düzen aynen.
   Güvence: ⚡ emir dilim gelse de dakikada bir sorulur (aynı adresin başka TWAP'ı iptali gizlemez); bildirilen
   emirler kv'de (`twapfast_open`) ve `twap_runs`'ta — yeniden başlatmada geri yüklenir, kapalıyken iptal
   edilenin ⛔'si açılışta yazılır; not ana kanala gidemezse sonraki turlarda 3 kez denenir; iki yol aynı notu
-  aynı anda yazamaz. Bitiş notu kapalıysa "otomatik yazılır" denmez ve takip tuşu kalır.
+  aynı anda yazamaz. ⛔ İptal notu kapalıysa "otomatik yazılır" denmez ve takip tuşu kalır.
 - **⚡ HIZLI rozeti (kullanıcı 12.10: "çok hızlı" = 1 saat):** emir süresi ≤ `twap_fast_short_max_min`
-  (60 dk) olan TWAP'ın TÜM mesajlarında (ilk alarm, ilk dilim alarmı, yarı, 🏁/⛔) başlıkta
+  (60 dk) olan TWAP'ın TÜM mesajlarında (ilk alarm, ilk dilim alarmı, ⛔; açıksa yarı ve 🏁) başlıkta
   `⚡ HIZLI · 5 dk` yazar. Süre HL emrinin kendi alanıdır (ölçüm). Sınır ayarlardan değişir; aynı sınır
   dakika hızı kuralında da kullanılır.
 - **Mesaj (⏳ TWAP başladı):** süre, plan, dakikada $, ortalama dakika hacminin katı, emir/24s hacim,
@@ -409,8 +412,8 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   (en çok 2,5 sn beklenir), takip (`/takip_N`). Tahmin yok: emir HL'den okunamazsa bildirim yok
   (sıfır hash likidasyon dolumunda da görülebildiği için emir yoksa düşer, 5 dk yok sayılır).
 - **Bitiş:** ilk dilim yolunun bildirdiği emir kendi kaydında izlenir; emir süresi dolunca (+30 sn) ya da
-  dilimler 90 sn kesilince (iptal?) emir sorulur → 🏁/⛔ notu (HL hâlâ "activated" diyorsa beklenir,
-  sessizlik bitiş sayılmaz). Not emir anahtarıyla tekil: eski yol aynı emrin notunu ayrıca yazmaz.
+  dilimler 90 sn kesilince (iptal?) emir sorulur → iptalse ⛔ notu, normal bitişse sessizce kapanır (🏁
+  notu açıksa o yazılır; HL hâlâ "activated" diyorsa beklenir, sessizlik bitiş sayılmaz). Not emir anahtarıyla tekil: eski yol aynı emrin notunu ayrıca yazmaz.
 - **"Bildirildi" = ana hedef aldı:** ana kanal (iki deneme) düşerse ilk dilim yolu bildirdi saymaz ve aynaya
   da yazmaz; eski yol 5 dk sonra ikisini eskisi gibi dener.
 - **Eski yol ve 🧪 laboratuvar:** ilk dilim yolu eski yolun sayacına (`twaplive.REG`), emir önbelleğine ve
@@ -426,7 +429,7 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
 ### TWAP ayna grubu (`TWAP_MIRROR_CHAT_ID`)
 
 TWAP mesajları bugünkü yerlerine (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) gitmeye devam eder;
-**her TWAP mesajının birebir kopyası** (ilk alarm, 🔎 ilk dilim alarmı, yarı, 🏁/⛔ bitiş) ayrıca bu gruba
+**her TWAP mesajının birebir kopyası** (ilk alarm, 🔎 ilk dilim alarmı, ⛔ iptal; açıksa yarı ve 🏁) ayrıca bu gruba
 gider. Env-only (Railway Variables; diğer chat id'leri gibi ayarlar sayfasında yok); boş = kapalı.
 
 - Grup id'si: botu gruba ekle, grupta `/id` yaz (normal grup `-540…`, süper grup/kanal `-100…`).
@@ -478,7 +481,7 @@ kalmaz. Takip döngüsü aktif takipleri adrese göre gruplar (**adres başına 
 (7) sonunda kendiliğinden kapanır. İşaret **gönderimden sonra** yazılır: başarısız
 gönderim takibi kapatmaz, sonraki tur yeniden dener.
 
-Kanalın kendi bitiş notu (`twap_alert_end_note`) duruyor; yanına bir dürüstlük
+Kanalın kendi iptal notu (`twap_alert_end_note`; 🏁 için `twap_alert_finish_note`, varsayılan kapalı) duruyor; yanına bir dürüstlük
 düzeltmesi geldi: dilim akışı kesilip tur "bitti" sayılmadan önce emir **bir kez
 daha zorla sorulur**, böylece araya giren bir iptal "🏁 bitti" diye yazılmaz.
 

@@ -535,10 +535,12 @@ EDITABLE_FIELDS: dict[str, dict] = {
                              "desc": "Sorgu sonucu bu süre önbellekte kalır; bildirilmiş tur 10 dk'da bir tazelenir"},
     "twap_alert_cooldown": {"type": "int", "label": "Aynı adres+coin+yön için bekleme (sn)", "group": "TWAP radarı",
                             "desc": "Restart'a dayanıklı (alerts_log). İlerleme ve bitiş notları ayrı anahtarla gider"},
-    "twap_alert_progress": {"type": "bool", "label": "İlerleme notu", "group": "TWAP radarı",
-                            "desc": "Emrin yarısı dolunca tek kısa not (dolan / plan, kalan süre, fiyat)"},
-    "twap_alert_end_note": {"type": "bool", "label": "Bitiş notu", "group": "TWAP radarı",
-                            "desc": "Emir bitince (🏁) ya da iptal edilince (⛔) gerçek dolan tutar, plan, süre ve fiyat değişimi yazılır"},
+    "twap_alert_progress": {"type": "bool", "label": "⏳ Yarılandı notu", "group": "TWAP radarı",
+                            "desc": "Emrin yarısı dolunca kanala tek kısa not (dolan / plan, kalan süre, fiyat). Kullanıcı 12.10: iptal dışında not istemiyor — varsayılan KAPALI (yeni TWAP sanılıyordu)"},
+    "twap_alert_end_note": {"type": "bool", "label": "⛔ İptal notu", "group": "TWAP radarı",
+                            "desc": "Bildirilen emir İPTAL edilince (HL 'terminated'/'error') kanala ⛔ notu: gerçek dolan tutar, plan, süre, fiyat değişimi. ⚡ HIZLI'da takip tuşu yerine bu gelir"},
+    "twap_alert_finish_note": {"type": "bool", "label": "🏁 Bitti notu (normal bitiş)", "group": "TWAP radarı",
+                               "desc": "Emir planlandığı gibi bitince kanala 🏁 notu. Kullanıcı 12.10: 'iptal etmedikçe bildirim atma' (yeni TWAP sanılıyordu) — varsayılan KAPALI. 👁 takip edenin özel notu bundan bağımsız"},
     "twap_follow_enabled": {"type": "bool", "label": "👁 Takip düğmesi (/takip_N)", "group": "TWAP radarı",
                             "desc": "TWAP alarmına 'emri takip et' düğmesi koyar. Basan kişi EMRİ izler: iptal edilirse ⛔, bitince 🏁 haber alır — yalnız basan, kanal sessiz kalır. Pozisyon takibinden farkı emrin izlenmesidir; spot TWAP'ta pozisyon yoktur ama emir vardır"},
     "twap_follow_poll_sec": {"type": "int", "label": "Takip: durum sorgu aralığı (sn)", "group": "TWAP radarı",
@@ -905,8 +907,9 @@ class Config:
         self.twap_lookup_min_usd = float(os.getenv("TWAP_LOOKUP_MIN_USD", "50000"))
         self.twap_lookup_cooldown = int(os.getenv("TWAP_LOOKUP_COOLDOWN", "600"))
         self.twap_alert_cooldown = int(os.getenv("TWAP_ALERT_COOLDOWN", "21600"))
-        self.twap_alert_progress = True
-        self.twap_alert_end_note = True
+        self.twap_alert_progress = False     # 12.10: kanala yalnız ilk uyarı + iptal (yarılandı/bitti karışıyordu)
+        self.twap_alert_end_note = True      # ⛔ iptal notu
+        self.twap_alert_finish_note = False  # 🏁 normal bitiş notu
         self.twap_follow_enabled = True
         self.twap_follow_poll_sec = int(os.getenv("TWAP_FOLLOW_POLL_SEC", "120"))
         self.twap_follow_expire_days = int(os.getenv("TWAP_FOLLOW_EXPIRE_DAYS", "7"))

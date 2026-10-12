@@ -512,7 +512,7 @@ def _end_measure(r: dict) -> dict:
 
 
 async def lifecycle(cfg, notifier, collector, t: int) -> int:
-    """İlk dilim yolunun bildirdiği emirler → 🏁/⛔ notu (ana hedef + ayna). Emir sorulur: planlanan bitiş + 30 sn'de,
+    """İlk dilim yolunun bildirdiği emirler → ⛔ iptal notu (🏁 normal bitiş yalnız ayar açıksa; ana hedef + ayna). Emir sorulur: planlanan bitiş + 30 sn'de,
     dilimler kesilince (90 sn; ⚡ HIZLI'da 45 sn) ve ⚡ HIZLI'da ayrıca dakikada bir (aynı adres+coin+yönün başka
     TWAP'ı dilim atmaya devam etse de iptal kaçmasın). HL 'activated' diyorsa beklenir; bitişten 10 dk sonra hâlâ
     öyleyse not yazılmadan kapatılır. Not ana hedefe gidemezse sonraki turlarda yeniden denenir (en çok 3 kez).
@@ -565,8 +565,8 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
             continue
         if o is None and t < end_at + END_GRACE:
             continue                                    # geçmişte görünmüyor ama süresi dolmadı — bekle
-        if o is None or not getattr(cfg, "twap_alert_end_note", True):
-            r["ended"], changed = t, True
+        if o is None or not twaplive.end_note_wanted(cfg, st in ("terminated", "error")):
+            r["ended"], changed = t, True                # normal bitiş (🏁 kapalı) ya da emir yok → not yok
             F.known.pop(key, None)
             continue
         okey = f"{key[0]}:{key[1]}:{key[2]}:{int(r['started'])}"

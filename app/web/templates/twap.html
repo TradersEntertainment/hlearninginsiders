@@ -23,7 +23,7 @@
   sekmesindeki veri: plan, dolan, kalan süre) — <b>tahmin yok</b>. Telegram: emir ≥ <b>{{ alert_min|usd }}</b>,
   kalan ≥ <b>{{ min_left|usd }}</b> (ya da planın yarısı) ve emir 24s hacmin ≥ <b>%{{ '%g'|format(vol_pct) }}</b>'si (BTC/ETH %{{ '%g'|format(vol_pct_major or 20) }}) ise
   {%- if big_usd %} (ya da emir ≥ {{ big_usd|usd }}, hacimden bağımsız){% endif %}; emir yoksa/bitmişse bildirim yok.
-  Kripto → kripto kanalı, hisse → ana sohbet; yarısı dolunca ilerleme, bitince 🏁 / iptalde ⛔ notu.
+  Kripto → kripto kanalı, hisse → ana sohbet; sonrasında yalnız iptalde ⛔ notu (yarılandı / 🏁 bitti notları ayarlardan açılır).
   Kapsam: dinlenen <b>{{ ws.crypto|length if ws.crypto else 0 }}</b> kripto + <b>{{ ws.equity_n or 0 }}</b> hisse
   (Ayarlar → TWAP radarı).</p>
 

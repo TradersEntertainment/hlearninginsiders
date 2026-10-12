@@ -87,6 +87,7 @@ def _cfg(chat="-100"):
     cfg.twap_alert_cooldown = 21600
     cfg.twap_alert_progress = True
     cfg.twap_alert_end_note = True
+    cfg.twap_alert_finish_note = True          # eski testler 🏁'yi de pinler (varsayılan 12.10'dan beri kapalı)
     cfg.twap_live_window_min = 240
     cfg.twap_min_usd = 5_000_000
     cfg.twap_window_h = 12
@@ -694,13 +695,17 @@ def test_messages_and_wiring():
     for f in ("twap_live_enabled", "twap_alert_min_usd", "twap_alert_min_left_usd", "twap_alert_vol_pct",
               "twap_alert_vol_pct_major",
               "twap_alert_big_usd", "twap_alert_min_slices", "twap_lookup_min_usd", "twap_lookup_cooldown",
-              "twap_alert_cooldown", "twap_alert_progress", "twap_alert_end_note", "twap_live_window_min",
+              "twap_alert_cooldown", "twap_alert_progress", "twap_alert_end_note", "twap_alert_finish_note",
+              "twap_live_window_min",
               "twap_live_eval_sec", "twap_min_usd", "twap_window_h", "twap_scan_sec",
               "twap_follow_enabled", "twap_follow_poll_sec", "twap_follow_expire_days",
               "twap_follow_progress"):
         assert f in EDITABLE_FIELDS and hasattr(c, f) and EDITABLE_FIELDS[f]["group"] == "TWAP radarı", f
         assert all(EDITABLE_FIELDS[f].get(x) for x in ("type", "label", "group", "desc")), f
     assert "twap_alert_rate_pct" not in EDITABLE_FIELDS and not hasattr(c, "twap_alert_rate_pct")
+    # kullanıcı 12.10: "iptal etmedikçe bildirim atma" — kanala ilk uyarıdan sonra yalnız ⛔
+    assert c.twap_alert_end_note is True and c.twap_alert_finish_note is False and c.twap_alert_progress is False
+    assert tl.end_note_wanted(c, True) and not tl.end_note_wanted(c, False)
     assert EDITABLE_FIELDS["notify_twap"]["group"] == "Bildirimler" and c.notify_twap is True
     if not os.getenv("TWAP_ALERT_MIN_USD"):
         assert c.twap_alert_min_usd == 1_000_000 and c.twap_alert_min_left_usd == 1_000_000
