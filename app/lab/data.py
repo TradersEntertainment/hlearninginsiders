@@ -237,7 +237,7 @@ async def prune(now_ts: int | None = None) -> int:
 
 # ---------------- evren ----------------
 
-_UNIV: dict = {"ts": 0, "coins": {}}
+_UNIV: dict = {"ts": 0, "coins": {}, "pv": None}   # pv: propr listesi sürümü (değişince evren yeniden kurulur)
 UNIV_TTL = 3600
 BENCH_KRIPTO = "BTC"
 BENCH_ABD = "xyz:XYZ100"
@@ -248,9 +248,9 @@ async def lab_coins(cfg=None, ts: int | None = None) -> dict[str, str]:
     Aynı sembol birden çok hisse dex'indeyse `equity_dexes` sırasındaki ilki. Ağ yok (tickers + kv)."""
     from .. import assets
     from ..hl.universe import MAIN_CTX_KV
-    from ..propr import is_listed
+    from ..propr import is_listed, version
     ts = int(ts or now())
-    if _UNIV["coins"] and ts - _UNIV["ts"] < UNIV_TTL:
+    if _UNIV["coins"] and ts - _UNIV["ts"] < UNIV_TTL and _UNIV.get("pv") in (None, version()):
         return _UNIV["coins"]
     order = [str(x).strip().lower() for x in (getattr(cfg, "equity_dexes", None) or ["xyz"])]
     rank = lambda c: order.index(c.split(":")[0]) if c.split(":")[0] in order else len(order)   # noqa: E731
@@ -261,7 +261,7 @@ async def lab_coins(cfg=None, ts: int | None = None) -> dict[str, str]:
         rows = [dict(r) for r in await cur.fetchall()]
     for r in rows:
         coin = r["coin"] or ""
-        if not coin or assets.is_excluded(coin) or not is_listed(r["symbol"] or coin):
+        if not coin or assets.is_excluded(coin) or not is_listed(coin):
             continue
         k = assets.klass(coin)
         if k == "kripto":
@@ -278,16 +278,17 @@ async def lab_coins(cfg=None, ts: int | None = None) -> dict[str, str]:
             out[coin] = "kripto"
     out.setdefault(BENCH_KRIPTO, "kripto")
     out.setdefault(BENCH_ABD, "endeks")
-    _UNIV.update(ts=ts, coins=out)
+    _UNIV.update(ts=ts, coins=out, pv=version())
     return out
 
 
 def in_universe(coin: str) -> bool:
-    """Önbellekteki evrene göre (döngü tazeler); boşsa PROPR listesi."""
-    if _UNIV["coins"]:
+    """Önbellekteki evrene göre (döngü tazeler); boşsa ya da propr listesi o evren kurulduktan sonra
+    değiştiyse (bir sonraki lab turuna kadar) doğrudan PROPR listesi."""
+    from ..propr import is_listed, version
+    if _UNIV["coins"] and _UNIV.get("pv") in (None, version()):
         return coin in _UNIV["coins"]
-    from ..propr import is_listed
-    return is_listed(coin)
+    return is_listed(coin) or coin in (BENCH_KRIPTO, BENCH_ABD)
 
 
 def bench_of(coin: str, klass: str) -> str | None:

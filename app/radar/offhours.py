@@ -88,7 +88,7 @@ async def screener(cfg=None, limit: int | None = None) -> dict:
             n_stale += 1
         n_pos, ntl = pos.get(coin, (0, 0))
         rows.append({
-            "coin": coin, "symbol": t["symbol"], "propr": propr_listed(t["symbol"]),
+            "coin": coin, "symbol": t["symbol"], "propr": propr_listed(coin),
             "base_px": base["mark_px"], "px": cur_m["mark_px"], "dev": dev,
             "oi_chg": _pct(cur_m.get("oi"), base.get("oi")),
             "volume": cur_m.get("day_volume") or 0,
@@ -361,7 +361,7 @@ async def check_alerts(cfg, notifier, client=None) -> dict:
 
     marks = await band_marks(anchor)          # (coin, yön) -> duyurulan en yüksek bant
     for r in scr["rows"]:
-        if not propr_listed(r["symbol"]):
+        if not propr_listed(r["coin"]):
             continue
         # SEMBOL BAŞINA YALITIM: eskiden tek bir sembolün biçimlendirme hatası
         # `for` döngüsünü komple düşürüyordu ve o turdaki DİĞER bütün semboller

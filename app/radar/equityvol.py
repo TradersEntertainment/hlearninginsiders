@@ -13,9 +13,10 @@ EVREN: xyz dex tickers ∩ PROPR listesi. Kripto tarafından farklı olarak hacm
 API'den ÇEKMİYOR — `asset_metrics.day_volume` zaten `metrics.poll_metrics`
 tarafından her turda dolduruluyor, tekrar sormak boşuna istek olurdu.
 
-LİSTE KAYMASI: PROPR listesi elle yazılmış bir kopya ve eskiyor (SHEIN de
-MRNA da yoktu). `not_listed()` dexte olup listede olmayanları döndürür; sayfa
-ve /tani bunu gösterir ki filtre bir daha sessizce körleşmesin.
+LİSTE DIŞI: PROPR listesi 12.10'dan beri propr'dan CANLI çekiliyor (app/propr.py; eskiden elle
+yazılmış kopyaydı ve eskiyordu — SHEIN/MRNA vakası). `not_listed()` dexte olup propr'ın
+listelemediklerini döndürür; sayfa ve /tani bunu gösterir ki "neden taranmadı" cevapsız kalmasın.
+Eşleşme coin kimliğiyle: propr 'xyz:IREN'i listeler, 'para:IREN'i listelemez.
 """
 import asyncio
 import logging
@@ -62,20 +63,24 @@ async def universe(cfg) -> tuple[list[str], dict]:
     tick = await _tickers()
     vols = await _day_volumes()
     cap = max(1, int(getattr(cfg, "equity_vol_max_coins", 120)))
-    coins = sorted((t["coin"] for t in tick if propr_listed(t["symbol"])),
+    coins = sorted((t["coin"] for t in tick if propr_listed(t["coin"])),
                    key=lambda c: -vols.get(c, 0))[:cap]
     return coins, vols
 
 
 async def not_listed() -> list[str]:
-    """Dexte olup PROPR listemizde OLMAYAN semboller — kayma raporu.
+    """Dexte olup propr'ın LİSTELEMEDİĞİ perp'ler (coin kimliğiyle) — taranmıyorlar.
 
-    Bunlar taranmıyor. Sayfada gösteriliyor ki "neden bildirim gelmedi"
-    sorusunun cevabı bir daha kodun içinde saklı kalmasın.
+    Sayfada gösteriliyor ki "neden bildirim gelmedi" sorusunun cevabı kodun içinde
+    saklı kalmasın. Aynı sembolün listeli bir eşi varsa (xyz:IREN ✓, para:IREN ✗)
+    satır dex'iyle yazılır: 'IREN (para)'.
     """
     from ..propr import is_listed as propr_listed
-    return sorted(t["symbol"] for t in await _tickers()
-                  if not propr_listed(t["symbol"]))
+    tick = await _tickers()
+    listed_syms = {str(t["symbol"]).upper() for t in tick if propr_listed(t["coin"])}
+    return sorted({(f"{t['symbol']} ({t['coin'].split(':')[0]})"
+                    if str(t["symbol"]).upper() in listed_syms else t["symbol"])
+                   for t in tick if not propr_listed(t["coin"])})
 
 
 async def scan(cfg, client, notifier=None) -> dict:

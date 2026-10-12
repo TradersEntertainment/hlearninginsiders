@@ -55,6 +55,7 @@ def limits(cfg: Config) -> dict[str, int]:
     lim = {
         "universe": cfg.universe_refresh_sec * 3 + 300,
         "calendar": cfg.calendar_refresh_sec * 2 + 600,
+        "propr": max(600, int(getattr(cfg, "propr_sync_sec", 3600) or 3600)) * 3 + 600,   # her tur nabız (çekim düşse de)
         "cryptovol": int(getattr(cfg, "crypto_vol_poll_sec", 300)) * 3 + 300,
         "cryptoliq": int(getattr(cfg, "crypto_liq_poll_sec", 120)) * 3 + 300,
         "equityvol": int(getattr(cfg, "equity_vol_poll_sec", 300)) * 3 + 300,
@@ -112,6 +113,7 @@ def periods(cfg: Config) -> dict[str, int]:
     per = {
         "universe": cfg.universe_refresh_sec,
         "calendar": cfg.calendar_refresh_sec,
+        "propr": max(600, int(getattr(cfg, "propr_sync_sec", 3600) or 3600)),
         "cryptovol": int(getattr(cfg, "crypto_vol_poll_sec", 300)),
         "cryptoliq": int(getattr(cfg, "crypto_liq_poll_sec", 120)),
         "equityvol": int(getattr(cfg, "equity_vol_poll_sec", 300)),

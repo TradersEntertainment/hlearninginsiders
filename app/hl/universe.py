@@ -346,14 +346,25 @@ async def get_universe() -> list[dict]:
 
 
 async def find_ticker(symbol_or_coin: str) -> dict | None:
+    """Tam coin kimliği önce; sembolle bulunursa ve birden çok dex'te varsa (xyz:IREN + para:IREN)
+    hisse dex'leri (`equity_dexes` sırası) kazanır. Eskiden `LIMIT 1` sırasız seçiyordu: öneksiz
+    'IREN' satır sırasına göre para:IREN'e (kripto dex) düşebiliyordu."""
+    from ..config import get_config
     s = symbol_or_coin.strip()
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT * FROM tickers WHERE coin=? OR UPPER(symbol)=? LIMIT 1",
+            "SELECT * FROM tickers WHERE coin=? OR UPPER(symbol)=?",
             (s, s.upper()),
         )
-        row = await cur.fetchone()
-        return dict(row) if row else None
+        rows = [dict(r) for r in await cur.fetchall()]
+    if not rows:
+        return None
+    order = [str(d).strip().lower() for d in (getattr(get_config(), "equity_dexes", None) or ["xyz"])]
+
+    def _rank(r: dict) -> tuple:
+        dex = str(r.get("dex") or "").lower()
+        return (r.get("coin") != s, order.index(dex) if dex in order else len(order), str(r.get("coin") or ""))
+    return min(rows, key=_rank)
 
 
 async def crypto_names() -> dict[str, str]:
@@ -382,6 +393,14 @@ async def resolve_coin(symbol_or_coin: str) -> dict | None:
     """
     from .. import assets
     t = await find_ticker(symbol_or_coin)
+    s0 = (symbol_or_coin or "").strip()
+    if t and ":" not in s0 and t.get("coin") != s0 and assets.is_crypto_dex(t["coin"]):
+        # Kripto DEX'indeki eş ad (para:STX = Seagate) ile ana dex kripto (STX = Stacks) çakışırsa ana
+        # dex kazanır: ikisi de 'kripto' sınıfında, "hisse kazanır" kuralı burada geçerli değil.
+        # propr ana dex STX'i listeler, para:STX'i listelemez (12.10). Kripto dex'i 'para:STX' ile açılır.
+        name = (await crypto_names()).get(s0.upper())
+        if name and not assets.is_excluded(name):
+            return {"coin": name, "symbol": name, "dex": "", "kind": "crypto", "klass": "kripto"}
     if t:
         # kind = VERİ hattı (HIP-3: positions_current/asset_metrics); klass = sınıf
         # (para:ANSEM → kripto: takvim yok, kripto kanalı, endeks kapısı yok)

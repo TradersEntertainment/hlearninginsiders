@@ -183,7 +183,16 @@ def test_universe_and_measure():
         cfg.equity_dexes = ["xyz", "flx"]
         assert await om.universe(cfg) == {"xyz:SNDK", "xyz:CBRS", "xyz:MU"}, "iki dex'te aynı hisse tek satır"
         cfg.equity_dexes = ["flx", "xyz"]
-        assert "flx:SNDK" in await om.universe(cfg) and "xyz:SNDK" not in await om.universe(cfg)
+        # propr 12.10'dan beri dex'li eşleşir: yalnız xyz:SNDK listeli → flx önde olsa da xyz:SNDK
+        assert "xyz:SNDK" in await om.universe(cfg) and "flx:SNDK" not in await om.universe(cfg)
+        from app.config import get_config
+        gcfg = get_config()
+        old_extra, gcfg.propr_symbols = gcfg.propr_symbols, "SNDK"   # elle ek (sembol) → her dex'te geçer
+        try:
+            assert "flx:SNDK" in await om.universe(cfg) and "xyz:SNDK" not in await om.universe(cfg), \
+                "iki dex de listeliyse equity_dexes sırası"
+        finally:
+            gcfg.propr_symbols = old_extra
         cfg.equity_dexes = ["xyz"]
         # yapılandırılmadan (açılış bilinmeden) hiçbir şey sayılmaz
         om.observe("xyz:SNDK", 500.0, 1, O + 10, "z")

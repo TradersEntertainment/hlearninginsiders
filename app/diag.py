@@ -359,6 +359,12 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f"{_dur(now() - int(last_full))} önce" if last_full else "YOK (ilk tur sürüyor)")
                    + (f" · hl yazma hatası {sw['hl_err']}" if sw.get("hl_err") else "")
                    + (f"\n       ⚠️ HATA: {sw['err_msg']}" if sw.get("err_msg") else ""))
+    # PROPR listesi (canlı senkron): kaynak, sayılar, son çekim, son değişiklik
+    try:
+        from . import propr as _propr_d
+        out.append("  " + await _propr_d.diag_line(cfg))
+    except Exception as e:
+        out.append(f"  propr listesi okunamadı ({type(e).__name__}: {e})")
     # Sayım (census): mod (toplu/tek tek), süren turun yüzdesi, son tur özeti, 429
     try:
         from .radar import census as _census
@@ -412,10 +418,10 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f" · ⚠️ birim şüpheli: {', '.join(vs['unit_bad'][:5])}"
                       if vs.get("unit_bad") else "")
                    + (f"\n       ⏸ {vs['skipped']}" if vs.get("skipped") else ""))
-        # PROPR listesi elle tutuluyor ve eskiyor — kaç sembolü kaçırdığımız
-        # görünmezse "neden bildirim gelmedi" sorusu bir daha cevapsız kalır.
+        # propr'ın listelemediği perp'ler taranmaz — görünmezse "neden bildirim
+        # gelmedi" sorusu cevapsız kalır (liste 12.10'dan beri propr'dan canlı).
         if vs.get("n_missing"):
-            out.append(f"       📋 PROPR listesinde OLMAYAN {vs['n_missing']} perp"
+            out.append(f"       📋 propr'ın listelemediği {vs['n_missing']} perp"
                        f" taranmıyor: {', '.join(vs.get('missing', [])[:15])}")
     cl = await kv_get("cryptoliq_stats") or {}
     if cl:
@@ -605,8 +611,7 @@ async def _subsystems(cfg, state=None) -> list[str]:
         else:
             line += " · HIP-3 keşfi henüz koşmadı"
         if names:
-            propr_all = set(_propr.DEFAULT_PROPR) | {s.strip().upper() for s in
-                                                    (getattr(cfg, "propr_symbols", "") or "").split(",") if s.strip()}
+            propr_all = _propr.current_symbols()       # canlı (ya da gömülü) liste + elle eklenenler
             hip_names = {a: d["name"] for d in dexes for a in (d.get("assets") or [])}
             known = set(names) | tick
             exc = excluded_set()

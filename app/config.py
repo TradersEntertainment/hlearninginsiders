@@ -65,6 +65,8 @@ EDITABLE_FIELDS: dict[str, dict] = {
                       "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
     "notify_listing": {"type": "bool", "label": "🆕 Yeni hisse listelendi", "group": "Bildirimler",
                        "desc": "HL yeni bir hisse perp'i listelediğinde haber ver (ilk açılışta susar)"},
+    "notify_propr": {"type": "bool", "label": "✅ PROPR listesi değişti", "group": "Bildirimler",
+                     "desc": "propr.xyz listesine coin/hisse eklenince ya da çıkarılınca tek mesaj (canlı senkron, saatte bir). İlk çekimde susar"},
     "channel_auto_hours": {"type": "str", "label": "📣 Otomatik kanal yayını saatleri (TSİ)",
                            "group": "Bildirimler",
                            "desc": "Bu saatlerde 'bu saatin geçmiş karnesi' otomatik olarak yayın kanalına gönderilir. Virgülle: 10,14,17 · boş = kapalı (TELEGRAM_CHANNEL_ID gerekir)"},
@@ -210,7 +212,11 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "no_calendar_extra": {"type": "str", "label": "Takvimi olmayan hisseler (ek)",
                           "group": "Takvim & semboller", "desc": "Pre-IPO / sentetik hisseler — takvim aranmaz, elle /settime ile girilir"},
     "propr_symbols": {"type": "str", "label": "propr.xyz ek semboller",
-                      "group": "Takvim & semboller", "desc": "propr yeni bir şey listelerse buraya virgülle ekle — alertlere '✅ PROPR'da listeli' düşer"},
+                      "group": "Takvim & semboller", "desc": "Liste artık propr'dan CANLI çekiliyor (saatte bir) — buraya yalnız propr listesinde OLMAYAN ama PROPR gibi taranmasını istediğin sembolleri virgülle yaz (ör. TSM). Ön eksiz = sembol, 'xyz:TSM' = yalnız o dex"},
+    "propr_live": {"type": "bool", "label": "✅ PROPR listesini canlı çek", "group": "Takvim & semboller",
+                   "desc": "propr.xyz/api/universe/config saatte bir okunur (propr'ın kendi evren sayfasının kaynağı). Kapalıysa koddaki 12.10 listesi kullanılır. Çekim düşerse son iyi liste kalır"},
+    "propr_sync_sec": {"type": "int", "label": "PROPR listesi çekme aralığı (sn)", "group": "Takvim & semboller",
+                       "desc": "Varsayılan 3600 (saatte bir). En az 600"},
     "universe_refresh_sec": {"type": "int", "label": "Evren yenileme (sn)",
                              "group": "Tarama & performans", "desc": "HL coin listesi yenileme sıklığı"},
     "calendar_refresh_sec": {"type": "int", "label": "Takvim yenileme (sn)",
@@ -1024,6 +1030,7 @@ class Config:
         self.notify_wall = True
         self.notify_health = False  # bekçi sitede konuşur; Telegram istenirse açılır
         self.notify_listing = True
+        self.notify_propr = True
         self.channel_auto_hours = os.getenv("CHANNEL_AUTO_HOURS", "")
         self.zombie_silent_hours = int(os.getenv("ZOMBIE_SILENT_HOURS", "12"))
         self.wall_window_pct = float(os.getenv("WALL_WINDOW_PCT", "2.0"))
@@ -1107,8 +1114,11 @@ class Config:
         self.peers_override = os.getenv("PEERS", "")
         # ABD dışı hisselerin Yahoo sembolleri (varsayılan eşlemeye eklenir)
         self.yahoo_symbol_map = os.getenv("YAHOO_SYMBOL_MAP", "")
-        # propr.xyz'de listeli ek semboller (varsayılan listeye eklenir)
+        # propr.xyz'de listeli ek semboller (canlı/gömülü listeye eklenir)
         self.propr_symbols = os.getenv("PROPR_SYMBOLS", "")
+        # propr listesi canlı senkron (app/propr.py): propr.xyz/api/universe/config
+        self.propr_live = convert_value("bool", os.getenv("PROPR_LIVE", "1"))
+        self.propr_sync_sec = int(os.getenv("PROPR_SYNC_SEC", "3600"))
         self.tv_symbol_map = os.getenv("TV_SYMBOL_MAP", "")
         # Takvim sorgusundan muaf tutulacak ek enstrümanlar
         self.non_equity_extra = os.getenv("NON_EQUITY_EXTRA", "")

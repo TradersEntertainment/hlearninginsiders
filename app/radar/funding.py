@@ -80,7 +80,7 @@ async def ranking(cfg=None, top: int = TOP_PAYERS) -> dict:
 
         ln, sn = sides.get(coin, {}).get("long", (0, 0.0)), sides.get(coin, {}).get("short", (0, 0.0))
         rows.append({
-            "coin": coin, "symbol": t["symbol"], "propr": propr_listed(t["symbol"]),
+            "coin": coin, "symbol": t["symbol"], "propr": propr_listed(coin),
             "funding": f, "hourly": f * 100, "apr": annualize(f),
             "prev": pf, "chg": (f - pf) * 100 if pf is not None else None,
             "flipped": flipped, "extreme": abs(f) >= extreme,

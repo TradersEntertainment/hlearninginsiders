@@ -193,7 +193,7 @@ async def universe(cfg) -> set[str]:
     best: dict[str, str] = {}
     for r in rows:
         coin = r["coin"]
-        if not (is_listed(r["symbol"] or coin) and assets.klass(coin) == "hisse"):
+        if not (is_listed(coin) and assets.klass(coin) == "hisse"):
             continue
         sym = coin.split(":")[-1].upper()
         if sym not in best or rank(coin) < rank(best[sym]):
@@ -204,7 +204,10 @@ async def universe(cfg) -> set[str]:
 async def ensure_universe(cfg, ts: int) -> None:
     """Evren ~10 dk'da bir tazelenir (açılış raporu kapalıyken de: /5dk aynı evreni kullanır).
     İlk yüklemede `obs_since` = bu süreçte gözlemin başladığı an."""
-    if ts - REG.universe_ts >= UNIVERSE_TTL or not REG.coins:
+    # Açılış penceresinde (referans öncesi → 30. dk) evren DONAR: propr listesi pencerede değişirse
+    # çıkan hisse donmuş son fiyatla rapora girer, giren hissenin açılış öncesi referansı olmaz.
+    frozen = bool(REG.coins and REG.open_ts and REG.open_ts - COVER_LEAD * 5 <= ts <= REG.open_ts + WINDOW)
+    if (ts - REG.universe_ts >= UNIVERSE_TTL or not REG.coins) and not frozen:
         try:
             REG.coins = await universe(cfg)
             REG.universe_ts = int(ts)
@@ -281,7 +284,7 @@ def rank(book: dict, refs: dict, vols: dict, span: int, floor: float, top: int,
                      "last": a["last"], "chg": (a["last"] - ref) / ref * 100,
                      "rng": (a["hi"] - a["lo"]) / ref * 100, "vol": a["vol"], "n": a["n"],
                      "mult": a["vol"] / normal if normal > 0 else None,
-                     "propr": is_listed(assets.label(coin)),
+                     "propr": is_listed(coin),
                      "ref_old": bool(pre and stale and t0 - pre[0] > stale)})
     rows.sort(key=lambda r: (-abs(r["chg"]), -r["rng"]))
     return rows[:top], below

@@ -402,16 +402,16 @@ async def index(request: Request):
     bw_maxn = max((x["notional"] for x in book_walls), default=1)
     for x in book_walls:
         x["wpct"] = max(4, x["notional"] / bw_maxn * 100)
-        x["propr"] = propr_listed(x["symbol"])
+        x["propr"] = propr_listed(x.get("coin") or x["symbol"])
         x["age_ts"] = x["first_ts"]
     liq_maxn = max((x["notional"] for x in liq_map), default=1)
     for x in liq_map:
         x["wpct"] = max(4, x["notional"] / liq_maxn * 100)
-        x["propr"] = propr_listed(x["symbol"])
+        x["propr"] = propr_listed(x.get("coin") or x["symbol"])
 
     # propr.xyz'de işlem görebildiklerimizi her listede işaretle
     for _row in (*recent_big, *suspicious, *events, *specialists, *universe):
-        _row["propr"] = propr_listed(_row.get("symbol") or _row.get("coin") or "")
+        _row["propr"] = propr_listed(_row.get("coin") or _row.get("symbol") or "")
 
     # ---- Earnings radarı kartları: yaklaşan her bilanço için balina verisi + yön okuması ----
     from datetime import date as _date
@@ -504,7 +504,7 @@ async def index(request: Request):
         t["prog"] = (f"%{closed:.0f} kapandı" if closed > 1
                      else (f"%{abs(closed):.0f} büyüttü" if closed < -1 else "değişim yok"))
         t["days_left"] = max(0, (int(t.get("expires_ts") or 0) - ts_now) // 86400)
-        t["propr"] = propr_listed(t.get("symbol") or "")
+        t["propr"] = propr_listed(t.get("coin") or t.get("symbol") or "")
 
     # 🕐 Şu saatte beklenenler: SIRALAMA (eskiden eşik filtresiydi ve hiçbir
     # hisse eşiği geçmediğinde panel bomboş kalıyordu — özellik yok sanılıyordu).
@@ -514,13 +514,13 @@ async def index(request: Request):
     hot_hours = hot_rank["up"]
     for h in hot_hours:
         h["symbol"] = sym_map.get(h["coin"], h["coin"].split(":")[-1])
-        h["propr"] = propr_listed(h["symbol"])
+        h["propr"] = propr_listed(h.get("coin") or h["symbol"])
     n_hstats = hot_rank["n_stats"]
     # 🌙 Seans karnesi: hareketin ne kadarı borsa KAPALIYKEN oldu (yön ayrımlı).
     # Aynı hmap — ek istek yok; yeni şemayla henüz tazelenmemişler atlanır.
     session_rows = hourstats.session_ranking(hmap, sym_map)
     for r in session_rows:
-        r["propr"] = propr_listed(r["symbol"])
+        r["propr"] = propr_listed(r.get("coin") or r["symbol"])
     session_rows = session_rows[:20]
 
     # 🪙 Ana dex kripto etiketleri: hacimce ilk 40 (yalnız kv, ağ yok); tümü
@@ -836,7 +836,7 @@ async def coin_page(request: Request, symbol: str):
         "klass": t.get("klass") or assets.klass(coin),
         "tv_sym": (tv_symbol(t["symbol"]) if cfg.show_tradingview and kind != "crypto"
                    and t.get("klass") != "kripto" else None),
-        "propr": propr_listed(t["symbol"]),
+        "propr": propr_listed(coin),
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
     })
@@ -1549,7 +1549,7 @@ async def hours_page(request: Request):
     rank = hourstats.hour_ranking(hmap, et_hour, limit=20)
     for row in (*rank["up"], *rank["down"]):
         row["symbol"] = sym_map.get(row["coin"], row["coin"].split(":")[-1])
-        row["propr"] = propr_listed(row["symbol"])
+        row["propr"] = propr_listed(row.get("coin") or row["symbol"])
 
     # Sonraki 6 saat: "ne" sorusunun yanına "ne zaman". Aynı stats_map,
     # ek istek yok — yalnız farklı saat kovalarına bakılıyor.
@@ -1852,7 +1852,7 @@ async def lowvol_page(request: Request):
         "min_share": cfg.lowvol_min_oi_share,
         "min_ntl": cfg.lowvol_min_notional,
         "alert_min": cfg.lowvol_alert_min_usd,
-        "propr": {p["symbol"] for p in rows if propr_listed(p["symbol"])},
+        "propr": {p["symbol"] for p in rows if propr_listed(p.get("coin") or p["symbol"])},
     })
 
 

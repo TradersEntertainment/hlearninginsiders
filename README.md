@@ -150,7 +150,8 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
    genişlemez: `/tani` "evren" satırı dex'leri, izlenenleri ve PROPR'da olup HL'de
    karşılığı olmayan sembolleri yazar; arama ve bot "X `abc` dex'inde listeli ama
    izlenmiyor" der. Arama PROPR listesine değil HL evrenine bakar — PROPR'a bir
-   sembol eklemek onu aranır yapmaz, HL'de o adla var olması gerekir.
+   sembol eklemek onu aranır yapmaz, HL'de o adla var olması gerekir. PROPR listesinin
+   kendisi propr'dan canlı çekilir (aşağıda *✅ PROPR listesi — canlı senkron*).
    **Kripto builder dex'leri** (`CRYPTO_DEXES`, varsayılan `para` — `para:ANSEM`):
    veri hattı HIP-3 gibi (tickers, positions_current, asset_metrics; süpürücü adres
    başına +1 istek) ama sınıf **kripto** (`assets.kind` → `crypto`, `assets.klass` →
@@ -258,12 +259,58 @@ akışı sayfa tabanının altında kalan sembole mum sormuyor; o sembol burada 
 görünemez. Kaç sembolün atlandığı künyede yazar. Spot çiftleri PROPR'da
 olmadığı için listede yoktur.
 
-**PROPR listesi elle tutulur ve eskir.** Liste `app/propr.py` içinde sabit bir
-kopya; HL yeni perp ekledikçe geride kalır ve filtre koyduğumuz her yerde
-(hacim radarı, kapalı seans bildirimi) o semboller **sessizce** elenir. SHEIN
-tam olarak böyle kaçtı. Bu yüzden `/hacim` ve `/tani`, dexte olup listede
-olmayan sembolleri **sayıp yazar**; eksik olanı Ayarlar → *propr.xyz ek
-semboller* ile eklersin.
+### ✅ PROPR listesi — canlı senkron (`app/propr.py`)
+
+Kullanıcı (12.10): propr'ın evren sayfasını yapıştırdı — "bizde olmayan coin varsa takibe alalım,
+bayadır eski listeye bakıyoruz". Liste eskiden `app/propr.py`'de elle yazılmış bir kopyaydı ve
+eskiyordu (SHEIN/MRNA böyle kaçmıştı). propr'ın kendi evren sayfası veriyi
+`https://www.propr.xyz/api/universe/config`'den okuyor (406 varlık, her birinde `status`
+whitelisted/blacklisted). O gün: **140 listeli** (89 ana dex kripto + 51 xyz) — sayfayla birebir.
+
+- **12 yeni** takibe girdi: kripto **S, IO, USELESS, RSR, AZTEC, NIL, STX (Stacks), GRIFFAIN, SAND,
+  MINA**; hisse **xyz:IREN**, **xyz:SNXX** (Tradr 2X Long SNDK — SOXL gibi kaldıraçlı ETF:
+  `assets.NON_EQUITY`'de, takvim aranmaz, sınıfı 📐 endeks). Bu 10 kripto ana dex hacim sırasında
+  ilk 90'da — WS'in dinlediği ilk 120 içinde (TWAP/balina zaten görüyordu). RSR aynı gün propr'ca
+  kara listeye alındı (canlı senkron çıkardı).
+- **57'si çıktı** (propr kara listeye almış): TSM, NFLX, LLY, ARM, ASML, QCOM, RKLB, KIOXIA, WIF,
+  KAITO, BERA, DYDX, ENS, ETC, KAS, RUNE, SUSHI, WLFI, JP225, NATGAS, PLATINUM, PALLADIUM, NOK… "✅
+  PROPR'da listeli" rozeti bunlarda artık yok. Yine taranmasını istediğin varsa Ayarlar → *propr.xyz
+  ek semboller* (ör. `TSM`).
+- **Saatte bir çekilir** (`PROPR_SYNC_SEC`, en az 600 sn); liste değişince sahibe tek mesaj
+  (`✅ PROPR listesi değişti` — eklenen/çıkarılan, kripto / hisse ayrı; Bildirimler → *✅ PROPR
+  listesi değişti*). İlk çekimde taban koddaki 12.10 listesidir: fark ≤ 20 ise bildirilir (12.10'da
+  propr **RSR**'yi bir saat sonra kara listeye aldı — deploy sonrası ilk mesaj bu), büyükse susar.
+  Değişiklikler kv `propr_changes`'e tarihli yazılır.
+- **Kimlik dex'li:** propr `xyz:IREN`'i listeler, `para:IREN`'i listelemez; ana dex `STX` (Stacks)
+  listeli, `para:STX` (Seagate) değil. Ön ekli sorgu tam eşleşir, ön eksiz sembol herhangi bir listeli
+  kimliğin sembolüyle. Radarlar, sayfalar ve mesaj rozetleri ellerindeki **coin kimliğiyle** sorar —
+  hisse hacim radarı artık `para:IREN`'i PROPR sanıp taramaz.
+- **Güvence:** çekim düşerse / şekil tutmazsa son iyi liste (kv `propr_live`) kalır; o da yoksa
+  koddaki 12.10 anlık görüntüsü. Beyaz liste 40'tan küçükse ya da bir önceki listenin yarısından azsa
+  "şüpheli" sayılır ve **art arda 3 kez aynı gelmeden uygulanmaz** (toplu silinme önce hata
+  sayılır — PROPR'a bağlı radarlar bir API hıçkırığıyla susmasın). `is_listed` senkron, G/Ç yok.
+- **Etkisi:** PROPR'a bağlı olanlar — kripto/hisse hacim rekoru, açılışın en hareketlileri (açılış
+  penceresinde evren donar), kapalı seans, ana dex metrik kaydı, 🧪 laboratuvar evreni (liste değişince
+  yeniden kurulur), rozetler. **TWAP, balina işlemi, likidasyon ve WS aboneliği listeden bağımsız**
+  (haritalandı): bu değişiklik onları kısmaz.
+- `/tani`: `propr listesi: canlı · 140 enstrüman (89 ana dex kripto · 51 HIP-3) · son çekim ✓ … ·
+  son değişiklik …`; çekim düşmüşse `⚠ son çekim başarısız … · son başarılı … önce`; elle eklenenler
+  "propr listesinde yok" / "zaten listede" diye ayrılır. `/hacim` ve `/tani`, dexte olup propr'ın
+  listelemediklerini sayıp yazar (aynı sembolün listeli eşi varsa `IREN (para)`).
+- Ayarlar → *Takvim & semboller*: **✅ PROPR listesini canlı çek** (`PROPR_LIVE`, kapalıysa 12.10
+  listesi), **çekme aralığı** (`PROPR_SYNC_SEC`), **ek semboller**.
+
+**Yan düzeltmeler (aynı inceleme):** aynı sembol hem xyz hem para'daysa (IREN, AVGO, CRWD, NET, RDDT,
+LRCX, GLW, AAOI) bilanço takvimi **hisse dex'inden** sorulur — öneksiz sembol para yüzünden kripto
+sayılıp takvimi hiç aranmıyordu. `find_ticker` aynı sembolde hisse dex'ini seçer (eskiden satır
+sırasına göre para'ya düşebiliyordu); öneksiz `STX` ana dex'teki Stacks'i açar (`para:STX` açıkça yazılır).
+
+**🧪 Laboratuvar ve evren değişimi:** evren (PROPR) kuralın `spec_sha`'sına girmez — girseydi her
+propr değişikliği tüm kuralları emekliye ayırırdı (K bütçesi dolu). Bunun yerine değişiklik
+`propr_changes`'e tarihli yazılır; örneklem o tarihten önce/sonra ayrılabilir. 12.10 değişikliği kurallar
+kaydedildikten (08.10) sonraki ilk evren değişimidir: HAC-HSS'nin xyz evreninden 31 enstrüman çıktı
+(23 hisse + 8 endeks/emtia/döviz/ETF; giren IREN, SNXX), ACI'nın hisse evreninden 23 hisse çıktı (giren
+IREN), HAC-KRP'nin kripto evreninden ~25 coin çıktı, 10 coin girdi.
 
 **Kripto/TradFi ayrımı** PROPR listesini bölerek değil **ana dex üyeliğiyle**
 yapılır: HL'de hisse/emtia perp'leri `xyz:` önekli geldiği için ana dexte kalan

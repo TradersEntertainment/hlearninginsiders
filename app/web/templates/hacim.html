@@ -93,13 +93,12 @@
   {{ unitwarn(eq_st) }}
 
   {% if n_missing %}
-  <p class="alert warn">📋 <b>{{ n_missing }} perp taranmıyor</b> — xyz dex'te listeli
-    ama bizim PROPR listemizde yoklar:
+  <p class="alert warn">📋 <b>{{ n_missing }} perp taranmıyor</b> — izlenen HIP-3 dex'lerinde listeli
+    ama propr listelemiyor:
     <span class="dim">{{ missing|join(', ') }}</span>.
-    Liste elle tutulan bir kopya ve HL yeni perp ekledikçe eskiyor
-    (<b>SHEIN</b> tam olarak böyle kaçmıştı). İşlem açabildiğin bir sembol
-    buradaysa <b>Ayarlar → propr.xyz ek semboller</b> alanına virgülle ekle,
-    bir sonraki turda taranmaya başlar.</p>
+    PROPR listesi propr.xyz'den saatte bir <b>canlı</b> çekilir (yeni eklenen kendiliğinden girer;
+    <i>IREN (para)</i> = sembolün listeli eşi başka dex'te). Yine de taranmasını istediğin bir sembol
+    buradaysa <b>Ayarlar → propr.xyz ek semboller</b> alanına virgülle ekle.</p>
   {% endif %}
 
   {% if eq_events %}

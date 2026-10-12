@@ -143,7 +143,13 @@ def test_page_bot_diag():
         assert "abc" in await public.unknown_message(cfg, "MEME") and "Yakın" not in await public.unknown_message(cfg, "zzzz")
         # /tani evren satırı
         from app import diag
-        txt = await diag.report(cfg, None)
+        from app.config import get_config
+        gcfg = get_config()
+        old_extra, gcfg.propr_symbols = gcfg.propr_symbols, "ANSEM"   # propr 12.10'da ANSEM yok → elle ek
+        try:
+            txt = await diag.report(cfg, None)
+        finally:
+            gcfg.propr_symbols = old_extra
         line = next((ln for ln in txt.splitlines() if ln.strip().startswith("evren:")), "")
         assert "evren: ana dex 2 coin (kv" in line and "HIP-3: xyz 2 ✓, abc 2, bad ? (izlenen: xyz)" in line, line
         assert "PROPR'da olup izlenmeyen dex'te: ANSEM (abc)" in line and "PROPR'da olup HL'de bulunamayan (" in line

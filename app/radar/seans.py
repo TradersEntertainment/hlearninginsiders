@@ -75,7 +75,7 @@ GUN_TR = ("Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz")
 # ABD'de işlem gören endeks/ETF perp'leri (NON_EQUITY içinde olup nakit seansı ABD'de olanlar)
 US_NONEQ_OK = frozenset({"XYZ100", "SP500", "SPX", "NDX", "QQQ", "SPY", "IWM", "SMH", "SOXX", "SOXL",
                          "XLE", "XLF", "XLK", "ARKK", "GDX", "TLT", "LIT", "URNM", "EWY", "EWJ", "EWT",
-                         "EWZ", "EWW", "KORU"})
+                         "EWZ", "EWW", "KORU", "SNXX"})
 # Dayanağı Asya borsasında işlem gören xyz perp'leri (06.10 xyz evreni): onların asıl seansı "Asya".
 # GIGADEV Şanghay'da; takvimsiz (assets.NO_CALENDAR) diğerleri uyarıyla kabul edilir.
 NON_US_LISTED = frozenset({"HYUNDAI", "KIOXIA", "SKHX", "SKHY", "SMSN", "SOFTBANK", "GIGADEV"})

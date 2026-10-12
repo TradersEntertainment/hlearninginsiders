@@ -299,17 +299,36 @@ async def _fetch_nasdaq(session: aiohttp.ClientSession, horizon_days: int) -> di
 
 # ---------------- Yenileme ----------------
 
+def symbol_coins(rows, equity_dexes=None) -> dict[str, str]:
+    """tickers satırları → sembol → coin. Aynı sembol birden çok dex'teyse (xyz:IREN + para:IREN)
+    HİSSE dex'i (`equity_dexes` sırası) kazanır: sınıf o coinden okunur (öneksiz 'IREN', para:IREN
+    yüzünden kripto sayılıp takvimi hiç aranmıyordu — IREN, AVGO, CRWD, NET…) ve earnings_events.coin
+    hisse defterini gösterir."""
+    order = [str(d).strip().lower() for d in (equity_dexes or ["xyz"])]
+
+    def _rank(coin: str) -> int:
+        dex = coin.split(":")[0].lower() if ":" in coin else ""
+        return order.index(dex) if dex in order else len(order)
+
+    out: dict[str, str] = {}
+    for r in rows:
+        sym, coin = r["symbol"], r["coin"]
+        if sym not in out or _rank(coin) < _rank(out[sym]):
+            out[sym] = coin
+    return out
+
+
 async def refresh_calendar(cfg: Config, session: aiohttp.ClientSession) -> int:
     async with db() as conn:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         rows = await cur.fetchall()
-    sym2coin = {r["symbol"]: r["coin"] for r in rows}
+    sym2coin = symbol_coins(rows, getattr(cfg, "equity_dexes", None))
     all_symbols = sorted(sym2coin)
     # Endeks/emtia/FX/ETF/kripto ve pre-IPO'ların bilançosu yok — sorgulama.
     # Takipten çıkarılanlar (exclude_symbols) hiç sorgulanmaz.
     exc = excluded_set()
     symbols = [s for s in all_symbols
-               if has_earnings(s) and s.upper() not in exc]
+               if has_earnings(sym2coin[s]) and s.upper() not in exc]
     skipped = len(all_symbols) - len(symbols)
     if not symbols:
         log.info("takvim: sorgulanacak hisse yok (evren %d, hepsi muaf)", len(all_symbols))

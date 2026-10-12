@@ -17,6 +17,7 @@ NON_EQUITY: frozenset[str] = frozenset({
     # ETF / sepet (bilanço açıklamaz)
     "SMH", "XLE", "XLF", "XLK", "URNM", "EWY", "EWJ", "EWT", "EWZ", "EWW",
     "KORU", "SOXL", "SOXX", "QQQ", "SPY", "IWM", "ARKK", "GDX", "TLT", "LIT",
+    "SNXX",            # Tradr 2X Long SNDK Daily ETF (Cboe; propr 12.10 listesi) — SOXL gibi kaldıraçlı ETF
     # Kripto (ana dex'ten sızarsa)
     "BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE", "BNB", "ADA", "AVAX", "LINK",
     "SUI", "NEAR", "TAO", "ZEC", "XMR", "LTC", "BCH", "TRX", "DOT", "ATOM",

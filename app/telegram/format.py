@@ -216,7 +216,7 @@ def new_big_position_alert(coin: str, p: dict, event: dict | None) -> str:
         lines.append(f"📅 Dikkat: {event['date_et']} ({hint}) earnings var!")
     else:
         lines.append("ℹ️ Takvimde yaklaşan earnings kaydı yok")
-    if is_listed(sym):
+    if is_listed(coin):
         lines.append(PROPR_NOTE)
     lines.append(DISCLAIMER)
     return "\n".join(lines)
@@ -242,7 +242,7 @@ def liq_alert(coin: str, addr: str, p: dict, mark: float, dist: float, stage: in
         f"👤 {alink(addr)}",
         f"💥 {etki}",
     ]
-    if is_listed(sym):
+    if is_listed(coin):
         lines.append(PROPR_NOTE)
     lines.append(DISCLAIMER)
     return "\n".join(lines)
@@ -275,7 +275,7 @@ def liq_cluster_alert(c: dict) -> str:
         g = c["gate"]
         lines.append(f"📐 endeks/emtia/FX kapısı: ≤%{float(g['dist']):g} içinde {usd(g['near'])}"
                      f" (eşik {usd(g['min'])})")
-    if is_listed(sym):
+    if is_listed(c.get("coin") or sym):
         lines.append(PROPR_NOTE)
     lines.append(DISCLAIMER)
     return "\n".join(lines)
@@ -300,7 +300,7 @@ def anomaly_alert(symbol: str, coin: str, triggers: list[str], event: dict | Non
     for t in triggers:
         lines.append(f"  ⚠️ {t}")
     lines.append(f"🔍 Detay için: /scan {symbol}")
-    if is_listed(symbol):
+    if is_listed(coin or symbol):
         lines.append(PROPR_NOTE)
     lines.append(DISCLAIMER)
     return "\n".join(lines)
@@ -326,7 +326,7 @@ def earnings_report(event: dict, stage: str, summ: dict, rows: list[dict], cfg,
                 + (f" │ EPS beklentisi {event['eps_est']}" if event.get("eps_est") else ""))
         if event.get("note"):
             head += f"\n⚠️ {event['note']}"
-    if is_listed(sym):
+    if is_listed(event.get("coin") or sym):
         head += f"\n{PROPR_NOTE}"
     parts = [head, _summary_block(summ)]
     if rows:
@@ -375,7 +375,7 @@ def whale_fill_alert(coin: str, addr: str, side: str, price: float,
     if hits or misses:
         lines.append(f"🎯 Sicil: {hits} kez yönü tuttu / {misses} kez tutmadı")
     lines += what_happened(brief)
-    if is_listed(sym):
+    if is_listed(coin):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
@@ -398,6 +398,7 @@ TASK_TR = {
     "seans": "ABD seans karnesi (mum arşivi)", "wake": "uyandırma alarmı",
     "openmove": "açılışın en hareketlileri",
     "lab": "strateji laboratuvarı",
+    "propr": "PROPR listesi (canlı senkron)",
 }
 
 
@@ -485,7 +486,7 @@ def hot_hours_channel(entries: list[dict], tsi_now: int) -> str:
     for h in entries:
         sym = h.get("symbol") or (h.get("coin") or "").split(":")[-1]
         moon = " 🌙" if h.get("closed_heavy") else ""
-        propr = " · ✅ PROPR" if is_listed(sym) else ""
+        propr = " · ✅ PROPR" if is_listed(h.get("coin") or sym) else ""
         lines.append(f"<b>{sym}</b>{moon} — bu saat ort <b>{h['avg']:+.2f}%</b>"
                      f" · %{h['win']:.0f} pozitif saat · {h['n']} örnek{propr}")
     lines.append("\n<i>🌙 = getirinin çoğu ABD borsası kapalıyken · son ~90 günün"
@@ -506,11 +507,33 @@ def new_listing_alert(items: list[dict]) -> str:
         sym = esc(it.get("symbol") or "")
         lev = it.get("max_leverage")
         extra = f" · max {int(lev)}x" if lev else ""
-        propr = f" · {PROPR_NOTE}" if is_listed(sym) else ""
+        propr = f" · {PROPR_NOTE}" if is_listed(it.get("coin") or it.get("symbol") or "") else ""
         lines.append(f"• <b>{sym}</b>{extra}{propr}")
     if n > 12:
         lines.append(f"…ve {n - 12} tane daha")
     lines.append("\n<i>Yeni listeleme — bu sembolde geçmiş mum ve sicil verisi henüz az.</i>")
+    return "\n".join(lines)
+
+
+def propr_change(added: list[str], removed: list[str], n: int) -> str:
+    """PROPR listesi değişti (canlı senkron, propr.xyz/api/universe/config). Kimlikler dex'li:
+    ana dex kripto öneksiz, HIP-3 'xyz:IREN' → 'IREN (hisse/endeks)'."""
+    def grp(ids: list[str]) -> str:
+        cr = [i for i in ids if ":" not in i]
+        eq = [i.split(":")[-1] for i in ids if ":" in i]
+        out = []
+        if cr:
+            out.append("kripto: " + ", ".join(esc(x) for x in cr[:40]) + (f" … +{len(cr) - 40}" if len(cr) > 40 else ""))
+        if eq:
+            out.append("hisse/endeks: " + ", ".join(esc(x) for x in eq[:40]) + (f" … +{len(eq) - 40}" if len(eq) > 40 else ""))
+        return " · ".join(out)
+    lines = [f"✅ <b>PROPR listesi değişti</b> · propr.xyz · şimdi {n} enstrüman"]
+    if added:
+        lines.append(f"➕ <b>eklendi ({len(added)})</b> — {grp(added)}")
+    if removed:
+        lines.append(f"➖ <b>çıkarıldı ({len(removed)})</b> — {grp(removed)}")
+    lines.append("<i>PROPR'a bağlı taramalar (hacim rekoru, açılış, kapalı seans, 🧪 evren) bir sonraki"
+                 " turda bu listeyle çalışır. TWAP / balina / likidasyon radarları listeden bağımsız.</i>")
     return "\n".join(lines)
 
 
@@ -541,7 +564,7 @@ def wall_alert(w: dict, day_volume: float | None) -> str:
     else:
         lines.append("👤 Sahibi bilinmiyor — defter anonim, tanıdığımız balinalarla eşleşmedi")
     lines.append("<i>Duvar defterden kalkınca ayrıca haber veririm (dolum mu iptal mi bu radar ayırt etmez).</i>")
-    if is_listed(sym):
+    if is_listed(w.get("coin") or sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
@@ -1942,7 +1965,7 @@ def offhours_move(m: dict) -> str:
     lines.append(f"<i>Son {m.get('window_min')} dakikadaki ölçülen sıçrama; açılış fiyatı hakkında ölçüm içermez.</i>"
                  if m["kind"] == "spike" else
                  "<i>Kapanış çıpasına göre ölçülen sapma; açılış fiyatı hakkında ölçüm içermez.</i>")
-    if is_listed(sym):
+    if is_listed(m.get("coin") or sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
@@ -1970,7 +1993,7 @@ def lowvol_alert(p: dict) -> str:
     hits, misses = p.get("hits") or 0, p.get("misses") or 0
     if hits or misses:
         lines.append(f"🎯 Sicil: {hits} kez yönü tuttu / {misses} kez tutmadı")
-    if is_listed(sym):
+    if is_listed(p.get("coin") or sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
@@ -2186,7 +2209,7 @@ def track_step(t: dict, live: dict, base: float, last: float, cur: float) -> str
         prev = t.get("liq_px")
         lines.append(f"liq {px(prev)} → <b>{px(live['liq_px'])}</b>" if prev and abs(prev - live["liq_px"]) > 1e-12
                      else f"liq <b>{px(live['liq_px'])}</b>")
-    if is_listed(sym):
+    if is_listed(t.get("coin") or sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
@@ -2213,7 +2236,7 @@ def track_closed(t: dict, base: float, last: float, pnl: dict | None = None,
                      f"\n<i>giriş {px(pnl['entry'])} → çıkış ~{px(pnl['exit'])}"
                      " (son fiyattan hesap)</i>")
     lines.append(f"Takip #{t['id']} sona erdi.")
-    if is_listed(sym):
+    if is_listed(t.get("coin") or sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
@@ -2225,7 +2248,7 @@ def track_flip(t: dict, live: dict) -> str:
              f" {_side_badge(live['side'])} <b>{usd(live['notional'])}</b>"
              f" @ {px(live['entry_px'])}",
              f"Takip yeni yönle devam ediyor (#{t['id']})."]
-    if is_listed(sym):
+    if is_listed(t.get("coin") or sym):
         lines.append(PROPR_NOTE)
     return "\n".join(lines)
 
@@ -2648,7 +2671,7 @@ def strat_signal(e: dict, r: dict, spec: dict) -> str:
              f"Karar {tr_time_s(int(e['ts_decision']))} TSİ · ölçüm ufku {_lab_h(int(spec.get('primary_h') or 0))}"
              f" · giriş: karardan {int(spec.get('latency_s') or 0)} sn sonraki ilk işlem"]
     lines.append("Kural karnesi — " + _lab_line(prim.get("fwd") or {}, "kayıttan sonra"))
-    if is_listed(sym):
+    if is_listed(e["coin"]):
         lines.append(PROPR_NOTE)
     lines.append(STRAT_FOOT)
     return "\n".join(lines)
@@ -3204,7 +3227,7 @@ def twap_alert(m: dict, ctx: dict) -> str:
     lines.append(pr)
     if ctx.get("entity"):
         lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
-    if klass == "hisse" and is_listed(sym):
+    if klass == "hisse" and is_listed(coin):
         lines.append(PROPR_NOTE)
     if ctx.get("auto_end"):
         lines.append(TWAP_AUTO_NOTE.get(ctx["auto_end"], TWAP_AUTO_NOTE["cancel"]))   # ⚡: takip tuşu yok
@@ -3270,7 +3293,7 @@ def twap_fast(o: dict, ctx: dict) -> str:
         lines.append(" · ".join(extra))
     if ctx.get("entity"):
         lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
-    if (ctx.get("klass") or "") == "hisse" and is_listed(sym):
+    if (ctx.get("klass") or "") == "hisse" and is_listed(coin):
         lines.append(PROPR_NOTE)
     if ctx.get("auto_end"):
         lines.append(TWAP_AUTO_NOTE.get(ctx["auto_end"], TWAP_AUTO_NOTE["cancel"]))
