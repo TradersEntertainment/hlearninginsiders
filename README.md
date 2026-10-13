@@ -449,8 +449,10 @@ devralır (eski TWAP akışı, 'twap' bekleme işareti, 🧪 LOG-TWAP değişmez
   bekleme 6 sa (adres + coin + yön).
 - **Mesaj (🕵️ Gizli TWAP):** adres, dilim × büyüklük, aralık, taker payı, şimdiye kadar görülen + dakika hızı ve
   coinin dakika hacmine oranı, pozisyon (canlı), fiyat ilk→son. **Plan, toplam ve süre görünmez** (HL emri yok) —
-  mesaj bunu söyler. Yer: TWAP ile aynı (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) + TWAP ayna grubu. Yalnız
-  ilk uyarı (sonradan not yok). Bildirimler → 🕵️ Gizli TWAP; eşikler Ayarlar → 🕵️ Gizli TWAP.
+  mesaj bunu söyler. Yer: **`HIDDEN_TWAP_CHAT_ID`** (kullanıcının "🕵️ Gizli TWAP" grubu; env-only, botu ekle, grupta
+  `/id`) tanımlıysa **yalnız oraya** — TWAP kanalı ve ayna temiz kalır; boşsa TWAP ile aynı yer (kripto →
+  `CRYPTO_CHAT_ID`, hisse → ana sohbet) + TWAP ayna grubu. Bot o grupta komutlara da cevap verir. Yalnız ilk uyarı
+  (sonradan not yok). Bildirimler → 🕵️ Gizli TWAP; eşikler Ayarlar → 🕵️ Gizli TWAP.
 - **🧪 LOG-HTWAP:** dizi sabit $100K tabanını ilk geçtiğinde, kapı sonucu ne olursa olsun (geçen + kalan) —
   ufuklar 15 dk / 1 sa / 4 sa / 24 sa. "Önden girmek" sorusunun cevabı buradan çıkar.
 - **Kör noktalar:** yalnız dinlenen coinler (hisseler + hacimce ilk 120 kripto); düzenin oturması için ~5 dk ve

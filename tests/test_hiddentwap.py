@@ -207,6 +207,32 @@ def test_lookup_fail_small_maker_off():
     asyncio.run(run())
 
 
+def test_own_group():
+    async def run():
+        await _fresh()
+        cfg = _cfg()
+        cfg.twap_mirror_chat_id = "-777"
+        cfg.hidden_twap_chat_id = "-555"
+        bot = Bot()
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert [c for c, _ in bot.sent] == ["-555"], "kendi grubu: yalnız oraya (TWAP kanalı ve ayna değil)"
+        assert await _kind("htwap") == 1 and tl.MIRROR["sent"] == 0
+        assert "grup: HIDDEN_TWAP_CHAT_ID" in await ht.diag_line(cfg)
+        # kripto kanalı tanımsız olsa da kendi grubuna gider
+        await _fresh()
+        cfg2 = _cfg(chat="")
+        cfg2.hidden_twap_chat_id = "-555"
+        bot2 = Bot()
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg2, Notifier(cfg2, bot2), None, Col([]))
+        assert [c for c, _ in bot2.sent] == ["-555"]
+        from app.telegram.bot import TelegramBot
+        assert "-555" in TelegramBot._own_chats(type("B", (), {"cfg": cfg})())
+        print("✅ grup) HIDDEN_TWAP_CHAT_ID tanımlıysa yalnız oraya; kripto kanalı yoksa da; bot o grupta komut alır")
+    asyncio.run(run())
+
+
 def test_equity_main_chat_and_propr_note():
     async def run():
         await _fresh(vol=3e6, coin="xyz:CBRS")

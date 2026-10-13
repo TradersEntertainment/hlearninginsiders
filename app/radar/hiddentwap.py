@@ -19,8 +19,9 @@ Kapı (hepsi ÖLÇÜLEN; tahmin yok — plan, toplam ve süre GÖRÜNMEZ, yalnı
   • büyüklük: görülen ≥ hidden_twap_min_usd ($250K) VE hız ≥ hidden_twap_rate_x × coinin ortalama
     dakika hacmi (0.5×) — ya da görülen ≥ hidden_twap_big_usd ($1M), hacimden bağımsız
   • bekleme: aynı adres + coin + yön 6 sa (twap_alert_cooldown; kendi anahtarı 'htwap')
-Bildirim: TWAP ile aynı yer (kripto → CRYPTO_CHAT_ID, hisse/endeks → ana sohbet) + TWAP ayna grubu;
-tür 'htwap' (Bildirimler → 🕵️ Gizli TWAP). Yalnız İLK uyarı (kullanıcı 12.10: TWAP'ta sonradan not yok).
+Bildirim: HIDDEN_TWAP_CHAT_ID (kullanıcının "🕵️ Gizli TWAP" grubu, env-only) tanımlıysa YALNIZ oraya; boşsa TWAP
+ile aynı yer (kripto → CRYPTO_CHAT_ID, hisse/endeks → ana sohbet) + TWAP ayna grubu. Tür 'htwap' (Bildirimler →
+🕵️ Gizli TWAP). Yalnız İLK uyarı (kullanıcı 12.10: TWAP'ta sonradan not yok).
 🧪 LOG-HTWAP: kapılardan ÖNCE, dizi sabit lab tabanını (LAB_MIN $100K) ilk geçtiğinde bir kez — "önden
 girmek" ölçülsün (geçen + kalan; ayar değişse de örneklem değişmez).
 """
@@ -124,8 +125,12 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
     key = f"{run.coin}:{run.address}:{run.side}"
     if await alert_recent("htwap", key, int(getattr(cfg, "twap_alert_cooldown", 21600) or 0)):
         return _count("cooldown")
-    chat, can = twaplive.chat_for(cfg, run.coin)
-    mirror_on = bool(twaplive.mirror_chat(cfg))
+    own = (getattr(cfg, "hidden_twap_chat_id", "") or "").strip()
+    if own:                                       # kendi grubu: yalnız oraya (TWAP kanalı ve ayna değil)
+        chat, can, mirror_on = own, True, False
+    else:
+        chat, can = twaplive.chat_for(cfg, run.coin)
+        mirror_on = bool(twaplive.mirror_chat(cfg))
     if not can and not mirror_on:
         return _count("no_chat")
     pos = await twaplive.position_ctx(client, run.coin, run.address)
@@ -137,7 +142,8 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
     if can:
         ok = bool(await notifier.send("htwap", text, priority="high", key=f"htwap:{key}", chat_id=chat,
                                       coin=run.coin, public=False))
-    mres = await twaplive.mirror(cfg, notifier, text, mkey, run.coin, out, primary=chat if can else None)
+    mres = (await twaplive.mirror(cfg, notifier, text, mkey, run.coin, out, primary=chat if can else None)
+            if mirror_on else None)
     if ok or (not can and mres):
         await alert_log("htwap", key, text)       # kanal tanımsız kriptoda ayna tek başına da bekleme yakar
     else:
@@ -174,7 +180,9 @@ async def diag_line(cfg) -> str:
     st = await kv_get(STATS_KV) or STATS
     rs = st.get("reasons") or {}
     head = (f"gizli twap: {st.get('considered', 0)} aday (emirsiz düzenli dizi) · {st.get('alerted', 0)} bildirim"
-            f" · 🧪 {st.get('lab', 0)} kayıt")
+            f" · 🧪 {st.get('lab', 0)} kayıt"
+            + (" · grup: HIDDEN_TWAP_CHAT_ID" if (getattr(cfg, "hidden_twap_chat_id", "") or "").strip()
+               else " · grup yok → TWAP kanalı + ayna"))
     if rs:
         head += " · " + ", ".join(f"{REASON_TR.get(k, k)} {v}" for k, v in sorted(rs.items(), key=lambda kv: -kv[1])[:5])
     last = await kv_get(LAST_KV) or []
