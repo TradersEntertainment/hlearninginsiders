@@ -284,6 +284,24 @@ def test_review_fixes_no_false_hidden_claim():
         feed("PUMP", A, "buy", 20, 15_000)
         await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([order(status="terminated", start_ago=900, minutes=60)]))
         assert not bot.sent and ht.STATS["considered"] == 0 and len(_q("LOG-TWAP")) == 1, "HL emri: eski yol aynen"
+        # 4b) aynı adres + yön 6 sa içinde HL TWAP bildirimi aldı, emir BİTTİ; şimdi kendi botuyla dilimliyor →
+        #     bekleme bu diziyi benimsemez (eski emir bağlanmaz), gizli TWAP gider
+        await _fresh()
+        bot = Bot()
+        await dbm.alert_log("twap", f"PUMP:{A}:buy", "")
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([order(status="finished", start_ago=9000, minutes=30)]))
+        assert [c for c, _ in bot.sent] == ["-555"] and tl.REG.runs[("PUMP", A, "buy")].alerted_ts is None
+        async with dbm.db() as c:
+            assert (await (await c.execute("SELECT COUNT(*) n FROM twap_runs")).fetchone())["n"] == 0
+        # ...ama bekleme içinde HL alt emri dolumu olan dizi eskisi gibi sorgusuz benimsenir
+        await _fresh()
+        bot = Bot()
+        await dbm.alert_log("twap", f"PUMP:{A}:buy", "")
+        feed("PUMP", A, "buy", 20, 15_000, native=True)
+        col = Col([])
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
+        assert not bot.sent and not col.calls and tl.REG.runs[("PUMP", A, "buy")].alerted_ts
         # 5) /ignore ile elenen adres ('manual') → yok
         await _fresh()
         async with dbm.db() as c:

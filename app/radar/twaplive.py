@@ -892,7 +892,11 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 out["skipped_mm"] += 1
                 decide(run, "mm")
                 continue
-            if await alert_recent("twap", key, int(getattr(cfg, "twap_alert_cooldown", 21600) or 0)):
+            # Bekleme ('twap' adres + coin + yön, 6 sa): dizi HL TWAP'ına aitse benimsenir, tekrar sayılmaz. Adres
+            # aynı yönde KENDİ BOTUYLA dilimliyorsa (HL alt emri dolumu yok) önce emir sorulur: örtüşen HL emri
+            # varsa eskisi gibi benimse; yoksa dizi kapıya / 🕵️ gizli TWAP'a gider — eski emir ona bağlanmaz.
+            cool = await alert_recent("twap", key, int(getattr(cfg, "twap_alert_cooldown", 21600) or 0))
+            if cool and (run.nat_n or collector is None):
                 run.alerted_ts = run.alerted_ts or ts        # bekleme içinde: tekrar sayılmaz
                 run.alert_total = run.alert_total or run.total
                 decide(run, "cooldown")
@@ -904,6 +908,13 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             lf_before = out.get("lookup_fail", 0)
             lc_before = out.get("lookup_capped", 0)
             order = await lookup_order(collector, run, ts, cfg, out)
+            if cool and (not order or native_overlap([order], run)) \
+                    and (out.get("lookup_fail", 0) > lf_before or out.get("lookup_capped", 0) > lc_before or order):
+                # örtüşen HL emri (ya da bu tur sorulamadı → eski davranış): benimse, tekrar sayılmaz
+                run.alerted_ts = run.alerted_ts or ts
+                run.alert_total = run.alert_total or run.total
+                decide(run, "cooldown")
+                continue
             vol = vols.get(run.coin)
             day_vol, vol_ts = (vol if vol else (None, None))
             det = gate_detail(cfg, run.coin, order, day_vol, vol_ts, ts)

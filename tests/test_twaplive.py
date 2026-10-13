@@ -102,8 +102,9 @@ async def _fresh():
 
 
 def slices(coin, addr, side, n, gap=30, ntl=2200.0, px=MARK, t0=None, jitter=0.0, size_jitter=0.0,
-           seed=1, taker=1):
-    """n dilim: t0'dan itibaren `gap` sn arayla; jitter oranı ±uniform."""
+           seed=1, taker=1, native=False):
+    """n dilim: t0'dan itibaren `gap` sn arayla; jitter oranı ±uniform. `native`: HL TWAP alt emri dolumu
+    (sıfır hash, taker) — collector'daki işaret."""
     r = random.Random(seed)
     t0 = t0 if t0 is not None else dbm.now() - (n - 1) * gap - 5
     t = t0
@@ -113,7 +114,7 @@ def slices(coin, addr, side, n, gap=30, ntl=2200.0, px=MARK, t0=None, jitter=0.0
         t = t0 + i * gap if not jitter else last + g
         last = t
         v = ntl * (1 + r.uniform(-size_jitter, size_jitter)) if size_jitter else ntl
-        tl.observe(coin, addr, side, px, v / px, v, int(t), taker)
+        tl.observe(coin, addr, side, px, v / px, v, int(t), taker, native)
     return int(last)
 
 
@@ -357,12 +358,19 @@ def test_evaluate_alert_crypto():
         # ikinci tur: tekrar yok, 10 dk dolmadan yeniden sorgu yok
         out = await tl.evaluate(cfg, notifier, collector=col)
         assert out["alerted"] == 0 and len(bot.sent) == 1 and col.calls == [A]
-        # restart: registry boş, aynı dilimler → bekleme DB'de; tekrar yok, sorgu bile yok
+        # restart: registry boş, aynı (HL alt emri) dilimler → bekleme DB'de; tekrar yok, sorgu bile yok
+        tl.REG.clear()
+        tl._lookup_cache.clear()
+        slices("INJ", A, "buy", 50, t0=now - 49 * 30 - 5, native=True)
+        out = await tl.evaluate(cfg, notifier, collector=col)
+        assert out["alerted"] == 0 and len(bot.sent) == 1 and tl.REG.runs[("INJ", A, "buy")].alerted_ts and col.calls == [A]
+        # HL alt emri işareti olmayan dizi bekleme içinde: önce emir sorulur; örtüşen emir → yine benimsenir, tekrar yok
         tl.REG.clear()
         tl._lookup_cache.clear()
         slices("INJ", A, "buy", 50, t0=now - 49 * 30 - 5)
         out = await tl.evaluate(cfg, notifier, collector=col)
-        assert out["alerted"] == 0 and len(bot.sent) == 1 and tl.REG.runs[("INJ", A, "buy")].alerted_ts and col.calls == [A]
+        assert out["alerted"] == 0 and len(bot.sent) == 1 and tl.REG.runs[("INJ", A, "buy")].alerted_ts
+        assert col.calls == [A, A] and (await dbm.kv_get(tl.LAST_KV))[0]["reason"] == "cooldown"
         # entity mm → sorgusuz elenir
         await _fresh()
         await set_vol("INJ", 9.9e6)
