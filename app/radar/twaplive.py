@@ -1542,7 +1542,8 @@ def _native_active(ts: int) -> dict[tuple, Run]:
 
 
 async def live_twaps_full(collector=None, now_ts: int | None = None,
-                          max_lookups: int = LIVE_LOOKUPS, cfg=None, client=None) -> tuple[list[dict], dict]:
+                          max_lookups: int = LIVE_LOOKUPS, cfg=None, client=None,
+                          coin: str | None = None) -> tuple[list[dict], dict]:
     """/twap (kullanıcı 13.10: "hangi grupta yazarsam yazayım en büyük canlı TWAP'ları sıralasın"): şu an SÜREN
     HL TWAP emirleri, planlanan büyüklüğe göre. Bellek yeniden başlatmada sıfırlanır (13.10 20:39 deploy
     sonrası liste boş geldi) — kaynaklar:
@@ -1562,6 +1563,9 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
         vols = VOL_CACHE.get("v") or {}
     cands = _live_memory_cands(ts)
     active = _native_active(ts)
+    if coin:                                          # /xpltwap: yalnız bu coin — anlık sorgular da hep ona gitsin
+        cands = [c for c in cands if c[0] == coin]
+        active = {k: r for k, r in active.items() if k[0] == coin}
     # 2) kayıt
     if active:
         try:
@@ -1570,9 +1574,10 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
                     """SELECT coin, address, side, planned_usd, planned_sz, executed_usd, remaining_usd, order_ts,
                               order_min, order_status, lookup_ts, ts, alerted_ts, n_slices, total
                        FROM twap_runs WHERE order_status='activated' AND ended_ts IS NULL AND planned_usd > 0
+                         AND (? = '' OR coin = ?)
                          AND order_ts IS NOT NULL AND order_min IS NOT NULL
                          AND order_ts + order_min * 60 > ? AND COALESCE(lookup_ts, ts) >= ?""",
-                    (ts, ts - LIVE_DB_MAX_AGE))
+                    (coin or "", coin or "", ts, ts - LIVE_DB_MAX_AGE))
                 rows = [dict(x) for x in await cur.fetchall()]
         except Exception:                              # noqa: BLE001
             log.debug("twap_runs süren emirler okunamadı", exc_info=True)
@@ -1670,7 +1675,7 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
             log.debug("Cumartesi tabanı", exc_info=True)
     out: dict[tuple, dict] = {}
     _add_cands(out, cands, ts, vols, cfg)            # her kopya en taze geçmişle süzülür (iptal → düşer)
-    rows = _live_sorted(out)
+    rows = [e for e in _live_sorted(out) if not coin or e["coin"] == coin]
     await _announced(rows)
     return rows, info
 

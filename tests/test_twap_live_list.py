@@ -376,6 +376,86 @@ def test_review3_replacement_and_manual():
     asyncio.run(run())
 
 
+def test_coin_twap_command_and_liq_hint():
+    """Kullanıcı 13.10: "/xpl yazdığımda XPL'deki en büyük TWAP'lar — liq + TWAP ya da /xpltwap (X yerine herhangi
+    bir ticker)". /TICKERtwap ayrı liste; /xpl liq mesajının altında tek satır."""
+    async def run():
+        from app.hl import universe as U
+        from app.notify import Notifier
+        from app.radar import cryptoliq
+        from app.telegram.bot import TelegramBot
+        await _fresh()
+        cfg = _cfg()
+        feed("PUMP", A, "buy")
+        feed("PUMP", B, "sell")
+        feed("INJ", C, "buy")
+        col = Col({A: [order("PUMP", A, ntl=2_000_000)], B: [order("PUMP", B, side="A", ntl=5_000_000, minutes=30,
+                                                                     start_ago=600)],
+                   C: [order("INJ", C, ntl=9_000_000)]})
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, col)
+        # coin süzgeci: yalnız PUMP; anlık sorgular da yalnız o coinin adreslerine
+        tl.REG.clear()
+        tl._lookup_cache.clear()
+        tl._LIVE_Q.clear()
+        feed("PUMP", A, "buy", n=3)
+        feed("PUMP", B, "sell", n=3)
+        feed("INJ", C, "buy", n=3, ntl=90_000)
+        col2 = Col(col.by_addr)
+        rows, info = await tl.live_twaps_full(col2, coin="PUMP", max_lookups=2)
+        assert sorted(col2.calls) == sorted([A, B]) and [r["side"] for r in rows] == ["sell", "buy"], (rows, col2.calls)
+        t = fmt.coin_twaps("PUMP", rows, info, quick_max=60, listened=True)
+        assert t.startswith("⏳ <b>PUMP</b> · süren HL TWAP'ları · 2 emir · 🟢 alış 1 (plan $2.0M) · 🔴 satış 1"
+                            " (plan $5.0M)"), t
+        assert "\n1. 🔴 SATIŞ · plan <b>$5.0M</b>" in t and "<b>PUMP</b> 🔴" not in t and "⚡" in t, t
+        assert "dinlenmiyor" not in t
+        assert "dinlenmiyor" in fmt.coin_twaps("PUMP", [], {}, listened=False)
+        assert fmt.coin_twaps("PUMP", [], {}).startswith("⏳ <b>PUMP</b> · şu an radarın gördüğü süren HL TWAP emri yok.")
+        # komut: /pumptwap, /pump_twap — sahip DM ve grubun üyesi; bilinmeyen ticker dürüst cevap
+        real_res, real_snap, real_fmt = U.resolve_coin, cryptoliq.snapshot, fmt.crypto_liq_snapshot
+
+        async def fake_resolve(x):
+            x = (x or "").lower()
+            return {"coin": x.upper(), "symbol": x.upper(), "kind": "crypto"} if x in ("pump", "inj") else None
+
+        async def fake_snap(cfg_, client, coin, kind):
+            return {"rows": [], "png": None}
+        U.resolve_coin, cryptoliq.snapshot = fake_resolve, fake_snap
+        fmt.crypto_liq_snapshot = lambda s, offers=None, compact=False: "LIQ"
+        try:
+            bot = TelegramBot(cfg, None, None, {})
+            bot.collector = Col(col.by_addr)
+            sent = []
+
+            async def fake_send(text, chat_id=None, reply_markup=None):
+                sent.append((str(chat_id), text))
+                return True
+            bot.send = fake_send
+
+            async def msg(text, chat, uid, ctype="supergroup"):
+                await bot._handle_update({"message": {"chat": {"id": chat, "type": ctype}, "from": {"id": uid},
+                                                      "text": text}})
+            for text, chat, uid in (("/pumptwap", 111, 111), ("/PUMP_twap", 111, 111), ("/pumptwap", -100, 42)):
+                await msg(text, chat, uid, "private" if chat == 111 else "supergroup")
+                assert sent[-1][0] == str(chat) and sent[-1][1].startswith("⏳ <b>PUMP</b> · süren HL TWAP'ları"), sent[-1]
+            await bot._handle_update({"channel_post": {"chat": {"id": -100, "type": "channel"}, "text": "/injtwap"}})
+            assert sent[-1][1].startswith("⏳ <b>INJ</b>"), sent[-1]
+            await msg("/zzztwap", 111, 111, "private")
+            assert sent[-1][1].startswith("❓ <b>ZZZ</b> diye bir coin bulamadım"), sent[-1]
+            # /pump: liq mesajının altında TWAP satırı (anlık sorgu yok)
+            n_calls = len(bot.collector.calls)
+            await msg("/pump", 111, 111, "private")
+            assert sent[-1][1].startswith("LIQ\n⏳ PUMP'de süren HL TWAP: 2 · en büyüğü 🔴 SATIŞ plan $5.0M → /pumptwap"), sent[-1]
+            assert len(bot.collector.calls) == n_calls, "liq satırı için HL'ye sorulmaz"
+            await msg("/inj", -100, 42)
+            assert sent[-1][1].startswith("LIQ\n⏳ INJ'de süren HL TWAP: 1"), sent[-1]
+            assert "/xpltwap" in fmt.help_text()
+        finally:
+            U.resolve_coin, cryptoliq.snapshot, fmt.crypto_liq_snapshot = real_res, real_snap, real_fmt
+        print("✅ /TICKERtwap) coin süzgeci (sorgular o coine), alış/satış özeti; /pumptwap, /pump_twap, grup üyesi,"
+              " kanal gönderisi; bilinmeyen ticker; /pump liq mesajının altında tek satır (sorgusuz)")
+    asyncio.run(run())
+
+
 def test_message():
     now = dbm.now()
     rows = [{"coin": "INJ", "addr": B, "side": "sell", "planned_usd": 5e6, "executed_usd": 1.25e6, "filled_pct": 25.0,

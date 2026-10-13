@@ -404,6 +404,12 @@ bildirilmez.
   `/twap PUMP`: coin dinleniyor mu, 24s hacim, bildirim için gereken emir; `/twap durum`:
   özet + son 50 karar (`twaplive_last` kv'si, tur tur ezilmez). Emir henüz 5 dk /
   10 dilim olmadıysa aday bile değildir — tahmin yok, beklenir.
+- **⏳ `/xpltwap` — o coinde süren HL TWAP'ları** (kullanıcı 13.10: "/xpl yazdığımda XPL'deki en büyük TWAP'lar … ya da
+  /xpltwap, X yerine herhangi bir ticker"): `/TICKERtwap` (`/hypetwap`, `/tslatwap`, `/xpl_twap` da olur) o coinin süren
+  emirlerini planlanan büyüklüğe göre listeler (alış / satış sayısı ve plan toplamı, satırlar `/twap` ile aynı); anlık
+  sorgular yalnız o coinin adreslerine gider. Coin canlı akışta dinlenmiyorsa söyler. `/xpl` liq mesajının altına tek
+  satır eklenir: "⏳ XPL'de süren HL TWAP: N · en büyüğü … → /xpltwap" (sorgusuz — liq cevabı gecikmez). Sahibin her
+  sohbetinde ve botun kendi kanal/gruplarında çalışır.
 - **📅 Cumartesi hisse tabanı** (kullanıcı 13.10: "hafta sonu 24 saat baz alırsa yanlış olur… sadece hisseler için,
   geçen hafta Cumartesi'ye kıyasla %10'dan büyük TWAP; Pazar değişmeden kalabilir"): TSİ Cumartesi günü hisse ve
   endeks/emtia (HIP-3, kripto ve spot değil) TWAP'ı son 24s yerine **geçen Cumartesi'nin hacmiyle** (TSİ 00–24, HL
