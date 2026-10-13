@@ -21,6 +21,7 @@ Pinlenenler:
 """
 import asyncio
 import os
+import re
 import sys
 import tempfile
 
@@ -392,7 +393,7 @@ def test_wiring_and_diag():
         line = await propr.diag_line(cfg)
         assert line.startswith("propr listesi: birleşik (yalnız büyür) · 199 enstrüman"), line
         assert "propr şu an 143 listeliyor — kara listeye aldıkları da tutulur" in line and "son çekim ✓" in line
-        assert "son ekleme 0 sn önce: NEWC" in line, line
+        assert re.search(r"son ekleme \d+ sn önce: NEWC", line), line   # saniye sınırı geçilebilir
         await propr.refresh(None, _fetcher([(503, None)]))
         line = await propr.diag_line(cfg)
         assert "⚠ son çekim başarısız" in line and "HTTP 503" in line and "son başarılı" in line, line
