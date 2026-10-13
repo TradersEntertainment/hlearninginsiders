@@ -491,6 +491,8 @@ class TelegramBot:
             await self._cmd_whale(args, chat_id)
         elif cmd in ("twap", "twaplar"):
             await self._cmd_twap(args, chat_id)
+        elif cmd in ("twapf", "twaphizli", "hizlitwap"):
+            await self._cmd_twap_live(chat_id, owner=True, quick=True)
         elif cmd == "watch":
             await self._cmd_watch(args, chat_id, add=True)
         elif cmd == "unwatch":
@@ -829,6 +831,8 @@ class TelegramBot:
             await self._cmd_twap_follow_list(chat_id)
         elif cmd in ("twap", "twaplar"):
             await self._cmd_twap_live(chat_id, owner=False)   # botun kendi kanal/gruplarında: canlı liste
+        elif cmd in ("twapf", "twaphizli", "hizlitwap"):
+            await self._cmd_twap_live(chat_id, owner=False, quick=True)   # ⚡ yalnız hızlılar
         elif cmd in ("duvartakipler", "duvartakip"):
             await self._cmd_sticky_follow_list(chat_id)
         elif cmd in ("hesaplar", "hesap"):
@@ -1095,12 +1099,15 @@ class TelegramBot:
             txt = await tl.diag_coin(self.cfg, arg)
         await self.send(txt, chat_id)
 
-    async def _cmd_twap_live(self, chat_id: str, owner: bool = True) -> None:
+    async def _cmd_twap_live(self, chat_id: str, owner: bool = True, quick: bool = False) -> None:
         """⏳ En büyük canlı TWAP'lar — sahibin her sohbetinde ve botun kendi kanal/gruplarında aynı liste."""
         from ..radar import twaplive as tl
         rows, info = await tl.live_twaps_full(getattr(self, "collector", None), cfg=self.cfg,
                                               client=getattr(self, "client", None))
-        await self.send(fmt.live_twaps(rows, owner=owner, info=info, quick_max=tl.quick_max(self.cfg)), chat_id,
+        qm = tl.quick_max(self.cfg)
+        if quick:                                     # /twapf: yalnız ⚡ (süre ≤ hızlı sınırı), sıra aynı (büyükten)
+            rows = [e for e in rows if qm > 0 and 0 < float(e.get("minutes") or 0) <= qm]
+        await self.send(fmt.live_twaps(rows, owner=owner, info=info, quick_max=qm, quick=quick), chat_id,
                         reply_markup=await self._follow_kb(rows[:fmt.LIVE_TWAP_TOP]))
 
     async def _follow_kb(self, rows: list[dict]):

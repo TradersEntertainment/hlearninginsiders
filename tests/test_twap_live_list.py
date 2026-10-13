@@ -658,6 +658,56 @@ def test_routing_everywhere():
     asyncio.run(run())
 
 
+def test_twapf_quick_only():
+    """Kullanıcı 13.10: "/twapf yazarsam hızlı olanları atsın sadece şimşeklileri, büyükten küçüğe"."""
+    async def run():
+        await _fresh()
+        cfg = _cfg()
+        cfg.hidden_twap_chat_id = "-555"
+        from app.telegram.bot import TelegramBot
+        bot = TelegramBot(cfg, None, None, {})
+        bot.collector = Col({})
+        sent = []
+
+        async def fake_send(text, chat_id=None, reply_markup=None):
+            sent.append((str(chat_id), text, reply_markup))
+            return True
+        bot.send = fake_send
+
+        async def msg(text, chat, uid, ctype="supergroup"):
+            await bot._handle_update({"message": {"chat": {"id": chat, "type": ctype}, "from": {"id": uid},
+                                                  "text": text}})
+        await msg("/twapf", 111, 111, "private")                     # henüz hiç emir yok
+        assert sent[-1][1].startswith("⚡ <b>Hızlı TWAP'lar</b> (süre ≤ 60 dk)") \
+            and "süren hızlı HL TWAP emri yok" in sent[-1][1], sent[-1]
+        for coin, addr, minutes, ntl in (("PUMP", A, 120, 9_000_000),     # en büyük ama yavaş (2 sa)
+                                         ("INJ", B, 30, 500_000),         # ⚡ küçük
+                                         ("WIF", C, 60, 1_500_000),       # ⚡ sınırda (= 60 dk) büyük
+                                         ("SOL", D, 0, 3_000_000)):       # süresi bilinmeyen: ⚡ değil
+            feed(coin, addr, "buy")
+            o = order(coin, addr, minutes=minutes or 120, ntl=ntl, start_ago=600)
+            tl.REG.runs[(coin, addr, "buy")].order = tl.parse_twap_orders([o], coin, "buy", PX, dbm.now())[0]
+            if not minutes:
+                tl.REG.runs[(coin, addr, "buy")].order["minutes"] = 0
+        await msg("/twap", 111, 111, "private")
+        assert all(c in sent[-1][1] for c in ("PUMP", "INJ", "WIF")), "tam liste hepsini gösterir"
+        for chat, uid, ctype in ((111, 111, "private"), (-555, 42, "supergroup")):   # sahip DM + grubun üyesi
+            await msg("/twapf", chat, uid, ctype)
+            ch, txt, kb = sent[-1]
+            assert ch == str(chat) and txt.startswith("⚡ <b>Hızlı TWAP'lar</b> (süre ≤ 60 dk) · en büyük 2"), txt
+            assert "PUMP" not in txt and "SOL" not in txt, "yavaş / süresi bilinmeyen emir listede yok"
+            assert txt.index("WIF") < txt.index("INJ"), "büyükten küçüğe"
+        await msg("/hizlitwap@HLRadarBot", -555, 42)
+        assert sent[-1][1].startswith("⚡ <b>Hızlı TWAP'lar</b>")
+        cfg.twap_follow_enabled = True
+        await msg("/twapf", 111, 111, "private")
+        labels = [b["text"] for row in sent[-1][2]["inline_keyboard"] for b in row]
+        assert labels == ["👁 1. WIF", "👁 2. INJ"], labels
+        print("✅ /twapf) yalnız ⚡ (0 < süre ≤ 60 dk) emirler, büyükten küçüğe; boşken 'hızlı emir yok';"
+              " sahip DM + grup; 👁 tuşları aynı sırada")
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
@@ -700,6 +750,3 @@ def test_follow_buttons():
         print("✅ takip tuşu) her satıra 👁 tuşu; basınca emir takibe girer (⛔/🏁 basana)")
     asyncio.run(run())
 
-
-if __name__ == "__main__":
-    test_follow_buttons()

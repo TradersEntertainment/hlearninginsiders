@@ -404,6 +404,10 @@ bildirilmez.
   `/twap PUMP`: coin dinleniyor mu, 24s hacim, bildirim için gereken emir; `/twap durum`:
   özet + son 50 karar (`twaplive_last` kv'si, tur tur ezilmez). Emir henüz 5 dk /
   10 dilim olmadıysa aday bile değildir — tahmin yok, beklenir.
+- **⚡ `/twapf` — yalnız hızlı TWAP'lar** (kullanıcı 13.10: "/twapf yazarsam hızlı olanları atsın, sadece şimşeklileri,
+  büyükten küçüğe"): `/twap` listesinin yalnız ⚡ satırları (süre > 0 ve ≤ `twap_fast_short_max_min`, varsayılan 60 dk),
+  planlanan büyüklüğe göre büyükten küçüğe; her satırda 👁 takip tuşu. `/hizlitwap`, `/twaphizli` da olur. Sahibin her
+  sohbetinde ve botun kendi kanal/gruplarında çalışır; hızlı emir yoksa bunu söyler.
 - **⏳ `/xpltwap` — o coinde süren HL TWAP'ları** (kullanıcı 13.10: "/xpl yazdığımda XPL'deki en büyük TWAP'lar … ya da
   /xpltwap, X yerine herhangi bir ticker"): `/TICKERtwap` (`/hypetwap`, `/tslatwap`, `/xpl_twap` da olur) o coinin süren
   emirlerini planlanan büyüklüğe göre listeler (alış / satış sayısı ve plan toplamı, satırlar `/twap` ile aynı); anlık

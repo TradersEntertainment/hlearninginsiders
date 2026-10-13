@@ -2940,6 +2940,7 @@ def help_text() -> str:
         "/settime SHAZ bmo — bilanço saatini elle düzelt (bmo/amc/16:30/09:30et)\n"
         "/whale 0x… — adres karnesi + açık pozisyonları\n"
         "/twap — ⏳ en büyük canlı (süren) HL TWAP'lar, planlanan büyüklüğe göre (her grupta çalışır)\n"
+        "/twapf — ⚡ yalnız hızlı TWAP'lar (süre ≤ 1 sa), büyükten küçüğe\n"
         "/xpltwap — ⏳ o coinde süren HL TWAP'ları (her coin için /TICKERtwap: /hypetwap, /tslatwap)\n"
         "/twap 0x… | /twap PUMP — canlı TWAP radarı teşhisi: diziler, HL emirleri, kapı kararı (niye gelmedi?)"
         " · /twap durum — radar özeti\n"
@@ -3302,10 +3303,11 @@ def coin_twap_hint(symbol: str, cmd: str, rows: list[dict], info: dict | None = 
 
 
 def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, info: dict | None = None,
-               quick_max: float = 60) -> str:
+               quick_max: float = 60, quick: bool = False) -> str:
     """/twap: en büyük SÜREN HL TWAP emirleri (twaplive.live_twaps_full), planlanan büyüklüğe göre. Tahmin yok:
     dolan = son sorgudaki HL rakamı; kalan süre planlanan bitişe göre."""
-    head = "⏳ <b>Canlı TWAP'lar</b>"
+    head = (f"⚡ <b>Hızlı TWAP'lar</b> (süre ≤ {float(quick_max or 0):g} dk)" if quick
+            else "⏳ <b>Canlı TWAP'lar</b>")
     info = info or {}
     foot = ("<i>Dinlenen coinlerde dilimi görülen süren HL TWAP emirleri (HL tüm emirleri tek yerden vermiyor;"
             " yeni dilim gelmeyen emir listede yok). Plan bugünkü fiyatla; dolan son sorgudaki HL rakamı."
@@ -3316,7 +3318,7 @@ def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, i
     if owner:
         foot += "\nAyrıntı: /twap COIN · /twap 0xADRES · radar özeti: /twap durum"
     if not rows:
-        return f"{head}\nŞu an radarın gördüğü süren HL TWAP emri yok.\n{foot}"
+        return f"{head}\nŞu an radarın gördüğü süren {'hızlı ' if quick else ''}HL TWAP emri yok.\n{foot}"
     shown = rows[:max(1, int(top))]
     lines = [f"{head} · en büyük {len(shown)}" + (f" / {len(rows)}" if len(rows) > len(shown) else "")
              + " · planlanan büyüklüğe göre"]
