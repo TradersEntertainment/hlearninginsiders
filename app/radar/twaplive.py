@@ -71,14 +71,15 @@ REASON_TR = {"irregular": "düzensiz dizi", "mm": "mm/vault", "cooldown": "bekle
              "order_small": "emir eşik altı", "order_left": "kalan az", "no_vol": "hacim bilinmiyor",
              "spot_thin": "spot çifti ince (24s hacim taban altı)",
              "vol_small": "hacme göre küçük", "no_chat": "kanal yok", "alerted": "bildirildi",
-             "failed": "gönderilemedi", "ok": "geçer", "big": "hacimden bağımsız büyük"}
+             "failed": "gönderilemedi", "ok": "geçer", "big": "hacimden bağımsız büyük",
+             "lookup_capped": "bu turun sorgu tavanı doldu (sonraki tur)"}
 
 
 class Run:
     __slots__ = ("coin", "address", "side", "first_ts", "last_ts", "n", "total", "sz_total",
                  "pxsz", "px_first", "px_last", "tk_n", "known_n", "slices", "alerted_ts",
                  "alert_total", "progress_ts", "progress_step", "ended_ts", "day_volume",
-                 "rate_day", "gate", "order", "lookup_ts", "half_ts")
+                 "rate_day", "gate", "order", "lookup_ts", "half_ts", "nat_n")
 
     def __init__(self, coin: str, address: str, side: str, ts: int, px: float):
         self.coin, self.address, self.side = coin, address, side
@@ -99,6 +100,7 @@ class Run:
         self.order = None          # son sorgudaki HL TWAP emri (parse_twap_orders çıktısı)
         self.lookup_ts = None
         self.half_ts = None
+        self.nat_n = 0             # HL TWAP alt emri dolumu (sıfır hash, taker) sayısı — 🕵️ gizli TWAP'ı dışlar
 
     @property
     def key(self) -> tuple:
@@ -112,8 +114,9 @@ class Registry:
         self.observed = 0
 
     def observe(self, coin: str, addr: str, side: str, px: float, sz: float,
-                notional: float, ts: int, taker=None) -> None:
-        """Sıcak yol: dict araması + birkaç float. Await yok, istisna yok."""
+                notional: float, ts: int, taker=None, native: bool = False) -> None:
+        """Sıcak yol: dict araması + birkaç float. Await yok, istisna yok. `native`: bu dolum HL TWAP alt
+        emrinin (sıfır hash) ve adres taker — dizi HL emriyle yürüyor demektir (gizli TWAP değil)."""
         self.observed += 1
         key = (coin, addr, side)
         r = self.runs.get(key)
@@ -133,6 +136,8 @@ class Registry:
                 r.known_n += 1
                 if taker:
                     r.tk_n += 1
+        if native:
+            r.nat_n += 1
         r.total += notional
         r.sz_total += sz
         r.pxsz += px * sz
@@ -176,9 +181,9 @@ REG = Registry()
 
 
 def observe(coin: str, addr: str, side: str, px: float, sz: float, notional: float,
-            ts: int, taker=None) -> None:
+            ts: int, taker=None, native: bool = False) -> None:
     """Collector kancası (bkz. app/hl/collector.py::_handle)."""
-    REG.observe(coin, addr, side, px, sz, notional, ts, taker)
+    REG.observe(coin, addr, side, px, sz, notional, ts, taker, native)
 
 
 # ---------------- saf ölçüm / kapı ----------------
@@ -383,6 +388,45 @@ async def lookup_order(collector, run: Run, now_ts: int, cfg, out: dict, force: 
     run.lookup_ts = now_ts
     run.order = orders[0] if orders else None
     return run.order
+
+
+HIDDEN_SLACK = 120          # 🕵️ bitmiş HL emri dizinin başından bu kadar önce bitmediyse "örtüşüyor" sayılır
+HIDDEN_FRESH_SKEW = 30      # emir geçmişi son dilimden en çok bu kadar önce alınmışsa taze sayılır (saat farkı)
+
+
+def native_overlap(orders, run: Run) -> bool:
+    """Bu dizinin süresiyle örtüşebilen HL TWAP emri var mı: süren (activated) ya da planlanan bitişi dizinin
+    başından sonraya uzanan. Dizi başlamadan çok önce bitmiş eski emir "emir var" sayılmaz (yoksa adresin
+    geçmişteki tek bir TWAP'ı onu gizli TWAP radarından ömür boyu silerdi). Planlanan bitiş kullanılır —
+    iptal daha erken bitirse de — yani şüphede "örtüşüyor" (gizli TWAP iddiası yok)."""
+    for o in orders or ():
+        if o.get("status") == "activated":
+            return True
+        t0 = int(o.get("started_ts") or 0)
+        if not t0 or t0 + float(o.get("minutes") or 0) * 60 + HIDDEN_SLACK >= run.first_ts:
+            return True
+    return False
+
+
+async def verify_hidden(collector, run: Run, now_ts: int, cfg, out: dict) -> bool | None:
+    """🕵️ "HL'de TWAP emri yok" iddiası için TAZE kanıt. True = dizinin son diliminden SONRA alınmış emir
+    geçmişinde bu coin + yönde örtüşen emir yok; False = HL TWAP emri var (ya da dizide HL alt emri dolumu
+    görüldü); None = taze veri alınamadı (tavan / sorgu düştü) → karar yok, sonraki tur.
+    Adres önbelleği diziden eskiyse zorla sorulur: önbellek alındıktan sonra açılan emir onda görünmez."""
+    if run.nat_n:
+        return False
+    c = _lookup_cache.get(run.address)
+    if not (c and c[0] >= run.last_ts - HIDDEN_FRESH_SKEW):
+        if collector is None:
+            return None
+        lf, lc = out.get("lookup_fail", 0), out.get("lookup_capped", 0)
+        await lookup_order(collector, run, now_ts, cfg, out, force=True)
+        if out.get("lookup_fail", 0) > lf or out.get("lookup_capped", 0) > lc:
+            return None
+        c = _lookup_cache.get(run.address)
+        if not c:
+            return None
+    return not native_overlap(parse_twap_orders(c[1], run.coin, run.side, run.px_last, now_ts), run)
 
 
 def is_ended(run: Run, m: dict | None, ref_ts: int) -> bool:
@@ -858,6 +902,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 decide(run, "no_lookup")
                 continue
             lf_before = out.get("lookup_fail", 0)
+            lc_before = out.get("lookup_capped", 0)
             order = await lookup_order(collector, run, ts, cfg, out)
             vol = vols.get(run.coin)
             day_vol, vol_ts = (vol if vol else (None, None))
@@ -873,14 +918,17 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             if g not in ("ok", "big"):
                 out[g] = out.get(g, 0) + 1
                 failed_lookup = g == "no_order" and out.get("lookup_fail", 0) > lf_before
-                decide(run, "lookup_fail" if failed_lookup else g, det)
-                if g == "no_order" and not failed_lookup:
-                    # 🕵️ Emir YOK (sorgu başarılı): kendi botuyla dilimleme — gizli TWAP radarı devralır.
+                capped = out.get("lookup_capped", 0) > lc_before     # bu tur sorulmadı: emir YOK sayılamaz
+                decide(run, "lookup_fail" if failed_lookup else ("lookup_capped" if capped and not order else g), det)
+                if g in ("no_order", "order_done") and not failed_lookup and not capped:
+                    # 🕵️ Emir YOK ya da dizi başlamadan bitmiş eski emir (sorgu başarılı): kendi botuyla dilimleme —
+                    # gizli TWAP radarı devralır; iddiadan önce TAZE geçmişle doğrular (verify_hidden).
                     # Bu dalın eski davranışı (karar, sayaç, 'twap' işareti yok) DEĞİŞMEZ.
                     try:
                         from . import hiddentwap
-                        decisions[-1]["hidden"] = await hiddentwap.consider(cfg, notifier, client, run, m, day_vol,
-                                                                            ents, ts, out)
+                        decisions[-1]["hidden"] = await hiddentwap.consider(
+                            cfg, notifier, client, run, m, day_vol, ents, ts, out, vol_ts=vol_ts,
+                            verify=lambda: verify_hidden(collector, run, ts, cfg, out))
                     except Exception:
                         log.exception("gizli twap değerlendirme hatası %s", key)
                 # HL'de GERÇEK bir TWAP emri bulunduysa kapıdan geçmese de kaydet:

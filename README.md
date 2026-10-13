@@ -442,25 +442,29 @@ devralır (eski TWAP akışı, 'twap' bekleme işareti, 🧪 LOG-TWAP değişmez
   tane (biri 0xbf73…5d58'in GOOGL'daki ~$10M long'u 5 dk'da ~30 sn arayla kapatması). CBRS balinası
   (0x30af…393e) 05–12.10: 4 operasyon, 7 dizi ($7–38M); slicewatch'ın "başladı" anından dizi sonuna fiyat 7'nin
   6'sında onun yönünde, hacim ağırlıklı +%1.7 (küçük örneklem — kanıt değil; LOG-HTWAP bunu sürekli ölçer).
-- **Kapı:** twaplive'ın düzenli dizisi (≥ 10 dilim, ≥ 5 dk, ≥ $50K) + emir sorgusu BAŞARILI ve TWAP emri yok;
-  bilinen MM/vault elenmiş · taker payı ≥ `HIDDEN_TWAP_TAKER_MIN_PCT` (%50) · aynı adres aynı coinde karşı yönde
-  bu dizinin ≥ %25'i kadar dizi yapıyorsa market yapıcı sayılır · görülen ≥ `HIDDEN_TWAP_MIN_USD` ($250K) VE hız ≥
-  `HIDDEN_TWAP_RATE_X` (0.5) × coinin ortalama dakika hacmi — ya da görülen ≥ `HIDDEN_TWAP_BIG_USD` ($1M) ·
-  bekleme 6 sa (adres + coin + yön).
+- **Kapı:** twaplive'ın düzenli dizisi (≥ 10 dilim, ≥ 5 dk, ≥ $50K) + emir sorgusu BAŞARILI ve bu coin + yönde TWAP
+  emri yok ya da dizi başlamadan bitmiş eski emir (tur sorgu tavanına takılan / düşen sorguda karar yok);
+  bilinen MM/vault ve `/ignore` ile elenen adres yok · dizide HL TWAP alt emri dolumu (sıfır hash, adres taker)
+  hiç görülmemiş · **iddiadan önce taze kanıt:** emir geçmişi dizinin son diliminden sonra alınmış olmalı (adres
+  önbelleği eskiyse zorla sorulur) ve dizinin süresiyle örtüşen HL TWAP emri olmamalı · taker payı ≥
+  `HIDDEN_TWAP_TAKER_MIN_PCT` (%50) · aynı adres aynı coinde karşı yönde bu dizinin ≥ %25'i kadar dizi yapıyorsa
+  market yapıcı sayılır · ince spot çifti (`SPOT_TWAP_MIN_DAY_VOL` altı) elenir · görülen ≥ `HIDDEN_TWAP_MIN_USD`
+  ($250K) VE hız ≥ `HIDDEN_TWAP_RATE_X` (0.5) × coinin ortalama dakika hacmi (hacim ölçümü 1 sa'ten eskiyse yok
+  sayılır) — ya da görülen ≥ `HIDDEN_TWAP_BIG_USD` ($1M) · **tek uyarı / operasyon:** adres 30 dk'dan uzun
+  susmadıkça aynı operasyon (twaplive diziyi 4 sa'te yeniden başlatsa da, restart'ta da) + 6 sa bekleme.
 - **Mesaj (🕵️ Gizli TWAP):** adres, dilim × büyüklük, aralık, taker payı, şimdiye kadar görülen + dakika hızı ve
   coinin dakika hacmine oranı, pozisyon (canlı), fiyat ilk→son. **Plan, toplam ve süre görünmez** (HL emri yok) —
   mesaj bunu söyler. Yer: **yalnız `HIDDEN_TWAP_CHAT_ID`** (kullanıcının "🕵️ Gizli TWAP" grubu; env-only, botu ekle,
   grupta `/id`) — TWAP kanalına, kripto kanalına, ana sohbete ve TWAP aynasına **hiç gitmez**; değişken boşsa mesaj
   gönderilmez (ölçüm + 🧪 sürer, bekleme yakılmaz — eklenince süren dizi sonraki turda gelir). Bot o grupta
-  komutlara da cevap verir. Yalnız ilk uyarı
-  (sonradan not yok). **Ayarlar sayfasında yok** (kullanıcı 13.10: yalnız Railway değişkeni) — tek gereken
+  komutlara da cevap verir. Yalnız ilk uyarı (sonradan not yok). **Ayarlar sayfasında yok** (kullanıcı 13.10: yalnız Railway değişkeni) — tek gereken
   `HIDDEN_TWAP_CHAT_ID`; kapatmak `HIDDEN_TWAP_ENABLED=0`; eşikler istenirse `HIDDEN_TWAP_*` env'leri.
-- **🧪 LOG-HTWAP:** dizi sabit $100K tabanını ilk geçtiğinde, kapı sonucu ne olursa olsun (geçen + kalan) —
-  ufuklar 15 dk / 1 sa / 4 sa / 24 sa. "Önden girmek" sorusunun cevabı buradan çıkar.
+- **🧪 LOG-HTWAP:** operasyon sabit $100K tabanını ilk geçtiğinde (taze kanıttan sonra), kapı sonucu ne olursa
+  olsun (geçen + kalan) — ufuklar 15 dk / 1 sa / 4 sa / 24 sa. "Önden girmek" sorusunun cevabı buradan çıkar.
 - **Kör noktalar:** yalnız dinlenen coinler (hisseler + hacimce ilk 120 kripto); düzenin oturması için ~5 dk ve
   10 dilim gerekir (ilk dilimde yakalanmaz — yerel TWAP'taki sıfır hash işareti yok); emir sorgusu düşen turda
   karar verilmez (veri yok ≠ emir yok).
-- `/tani`: `gizli twap: N aday · M bildirim · 🧪 K kayıt · <neden dağılımı> · son: …`; `/twap` son kararlarında
+- `/tani`: `gizli twap: N dizi · M bildirim · 🧪 K kayıt · <dizi başına son karar dağılımı> · son: …`; `/twap` son kararlarında
   emirsiz diziler `🕵️ gizli twap: <neden>` ile işaretli.
 
 ### 🔎 İlk dilimde TWAP + ⚡ HIZLI TWAP (`app/radar/twapfast.py`)

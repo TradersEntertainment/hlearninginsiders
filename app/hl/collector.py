@@ -426,6 +426,7 @@ class Collector:
                     stickywall.observe(coin, aggr, buyer, seller, px, sz, ts)
                 except Exception:
                     stickywall.REG.errors += 1
+            zero = twapfast.is_twap_hash(t.get("hash"))    # HL TWAP alt emri: sahibi taker
             for addr, side in ((buyer, "buy"), (seller, "sell")):
                 if not addr:
                     continue
@@ -437,10 +438,10 @@ class Collector:
                 # TWAP ~$2.2K'lık 720 dilimdir, fills bunları hiç görmez. Sıcak yol:
                 # senkron, asla fırlatmaz (bkz. app/radar/twaplive.py).
                 try:
-                    twaplive.observe(coin, addr, side, px, sz, notional, ts, taker)
+                    twaplive.observe(coin, addr, side, px, sz, notional, ts, taker, bool(taker) and zero)
                 except Exception:
                     twaplive.REG.errors += 1
-                if fast_on and taker and twapfast.is_twap_hash(t.get("hash")):
+                if fast_on and taker and zero:
                     try:
                         twapfast.observe(coin, addr, side, px, sz, notional, ts, fast_min)
                     except Exception:

@@ -78,8 +78,7 @@ async def _fresh(vol=2e6, coin="PUMP"):
     tl.VOL_CACHE.update(ts=0, v={})
     for k in tl.MIRROR:
         tl.MIRROR[k] = 0
-    ht.STATS.update(considered=0, alerted=0, lab=0, reasons={}, last_ts=0)
-    ht._LAB_DONE.clear()
+    ht.reset()
     await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {coin: {"m": PX, "oi": 1, "f": 0, "v": vol, "p": None},
                                              "BTC": {"m": 60_000, "oi": 1, "f": 0, "v": 2e9, "p": None}},
                                        "ts": dbm.now()})
@@ -100,11 +99,31 @@ def _f(e):
     return json.loads(f) if isinstance(f, str) else f
 
 
-def feed(coin, addr, side, n, ntl, gap=30, taker=1, t_end=None):
+def feed(coin, addr, side, n, ntl, gap=30, taker=1, t_end=None, native=False):
     t_end = t_end or dbm.now() - 5
     for i in range(n):
         ts = t_end - (n - 1 - i) * gap
-        tl.observe(coin, addr, side, PX, ntl / PX, ntl, int(ts), taker)
+        tl.observe(coin, addr, side, PX, ntl / PX, ntl, int(ts), taker, native)
+
+
+class ColSeq(Col):
+    """Sırayla farklı geçmiş döndürür (son eleman tekrarlanır)."""
+
+    def __init__(self, seq):
+        super().__init__(None)
+        self.seq = list(seq)
+
+    async def fetch_twap_history(self, addr, timeout=6.0):
+        self.calls.append(addr)
+        return self.seq.pop(0) if len(self.seq) > 1 else self.seq[0]
+
+
+def order(coin="PUMP", user=A, side="B", status="activated", start_ago=1300, minutes=60, ntl=2_000_000):
+    t0 = dbm.now() - start_ago
+    return {"time": t0, "twapId": 9, "status": {"status": status},
+            "state": {"coin": coin, "user": user, "side": side, "sz": str(ntl / PX * 2), "executedSz": str(ntl / PX),
+                      "executedNtl": str(ntl), "minutes": minutes, "timestamp": t0 * 1000,
+                      "reduceOnly": False, "randomize": False}}
 
 
 async def _kind(kind):
@@ -171,9 +190,9 @@ def test_flow_alert_cooldown_and_old_path_untouched():
         tl._lookup_cache.clear()
         feed("PUMP", A, "buy", 3, 15_000, t_end=dbm.now())
         await tl.evaluate(cfg, n, None, col)
-        assert len(bot.sent) == 1 and len(_q("LOG-HTWAP")) == 1 and ht.STATS["reasons"].get("cooldown") == 1
+        assert len(bot.sent) == 1 and len(_q("LOG-HTWAP")) == 1 and ht.STATS["reasons"] == {"same_op": 1}, ht.STATS
         line = await ht.diag_line(cfg)
-        assert line.startswith("gizli twap: 2 aday (emirsiz düzenli dizi) · 1 bildirim · 🧪 1 kayıt"), line
+        assert line.startswith("gizli twap: 1 dizi (emirsiz, düzenli) · 1 bildirim · 🧪 1 kayıt"), line
         assert "son: PUMP" in line
         print("✅ akış) emirsiz düzenli dizi → 🕵️ yalnız gizli TWAP grubu; 'htwap' bekleme; eski yol aynen (no_order, 'twap'"
               " işareti yok, LOG-TWAP yok); LOG-HTWAP bir kez; /tani")
@@ -208,6 +227,117 @@ def test_lookup_fail_small_maker_off():
         await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
         assert not bot.sent and ht.STATS["reasons"] == {"off": 1} and not _q("LOG-HTWAP")
         print("✅ eleme) sorgu düşerse karar yok; küçük → yalnız 🧪 kayıt; maker → yok; kapalı → hiçbir şey")
+    asyncio.run(run())
+
+
+def test_review_fixes_no_false_hidden_claim():
+    """İnceleme (13.10): gerçek HL TWAP'ı "emirsiz" diye bildirme yolları kapalı; tek uyarı / operasyon; eleme."""
+    async def run():
+        cfg = _cfg()
+        # 1) tur sorgu tavanı: bu tur sorulmadı → emir YOK sayılmaz (karar lookup_capped, 🕵️ yok, 🧪 yok)
+        await _fresh()
+        bot, old = Bot(), tl.LOOKUP_MAX_PER_EVAL
+        tl.LOOKUP_MAX_PER_EVAL = 0
+        try:
+            feed("PUMP", A, "buy", 20, 15_000)
+            out = await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        finally:
+            tl.LOOKUP_MAX_PER_EVAL = old
+        assert out["lookup_capped"] == 1 and not bot.sent and ht.STATS["considered"] == 0 and not _q("LOG-HTWAP")
+        assert (await dbm.kv_get(tl.LAST_KV))[0]["reason"] == "lookup_capped"
+        # 2) adres önbelleği diziden ESKİ (emir sonradan açıldı) → iddiadan önce zorla sorulur → HL emri var
+        await _fresh()
+        bot = Bot()
+        tl._lookup_cache[A] = (dbm.now() - 400, [])             # 600 sn önbellek içinde ama son dilimden eski
+        col = Col([order()])
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
+        assert col.calls == [A] and not bot.sent and ht.STATS["reasons"] == {"native_order": 1}, ht.STATS
+        assert not _q("LOG-HTWAP")
+        # zorla sorgu düşerse: karar yok (veri yok ≠ emir yok)
+        await _fresh()
+        tl._lookup_cache[A] = (dbm.now() - 400, [])
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col(None))
+        assert not bot.sent and ht.STATS["reasons"] == {"no_data": 1} and not _q("LOG-HTWAP")
+        # 3) dizide HL TWAP alt emri dolumu (sıfır hash, taker) → emir var demektir, sorgu gerekmez
+        await _fresh()
+        feed("PUMP", A, "buy", 20, 15_000, native=True)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert tl.REG.runs[("PUMP", A, "buy")].nat_n == 20 and ht.STATS["reasons"] == {"native": 1} and not bot.sent
+        # maker tarafındaki adres sıfır hash'ten etkilenmez (taker=0 → native=False collector'da)
+        # 4) dizi başlamadan çok önce BİTMİŞ eski emir → gizli TWAP (adres ömür boyu silinmez)
+        await _fresh()
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([order(status="finished", start_ago=20_000, minutes=30)]))
+        assert [c for c, _ in bot.sent] == ["-555"] and (await dbm.kv_get(tl.LAST_KV))[0]["reason"] == "order_done"
+        # dizinin süresiyle örtüşen bitmiş/iptal emir → HL emri sayılır
+        await _fresh()
+        bot = Bot()
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([order(status="terminated", start_ago=900, minutes=60)]))
+        assert not bot.sent and ht.STATS["reasons"] == {"native_order": 1}
+        # 5) /ignore ile elenen adres ('manual') → yok
+        await _fresh()
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO addresses(address, first_seen, entity) VALUES(?,?,'manual')", (A, dbm.now()))
+            await c.commit()
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert not bot.sent and ht.STATS["reasons"] == {"ignored": 1}
+        # 6) ince spot çifti → yok (büyük olsa da)
+        await _fresh()
+        await dbm.kv_set("spot_top_coins", {"ts": dbm.now(), "vols": {"@107": 400_000}})
+        feed("@107", A, "buy", 20, 80_000)                       # $1.6M
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert not bot.sent and ht.STATS["reasons"] == {"spot_thin": 1}, ht.STATS
+        # 7) hacim ölçümü bayat (> 1 sa) → hız kuralı işlemez (yalnız 'büyük' yolu)
+        await _fresh()
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": PX, "oi": 1, "f": 0, "v": 2e6, "p": None}},
+                                           "ts": dbm.now() - 7200})
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert not bot.sent and ht.STATS["reasons"] == {"no_vol": 1}, ht.STATS
+        print("✅ inceleme) tavan → karar yok; eski önbellek → zorla sorgu → HL emri; sorgu düşerse yok; sıfır hash"
+              " dilim → yok; dizi öncesi bitmiş emir → gizli; örtüşen emir → yok; /ignore, ince spot, bayat hacim")
+    asyncio.run(run())
+
+
+def test_one_alert_per_operation():
+    async def run():
+        await _fresh()
+        cfg = _cfg()
+        cfg.twap_alert_cooldown = 0                              # yalnız operasyon hafızası sınansın
+        bot = Bot()
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert len(bot.sent) == 1 and len(_q("LOG-HTWAP")) == 1 and ht.STATS["considered"] == 1
+        # aynı dizi sonraki turlarda: dizi başına sayılır (tur başına değil)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert ht.STATS["considered"] == 1 and ht.STATS["reasons"] == {"same_op": 1}
+        # twaplive diziyi yeniden başlattı (4 sa penceresi) ama adres susmadı → aynı operasyon: uyarı/🧪 yok
+        del tl.REG.runs[("PUMP", A, "buy")]
+        tl._lookup_cache.clear()
+        feed("PUMP", A, "buy", 20, 15_000, t_end=dbm.now())
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert len(bot.sent) == 1 and len(_q("LOG-HTWAP")) == 1 and ht.STATS["considered"] == 2
+        # restart: operasyon hafızası kv'den geri gelir
+        await ht.save_stats()
+        ht.reset()
+        del tl.REG.runs[("PUMP", A, "buy")]
+        tl._lookup_cache.clear()
+        feed("PUMP", A, "buy", 20, 15_000, t_end=dbm.now())
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert len(bot.sent) == 1 and ht.STATS["reasons"] == {"same_op": 1}, ht.STATS
+        # 30 dk'dan uzun sessizlik → YENİ operasyon: yeni uyarı + yeni 🧪
+        ht.OPS[("PUMP", A, "buy")]["last"] = dbm.now() - 4000
+        del tl.REG.runs[("PUMP", A, "buy")]
+        tl._lookup_cache.clear()
+        feed("PUMP", A, "buy", 20, 15_000, t_end=dbm.now())
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert len(bot.sent) == 2 and len(_q("LOG-HTWAP")) == 2, (bot.sent, _q("LOG-HTWAP"))
+        print("✅ operasyon) tek uyarı + tek 🧪 / operasyon (dizi yeniden başlasa da, restart'ta da); 30 dk sessizlik"
+              " → yeni operasyon; /tani dizi başına sayar")
     asyncio.run(run())
 
 

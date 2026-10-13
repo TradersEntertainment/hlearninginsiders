@@ -162,6 +162,9 @@ def test_zero_hash_taker_and_prefilter():
         assert ("BTC", B, "sell") in tf.F.pending and not tf.F.pending[("BTC", B, "sell")]["queued"]
         assert tf.F.stats["pre_low"] == 1 and tf.F.stats["queued"] == 1 and tf.F.stats["zero"] == 3
         assert tl.REG.runs[("PUMP", A, "buy")].n == 1, "eski sayaç eskisi gibi"
+        # 🕵️ gizli TWAP'ı dışlayan işaret: sıfır hash'li dolum YALNIZ taker'ın dizisine (maker'ınkine değil)
+        assert tl.REG.runs[("PUMP", A, "buy")].nat_n == 2 and tl.REG.runs[("PUMP", B, "sell")].nat_n == 0
+        assert tl.REG.runs[("BTC", B, "sell")].nat_n == 1 and tl.REG.runs[("BTC", A, "buy")].nat_n == 0
         assert tf.is_twap_hash(ZERO) and not tf.is_twap_hash("0x" + "0" * 63 + "1") and not tf.is_twap_hash(None)
         assert not tf.is_twap_hash("0x")
         # ön süzgeç sayıları: hacim yok → sorgu yok; ince spot → yok; uzun TWAP olabilecek dilim → sorulur
