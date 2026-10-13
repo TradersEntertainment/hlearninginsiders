@@ -294,6 +294,18 @@ def test_review_fixes_no_false_hidden_claim():
         assert [c for c, _ in bot.sent] == ["-555"] and tl.REG.runs[("PUMP", A, "buy")].alerted_ts is None
         async with dbm.db() as c:
             assert (await (await c.execute("SELECT COUNT(*) n FROM twap_runs")).fetchone())["n"] == 0
+        # bekleme içinde sorgu bir kez düşerse dizi KALICI benimsenmez: karar lookup_fail, sonraki tur gizli TWAP
+        await _fresh()
+        bot = Bot()
+        await dbm.alert_log("twap", f"PUMP:{A}:buy", "")
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col(None))
+        r = tl.REG.runs[("PUMP", A, "buy")]
+        assert r.alerted_ts is None and (await dbm.kv_get(tl.LAST_KV))[0]["reason"] == "lookup_fail" and not bot.sent
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([order(status="finished", start_ago=9000, minutes=30)]))
+        assert [c for c, _ in bot.sent] == ["-555"] and r.alerted_ts is None and r.ended_ts is None
+        async with dbm.db() as c:
+            assert (await (await c.execute("SELECT COUNT(*) n FROM twap_runs")).fetchone())["n"] == 0
         # ...ama bekleme içinde HL alt emri dolumu olan dizi eskisi gibi sorgusuz benimsenir
         await _fresh()
         bot = Bot()

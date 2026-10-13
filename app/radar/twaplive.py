@@ -908,9 +908,10 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             lf_before = out.get("lookup_fail", 0)
             lc_before = out.get("lookup_capped", 0)
             order = await lookup_order(collector, run, ts, cfg, out)
-            if cool and (not order or native_overlap([order], run)) \
-                    and (out.get("lookup_fail", 0) > lf_before or out.get("lookup_capped", 0) > lc_before or order):
-                # örtüşen HL emri (ya da bu tur sorulamadı → eski davranış): benimse, tekrar sayılmaz
+            if cool and order and native_overlap([order], run):
+                # Bu turun sorgusu (taze ya da önbellek) örtüşen HL emri gösteriyor: benimse, tekrar sayılmaz. Sorgu
+                # düştü / tavana takıldıysa BENİMSEME (alerted_ts kalıcıdır — eski emir bot dizisine yapışırdı):
+                # kapı lookup_fail / lookup_capped yazar, gizli iddia da yok; sonraki tur yeniden sorar.
                 run.alerted_ts = run.alerted_ts or ts
                 run.alert_total = run.alert_total or run.total
                 decide(run, "cooldown")
