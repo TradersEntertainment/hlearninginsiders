@@ -899,21 +899,29 @@ class TelegramBot:
         tick = c[:-4].rstrip("_")
         if not tick:
             return False
-        from ..hl.universe import resolve_coin
         from ..radar import twaplive as tl
-        t = await resolve_coin(tick)
-        if not t:
+        t, coins = await self._twap_coins(tick)
+        if not coins:
             await self.send(f"❓ <b>{fmt.esc(tick.upper())}</b> diye bir coin bulamadım (ör. /xpltwap, /tslatwap).",
                             chat_id)
             return True
         coll = getattr(self, "collector", None)
         valid = getattr(coll, "valid_coins", None) if coll is not None else None
-        listened = (t["coin"] in valid) if valid else None
-        rows, info = await tl.live_twaps_full(coll, cfg=self.cfg, client=getattr(self, "client", None),
-                                              coin=t["coin"])
-        await self.send(fmt.coin_twaps(t["coin"], rows, info, quick_max=tl.quick_max(self.cfg), listened=listened),
-                        chat_id)
+        listened = any(x in valid for x in coins) if valid else None
+        rows, info = await tl.live_twaps_full(coll, cfg=self.cfg, client=getattr(self, "client", None), coin=coins)
+        await self.send(fmt.coin_twaps(coins[0], rows, info, quick_max=tl.quick_max(self.cfg), listened=listened,
+                                       name=(t or {}).get("symbol") or tick.upper()), chat_id)
         return True
+
+    async def _twap_coins(self, tick: str) -> tuple[dict | None, list[str]]:
+        """Ticker → (çözülen coin, TWAP'ı aranacak coin kimlikleri): perp/HIP-3 + aynı token'ın spot çiftleri
+        (HYPE → HYPE ve @107 HYPE/USDC; yalnız spotta olan UBTC → @N)."""
+        from .. import assets
+        from ..hl.universe import resolve_coin
+        t = await resolve_coin(tick)
+        tu = (tick or "").upper()
+        spot = [c for c, lbl in assets.SPOT_NAMES.items() if (lbl or "").split("/")[0].upper() == tu]
+        return t, ([t["coin"]] if t else []) + [c for c in spot if not t or c != t["coin"]]
 
     async def _cmd_coin_liq(self, cmd: str, chat_id: str) -> bool:
         """/hype, /pump, /sndk → o coinin liq'e en yakın büyük pozisyonları +
@@ -945,22 +953,25 @@ class TelegramBot:
         hint = ""
         try:
             from ..radar import twaplive as tl
-            trows, _ = await tl.live_twaps_full(getattr(self, "collector", None), cfg=self.cfg,
-                                               client=getattr(self, "client", None), coin=t["coin"], max_lookups=0)
-            hint = fmt.coin_twap_hint(t["symbol"], cmd, trows)
+            _, tcoins = await self._twap_coins(cmd)
+            trows, tinfo = await tl.live_twaps_full(getattr(self, "collector", None), cfg=self.cfg,
+                                                    client=getattr(self, "client", None),
+                                                    coin=tcoins or [t["coin"]], max_lookups=0)
+            hint = fmt.coin_twap_hint(t["symbol"], cmd, trows, tinfo)
         except Exception:                              # noqa: BLE001
             log.debug("liq: twap satırı (%s)", t["coin"], exc_info=True)
-        add = ("\n" + hint) if hint else ""
         # TEK MESAJ garantisi, üç kademe: (1) tam metin altyazıya sığıyorsa o gider;
         # (2) sığmıyorsa compact sürüm — öncelik merdiveni zincir/bağlam eklerini ve
         # en uzak satırları düşürerek 1024'e indirir, düşen sayı satır sonunda yazılır;
         # (3) foto yoksa ya da compact bile sığmadıysa metin ayrı + foto. Kullanıcı
         # "foto ve mesaj ayrı geldi yine" dedi: (2) tam olarak bunun için var.
-        for cap in ([fmt.crypto_liq_snapshot(s, offers=offers, compact=c) + add for c in (False, True)]
+        # TWAP satırı `extra`dan: hiç düşmeyen blok ve 1024 bütçesinin İÇİNDE (sonradan eklenince sığmış altyazı
+        # taşıyor, foto ve metin ayrı gidiyordu — kullanıcının eski şikâyeti)
+        for cap in ([fmt.crypto_liq_snapshot(s, offers=offers, compact=c, extra=hint) for c in (False, True)]
                     if png else []):
             if _caption_fit(cap)[1] and await self.send_photo(png, cap, chat_id):
                 return True
-        await self.send(fmt.crypto_liq_snapshot(s, offers=offers) + add, chat_id)
+        await self.send(fmt.crypto_liq_snapshot(s, offers=offers, extra=hint), chat_id)
         if png:
             await self.send_photo(png, fmt.crypto_liq_photo_caption(s), chat_id)
         return True

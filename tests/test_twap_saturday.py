@@ -183,6 +183,72 @@ def test_prefilter_fast_hidden_and_text():
     asyncio.run(run())
 
 
+def test_review_lab_race_texts():
+    """İnceleme: 🧪 özellikleri ham 24s ölçüsünde (AKI-TWAP-F bozulmasın) + ayrı Cumartesi alanı; aynı coin için tek
+    istek (eşzamanlı çağıran bekler); karar satırı ve ⚡ metni; /twap COIN dex öneki."""
+    async def run():
+        await _fresh()
+        cfg = _cfg()
+        tl.SAT_CACHE["xyz:TSLA"] = (PREV[0], 20e6)
+        o = tl.parse_twap_orders([order("xyz:TSLA")], "xyz:TSLA", "buy", PX, dbm.now())[0]
+        det = tl.gate_detail(cfg, "xyz:TSLA", o, 200e6, SAT - 60, SAT)
+        assert det["sat"] and abs(det["vol_pct"] - 10) < 1e-6 and abs(tl._vol_pct_24h(det) - 1) < 1e-6
+        from app.lab import registry, specs
+        rule = next(r for r in specs.RULES if r["id"] == "AKI-TWAP-F")
+        cond = [c for c in rule["where"] if c[0] == "vol_pct"]
+        assert cond and not specs.match(cond, {"vol_pct": tl._vol_pct_24h(det)}, SAT), "24s'e göre %1 → kurala girmez"
+        assert specs.match(cond, {"vol_pct": det["vol_pct"]}, SAT), "Cumartesi tabanı (%10) girerdi — o yüzden ayrı"
+        captured = {}
+        real_emit = registry.emit
+
+        def fake_emit(rid, coin, ts, **k):
+            captured[rid] = k["features"]
+            return True
+        registry.emit = fake_emit
+        try:
+            run_ = tl.Run("xyz:TSLA", A, "buy", SAT - 600, PX)
+            tl._lab_twap(run_, o, det, "ok", SAT)
+            g, d2 = tf.decide_gate(cfg, "xyz:TSLA", o, 200e6, SAT - 60, SAT)
+            tf._lab_fast({"coin": "xyz:TSLA", "side": "buy", "addr": A, "px": PX, "max": 1000}, o, d2, g, SAT)
+        finally:
+            registry.emit = real_emit
+        f = captured["LOG-TWAP"]
+        assert abs(f["vol_pct"] - 1) < 1e-6 and f["sat"] == 1 and abs(f["vol_pct_sat"] - 10) < 1e-6, f
+        f2 = captured["LOG-TWAPF"]
+        assert abs(f2["vol_pct"] - 1) < 1e-6 and f2["sat"] == 1 and f2["rate_x"] == d2["rate_x_24h"], f2
+        assert d2["rate_x_24h"] < d2["rate_x"]
+        # eşzamanlı iki çağıran aynı coin için TEK istek; ikincisi sonucu bekler
+        await _fresh()
+
+        class Slow(Client):
+            async def candles(self, *a):
+                await asyncio.sleep(0.05)
+                return await super().candles(*a)
+        cl = Slow(per_h=1e6)
+        await asyncio.gather(tl.ensure_sat(cfg, cl, ["xyz:TSLA"], SAT), tl.ensure_sat(cfg, cl, ["xyz:TSLA"], SAT))
+        assert len(cl.calls) == 1 and tl.eff_vol(cfg, "xyz:TSLA", 1, SAT, SAT)[2], "ikinci çağıran da tabanı görür"
+        # karar satırı: kalan az ayrıntısı kaybolmaz; ⚡ vol_small metni Cumartesi'ye göre
+        dl = tl.decision_line({"coin": "xyz:TSLA", "addr": A, "side": "buy", "planned": 2e6, "left": 3e5,
+                               "reason": "order_left", "sat": True})
+        assert "(kalan $300K)" in dl and "geçen Cumartesi" not in dl, dl
+        t = fmt.twap_fast(o, {"coin": "xyz:TSLA", "address": A, "side": "buy", "gate": "short", "day_vol": 20e6,
+                              "sat": True, "why": "vol_small", "pos": {"none": True}, "klass": "hisse",
+                              "now": dbm.now(), "quick_max": 60})
+        assert "emir/geçen Cumartesi hacmi eşiğinin altında" in t and "24s hacim eşiğinin" not in t, t
+        # /twap COIN: dex öneki küçük harf → Cumartesi satırı tabanı bulur
+        real_win, real_now = tl.sat_window, tl.now
+        tl.sat_window = lambda ts: PREV
+        tl.SAT_CACHE["xyz:TSLA"] = (PREV[0], 20e6)
+        try:
+            txt = await tl.diag_coin(cfg, "XYZ:tsla")
+        finally:
+            tl.sat_window, tl.now = real_win, real_now
+        assert "📅 Cumartesi (hisse): taban geçen Cumartesi hacmi, eşik %10 — $20.0M" in txt, txt
+        print("✅ inceleme) 🧪 ham 24s + ayrı Cumartesi alanı (AKI-TWAP-F bozulmaz); aynı coin tek istek; karar satırı"
+              " ve ⚡ metni; /twap XYZ:tsla dex öneki")
+    asyncio.run(run())
+
+
 def test_evaluate_saturday_equity_alert():
     """Uçtan uca: evaluate Cumartesi (pencere sabitlenir) — son 24s'e göre %2 olan emir geçen Cmt'ye göre %20 → kanal."""
     async def run():

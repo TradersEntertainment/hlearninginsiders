@@ -263,8 +263,9 @@ def short_gate(cfg, order: dict, rx: float | None) -> str:
 def decide_gate(cfg, coin: str, order: dict, day_vol, vol_ts, now_ts: int) -> tuple[str, dict]:
     """(karar, ayrıntı). 'ok' | 'big' | 'short' bildirilir. Spot ince çift ve bitmiş emir kısa yoldan da geçemez."""
     det = twaplive.gate_detail(cfg, coin, order, day_vol, vol_ts, now_ts)
-    dv, vts, _ = twaplive.eff_vol(cfg, coin, day_vol, vol_ts, now_ts)     # Cumartesi hisse: aynı taban
+    dv, vts, sat = twaplive.eff_vol(cfg, coin, day_vol, vol_ts, now_ts)   # Cumartesi hisse: aynı taban
     per_min, rx = rate_x(order, dv, vts, now_ts)
+    det["rate_x_24h"] = rate_x(order, day_vol, vol_ts, now_ts)[1] if sat else rx   # 🧪 ham 24s ölçüsü
     det.update(per_min=per_min, rate_x=rx, minutes=order.get("minutes"))
     g = det["reason"]
     if g in ("ok", "big") or g in ("no_order", "order_done", "spot_thin"):
@@ -305,7 +306,8 @@ def _lab_fast(p: dict, order: dict, det: dict, gate: str, ts: int) -> bool:
                     trig_key=f"{p['addr']}:{int(order.get('started_ts') or 0)}",
                     features={"plan": round(float(order.get("planned_usd") or 0)),
                               "left": order.get("remaining_usd"), "dk": order.get("minutes"),
-                              "vol_pct": det.get("vol_pct"), "rate_x": det.get("rate_x"),
+                              "vol_pct": twaplive._vol_pct_24h(det), "rate_x": det.get("rate_x_24h", det.get("rate_x")),
+                              "sat": int(bool(det.get("sat"))),
                               "kapi": gate, "gec": ts - int(order.get("started_ts") or ts),
                               "dilim": round(float(p.get("max") or 0))},
                     gated=gate in ("ok", "big", "short"))
@@ -341,6 +343,8 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
         except Exception as e:                         # noqa: BLE001
             log.debug("hızlı twap sorgusu %s: %s", addr[:10], e)
     t = now()
+    if hist is not None:
+        twaplive.live_q_put(addr, t, hist)              # /twap: ilk dilimde sorulan taze geçmiş (yeni emir hemen görünür)
     if hist is None:
         F.stats["lookup_fail"] += 1
         p["queued"], p["not_before"] = 0, t + RETRY_FAIL
@@ -359,8 +363,8 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
         return "no_order"
     F.known[key] = int(order["started_ts"]) + int(float(order.get("minutes") or 0) * 60) + 120
     F.pending.pop(key, None)
-    try:
-        await twaplive.ensure_sat(cfg, client, [coin], t)   # Cumartesi hisse: geçen Cumartesi hacmi (haftada 1 istek)
+    try:                                                # Cumartesi hisse: geçen Cumartesi hacmi (haftada 1 istek)
+        await asyncio.wait_for(twaplive.ensure_sat(cfg, client, [coin], t), twaplive.SAT_TIMEOUT)
     except Exception:                                  # noqa: BLE001
         log.debug("Cumartesi tabanı", exc_info=True)
     return await _decide(cfg, client, notifier, key, p, order, vols, t, ents.get(addr) or "")

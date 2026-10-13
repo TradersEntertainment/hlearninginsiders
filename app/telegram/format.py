@@ -3250,10 +3250,10 @@ def _live_row(i: int, e: dict, quick_max: float = 60, show_coin: bool = True) ->
 
 
 def coin_twaps(coin: str, rows: list[dict], info: dict | None = None, quick_max: float = 60,
-               listened: bool | None = None, top: int = LIVE_TWAP_TOP) -> str:
+               listened: bool | None = None, top: int = LIVE_TWAP_TOP, name: str | None = None) -> str:
     """/XPLtwap (kullanıcı 13.10): bu coinde SÜREN HL TWAP emirleri, planlanan büyüklüğe göre; alış / satış toplamı.
     Tahmin yok: plan bugünkü fiyatla, dolan son sorgudaki HL rakamı, kalan süre planlanan bitişe göre."""
-    sym = esc(assets.label(coin))
+    sym = esc(name or assets.label(coin))
     info = info or {}
     foot = ("<i>Dilimi görülen süren HL TWAP emirleri (HL tüm emirleri tek yerden vermiyor; yeni dilim gelmeyen emir"
             " listede yok). Plan bugünkü fiyatla; dolan son sorgudaki HL rakamı. 📣 = kanala bildirildi.</i>")
@@ -3271,20 +3271,27 @@ def coin_twaps(coin: str, rows: list[dict], info: dict | None = None, quick_max:
             + (f" · 🟢 alış {len(buy)} (plan {tot(buy)})" if buy else "")
             + (f" · 🔴 satış {len(sell)} (plan {tot(sell)})" if sell else ""))
     shown = rows[:max(1, int(top))]
-    lines = [head] + [_live_row(i, e, quick_max, show_coin=False) for i, e in enumerate(shown, 1)]
+    many = len({e.get("coin") for e in rows}) > 1      # perp + spot çifti birlikte: satırda hangisi olduğu yazsın
+    lines = [head] + [_live_row(i, e, quick_max, show_coin=many) for i, e in enumerate(shown, 1)]
     if len(rows) > len(shown):
         lines.append(f"… +{len(rows) - len(shown)} küçük emir daha")
     lines.append(foot)
     return "\n".join(lines)
 
 
-def coin_twap_hint(symbol: str, cmd: str, rows: list[dict]) -> str:
-    """/xpl liq mesajının altına tek satır: bu coinde süren HL TWAP var mı (ayrıntı /xpltwap)."""
+def coin_twap_hint(symbol: str, cmd: str, rows: list[dict], info: dict | None = None) -> str:
+    """/xpl liq mesajının altına tek satır (sorgusuz): bu coinde süren HL TWAP var mı (ayrıntı /xpltwap). Kayıttan
+    gelen satır sorgusuz doğrulanamaz (iptal sonrası 'activated' kalmış olabilir) → yazılmaz; emri henüz bilinmeyen
+    HL TWAP dilimi varsa söylenir. Komut Telegram'da tıklanamıyorsa (':' gibi) kopyalanabilir kod."""
+    rows = [e for e in rows if e.get("src") != "db" or now() - int(e.get("q_ts") or 0) < 120]   # taze geçmişle doğrulanmış
+    info = info or {}
+    k = int(info.get("skipped") or 0) + int(info.get("failed") or 0)
+    link = f"/{cmd}twap" if re.fullmatch(r"[a-z0-9_]{1,60}", cmd or "") else f"<code>/{esc(cmd)}twap</code>"
     if not rows:
-        return ""
+        return (f"⏳ {esc(symbol)}'de {k} adreste HL TWAP dilimi görülüyor, emri henüz sorulmadı → {link}") if k else ""
     big = rows[0]
     return (f"⏳ {esc(symbol)}'de süren HL TWAP: {len(rows)} · en büyüğü {_twap_side(big.get('side'))}"
-            f" plan {usd(big.get('planned_usd'))} → /{esc(cmd)}twap")
+            f" plan {usd(big.get('planned_usd'))}" + (f" (+{k} adreste dilim görülüyor)" if k else "") + f" → {link}")
 
 
 def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, info: dict | None = None,
@@ -3410,7 +3417,9 @@ def twap_fast(o: dict, ctx: dict) -> str:
     if ctx.get("day_vol"):
         extra.append(f"{'geçen Cumartesi hacmi' if ctx.get('sat') else '24s hacim'} {usd(ctx['day_vol'])}")
     if ctx.get("gate") == "short":
-        why = {"order_small": "emir toplamı tabanın altında", "vol_small": "emir/24s hacim eşiğinin altında",
+        why = {"order_small": "emir toplamı tabanın altında",
+               "vol_small": ("emir/geçen Cumartesi hacmi eşiğinin altında" if ctx.get("sat")
+                             else "emir/24s hacim eşiğinin altında"),
                "order_left": "kalan eşiğin altında"}.get(ctx.get("why") or "")
         extra.append("⚡ dakika hızı kuralıyla" + (f" ({why})" if why else ""))
     if extra:

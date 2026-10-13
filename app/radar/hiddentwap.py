@@ -121,7 +121,7 @@ def gate(cfg, run, m: dict, day_vol, reg) -> tuple[str, float | None]:
     return "ok", x
 
 
-def _lab(run, m: dict, g: str, x, ts: int, two: bool, tk: str) -> bool:
+def _lab(run, m: dict, g: str, x, ts: int, two: bool, tk: str, sat: bool = False) -> bool:
     """🧪 LOG-HTWAP: operasyon LAB_MIN'i ilk geçtiğinde (taze kanıttan sonra), kapı sonucu ne olursa olsun.
     `tk` operasyon anahtarı (adres:yön:operasyon başı). Senkron, G/Ç yok, fırlatmaz."""
     try:
@@ -130,7 +130,8 @@ def _lab(run, m: dict, g: str, x, ts: int, two: bool, tk: str) -> bool:
                   trig_key=tk,
                   features={"gor": round(run.total), "n": run.n, "dk": round((run.last_ts - run.first_ts) / 60, 1),
                             "aralik": round(float(m.get("median_gap") or 0), 1), "taker": m.get("taker_pct"),
-                            "rate_x": None if x is None else round(x, 3), "iki_yon": int(two), "kapi": g},
+                            "rate_x": None if x is None else round(x, 3), "iki_yon": int(two), "kapi": g,
+                            "sat": int(bool(sat))},
                   gated=g in ("ok", "big"))
         if ok:
             STATS["lab"] += 1
@@ -197,6 +198,7 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
         return _count("ignored", rid)
     if getattr(run, "nat_n", 0):
         return _count("native", rid)              # dizide HL TWAP alt emri dolumu: emir var demektir
+    raw24 = day_vol if (vol_ts and ts - int(vol_ts) <= twaplive.VOL_MAX_AGE) else None   # 🧪 ham 24s ölçüsü
     day_vol, vol_ts, sat = twaplive.eff_vol(cfg, run.coin, day_vol, vol_ts, ts)   # Cumartesi hisse: geçen Cmt
     if not vol_ts or ts - int(vol_ts) > twaplive.VOL_MAX_AGE:
         day_vol = None
@@ -231,7 +233,8 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
         return _count("native_order", rid)
     if lab_due:
         op["lab"] = 1
-        _lab(run, m, g, x, ts, g == "two_sided", f"{run.address}:{run.side}:{op['start']}")
+        _lab(run, m, g, rate_x(m, raw24) if sat else x, ts, g == "two_sided", f"{run.address}:{run.side}:{op['start']}",
+             sat)
     if not send_due:
         return _count(reason, rid)
     pos = await twaplive.position_ctx(client, run.coin, run.address)

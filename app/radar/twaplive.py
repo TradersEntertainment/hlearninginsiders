@@ -320,6 +320,8 @@ SAT_CACHE: dict[str, tuple[int, float]] = {}     # coin → (geçen Cumartesi TS
 _SAT_TRY: dict[str, int] = {}                     # coin → son deneme (veri yoksa 10 dk'da bir yeniden)
 _SAT_LOADED: list = [False]
 SAT_RETRY = 600
+SAT_TIMEOUT = 6.0                                 # taban okuma bütçesi (çağıranlar wait_for ile sarar)
+_SAT_INFLIGHT: dict[str, asyncio.Future] = {}     # coin → süren mum isteği (diğer çağıranlar onu bekler)
 
 
 def sat_pct(cfg) -> float:
@@ -372,24 +374,37 @@ async def ensure_sat(cfg, client, coins, now_ts: int, max_fetch: int = 12) -> in
             log.debug("sat_vol okunamadı", exc_info=True)
     if client is None or not hasattr(client, "candles"):
         return 0
-    todo = [c for c in dict.fromkeys(coins or []) if sat_applies(cfg, c, now_ts)
+    uniq = list(dict.fromkeys(coins or []))
+    pend = [f for c in uniq if (f := _SAT_INFLIGHT.get(c)) is not None]   # başka çağıran şu an okuyor: bekle
+    todo = [c for c in uniq if c not in _SAT_INFLIGHT and sat_applies(cfg, c, now_ts)
             and int((SAT_CACHE.get(c) or (0, 0))[0]) != w[0] and int(now_ts) - _SAT_TRY.get(c, 0) >= SAT_RETRY]
     got = 0
     for c in todo[:max(0, int(max_fetch))]:
         _SAT_TRY[c] = int(now_ts)
+        fut = _SAT_INFLIGHT[c] = asyncio.get_running_loop().create_future()
+        tot = 0.0
         try:
             rows = await client.candles(c, "1h", w[0] * 1000, w[1] * 1000 - 1)
-            tot = 0.0
             for x in rows or []:
                 t = int(x.get("t") or 0) // 1000
                 if w[0] <= t < w[1]:
                     tot += float(x.get("v") or 0) * (float(x.get("o") or 0) + float(x.get("c") or 0)) / 2
         except Exception:                              # noqa: BLE001
             log.debug("geçen Cumartesi hacmi okunamadı %s", c, exc_info=True)
-            continue
+            tot = 0.0
+        finally:
+            if tot > 0:
+                SAT_CACHE[c] = (w[0], tot)
+            _SAT_INFLIGHT.pop(c, None)
+            if not fut.done():
+                fut.set_result(tot)
         if tot > 0:
-            SAT_CACHE[c] = (w[0], tot)
             got += 1
+    for f in pend:
+        try:
+            await asyncio.shield(f)
+        except Exception:                              # noqa: BLE001
+            pass
     if got:
         try:
             cut = w[0] - 7 * 86400
@@ -841,6 +856,15 @@ def order_key(key: str, order: dict | None) -> str | None:
 
 # ---------------- değerlendirme turu ----------------
 
+def _vol_pct_24h(det: dict):
+    """Emir / ham 24s hacim (%) — Cumartesi tabanından bağımsız (🧪 özellikleri için)."""
+    dv = det.get("day_vol_24h") if "day_vol_24h" in det else det.get("day_vol")
+    try:
+        return (float(det.get("planned") or 0) / float(dv) * 100) if dv and float(dv) > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _lab_twap(run: "Run", order: dict, det: dict, gate: str, ts: int, lookup_min: float = 0.0,
               min_slices: int = 0) -> bool:
     """🧪 Laboratuvar kaydı: HL'de doğrulanmış TWAP emri, kapı sonucu ne olursa olsun (kapıdan kalan
@@ -850,8 +874,12 @@ def _lab_twap(run: "Run", order: dict, det: dict, gate: str, ts: int, lookup_min
         from ..lab.registry import emit
         return emit("LOG-TWAP", run.coin, ts, side=1 if run.side == "buy" else -1, px_ref=run.px_last,
                     trig_key=f"{run.address}:{int(run.first_ts)}",
+                    # 🧪 kural eşikleri ham 24s ölçüsüne bağlı (AKI-TWAP-F "24s hacmin ≥ %5'i"): Cumartesi hisse tabanı
+                    # özelliği DEĞİŞTİRMEZ, ayrı alanda (sat, vol_pct_sat)
                     features={"plan": round(det.get("planned") or 0), "left": order.get("remaining_usd"),
-                              "vol_pct": det.get("vol_pct"), "n": run.n, "dur": int(run.last_ts - run.first_ts),
+                              "vol_pct": _vol_pct_24h(det), "sat": int(bool(det.get("sat"))),
+                              "vol_pct_sat": det.get("vol_pct") if det.get("sat") else None,
+                              "n": run.n, "dur": int(run.last_ts - run.first_ts),
                               "seen": round(run.total), "kapi": gate, "st": order.get("status"),
                               "lk_min": lookup_min, "min_sl": min_slices},
                     gated=gate in ("ok", "big"))
@@ -905,7 +933,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     vols = await volumes(client)
     VOL_CACHE.update(ts=ts, v=vols)
     try:
-        await ensure_sat(cfg, client, [r.coin for r in cands], ts)   # Cumartesi hisse: geçen Cumartesi hacmi
+        await asyncio.wait_for(ensure_sat(cfg, client, [r.coin for r in cands], ts),   # Cumartesi hisse: geçen Cmt
+                               SAT_TIMEOUT * 2)
     except Exception:                                  # noqa: BLE001
         log.debug("Cumartesi tabanı", exc_info=True)
     ents = await entities(list({r.address for r in cands}))
@@ -1199,10 +1228,10 @@ def decision_line(d: dict) -> str:
     txt += f" → {REASON_TR.get(r, r)}"
     if r == "vol_small" and d.get("pct_needed") is not None:
         txt += f" (%{float(d['pct_needed']):g} gerekir)"
-    if d.get("sat"):
-        txt += " · taban: geçen Cumartesi hacmi"
     elif r == "order_left" and d.get("left") is not None:
         txt += f" (kalan {usd(d['left'])})"
+    if d.get("sat") and r != "order_left":
+        txt += " · taban: geçen Cumartesi hacmi"
     if d.get("hidden"):
         from .hiddentwap import REASON_TR as HR
         txt += f" · 🕵️ gizli twap: {HR.get(d['hidden'], d['hidden'])}"
@@ -1355,7 +1384,8 @@ async def diag_address(cfg, collector, addr: str) -> str:
 async def diag_coin(cfg, coin: str) -> str:
     """/twap COIN: dinleniyor mu, 24s hacim, bildirim için gereken emir, coindeki diziler, son kararlar."""
     from ..telegram.format import esc, usd
-    coin = (coin or "").upper()
+    _d, _s = (coin or "").strip().rpartition(":")[::2]
+    coin = f"{_d.lower()}:{_s.upper()}" if _d else _s.upper()      # 'xyz:TSLA' (dex öneki küçük harf)
     # '/twap PURR/USDC' → '@107': kullanıcı borsa kimliğini bilmek zorunda değil
     coin = assets.spot_coin_of(coin) or coin
     ws = await kv_get("ws_universe") or {}
@@ -1443,7 +1473,7 @@ def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts
     cur = out.get(k)
     if cur is None:
         out[k] = e
-    elif e["q_ts"] > cur["q_ts"]:
+    elif e["q_ts"] > cur["q_ts"] or (e["q_ts"] == cur["q_ts"] and cur["src"] == "db" and src != "db"):
         e["alerted"] = e["alerted"] or cur["alerted"]
         e["last_ts"] = max(cur["last_ts"], e["last_ts"])
         out[k] = e
@@ -1543,7 +1573,7 @@ def _native_active(ts: int) -> dict[tuple, Run]:
 
 async def live_twaps_full(collector=None, now_ts: int | None = None,
                           max_lookups: int = LIVE_LOOKUPS, cfg=None, client=None,
-                          coin: str | None = None) -> tuple[list[dict], dict]:
+                          coin=None) -> tuple[list[dict], dict]:
     """/twap (kullanıcı 13.10: "hangi grupta yazarsam yazayım en büyük canlı TWAP'ları sıralasın"): şu an SÜREN
     HL TWAP emirleri, planlanan büyüklüğe göre. Bellek yeniden başlatmada sıfırlanır (13.10 20:39 deploy
     sonrası liste boş geldi) — kaynaklar:
@@ -1563,9 +1593,11 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
         vols = VOL_CACHE.get("v") or {}
     cands = _live_memory_cands(ts)
     active = _native_active(ts)
-    if coin:                                          # /xpltwap: yalnız bu coin — anlık sorgular da hep ona gitsin
-        cands = [c for c in cands if c[0] == coin]
-        active = {k: r for k, r in active.items() if k[0] == coin}
+    # /xpltwap: yalnız bu coin(ler) (perp + aynı token'ın spot çiftleri) — anlık sorgular da hep onlara gitsin
+    coins = ({coin} if isinstance(coin, str) else set(coin)) if coin else set()
+    if coins:
+        cands = [c for c in cands if c[0] in coins]
+        active = {k: r for k, r in active.items() if k[0] in coins}
     # 2) kayıt
     if active:
         try:
@@ -1574,10 +1606,10 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
                     """SELECT coin, address, side, planned_usd, planned_sz, executed_usd, remaining_usd, order_ts,
                               order_min, order_status, lookup_ts, ts, alerted_ts, n_slices, total
                        FROM twap_runs WHERE order_status='activated' AND ended_ts IS NULL AND planned_usd > 0
-                         AND (? = '' OR coin = ?)
+                         AND (? = '' OR instr(?, '|' || coin || '|') > 0)
                          AND order_ts IS NOT NULL AND order_min IS NOT NULL
                          AND order_ts + order_min * 60 > ? AND COALESCE(lookup_ts, ts) >= ?""",
-                    (coin or "", coin or "", ts, ts - LIVE_DB_MAX_AGE))
+                    ("1" if coins else "", "|" + "|".join(sorted(coins)) + "|", ts, ts - LIVE_DB_MAX_AGE))
                 rows = [dict(x) for x in await cur.fetchall()]
         except Exception:                              # noqa: BLE001
             log.debug("twap_runs süren emirler okunamadı", exc_info=True)
@@ -1597,7 +1629,11 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
     # 3) anlık sorgu: bellekte taze emri olmayan (kayıttan gelen ya da sorgu anı bilinmeyen) alt emir dizileri
     # "bilinen" = bellekte TAZE ve LİSTELENECEK kopya (en taze geçmişle süzülmüş, activated, bitişi gelmemiş): biten /
     # iptal edilen kopya aynı anahtarın yeni TWAP'ının sorulmasını engellemesin
-    known = set()
+    # "bilinen" = bellekte LİSTELENECEK kopya (en taze geçmişle süzülmüş, activated, bitişi gelmemiş). Yalnız son
+    # LIVE_Q_TTL içinde HL'den gelmişse sorgu gerekmez ("taze"); daha eskiyse listelenir AMA yine sorulur (hiç
+    # bilinmeyenlerden sonra): aynı adres + coin + yönde iptal-yeniden-koy ya da eşzamanlı ikinci TWAP dilimleri
+    # ayırt edilemez, eski kopya yeni emri 10–20 dk gizlemesin (inceleme 4).
+    known, fresh, stale = set(), set(), {}
     for c in cands:
         if c[8] == "db":
             continue
@@ -1608,25 +1644,33 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
         t0, mins = int(o.get("started_ts") or 0), float(o.get("minutes") or 0)
         if t0 and mins and t0 + int(mins * 60) <= ts:
             continue
-        known.add((c[0], c[1], c[2]))
-    todo = sorted((r for k, r in active.items() if k not in known), key=lambda r: -r.total)
+        k = (c[0], c[1], c[2])
+        known.add(k)
+        if ts - q < LIVE_Q_TTL:
+            fresh.add(k)
+        else:
+            stale[k] = max(stale.get(k, 0.0), float(o.get("planned_usd") or 0))
+    unknown = sorted((r for k, r in active.items() if k not in known), key=lambda r: -r.total)
+    todo = unknown + sorted((active[k] for k in stale if k in active and k not in fresh), key=lambda r: -stale[r.key])
+    unk_addrs = {r.address for r in unknown}
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
     addrs: list[str] = []
     for r in todo:
         if r.address not in addrs:
             addrs.append(r.address)
     if fn is None:
-        info["skipped"] = len(addrs)
+        info["skipped"] = len([a for a in addrs if a in unk_addrs])   # eski kopyası listelenen uyarı sayılmaz
         addrs = []
-    elif len(addrs) > max(0, int(max_lookups)):
-        info["skipped"] = len(addrs) - max(0, int(max_lookups))
-        addrs = addrs[:max(0, int(max_lookups))]
     # önbellek yalnız tazeyse (2 dk) VE adresin en yeni dizisinden sonra alınmışsa yeter — sonra açılan emir onda yok
     since = {}
     for r in todo:
         since[r.address] = max(since.get(r.address, 0), int(r.nat_first_ts or r.first_ts))
     need = [a for a in addrs
             if not ((c := _newest_hist(a)) and ts - int(c[0]) < LIVE_Q_TTL and int(c[0]) >= since[a] - 5)]
+    cap = max(0, int(max_lookups))                   # tavan önbellek süzgecinden SONRA: taze önbellekli adres yer
+    if len(need) > cap:                              # kaplamaz, art arda /twap sıradakilere geçer
+        info["skipped"] += len([a for a in need[cap:] if a in unk_addrs])
+        need = need[:cap]
     if need:
         from . import twapfast
         sem = asyncio.Semaphore(LIVE_ASK_PAR)
@@ -1646,7 +1690,7 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
         res = await asyncio.gather(*(ask(a) for a in need))
         for a, h in zip(need, res):
             if isinstance(h, str):
-                info["skipped"] += 1
+                info["skipped"] += int(a in unk_addrs)
                 continue
             info["asked"] += 1
             if h is None:
@@ -1670,12 +1714,12 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
                               "ask" if r.address in asked else "mem", r.px_last, r))
     if cfg is not None:
         try:                                          # Cumartesi hisse: hacim oranı geçen Cumartesi'ye göre
-            await ensure_sat(cfg, client, [c[0] for c in cands], ts)
+            await asyncio.wait_for(ensure_sat(cfg, client, [c[0] for c in cands], ts), SAT_TIMEOUT)
         except Exception:                              # noqa: BLE001
             log.debug("Cumartesi tabanı", exc_info=True)
     out: dict[tuple, dict] = {}
     _add_cands(out, cands, ts, vols, cfg)            # her kopya en taze geçmişle süzülür (iptal → düşer)
-    rows = [e for e in _live_sorted(out) if not coin or e["coin"] == coin]
+    rows = [e for e in _live_sorted(out) if not coins or e["coin"] in coins]
     await _announced(rows)
     return rows, info
 

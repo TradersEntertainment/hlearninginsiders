@@ -164,8 +164,8 @@ def test_after_restart_db_and_ask():
         col = Col({A: [order("PUMP", A, ntl=7_000_000, start_ago=400, minutes=600)],
                    B: inj_hist, C: [order("WIF", C, ntl=300_000, start_ago=100, minutes=60)]})
         rows, info = await tl.live_twaps_full(col)
-        assert [(r["coin"], r["src"]) for r in rows] == [("PUMP", "ask"), ("INJ", "db"), ("WIF", "ask")], rows
-        assert rows[1]["q_ts"] >= dbm.now() - 5, "kayıt satırı taze geçmişle doğrulandı (sorgu anı yeni)"
+        assert [(r["coin"], r["src"]) for r in rows] == [("PUMP", "ask"), ("INJ", "ask"), ("WIF", "ask")], rows
+        assert rows[1]["q_ts"] >= dbm.now() - 5, "kayıt satırı taze geçmişle doğrulandı (doğrulanmış kopya kalır)"
         assert sorted(col.calls) == sorted([A, B, C]) and info == {"asked": 3, "failed": 0, "skipped": 0}, info
         inj = rows[1]
         assert inj["alerted"] and abs(inj["planned_usd"] - 5e6) < 1 and abs(inj["filled_pct"] - 25) < 1e-6
@@ -420,7 +420,7 @@ def test_coin_twap_command_and_liq_hint():
         async def fake_snap(cfg_, client, coin, kind):
             return {"rows": [], "png": None}
         U.resolve_coin, cryptoliq.snapshot = fake_resolve, fake_snap
-        fmt.crypto_liq_snapshot = lambda s, offers=None, compact=False: "LIQ"
+        fmt.crypto_liq_snapshot = lambda s, offers=None, compact=False, extra="": "LIQ" + ("\n" + extra if extra else "")
         try:
             bot = TelegramBot(cfg, None, None, {})
             bot.collector = Col(col.by_addr)
@@ -453,6 +453,134 @@ def test_coin_twap_command_and_liq_hint():
             U.resolve_coin, cryptoliq.snapshot, fmt.crypto_liq_snapshot = real_res, real_snap, real_fmt
         print("✅ /TICKERtwap) coin süzgeci (sorgular o coine), alış/satış özeti; /pumptwap, /pump_twap, grup üyesi,"
               " kanal gönderisi; bilinmeyen ticker; /pump liq mesajının altında tek satır (sorgusuz)")
+    asyncio.run(run())
+
+
+def test_coin_twap_review_fixes():
+    """İnceleme: TWAP satırı 1024 altyazı bütçesinin içinde (foto + metin tek mesaj); spot çiftleri; kayıt satırı
+    sorgusuz yazılmaz; tıklanamayan komut kod olarak."""
+    async def run():
+        import importlib
+        from app import assets
+        from app.hl import universe as U
+        from app.radar import cryptoliq
+        from app.telegram.bot import TelegramBot
+        snapmod = importlib.import_module("test_snapshot_compact")
+        await _fresh()
+        cfg = _cfg()
+        # 1) gerçek PUMP anlık görüntüsü + foto + TWAP satırı → tek mesaj (foto), altyazı ≤ 1024 ve satırı içerir
+        real_res, real_snap, real_live = U.resolve_coin, cryptoliq.snapshot, tl.live_twaps_full
+
+        async def fake_resolve(x):
+            x = (x or "").lower()
+            return {"coin": "PUMP", "symbol": "PUMP", "kind": "crypto"} if x == "pump" else None
+
+        async def fake_snap(cfg_, client, coin, kind):
+            s_ = snapmod.pump_snapshot()
+            s_["png"] = b"\x89PNG fake"
+            return s_
+
+        async def fake_live(*a, **k):
+            return ([{"coin": "PUMP", "addr": A, "side": "buy", "planned_usd": 2.4e6, "src": "mem"}],
+                    {"asked": 0, "failed": 0, "skipped": 0})
+        U.resolve_coin, cryptoliq.snapshot, tl.live_twaps_full = fake_resolve, fake_snap, fake_live
+        try:
+            bot = TelegramBot(cfg, None, None, {})
+            texts, photos = [], []
+
+            async def fake_send(text, chat_id=None, reply_markup=None):
+                texts.append(text)
+                return True
+
+            async def fake_photo(png, caption="", chat_id=None, **k):
+                photos.append(caption)
+                return True
+            bot.send, bot.send_photo = fake_send, fake_photo
+            await bot._cmd_coin_liq("pump", "111")
+            assert not texts and len(photos) == 1, (texts, photos)
+            assert fmt.visible_len(photos[0]) <= 1024 and "→ /pumptwap" in photos[0], photos[0][-200:]
+        finally:
+            U.resolve_coin, cryptoliq.snapshot, tl.live_twaps_full = real_res, real_snap, real_live
+        # 2) spot çiftleri: /hypetwap perp + HYPE/USDC; yalnız spotta olan UBTC bulunur
+        await _fresh()
+        old_names = dict(assets.SPOT_NAMES)
+        assets.SPOT_NAMES.clear()
+        assets.SPOT_NAMES.update({"@107": "HYPE/USDC", "@142": "UBTC/USDC"})
+
+        async def res2(x):
+            return {"coin": "HYPE", "symbol": "HYPE", "kind": "crypto"} if (x or "").lower() == "hype" else None
+        U.resolve_coin = res2
+        try:
+            feed("@107", A, "buy")
+            feed("HYPE", B, "sell")
+            feed("@142", C, "buy")
+            col = Col({A: [order("@107", A, ntl=5_000_000)], B: [order("HYPE", B, side="A", ntl=1_000_000)],
+                       C: [order("@142", C, ntl=3_000_000)]})
+            bot = TelegramBot(cfg, None, None, {})
+            bot.collector = col
+            sent = []
+
+            async def fs(text, chat_id=None, reply_markup=None):
+                sent.append(text)
+                return True
+            bot.send = fs
+            assert await bot._cmd_coin_twap("hypetwap", "111")
+            t = sent[-1]
+            assert t.startswith("⏳ <b>HYPE</b> · süren HL TWAP'ları · 2 emir · 🟢 alış 1 (plan $5.0M) · 🔴 satış 1"), t
+            assert "1. 🪙 <b>HYPE/USDC</b> 🟢 ALIŞ · plan <b>$5.0M</b>" in t and "2. <b>HYPE</b> 🔴 SATIŞ" in t, t
+            assert "UBTC" not in t
+            assert await bot._cmd_coin_twap("ubtctwap", "111")
+            assert sent[-1].startswith("⏳ <b>UBTC</b> · süren HL TWAP'ları · 1 emir"), sent[-1]
+        finally:
+            U.resolve_coin = real_res
+            assets.SPOT_NAMES.clear()
+            assets.SPOT_NAMES.update(old_names)
+        # 3) ipucu: kayıt satırı sorgusuz yazılmaz; emri bilinmeyen dilim söylenir; ':' komutu kod olarak
+        db_row = {"coin": "PUMP", "addr": A, "side": "buy", "planned_usd": 9e6, "src": "db"}
+        mem_row = {"coin": "PUMP", "addr": B, "side": "sell", "planned_usd": 1e6, "src": "mem"}
+        assert fmt.coin_twap_hint("PUMP", "pump", [db_row], {"skipped": 0}) == ""
+        h = fmt.coin_twap_hint("PUMP", "pump", [db_row, mem_row], {"skipped": 2})
+        assert h == "⏳ PUMP'de süren HL TWAP: 1 · en büyüğü 🔴 SATIŞ plan $1.0M (+2 adreste dilim görülüyor) → /pumptwap", h
+        assert fmt.coin_twap_hint("PUMP", "pump", [], {"skipped": 1}) == \
+            "⏳ PUMP'de 1 adreste HL TWAP dilimi görülüyor, emri henüz sorulmadı → /pumptwap"
+        assert "<code>/para:stxtwap</code>" in fmt.coin_twap_hint("STX", "para:stx", [mem_row])
+        print("✅ inceleme) TWAP satırı altyazı bütçesinde (foto + metin tek mesaj); spot çiftleri ve yalnız-spot token;"
+              " kayıt satırı sorgusuz yazılmaz; ':' komutu kod")
+    asyncio.run(run())
+
+
+def test_review4_stale_known_and_cap_order():
+    """İnceleme 4: bellek kopyası 2 dk'dan eskiyse yine sorulur (iptal-yeniden-koy / eşzamanlı ikinci TWAP gizlenmesin);
+    sorgu tavanı önbellek süzgecinden SONRA (taze önbellekli adres yer kaplamaz)."""
+    async def run():
+        from app.notify import Notifier
+        await _fresh()
+        cfg = _cfg()
+        feed("INJ", B, "sell")
+        x = [order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000, tid=1)]
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col({B: x}))
+        r = tl.REG.runs[("INJ", B, "sell")]
+        old = tl._lookup_cache[B][0] - 300                         # radarın kopyası 5 dk önce (henüz 20 dk değil)
+        tl._lookup_cache[B] = (old, tl._lookup_cache[B][1])
+        r.order["q_ts"] = old
+        y = [order("INJ", B, side="A", status="terminated", minutes=300, start_ago=1200, ntl=5_000_000, tid=1),
+             order("INJ", B, side="A", minutes=120, start_ago=100, ntl=9_000_000, tid=2)]
+        col = Col({B: y})
+        rows, info = await tl.live_twaps_full(col)
+        assert col.calls == [B] and [round(e["planned_usd"]) for e in rows] == [9_000_000], (rows, info)
+        # tavan önbellekten sonra: 4 adres, 3'ünün önbelleği taze → yalnız 1 sorgu, uyarı yok
+        await _fresh()
+        addrs = ["0x" + ch * 40 for ch in "1234"]
+        for i, ad in enumerate(addrs):
+            feed("PUMP", ad, "buy", n=3, ntl=10_000 * (i + 1))
+            if i < 3:
+                tl.live_q_put(ad, dbm.now(), [order("PUMP", ad, ntl=1_000_000 * (i + 1), tid=10 + i)])
+        col2 = Col({addrs[3]: [order("PUMP", addrs[3], ntl=4_000_000, tid=99)]})
+        rows, info = await tl.live_twaps_full(col2, max_lookups=1)
+        assert col2.calls == [addrs[3]] and info == {"asked": 1, "failed": 0, "skipped": 0}, (col2.calls, info)
+        assert len(rows) == 4, rows
+        print("✅ inceleme 4) 2 dk'dan eski bellek kopyası yeniden sorulur (yerine konan emir görünür); tavan önbellek"
+              " süzgecinden sonra")
     asyncio.run(run())
 
 
