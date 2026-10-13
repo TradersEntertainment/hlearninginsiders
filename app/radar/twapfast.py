@@ -552,6 +552,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
             hist = None
         if hist is None:
             continue                                    # sorgu başarısız: sonraki tur
+        twaplive.live_q_put(r["addr"], t, hist)         # /twap: eski yolun / kaydın aynı emir kopyası da iptali görsün
         o = None
         for x in twaplive.parse_twap_orders(hist, r["coin"], r["side"], r["px_last"], t):
             if abs(int(x.get("started_ts") or 0) - int(r["started"])) <= 2:

@@ -79,7 +79,7 @@ class Run:
     __slots__ = ("coin", "address", "side", "first_ts", "last_ts", "n", "total", "sz_total",
                  "pxsz", "px_first", "px_last", "tk_n", "known_n", "slices", "alerted_ts",
                  "alert_total", "progress_ts", "progress_step", "ended_ts", "day_volume",
-                 "rate_day", "gate", "order", "lookup_ts", "half_ts", "nat_n")
+                 "rate_day", "gate", "order", "lookup_ts", "half_ts", "nat_n", "nat_ts")
 
     def __init__(self, coin: str, address: str, side: str, ts: int, px: float):
         self.coin, self.address, self.side = coin, address, side
@@ -101,6 +101,7 @@ class Run:
         self.lookup_ts = None
         self.half_ts = None
         self.nat_n = 0             # HL TWAP alt emri dolumu (sıfır hash, taker) sayısı — 🕵️ gizli TWAP'ı dışlar
+        self.nat_ts = 0            # son HL alt emri dolumunun anı (/twap: emir hâlâ dilim atıyor mu)
 
     @property
     def key(self) -> tuple:
@@ -138,6 +139,8 @@ class Registry:
                     r.tk_n += 1
         if native:
             r.nat_n += 1
+            if ts > r.nat_ts:
+                r.nat_ts = ts
         r.total += notional
         r.sz_total += sz
         r.pxsz += px * sz
@@ -558,7 +561,8 @@ async def persist(run: Run, m: dict | None, src: str = "live", order: dict | Non
              m.get("taker_pct"), now(), run.day_volume, run.rate_day, src, run.alerted_ts,
              run.ended_ts, run.px_first, run.px_last, run.sz_total,
              o.get("planned_usd"), o.get("planned_sz"), o.get("executed_usd"), o.get("remaining_usd"),
-             o.get("started_ts"), o.get("minutes"), o.get("status"), run.lookup_ts, None))
+             o.get("started_ts"), o.get("minutes"), o.get("status"), int(o.get("q_ts") or 0) or run.lookup_ts,
+             None))
 
 
 async def _rehydrate(window_sec: int) -> int:
@@ -664,6 +668,7 @@ async def _quick_refresh(collector, run: "Run", ts: int, out: dict) -> None:
         hist = None
     if hist is None:
         return
+    live_q_put(run.address, ts, hist)                  # /twap: aynı emrin öteki kopyaları da iptali görsün
     orders = parse_twap_orders(hist, run.coin, run.side, run.px_last, ts)
     started = int((run.order or {}).get("started_ts") or 0)
     got = next((o for o in orders if started and abs(int(o.get("started_ts") or 0) - started) <= 2), None)
@@ -808,7 +813,10 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         and ts - int(run.lookup_ts or 0) >= QUICK_REFRESH:
                     await _quick_refresh(collector, run, ts, out)
                 elif collector is not None and ts - int(run.lookup_ts or 0) >= REFRESH_SEC:
+                    prev = (cur.get("started_ts"), cur.get("status"))
                     await lookup_order(collector, run, ts, cfg, out, force=True)
+                    if run.order and (run.order.get("started_ts"), run.order.get("status")) != prev:
+                        await persist(run, m)             # twap_runs iptal edilmiş eski emri 'activated' tutmasın
                 order = run.order
                 mm = m or _scalar_measure(run)
                 active = bool(order and order.get("status") == "activated")
@@ -1014,6 +1022,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 ok = await notifier.send("twap", text, priority="high", key=f"twap:{key}", chat_id=chat, coin=run.coin)
                 if ok:
                     await alert_log("twap", key, text)        # talep bırakılmadan önce: hızlı yol bekleme işaretini görsün
+                    if okey:
+                        await alert_log("twap_o", okey, "")   # 📣 (/twap): bildirilen EMİR (aynı anahtarın başka emri değil)
                 await mirror(cfg, notifier, text, mkey, run.coin, out, primary=chat)
                 if ok:
                     out["alerted"] += 1
@@ -1266,11 +1276,29 @@ async def diag_coin(cfg, coin: str) -> str:
     return "\n".join(lines)
 
 
-LIVE_SILENT = 300           # /twap canlı listesi: bu kadar dilim gelmeyen emir "süren" sayılmaz (HL dilimi ~30 sn)
+LIVE_SILENT = 300           # /twap canlı listesi: bu kadar HL alt emri dolumu gelmeyen emir "süren" sayılmaz (~30 sn'de bir)
 LIVE_LOOKUPS = 8            # /twap başına en çok bu kadar anlık emir sorgusu (dilimi görülen ama emri bilinmeyen)
+LIVE_ASK_PAR = 3            # anlık sorgular aynı anda en çok (HL: IP başına 10 kullanıcı aboneliği; radar yer bulsun)
 LIVE_Q_TTL = 120            # anlık sorgu önbelleği (art arda /twap aynı adresi yeniden sormasın)
-LIVE_DB_MAX_AGE = 6 * 3600  # kayıtlı (twap_runs) emir: son sorgusu bundan eskiyse kullanılmaz
+LIVE_DB_MAX_AGE = 6 * 3600  # kayıtlı (twap_runs) emir: son HL cevabı bundan eskiyse kullanılmaz
 _LIVE_Q: dict[str, tuple[int, list]] = {}
+
+
+def live_q_put(addr: str, ts: int, hist) -> None:
+    """/twap'ın emir geçmişi önbelleği (eski yolun `_lookup_cache`'ine DOKUNMAZ — o ilk alarm kararlarını besler).
+    ⚡ yenileme, hızlı yolun lifecycle sorgusu ve anlık sorgular yazar: bir kopyanın gördüğü iptali öteki kopya da görür."""
+    if hist is None or not addr:
+        return
+    cur = _LIVE_Q.get(addr)
+    if cur is None or int(ts) >= int(cur[0]):
+        _LIVE_Q[addr] = (int(ts), hist)
+    if len(_LIVE_Q) > 500:
+        for k in sorted(_LIVE_Q, key=lambda k: _LIVE_Q[k][0])[:250]:
+            _LIVE_Q.pop(k, None)
+
+
+def _newest_hist(addr: str):
+    return max((x for x in (_LIVE_Q.get(addr), _lookup_cache.get(addr)) if x), key=lambda x: int(x[0]), default=None)
 
 
 def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts, alerted, n, seen,
@@ -1287,6 +1315,8 @@ def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts
     planned = float(o.get("planned_usd") or 0)
     dv = (vols.get(coin) or (None, None))[0]
     k = (coin, addr, side, t0)
+    if k not in out and t0:                            # aynı emir: başlangıç kaynaktan kaynağa ±2 sn oynayabilir
+        k = next((k2 for k2 in out if k2[:3] == k[:3] and abs(int(k2[3]) - t0) <= 2), k)
     e = {"coin": coin, "addr": addr, "side": side, "planned_usd": planned,
          "executed_usd": o.get("executed_usd"), "filled_pct": o.get("filled_pct"), "minutes": mins,
          "started_ts": t0, "left_sec": max(0, end - ts) if end is not None else None, "q_ts": int(q_ts or 0),
@@ -1305,12 +1335,13 @@ def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts
 
 
 def _fresher(o: dict | None, addr: str, coin: str, side: str, px, ts: int) -> dict | None:
-    """Adresin önbellekteki emir geçmişi bu emrin son sorgusundan TAZEYSE aynı emri (başlangıç ±2 sn) oradan al —
-    iptal edilmiş emir (aynı adres + coin + yönün başka TWAP'ı dilim atarken) 'süren' görünmesin. G/Ç yok."""
+    """Adresin en taze emir geçmişi (eski yolun önbelleği ya da /twap önbelleği) bu emrin son sorgusundan TAZEYSE
+    aynı emri (başlangıç ±2 sn) oradan al — iptal edilmiş emir (aynı adres + coin + yönün başka TWAP'ı dilim
+    atarken, ya da kayıtta 'activated' kalmış) 'süren' görünmesin. Geçmişte bulunmazsa olduğu gibi. G/Ç yok."""
     if not o:
         return o
-    c = _lookup_cache.get(addr)
-    if not c or int(c[0]) <= int(o.get("q_ts") or 0):
+    c = _newest_hist(addr)
+    if not c or int(c[0]) < int(o.get("q_ts") or 0):     # eşitse de oku: aynı anın geçmişi kaydın kopyasından iyidir
         return o
     t0 = int(o.get("started_ts") or 0)
     for x in parse_twap_orders(c[1], coin, side, px, ts):
@@ -1320,44 +1351,32 @@ def _fresher(o: dict | None, addr: str, coin: str, side: str, px, ts: int) -> di
     return o
 
 
-def _live_memory(out: dict, ts: int, vols: dict) -> None:
-    """📣 burada geçici: kesin işaret live_twaps_full'da alerts_log'dan (gerçekten gönderilen emir) gelir."""
+def _live_memory_cands(ts: int) -> list[tuple]:
+    """(coin, adres, yön, emir, son dilim, 📣 geçici, n, görülen, kaynak) — bellekteki kopyalar."""
+    out = []
     for r in list(REG.runs.values()):
-        o = _fresher(r.order, r.address, r.coin, r.side, r.px_last, ts)
-        if not o or not native_overlap([o], r):
-            continue
-        q = int(o.get("q_ts") or 0)
-        _live_add(out, ts, vols, r.coin, r.address, r.side, o, r.last_ts, q, r.alerted_ts, r.n, r.total, "mem")
+        o = r.order
+        if o and native_overlap([o], r):
+            out.append((r.coin, r.address, r.side, o, r.last_ts, r.alerted_ts, r.n, r.total, "mem", r.px_last, r))
     try:
         from . import twapfast
         for f in list(twapfast.F.open.values()):
-            if f.get("ended"):
-                continue
-            o = _fresher(f.get("order"), f["addr"], f["coin"], f["side"], f.get("px_last"), ts)
-            _live_add(out, ts, vols, f["coin"], f["addr"], f["side"], o,
-                      max(int(f.get("last_ts") or 0), int(f.get("last_slice") or 0)),
-                      int((o or {}).get("q_ts") or 0), True, f.get("n"), f.get("total"), "fast")
+            if not f.get("ended"):
+                out.append((f["coin"], f["addr"], f["side"], f.get("order"),
+                            max(int(f.get("last_ts") or 0), int(f.get("last_slice") or 0)), True, f.get("n"),
+                            f.get("total"), "fast", f.get("px_last"), None))
     except Exception:                                  # noqa: BLE001
         log.debug("hızlı yol emirleri okunamadı", exc_info=True)
+    return out
 
 
-async def _announced(rows: list[dict]) -> None:
-    """📣 = bu EMİR gerçekten bildirildi (kullanıcıya 'kanala bildirildi' diyoruz): ilk dilim yolunun emir işareti
-    ('twap_fast', adres:coin:yön:başlangıç) ya da eski yolun GÖNDERİLMİŞ alarmı ('twap', metinli) emrin
-    başlangıcından sonra. Bekleme benimsemesi / kanalsız tur / aynı anahtarın eski emri 📣 sayılmaz."""
-    if not rows:
-        return
-    try:
-        async with db() as conn:
-            for e in rows:
-                key = f"{e['coin']}:{e['addr']}:{e['side']}"
-                cur = await conn.execute(
-                    """SELECT 1 FROM alerts_log WHERE (kind='twap_fast' AND key=?)
-                         OR (kind='twap' AND key=? AND ts >= ? AND COALESCE(payload,'') <> '') LIMIT 1""",
-                    (f"{key}:{int(e['started_ts'])}", key, int(e["started_ts"]) - 5))
-                e["alerted"] = (await cur.fetchone()) is not None
-    except Exception:                                  # noqa: BLE001
-        log.debug("📣 işareti okunamadı", exc_info=True)
+def _add_cands(out: dict, cands: list[tuple], ts: int, vols: dict) -> None:
+    for coin, addr, side, o, last_ts, alerted, n, seen, src, px, run in cands:
+        o = _fresher(o, addr, coin, side, px, ts)
+        if run is not None and o and not native_overlap([o], run):
+            continue
+        _live_add(out, ts, vols, coin, addr, side, o, last_ts, int((o or {}).get("q_ts") or 0), alerted, n, seen,
+                  src)
 
 
 def _live_sorted(out: dict) -> list[dict]:
@@ -1365,37 +1384,63 @@ def _live_sorted(out: dict) -> list[dict]:
 
 
 def live_twaps(now_ts: int | None = None) -> list[dict]:
-    """Yalnız bellek (canlı sayaç REG + ilk dilim yolu F.open) — G/Ç yok. /twap `live_twaps_full` kullanır."""
+    """Yalnız bellek (canlı sayaç REG + ilk dilim yolu F.open) — G/Ç yok, 📣 geçici. /twap `live_twaps_full`."""
     ts = int(now_ts or now())
     out: dict[tuple, dict] = {}
-    _live_memory(out, ts, VOL_CACHE.get("v") or {})
+    _add_cands(out, _live_memory_cands(ts), ts, VOL_CACHE.get("v") or {})
     return _live_sorted(out)
 
 
+async def _announced(rows: list[dict]) -> None:
+    """📣 = bu EMİR ana hedefe gerçekten gönderildi (kullanıcıya 'kanala bildirildi' diyoruz): ilk dilim yolunun
+    gönderim kaydı ('sent:twap', 'twap_fast:' + emir anahtarı — Notifier yalnız başarılı gönderimde yazar) ya da
+    eski yolun emir işareti ('twap_o', adres:coin:yön:başlangıç). Eski sürümün emirsiz 'twap' kaydı yalnız o
+    anahtarda hiç 'twap_o' yoksa (bu sürümden önce gönderilmiş) ve emrin başlangıcından sonraysa sayılır.
+    Bekleme benimsemesi / kanalsız tur / sessiz saatte özete kalan / aynı anahtarın başka emri 📣 değil."""
+    if not rows:
+        return
+    try:
+        async with db() as conn:
+            for e in rows:
+                key = f"{e['coin']}:{e['addr']}:{e['side']}"
+                okey = f"{key}:{int(e['started_ts'])}"
+                cur = await conn.execute(
+                    """SELECT 1 FROM alerts_log WHERE (kind='sent:twap' AND key=?) OR (kind='twap_o' AND key=?)
+                         OR (kind='twap' AND key=? AND ts >= ? AND COALESCE(payload,'') <> ''
+                             AND NOT EXISTS (SELECT 1 FROM alerts_log o WHERE o.kind='twap_o'
+                                             AND o.key >= ? AND o.key < ?)) LIMIT 1""",
+                    (f"twap_fast:{okey}", okey, key, int(e["started_ts"]) - 5, key + ":", key + ";"))
+                e["alerted"] = (await cur.fetchone()) is not None
+    except Exception:                                  # noqa: BLE001
+        log.debug("📣 işareti okunamadı", exc_info=True)
+
+
 def _native_active(ts: int) -> dict[tuple, Run]:
-    """Son LIVE_SILENT sn içinde HL TWAP alt emri dolumu (sıfır hash, adres taker) görülen diziler — emir sürüyor."""
-    return {r.key: r for r in list(REG.runs.values()) if r.nat_n and ts - int(r.last_ts) <= LIVE_SILENT}
+    """Son LIVE_SILENT sn içinde HL TWAP alt emri dolumu (sıfır hash, adres taker) görülen diziler — emir sürüyor.
+    Elle (imzalı) işlem bunu tazelemez."""
+    return {r.key: r for r in list(REG.runs.values()) if r.nat_n and ts - int(r.nat_ts or 0) <= LIVE_SILENT}
 
 
 async def live_twaps_full(collector=None, now_ts: int | None = None,
                           max_lookups: int = LIVE_LOOKUPS) -> tuple[list[dict], dict]:
     """/twap (kullanıcı 13.10: "hangi grupta yazarsam yazayım en büyük canlı TWAP'ları sıralasın"): şu an SÜREN
     HL TWAP emirleri, planlanan büyüklüğe göre. Bellek yeniden başlatmada sıfırlanır (13.10 20:39 deploy
-    sonrası liste boş geldi) — üç kaynak:
+    sonrası liste boş geldi) — kaynaklar:
       1) bellek: canlı sayacın emri sorulmuş dizileri + ilk dilim yolunun bildirdiği emirler
-      2) kayıt: twap_runs'taki süren emir (activated, bitişi gelmemiş, son sorgusu ≤ 6 sa) — YALNIZ aynı adres +
-         coin + yönde son 5 dk'da HL TWAP alt emri dolumu görülüyorsa (emir hâlâ dilim atıyor)
-      3) anlık sorgu: HL alt emri dolumu görülen ama emri bilinmeyen en büyük dizilerin (görülen $) adresleri
-         şimdi sorulur (en çok `max_lookups`, 2 dk önbellek)
-    Tahmin yok: dolan = son sorgudaki HL rakamı (sorgu anı `q_ts`), kalan süre = planlanan bitiş − şimdi.
-    Dönüş: (satırlar, bilgi {asked, failed, skipped})."""
+      2) kayıt: twap_runs'taki süren emir (activated, bitişi gelmemiş, son HL cevabı ≤ 6 sa) — YALNIZ aynı adres +
+         coin + yönde son 5 dk'da HL TWAP alt emri dolumu görülüyorsa; kayıt tek başına güvenilmez (iptal sonrası
+         'activated' kalmış olabilir) → anahtarı yine de anlık sorulur
+      3) anlık sorgu: alt emir dolumu görülen ama emri bellekte taze bilinmeyen en büyük dizilerin adresleri şimdi
+         sorulur (en çok `max_lookups`, aynı anda LIVE_ASK_PAR ve hızlı yolun soket tavanı içinde, 2 dk önbellek)
+    Her kopya en taze emir geçmişiyle süzülür (_fresher): iptal edilmiş emir düşer. Tahmin yok: dolan = son
+    HL cevabındaki rakam (`q_ts`), kalan süre = planlanan bitiş − şimdi. Dönüş: (satırlar, {asked, failed, skipped})."""
     ts = int(now_ts or now())
+    info = {"asked": 0, "failed": 0, "skipped": 0}
     try:
         vols = await volumes_cached()
     except Exception:                                  # noqa: BLE001
         vols = VOL_CACHE.get("v") or {}
-    out: dict[tuple, dict] = {}
-    _live_memory(out, ts, vols)
+    cands = _live_memory_cands(ts)
     active = _native_active(ts)
     # 2) kayıt
     if active:
@@ -1420,57 +1465,74 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
             o = {"status": "activated", "planned_usd": pu, "planned_sz": x.get("planned_sz"),
                  "executed_usd": x.get("executed_usd"), "remaining_usd": x.get("remaining_usd"),
                  "filled_pct": (float(x.get("executed_usd") or 0) / pu * 100) if pu else None,
-                 "minutes": float(x.get("order_min") or 0), "started_ts": int(x.get("order_ts") or 0)}
-            _live_add(out, ts, vols, x["coin"], x["address"], x["side"], o, r.last_ts,
-                      int(x.get("lookup_ts") or x.get("ts") or 0), x.get("alerted_ts"), r.n, r.total, "db")
-    # 3) anlık sorgu (sorgu anı bilinmeyen satır — restart — da yeniden sorulur)
-    have = {(e["coin"], e["addr"], e["side"]) for e in out.values() if e["q_ts"]}
-    todo = sorted((r for k, r in active.items() if k not in have), key=lambda r: -r.total)
-    info = {"asked": 0, "failed": 0, "skipped": 0}
+                 "minutes": float(x.get("order_min") or 0), "started_ts": int(x.get("order_ts") or 0),
+                 "q_ts": int(x.get("lookup_ts") or x.get("ts") or 0)}
+            cands.append((x["coin"], x["address"], x["side"], o, r.last_ts, x.get("alerted_ts"), r.n, r.total, "db",
+                          r.px_last, None))
+    # 3) anlık sorgu: bellekte taze emri olmayan (kayıttan gelen ya da sorgu anı bilinmeyen) alt emir dizileri
+    known = {(c[0], c[1], c[2]) for c in cands
+             if c[8] != "db" and c[3] and int(c[3].get("q_ts") or 0) and ts - int(c[3]["q_ts"]) < REFRESH_SEC * 2}
+    todo = sorted((r for k, r in active.items() if k not in known), key=lambda r: -r.total)
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
-    if todo and fn is None:
-        info["skipped"] = len({r.address for r in todo})
-        todo = []
-    picked, addrs = [], []
+    addrs: list[str] = []
     for r in todo:
         if r.address not in addrs:
-            if len(addrs) >= max(0, int(max_lookups)):
-                continue
             addrs.append(r.address)
-        picked.append(r)
-    info["skipped"] += len({r.address for r in todo} - set(addrs))
-    hist: dict[str, tuple[int, list]] = {}
-    need = []
-    for a in addrs:
-        c = max((x for x in (_LIVE_Q.get(a), _lookup_cache.get(a)) if x), key=lambda x: x[0], default=None)
-        if c and ts - int(c[0]) < LIVE_Q_TTL:
-            hist[a] = (int(c[0]), c[1])
-        else:
-            need.append(a)
+    if fn is None:
+        info["skipped"] = len(addrs)
+        addrs = []
+    elif len(addrs) > max(0, int(max_lookups)):
+        info["skipped"] = len(addrs) - max(0, int(max_lookups))
+        addrs = addrs[:max(0, int(max_lookups))]
+    # önbellek yalnız tazeyse (2 dk) VE adresin en yeni dizisinden sonra alınmışsa yeter — sonra açılan emir onda yok
+    since = {}
+    for r in todo:
+        since[r.address] = max(since.get(r.address, 0), int(r.first_ts))
+    need = [a for a in addrs
+            if not ((c := _newest_hist(a)) and ts - int(c[0]) < LIVE_Q_TTL and int(c[0]) >= since[a] - 5)]
     if need:
+        from . import twapfast
+        sem = asyncio.Semaphore(LIVE_ASK_PAR)
+
         async def ask(a):
-            try:
-                return await fn(a, timeout=5.0)
-            except TypeError:
-                return await fn(a)
-        res = await asyncio.gather(*(ask(a) for a in need), return_exceptions=True)
-        info["asked"] = len(need)
+            async with sem:
+                waiters = getattr(collector, "_twap_waiters", None)
+                if isinstance(waiters, dict) and len(waiters) >= twapfast.WS_CEILING:
+                    return "skip"                        # soket tavanı: radarın sorgularına yer kalsın
+                try:
+                    try:
+                        return await fn(a, timeout=5.0)
+                    except TypeError:
+                        return await fn(a)
+                except Exception:                      # noqa: BLE001
+                    return None
+        res = await asyncio.gather(*(ask(a) for a in need))
         for a, h in zip(need, res):
-            if isinstance(h, Exception) or h is None:
+            if isinstance(h, str):
+                info["skipped"] += 1
+                continue
+            info["asked"] += 1
+            if h is None:
                 info["failed"] += 1
                 continue
-            hist[a] = (ts, h)
-            _LIVE_Q[a] = (ts, h)
-        if len(_LIVE_Q) > 500:
-            for k in sorted(_LIVE_Q, key=lambda k: _LIVE_Q[k][0])[:250]:
-                _LIVE_Q.pop(k, None)
-    for r in picked:
-        got = hist.get(r.address)
-        if got is None:
+            live_q_put(a, ts, h)
+    # taze geçmişten bu coin + yönün TÜM süren emirleri (aynı anahtarda eşzamanlı birden çok TWAP olabilir; bellek
+    # yalnız birini tutar): sorulanlar REFRESH_SEC*2'den, diğerleri yalnız LIVE_Q_TTL içinde değil — bilinen taze
+    asked = set(need)
+    for k in set(active) | known:
+        r = REG.runs.get(k) or active.get(k)
+        if r is None:
             continue
-        for o in parse_twap_orders(got[1], r.coin, r.side, r.px_last, ts):
+        c = _newest_hist(r.address)
+        if not c or ts - int(c[0]) >= (LIVE_Q_TTL if r.address in asked or k not in known else REFRESH_SEC * 2):
+            continue
+        for o in parse_twap_orders(c[1], r.coin, r.side, r.px_last, ts):
             if o.get("status") == "activated":
-                _live_add(out, ts, vols, r.coin, r.address, r.side, o, r.last_ts, got[0], False, r.n, r.total, "ask")
+                o["q_ts"] = int(c[0])
+                cands.append((r.coin, r.address, r.side, o, r.last_ts, False, r.n, r.total,
+                              "ask" if r.address in asked else "mem", r.px_last, r))
+    out: dict[tuple, dict] = {}
+    _add_cands(out, cands, ts, vols)                 # her kopya en taze geçmişle süzülür (iptal → düşer)
     rows = _live_sorted(out)
     await _announced(rows)
     return rows, info

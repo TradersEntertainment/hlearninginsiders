@@ -71,6 +71,7 @@ async def _fresh():
     tl.REG.clear()
     tl._lookup_cache.clear()
     tl.VOL_CACHE.update(ts=0, v={})
+    tl._LIVE_Q.clear()
     tf.F.clear()
     await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {c: {"m": PX, "oi": 1, "f": 0, "v": v, "p": None}
                                              for c, v in (("PUMP", 100e6), ("INJ", 50e6), ("SOL", 900e6),
@@ -159,24 +160,33 @@ def test_after_restart_db_and_ask():
         feed("PUMP", A, "buy", n=2, ntl=40_000, t_end=dbm.now() - 3)   # emri bilinmeyen, görülen $80K
         feed("WIF", C, "buy", n=2, ntl=1_000, t_end=dbm.now() - 3)     # emri bilinmeyen, küçük
         feed("SOL", D, "buy", n=2, ntl=9_000, native=False)             # HL alt emri değil → sorulmaz
+        inj_hist = [order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000)]
         col = Col({A: [order("PUMP", A, ntl=7_000_000, start_ago=400, minutes=600)],
-                   C: [order("WIF", C, ntl=300_000, start_ago=100, minutes=60)]})
+                   B: inj_hist, C: [order("WIF", C, ntl=300_000, start_ago=100, minutes=60)]})
         rows, info = await tl.live_twaps_full(col)
         assert [(r["coin"], r["src"]) for r in rows] == [("PUMP", "ask"), ("INJ", "db"), ("WIF", "ask")], rows
-        assert sorted(col.calls) == sorted([A, C]) and info == {"asked": 2, "failed": 0, "skipped": 0}, info
+        assert rows[1]["q_ts"] >= dbm.now() - 5, "kayıt satırı taze geçmişle doğrulandı (sorgu anı yeni)"
+        assert sorted(col.calls) == sorted([A, B, C]) and info == {"asked": 3, "failed": 0, "skipped": 0}, info
         inj = rows[1]
         assert inj["alerted"] and abs(inj["planned_usd"] - 5e6) < 1 and abs(inj["filled_pct"] - 25) < 1e-6
         assert abs(rows[0]["vol_pct"] - 7) < 1e-6, "hacim kv'den (VOL_CACHE boşken de)"
         # 2 dk içinde yeniden /twap: yeniden sorulmaz
         rows2, info2 = await tl.live_twaps_full(col)
-        assert len(col.calls) == 2 and info2["asked"] == 0 and [r["coin"] for r in rows2] == ["PUMP", "INJ", "WIF"]
+        assert len(col.calls) == 3 and info2["asked"] == 0 and [r["coin"] for r in rows2] == ["PUMP", "INJ", "WIF"]
+        # kayıtta 'activated' kalmış ama taze geçmişte iptal (terminated) → listede YOK
+        tl._LIVE_Q.clear()
+        col_x = Col({A: [order("PUMP", A, ntl=7_000_000, start_ago=400, minutes=600)],
+                     B: [order("INJ", B, side="A", status="terminated", minutes=300, start_ago=1200, ntl=5_000_000)],
+                     C: [order("WIF", C, ntl=300_000, start_ago=100, minutes=60)]})
+        rows_x, _ = await tl.live_twaps_full(col_x)
+        assert [r["coin"] for r in rows_x] == ["PUMP", "WIF"], rows_x
         # sorgu tavanı: en büyük görülen önce sorulur, kalanlar "sorulamadı" sayılır
         tl._LIVE_Q.clear()
         col3 = Col({A: [order("PUMP", A, ntl=7_000_000, start_ago=400, minutes=600)]})
         rows3, info3 = await tl.live_twaps_full(col3, max_lookups=1)
-        assert col3.calls == [A] and info3 == {"asked": 1, "failed": 0, "skipped": 1}, info3
+        assert col3.calls == [A] and info3 == {"asked": 1, "failed": 0, "skipped": 2}, info3
         t = fmt.live_twaps(rows3, info=info3)
-        assert "⚠ HL TWAP dilimi görülen 1 adresin emri bu sefer sorulamadı" in t, t
+        assert "⚠ HL TWAP dilimi görülen 2 adresin emri bu sefer sorulamadı" in t, t
         # sorgu düştü / collector yok
         tl._LIVE_Q.clear()
 
@@ -185,9 +195,9 @@ def test_after_restart_db_and_ask():
                 self.calls.append(addr)
                 return None
         rows4, info4 = await tl.live_twaps_full(Dead({}))
-        assert info4["failed"] == 2 and [r["coin"] for r in rows4] == ["INJ"]
+        assert info4["failed"] == 3 and [r["coin"] for r in rows4] == ["INJ"], "sorgu düşerse kayıt kalır"
         rows5, info5 = await tl.live_twaps_full(None)
-        assert info5["skipped"] == 2 and [r["coin"] for r in rows5] == ["INJ"]
+        assert info5["skipped"] == 3 and [r["coin"] for r in rows5] == ["INJ"]
         # kayıtlı emir ama adres son 5 dk'da HL alt emri dilimi atmıyor → listede yok (iptal olmuş olabilir)
         tl.REG.clear()
         feed("INJ", B, "sell", n=3, t_end=dbm.now() - 900)
@@ -259,6 +269,68 @@ def test_review_ghost_bell_query_age():
         assert "-888" in TelegramBot._own_chats(type("B", (), {"cfg": c3})())
         print("✅ inceleme) iptal edilen emir taze önbellekle düşer + lifecycle 5 dk'da sorar; 📣 yalnız gönderilen"
               " emirde; sorgu anı önbellekten; bilinmiyorsa yazılır; ⚡ ayarlı süre; STRAT sohbeti")
+    asyncio.run(run())
+
+
+def test_review2_marks_gate_persist_ceiling():
+    """İkinci inceleme: 📣 emre özgü; yalnız HL alt emri dolumu 'süren' sayılır; yenileme kaydı günceller; soket tavanı."""
+    async def run():
+        from app.notify import Notifier
+        await _fresh()
+        cfg = _cfg()
+        # eski yol gerçekten gönderdi → 'twap_o' emir işareti; aynı anahtarın eşzamanlı başka emri 📣 almaz
+        feed("INJ", B, "sell")
+        hist = [order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000, tid=1),
+                order("INJ", B, side="A", minutes=600, start_ago=1800, ntl=1_000_000, tid=2)]
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col({B: hist}))
+        sent_o = tl.REG.runs[("INJ", B, "sell")].order
+        async with dbm.db() as c:
+            n = (await (await c.execute("SELECT COUNT(*) n FROM alerts_log WHERE kind='twap_o' AND key=?",
+                                        (f"INJ:{B}:sell:{sent_o['started_ts']}",))).fetchone())["n"]
+        assert n == 1
+        tl._LIVE_Q.clear()
+        rows, _ = await tl.live_twaps_full(Col({B: hist}))
+        assert {round(r["planned_usd"]): r["alerted"] for r in rows} == {5_000_000: True, 1_000_000: False}, rows
+        # hızlı yol: Notifier'ın başarılı gönderim kaydı (sent:twap, 'twap_fast:' + emir anahtarı) 📣 sayılır
+        okey = f"INJ:{B}:sell:{int(rows[1]['started_ts'])}"
+        await dbm.alert_log("sent:twap", f"twap_fast:{okey}", "x")
+        rows, _ = await tl.live_twaps_full(Col({B: hist}))
+        assert all(r["alerted"] for r in rows), rows
+        # yalnız HL alt emri dolumu 'süren' sayar: elle (imzalı) işlem anahtarı canlı tutmaz
+        await _fresh()
+        feed("PUMP", A, "buy", n=3, t_end=dbm.now() - 600)                 # HL dilimleri 10 dk önce bitti
+        feed("PUMP", A, "buy", n=3, t_end=dbm.now() - 2, native=False)     # şimdi elle işlem
+        assert not tl._native_active(dbm.now())
+        # alarm verilmiş turun 10 dk yenilemesi emri değiştirirse kayıt güncellenir (iptal edilen 'activated' kalmaz)
+        await _fresh()
+        feed("INJ", B, "sell")
+        x = [order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000, tid=1)]
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col({B: x}))
+        run_ = tl.REG.runs[("INJ", B, "sell")]
+        assert run_.alerted_ts
+        run_.lookup_ts = dbm.now() - tl.REFRESH_SEC - 1
+        y = [order("INJ", B, side="A", status="terminated", minutes=300, start_ago=1200, ntl=5_000_000, tid=1),
+             order("INJ", B, side="A", minutes=120, start_ago=60, ntl=3_000_000, tid=2)]
+        tl._lookup_cache.clear()
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col({B: y}))
+        async with dbm.db() as c:
+            st = [dict(r) for r in await (await c.execute(
+                "SELECT order_status, planned_usd FROM twap_runs WHERE address=?", (B,))).fetchall()]
+        assert st and all(not (r["order_status"] == "activated" and round(r["planned_usd"]) == 5_000_000)
+                          for r in st), st
+        # soket tavanı doluysa anlık sorgu yapılmaz (radarın sorgularına yer kalsın), 'sorulamadı' sayılır
+        await _fresh()
+        feed("PUMP", A, "buy", n=3)
+
+        class Busy(Col):
+            def __init__(self, h):
+                super().__init__(h)
+                self._twap_waiters = {f"w{i}": None for i in range(tf.WS_CEILING)}
+        busy = Busy({A: [order("PUMP", A)]})
+        rows, info = await tl.live_twaps_full(busy)
+        assert not busy.calls and info["skipped"] == 1 and not rows, (info, rows)
+        print("✅ inceleme 2) 📣 emre özgü (eski yol 'twap_o', hızlı yol gönderim kaydı); elle işlem 'süren' tutmaz;"
+              " yenileme kaydı günceller; soket tavanında anlık sorgu yok")
     asyncio.run(run())
 
 
