@@ -913,14 +913,18 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 out["best"] = {"coin": run.coin, "side": run.side, "planned": planned,
                                "left": (order or {}).get("remaining_usd"), "status": order.get("status"),
                                "vol_pct": det["vol_pct"]}
-            if order:
+            # Dizi başlamadan çok önce bitmiş eski emir BU dizinin emri değil (🕵️ gizli TWAP olabilir): ne 🧪
+            # LOG-TWAP ne /twaplar kaydı ona bağlanır — yoksa aynı dizi hem "emirsiz" hem "$4M HL TWAP" görünürdü.
+            own = bool(order) and native_overlap([order], run)
+            if own:
                 _lab_twap(run, order, det, g, ts, lookup_min, min_slices)   # 🧪 kapıdan ÖNCE: geçen + kalan
             if g not in ("ok", "big"):
                 out[g] = out.get(g, 0) + 1
                 failed_lookup = g == "no_order" and out.get("lookup_fail", 0) > lf_before
                 capped = out.get("lookup_capped", 0) > lc_before     # bu tur sorulmadı: emir YOK sayılamaz
                 decide(run, "lookup_fail" if failed_lookup else ("lookup_capped" if capped and not order else g), det)
-                if g in ("no_order", "order_done") and not failed_lookup and not capped:
+                if (g == "no_order" or (g == "order_done" and not own)) and not failed_lookup and not capped \
+                        and not run.nat_n:
                     # 🕵️ Emir YOK ya da dizi başlamadan bitmiş eski emir (sorgu başarılı): kendi botuyla dilimleme —
                     # gizli TWAP radarı devralır; iddiadan önce TAZE geçmişle doğrular (verify_hidden).
                     # Bu dalın eski davranışı (karar, sayaç, 'twap' işareti yok) DEĞİŞMEZ.
@@ -935,7 +939,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 # /twaplar sekmesi "tüm TWAP emirleri"ni gösteriyor, yalnız kanala
                 # düşenleri değil. Bildirim alanları (alerted_ts) boş kalır — sayfa
                 # bildirilmiş ile yalnız görülmüşü böyle ayırır.
-                if order:
+                if run.order and native_overlap([run.order], run):   # verify_hidden'ın zorla sorgusu tazelemiş olabilir
                     run.day_volume = day_vol
                     await persist(run, m)
                     out["seen"] = out.get("seen", 0) + 1
@@ -1113,7 +1117,7 @@ def live_runs(coin: str) -> list[dict]:
     bu liste BOŞTUR — sayfa bunu künyede söyler, "TWAP yok" diye yalan söylemez."""
     out = []
     for r in _runs_for(lambda x: x.coin == coin):
-        o = r.order or {}
+        o = r.order if (r.order and native_overlap([r.order], r)) else {}   # dizi öncesi bitmiş emir onun değil
         out.append({
             "coin": r.coin, "address": r.address, "side": r.side,
             "first_ts": r.first_ts, "last_ts": r.last_ts,

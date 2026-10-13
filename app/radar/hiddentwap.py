@@ -60,6 +60,7 @@ REASON_TR = {"ok": "bildirildi", "big": "bildirildi (büyük)", "small": "görü
              "spot_thin": "spot çifti ince", "ignored": "elenmiş adres (mm/vault//ignore)",
              "native": "HL TWAP alt emri dolumu görüldü", "native_order": "taze sorguda HL TWAP emri var",
              "no_data": "taze emir geçmişi alınamadı (sonraki tur)", "same_op": "aynı operasyon zaten bildirildi",
+             "ended": "dizi durmuş (iddia yok)",
              "failed": "gönderilemedi (bot grupta mı, HIDDEN_TWAP_CHAT_ID doğru mu?)"}
 
 STATS: dict = {"considered": 0, "alerted": 0, "lab": 0, "reasons": {}, "last_ts": 0}
@@ -138,18 +139,35 @@ def _lab(run, m: dict, g: str, x, ts: int, two: bool, tk: str) -> bool:
         return False
 
 
-async def _ops_load() -> None:
+async def _ops_load() -> bool:
+    """Operasyon hafızası kv'den. Okuma düşerse bayrak KALKMAZ (sonraki tur yeniden dener) ve save_stats kv'yi
+    ezmez — yoksa tek bir 'database is locked' restart sonrası ikinci uyarı / ikinci 🧪 doğururdu."""
     global _OPS_LOADED
     if _OPS_LOADED:
-        return
-    _OPS_LOADED = True
+        return True
     try:
-        for k, v in (await kv_get(OPS_KV) or {}).items():
+        doc = await kv_get(OPS_KV) or {}
+    except Exception:                                  # noqa: BLE001
+        log.debug("htwap_ops okunamadı (sonraki tur)", exc_info=True)
+        return False
+    for k, v in doc.items():
+        try:
             coin, addr, side = k.rsplit("|", 2)
             OPS[(coin, addr, side)] = {"start": int(v["start"]), "last": int(v["last"]),
                                        "alerted": int(v.get("alerted") or 0), "lab": int(v.get("lab") or 0)}
-    except Exception:                                  # noqa: BLE001
-        log.debug("htwap_ops okunamadı", exc_info=True)
+        except Exception:                              # noqa: BLE001
+            continue                                   # bozuk tek kayıt hafızanın gerisini düşürmesin
+    _OPS_LOADED = True
+    return True
+
+
+def touch(reg) -> None:
+    """Operasyonun son dilimi DOLUMLARDAN ilerler (consider() çağrılmayan turlarda da: düzensiz / sorgu düştü /
+    tavan) — yoksa twaplive'ın 4 sa yeniden başlatmasında susmamış operasyon 'yeni' sanılırdı."""
+    for k, op in OPS.items():
+        r = reg.runs.get(k)
+        if r is not None and not r.nat_n and int(r.first_ts) - int(op["last"]) <= OP_GAP:
+            op["last"] = max(int(op["last"]), int(r.last_ts))
 
 
 def _op(run) -> dict:
@@ -182,7 +200,8 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
     if not vol_ts or ts - int(vol_ts) > twaplive.VOL_MAX_AGE:
         day_vol = None
     g, x = gate(cfg, run, m, day_vol, twaplive.REG)
-    await _ops_load()
+    if not await _ops_load():
+        return _count("no_data", rid)             # operasyon hafızası okunamadı: ikinci uyarı riski → sonraki tur
     op = _op(run)
     lab_due = run.total >= LAB_MIN and not op["lab"]
     key = f"{run.coin}:{run.address}:{run.side}"
@@ -200,6 +219,10 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
             reason, send_due = "cooldown", False
     if not lab_due and not send_due:
         return _count(reason, rid)
+    if twaplive.is_ended(run, m, ts):
+        # Dizi durmuş (twaplive'ın bitiş kuralı: 3 aralık ve ≥ 5 dk dilim yok): gecikmiş turda (gönderim / sorgu
+        # düştü, bekleme ya da hacim tazelendi) "dilimliyor" demeyelim, 🧪 de geç karar örneklemesin.
+        return _count("ended", rid)
     v = await verify() if verify is not None else None
     if v is None:
         return _count("no_data", rid)             # veri yok ≠ emir yok: iddia da 🧪 de yok, sonraki tur
@@ -214,12 +237,12 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
     ctx = {"day_vol": day_vol, "rate_x": x, "pos": pos, "gate": g, "klass": twaplive.klass_of(run.coin),
            "entity": ents.get(run.address) or ""}
     text = fmt.hidden_twap(m, ctx)
-    if await notifier.send("htwap", text, priority="high", key=f"htwap:{key}", chat_id=chat,
-                           coin=run.coin, public=False):
-        await alert_log("htwap", key, text)
-        op["alerted"] = ts
-    else:
+    op["alerted"] = ts                            # talep ÖNCE: teslimden sonraki DB hatası ikinci mesaj doğurmasın
+    if not await notifier.send("htwap", text, priority="high", key=f"htwap:{key}", chat_id=chat,
+                               coin=run.coin, public=False):
+        op["alerted"] = 0
         return _count("failed", rid)              # işaret yok → sonraki tur yeniden dener
+    await alert_log("htwap", key, text)
     STATS["alerted"] += 1
     STATS["last_ts"] = ts
     try:
@@ -255,6 +278,8 @@ async def save_stats() -> None:
     try:
         await kv_set(STATS_KV, {**STATS, "ts": now()})
         if _OPS_LOADED:
+            from .twaplive import REG
+            touch(REG)
             cut = now() - OPS_MAX_AGE
             for k in [k for k, v in OPS.items() if int(v["last"]) < cut]:
                 OPS.pop(k, None)
@@ -275,7 +300,8 @@ async def diag_line(cfg) -> str:
         where = " · ⚠ HIDDEN_TWAP_CHAT_ID'ye gönderilemiyor (bot grupta mı, id doğru mu?)"
     else:
         where = " · grup: HIDDEN_TWAP_CHAT_ID"
-    head = (f"gizli twap: {st.get('considered', 0)} dizi (emirsiz, düzenli) · {st.get('alerted', 0)} bildirim"
+    emirsiz = max(0, int(st.get("considered", 0)) - int(rs.get("native", 0)) - int(rs.get("native_order", 0)))
+    head = (f"gizli twap: {emirsiz} dizi (emirsiz, düzenli) · {st.get('alerted', 0)} bildirim"
             f" · 🧪 {st.get('lab', 0)} kayıt" + where)
     if rs:
         head += " · " + ", ".join(f"{REASON_TR.get(k, k)} {v}" for k, v in sorted(rs.items(), key=lambda kv: -kv[1])[:5])

@@ -264,19 +264,26 @@ def test_review_fixes_no_false_hidden_claim():
         await _fresh()
         feed("PUMP", A, "buy", 20, 15_000, native=True)
         await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
-        assert tl.REG.runs[("PUMP", A, "buy")].nat_n == 20 and ht.STATS["reasons"] == {"native": 1} and not bot.sent
+        assert tl.REG.runs[("PUMP", A, "buy")].nat_n == 20 and not bot.sent
+        assert ht.STATS["considered"] == 0, "HL emriyle yürüyen dizi gizli TWAP'a hiç girmez (/tani 'emirsiz' saymaz)"
+        assert "hidden" not in (await dbm.kv_get(tl.LAST_KV))[0]
         # maker tarafındaki adres sıfır hash'ten etkilenmez (taker=0 → native=False collector'da)
         # 4) dizi başlamadan çok önce BİTMİŞ eski emir → gizli TWAP (adres ömür boyu silinmez)
         await _fresh()
         feed("PUMP", A, "buy", 20, 15_000)
         await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([order(status="finished", start_ago=20_000, minutes=30)]))
         assert [c for c, _ in bot.sent] == ["-555"] and (await dbm.kv_get(tl.LAST_KV))[0]["reason"] == "order_done"
+        # eski emir bu dizinin emri değil: ne 🧪 LOG-TWAP ne /twaplar kaydı ne canlı panelde plan
+        assert not _q("LOG-TWAP") and len(_q("LOG-HTWAP")) == 1
+        async with dbm.db() as c:
+            assert (await (await c.execute("SELECT COUNT(*) n FROM twap_runs")).fetchone())["n"] == 0
+        assert tl.live_runs("PUMP")[0]["planned_usd"] is None
         # dizinin süresiyle örtüşen bitmiş/iptal emir → HL emri sayılır
         await _fresh()
         bot = Bot()
         feed("PUMP", A, "buy", 20, 15_000)
         await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([order(status="terminated", start_ago=900, minutes=60)]))
-        assert not bot.sent and ht.STATS["reasons"] == {"native_order": 1}
+        assert not bot.sent and ht.STATS["considered"] == 0 and len(_q("LOG-TWAP")) == 1, "HL emri: eski yol aynen"
         # 5) /ignore ile elenen adres ('manual') → yok
         await _fresh()
         async with dbm.db() as c:
@@ -370,6 +377,62 @@ def test_message_ratio_and_send_failure():
                                      "no_chat", "spot_thin", "ignored", "native", "native_order", "no_data",
                                      "same_op", "failed"}
         print("✅ mesaj/hata) oran 1× altında yüzde (0.0× yok); gruba gidemezse bekleme yanmaz, /tani uyarır, sonra gider")
+    asyncio.run(run())
+
+
+def test_ended_claim_first_ops_load_and_touch():
+    async def run():
+        cfg = _cfg()
+        # durmuş dizi (son dilim 25 dk önce): "dilimliyor" iddiası yok, 🧪 geç karar yok
+        await _fresh()
+        bot = Bot()
+        feed("PUMP", A, "buy", 20, 15_000, t_end=dbm.now() - 1500)
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert not bot.sent and ht.STATS["reasons"] == {"ended": 1} and not _q("LOG-HTWAP"), ht.STATS
+        # teslimden SONRA DB hatası: aynı mesaj ikinci kez gitmez (talep gönderimden önce)
+        await _fresh()
+        bot = Bot()
+        feed("PUMP", A, "buy", 20, 15_000)
+        orig = ht.alert_log
+
+        async def boom(*a, **k):
+            raise RuntimeError("database is locked")
+        ht.alert_log = boom
+        try:
+            await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        finally:
+            ht.alert_log = orig
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert len(bot.sent) == 1 and ht.STATS["reasons"].get("same_op") == 1, (bot.sent, ht.STATS)
+        # operasyon hafızası okunamazsa: karar yok, kv ezilmez; sonraki tur okur
+        await _fresh()
+        await dbm.kv_set(ht.OPS_KV, {f"PUMP|{A}|buy": {"start": dbm.now() - 9000, "last": dbm.now() - 60,
+                                                       "alerted": dbm.now() - 8000, "lab": 1}})
+        bot = Bot()
+        feed("PUMP", A, "buy", 20, 15_000)
+        okv = ht.kv_get
+
+        async def flaky(k):
+            if k == ht.OPS_KV:
+                raise RuntimeError("database is locked")
+            return await okv(k)
+        ht.kv_get = flaky
+        try:
+            await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        finally:
+            ht.kv_get = okv
+        assert not bot.sent and ht.STATS["reasons"] == {"no_data": 1} and not ht._OPS_LOADED
+        assert (await dbm.kv_get(ht.OPS_KV))[f"PUMP|{A}|buy"]["alerted"], "kv ezilmedi"
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert not bot.sent and ht.STATS["reasons"] == {"same_op": 1} and not _q("LOG-HTWAP")
+        # touch: consider çağrılmayan turlarda da (düzensiz) operasyonun son dilimi dolumlardan ilerler
+        k = ("PUMP", A, "buy")
+        ht.OPS[k]["last"] = dbm.now() - 1000
+        tl.REG.runs[k].last_ts = dbm.now() - 3
+        await ht.save_stats()
+        assert ht.OPS[k]["last"] == dbm.now() - 3 or ht.OPS[k]["last"] >= dbm.now() - 5
+        print("✅ durmuş dizi iddiası yok; teslim sonrası DB hatası ikinci mesaj üretmez; operasyon hafızası okunamazsa"
+              " karar yok (kv ezilmez); son dilim dolumlardan ilerler")
     asyncio.run(run())
 
 
