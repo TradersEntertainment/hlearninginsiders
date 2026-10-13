@@ -2932,7 +2932,9 @@ def help_text() -> str:
         "/refresh — takvimi ŞİMDİ tüm kaynaklardan yenile (eksik earnings görürsen bas)\n"
         "/settime SHAZ bmo — bilanço saatini elle düzelt (bmo/amc/16:30/09:30et)\n"
         "/whale 0x… — adres karnesi + açık pozisyonları\n"
-        "/twap 0x… | /twap PUMP — canlı TWAP radarı teşhisi: diziler, HL emirleri, kapı kararı (niye gelmedi?)\n"
+        "/twap — ⏳ en büyük canlı (süren) HL TWAP'lar, planlanan büyüklüğe göre (her grupta çalışır)\n"
+        "/twap 0x… | /twap PUMP — canlı TWAP radarı teşhisi: diziler, HL emirleri, kapı kararı (niye gelmedi?)"
+        " · /twap durum — radar özeti\n"
         "/watch 0x… — adresi watchlist'e ekle\n"
         "/unwatch 0x… — watchlist'ten çıkar\n"
         "/ignore 0x… — adresi ele (MM/vault gibi davran, alert üretme)\n"
@@ -3214,6 +3216,46 @@ def hidden_twap(m: dict, ctx: dict) -> str:
         lines.append(PROPR_NOTE)
     lines.append("<i>Plan, toplam ve süre görünmez (HL emri yok) — yalnız şimdiye kadar görülen dilimler ve hızı."
                  " Ölçüm, tahmin değil.</i>")
+    return "\n".join(lines)
+
+
+LIVE_TWAP_TOP = 15
+
+
+def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP) -> str:
+    """/twap: en büyük SÜREN HL TWAP emirleri (twaplive.live_twaps), planlanan büyüklüğe göre. Tahmin yok:
+    dolan = son sorgudaki HL rakamı; kalan süre planlanan bitişe göre."""
+    head = "⏳ <b>Canlı TWAP'lar</b>"
+    foot = ("<i>Yalnız radarın HL'ye sorduğu süren emirler (dinlenen coinlerde ≥ $50K görülen ya da ilk dilimde"
+            " sorulan; HL tüm emirleri tek yerden vermiyor). Plan bugünkü fiyatla; dolan son sorgudaki HL rakamı."
+            " 📣 = kanala bildirildi.</i>")
+    if owner:
+        foot += "\nAyrıntı: /twap COIN · /twap 0xADRES · radar özeti: /twap durum"
+    if not rows:
+        return f"{head}\nŞu an radarın gördüğü süren HL TWAP emri yok.\n{foot}"
+    shown = rows[:max(1, int(top))]
+    lines = [f"{head} · en büyük {len(shown)}" + (f" / {len(rows)}" if len(rows) > len(shown) else "")
+             + " · planlanan büyüklüğe göre"]
+    for i, e in enumerate(shown, 1):
+        sym = esc(assets.label(e.get("coin") or ""))
+        ln = (f"{i}. {'🪙 ' if e.get('spot') else ''}<b>{sym}</b> {_twap_side(e.get('side'))} · plan "
+              f"<b>{usd(e.get('planned_usd'))}</b>")
+        if e.get("vol_pct") is not None:
+            ln += f" (24s hacmin %{float(e['vol_pct']):.1f}'i)"
+        if e.get("filled_pct") is not None:
+            ln += f" · doldu %{float(e['filled_pct']):.0f}"
+        if e.get("left_sec") is not None:
+            ln += f" · {dur_txt(e['left_sec'])} kaldı"
+        if e.get("minutes") and float(e["minutes"]) <= 60:
+            ln += " · ⚡"
+        if e.get("alerted"):
+            ln += " · 📣"
+        ln += f" · {alink(e.get('addr') or '')}"
+        q = int(e.get("q_ts") or 0)
+        if q and now() - q > 300:
+            ln += f" <i>(sorgu {dur_txt(now() - q)} önce)</i>"
+        lines.append(ln)
+    lines.append(foot)
     return "\n".join(lines)
 
 

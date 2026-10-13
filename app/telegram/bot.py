@@ -488,7 +488,7 @@ class TelegramBot:
             await self._cmd_scan(args, chat_id)
         elif cmd == "whale":
             await self._cmd_whale(args, chat_id)
-        elif cmd == "twap":
+        elif cmd in ("twap", "twaplar"):
             await self._cmd_twap(args, chat_id)
         elif cmd == "watch":
             await self._cmd_watch(args, chat_id, add=True)
@@ -816,6 +816,8 @@ class TelegramBot:
             await self._cmd_track_start(cmd, chat_id)
         elif cmd in ("twaptakipler", "twaptakip"):
             await self._cmd_twap_follow_list(chat_id)
+        elif cmd in ("twap", "twaplar"):
+            await self._cmd_twap_live(chat_id, owner=False)   # botun kendi kanal/gruplarında: canlı liste
         elif cmd in ("duvartakipler", "duvartakip"):
             await self._cmd_sticky_follow_list(chat_id)
         elif cmd in ("hesaplar", "hesap"):
@@ -1018,17 +1020,26 @@ class TelegramBot:
             await self.send(f"❌ <b>{t['symbol']}</b> taranamadı: {fmt.esc(e)}", chat_id)
 
     async def _cmd_twap(self, args: list[str], chat_id: str) -> None:
-        """/twap 0xADRES → adresin dizileri + HL emirleri + kapı kararı; /twap COIN → dinleme,
-        hacim, gereken emir; /twap → özet + son kararlar. "Niye gelmedi" sorusunun cevabı."""
+        """/twap → en büyük canlı (süren) HL TWAP'lar (kullanıcı 13.10, her grupta); /twap durum → radar özeti +
+        son kararlar; /twap 0xADRES → adresin dizileri + HL emirleri + kapı kararı; /twap COIN → dinleme,
+        hacim, gereken emir. "Niye gelmedi" sorusunun cevabı teşhis biçimlerinde."""
         from ..radar import twaplive as tl
         arg = (args[0] if args else "").strip()
-        if arg.lower().startswith("0x"):
-            txt = await tl.diag_address(self.cfg, getattr(self, "collector", None), arg)
-        elif arg:
-            txt = await tl.diag_coin(self.cfg, arg)
-        else:
+        if not arg:
+            await self._cmd_twap_live(chat_id, owner=True)
+            return
+        if arg.lower() in ("durum", "ozet", "özet", "tani", "tanı", "radar"):
             txt = await tl.diag_summary(self.cfg)
+        elif arg.lower().startswith("0x"):
+            txt = await tl.diag_address(self.cfg, getattr(self, "collector", None), arg)
+        else:
+            txt = await tl.diag_coin(self.cfg, arg)
         await self.send(txt, chat_id)
+
+    async def _cmd_twap_live(self, chat_id: str, owner: bool = True) -> None:
+        """⏳ En büyük canlı TWAP'lar — sahibin her sohbetinde ve botun kendi kanal/gruplarında aynı liste."""
+        from ..radar import twaplive as tl
+        await self.send(fmt.live_twaps(tl.live_twaps(), owner=owner), chat_id)
 
     async def _cmd_whale(self, args: list[str], chat_id: str) -> None:
         if not args or not args[0].startswith("0x"):

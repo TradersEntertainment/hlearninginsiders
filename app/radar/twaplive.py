@@ -1261,8 +1261,67 @@ async def diag_coin(cfg, coin: str) -> str:
     return "\n".join(lines)
 
 
+LIVE_SILENT = 300           # /twap canlı listesi: bu kadar dilim gelmeyen emir "süren" sayılmaz (HL dilimi ~30 sn)
+
+
+def live_twaps(now_ts: int | None = None) -> list[dict]:
+    """/twap (kullanıcı 13.10: "hangi grupta yazarsam yazayım en büyük canlı TWAP'ları sıralasın"): şu an SÜREN
+    HL TWAP emirleri, planlanan büyüklüğe göre. Kaynak: canlı sayaç (REG — emri sorulmuş diziler) + ilk dilim
+    yolunun bildirdiği emirler (twapfast.F.open). Süren = HL 'activated', planlanan bitişi gelmemiş, emir bu
+    diziyle örtüşüyor (dizi öncesi bitmiş eski emir değil) ve son LIVE_SILENT sn içinde dilimi görüldü.
+    Tahmin yok: dolan = son sorgudaki HL rakamı (sorgu anı `q_ts`), kalan süre = planlanan bitiş − şimdi."""
+    ts = int(now_ts or now())
+    vols = VOL_CACHE.get("v") or {}
+    out: dict[tuple, dict] = {}
+
+    def add(coin, addr, side, o, last_ts, q_ts, alerted, n, seen):
+        if not o or o.get("status") != "activated":
+            return
+        t0 = int(o.get("started_ts") or 0)
+        mins = float(o.get("minutes") or 0)
+        end = t0 + int(mins * 60) if (t0 and mins) else None
+        if (end is not None and end <= ts) or ts - int(last_ts or 0) > LIVE_SILENT:
+            return
+        planned = float(o.get("planned_usd") or 0)
+        dv = (vols.get(coin) or (None, None))[0]
+        k = (coin, addr, side, t0)
+        cur = out.get(k)
+        e = {"coin": coin, "addr": addr, "side": side, "planned_usd": planned,
+             "executed_usd": o.get("executed_usd"), "filled_pct": o.get("filled_pct"), "minutes": mins,
+             "started_ts": t0, "left_sec": max(0, end - ts) if end is not None else None, "q_ts": int(q_ts or 0),
+             "last_ts": int(last_ts or 0), "alerted": bool(alerted), "n": int(n or 0), "seen_usd": float(seen or 0),
+             "vol_pct": (planned / float(dv) * 100) if dv else None, "spot": assets.is_spot(coin)}
+        if cur is None:
+            out[k] = e
+        else:                                          # aynı emir iki kaynakta: en taze sorgu kalır, işaretler birleşir
+            if e["q_ts"] > cur["q_ts"]:
+                e["alerted"] = e["alerted"] or cur["alerted"]
+                out[k] = e
+            else:
+                cur["alerted"] = cur["alerted"] or e["alerted"]
+                cur["last_ts"] = max(cur["last_ts"], e["last_ts"])
+
+    for r in list(REG.runs.values()):
+        o = r.order
+        if not o or not native_overlap([o], r):
+            continue
+        c = _lookup_cache.get(r.address)
+        q = int(r.lookup_ts or 0) if r.alerted_ts else (c[0] if c else int(r.lookup_ts or 0))
+        add(r.coin, r.address, r.side, o, r.last_ts, q, r.alerted_ts, r.n, r.total)
+    try:
+        from . import twapfast
+        for f in list(twapfast.F.open.values()):
+            if f.get("ended"):
+                continue
+            add(f["coin"], f["addr"], f["side"], f.get("order"), max(int(f.get("last_ts") or 0),
+                int(f.get("last_slice") or 0)), f.get("lookup_ts"), True, f.get("n"), f.get("total"))
+    except Exception:                                  # noqa: BLE001
+        log.debug("hızlı yol emirleri okunamadı", exc_info=True)
+    return sorted(out.values(), key=lambda e: (-e["planned_usd"], e["coin"]))
+
+
 async def diag_summary(cfg) -> str:
-    """/twap: son tur özeti + son kararlar."""
+    """/twap durum: son tur özeti + son kararlar."""
     from ..telegram.format import esc
     st = await kv_get(STATS_KV) or {}
     if not st.get("ts"):
@@ -1283,7 +1342,7 @@ async def diag_summary(cfg) -> str:
     last = await kv_get(LAST_KV) or []
     if last:
         lines.append("Son kararlar:\n" + "\n".join("• " + esc(decision_line(d)) for d in last[:10]))
-    lines.append("Kullanım: /twap 0xADRES · /twap COIN")
+    lines.append("Kullanım: /twap → en büyük canlı TWAP'lar · /twap 0xADRES · /twap COIN")
     return "\n".join(lines)
 
 

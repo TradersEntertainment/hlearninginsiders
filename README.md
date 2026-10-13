@@ -401,9 +401,17 @@ bildirilmez.
   (coin, adres, emir $, hacmin yüzdesi, neden) ve Telegram'da **`/twap 0xADRES`**:
   adresin bellekteki dizileri, HL'deki TWAP emirleri (şimdi sorulur) ve her emrin
   kapı kararı sayılarla ("hacim $62M, emir hacmin %4,8'i, gerek %5 ≥ $3.1M").
-  `/twap PUMP`: coin dinleniyor mu, 24s hacim, bildirim için gereken emir; `/twap`:
+  `/twap PUMP`: coin dinleniyor mu, 24s hacim, bildirim için gereken emir; `/twap durum`:
   özet + son 50 karar (`twaplive_last` kv'si, tur tur ezilmez). Emir henüz 5 dk /
   10 dilim olmadıysa aday bile değildir — tahmin yok, beklenir.
+- **⏳ `/twap` (argümansız) — en büyük canlı TWAP'lar** (kullanıcı 13.10: "hangi grupta yazarsam yazayım"):
+  şu an SÜREN HL TWAP emirleri, planlanan büyüklüğe göre (en çok 15 satır): plan, 24s hacme oranı, doldu %,
+  kalan süre, ⚡ (≤ 1 sa), 📣 (kanala bildirildi), adres. Kaynak `twaplive.live_twaps()`: canlı sayacın emri
+  sorulmuş dizileri + ilk dilim yolunun bildirdiği emirler; süren = HL `activated`, planlanan bitiş gelmemiş,
+  emir diziyle örtüşüyor ve son 5 dk'da dilim görüldü. Dolan = son sorgudaki HL rakamı (sorgu 5 dk'dan eskiyse
+  yaşı yazılır). Yalnız radarın sorduğu emirler (HL tüm emirleri tek yerden vermiyor). Sahibin her sohbetinde
+  ve botun kendi kanal/gruplarında (kripto kanalı, TWAP aynası, 🕵️ Gizli TWAP grubu …; sahip olmayan üye ve
+  kanal gönderisi dahil) çalışır; `/twaplar` da aynı. Yabancı grupta sessiz.
 - **Kanal:** kripto → `CRYPTO_CHAT_ID` (boşsa gönderilmez), hisse/endeks → ana
   sohbet; `TWAP_MIRROR_CHAT_ID` tanımlıysa kopyası oraya da (aşağıda). Mesaj: emir (adet ≈ $, süre, başlangıç, kalan), dolan / kalan,
   gördüğümüz dilimler, adresin pozisyonu (canlı sorgu), fiyat ilk→son, taker %.

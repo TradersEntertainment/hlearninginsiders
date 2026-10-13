@@ -845,8 +845,10 @@ def test_volumes_fetch_and_twap_command():
         assert "dinleniyor ✓" in t and "24s hacim $62.0M" in t and "bildirim için emir ≥ $3.1M" in t and "Bellekteki diziler (1)" in t, t
         await tb._cmd_twap(["ZZZ"], "111")
         assert "dinlenMİyor" in sent[-1] and "hacim bilinmiyor" in sent[-1]
-        await tb._cmd_twap([], "111")
+        await tb._cmd_twap(["durum"], "111")                 # 13.10: eski özet /twap durum'a taşındı
         assert "Son kararlar" in sent[-1] and "1 aday" in sent[-1] and "/twap 0xADRES" in sent[-1], sent[-1]
+        await tb._cmd_twap([], "111")                        # /twap → en büyük canlı TWAP'lar
+        assert sent[-1].startswith("⏳ <b>Canlı TWAP'lar</b>"), sent[-1]
         # sorgu başarısız / collector yok / emir yok
         tb.collector = FakeCol(None)
         await tb._cmd_twap([B], "111")
@@ -860,7 +862,7 @@ def test_volumes_fetch_and_twap_command():
         # bağlantı
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         rd = lambda *p: open(os.path.join(root, *p), encoding="utf-8").read()  # noqa: E731
-        assert 'elif cmd == "twap":' in rd("app", "telegram", "bot.py") and "/twap 0x" in fmt.help_text()
+        assert 'elif cmd in ("twap", "twaplar"):' in rd("app", "telegram", "bot.py") and "/twap 0x" in fmt.help_text()
         assert "CRYPTO_WATCH_TOP=120" in rd(".env.example") and "vol_pct_major" in rd("app", "web", "templates", "twap.html")
         assert "/twap" in rd("README.md") and "BTC/ETH" in rd("README.md")
         print("✅ hacim/komut) bayat kv → tek istek; /twap adres (emirler + kapı sayılarla) / coin (dinleme, gereken emir) / özet")
