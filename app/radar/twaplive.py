@@ -79,7 +79,7 @@ class Run:
     __slots__ = ("coin", "address", "side", "first_ts", "last_ts", "n", "total", "sz_total",
                  "pxsz", "px_first", "px_last", "tk_n", "known_n", "slices", "alerted_ts",
                  "alert_total", "progress_ts", "progress_step", "ended_ts", "day_volume",
-                 "rate_day", "gate", "order", "lookup_ts", "half_ts", "nat_n", "nat_ts")
+                 "rate_day", "gate", "order", "lookup_ts", "half_ts", "nat_n", "nat_ts", "nat_first_ts")
 
     def __init__(self, coin: str, address: str, side: str, ts: int, px: float):
         self.coin, self.address, self.side = coin, address, side
@@ -102,6 +102,7 @@ class Run:
         self.half_ts = None
         self.nat_n = 0             # HL TWAP alt emri dolumu (sıfır hash, taker) sayısı — 🕵️ gizli TWAP'ı dışlar
         self.nat_ts = 0            # son HL alt emri dolumunun anı (/twap: emir hâlâ dilim atıyor mu)
+        self.nat_first_ts = 0      # bu HL alt emri "bölümünün" ilk dolumu (öncesi LIVE_SILENT'ten uzun sustuysa yeni)
 
     @property
     def key(self) -> tuple:
@@ -139,6 +140,8 @@ class Registry:
                     r.tk_n += 1
         if native:
             r.nat_n += 1
+            if not r.nat_ts or ts - r.nat_ts > LIVE_SILENT:
+                r.nat_first_ts = ts                    # yeni bölüm: önceki emir susmuştu (yeni TWAP olabilir)
             if ts > r.nat_ts:
                 r.nat_ts = ts
         r.total += notional
@@ -1357,7 +1360,9 @@ def _live_memory_cands(ts: int) -> list[tuple]:
     for r in list(REG.runs.values()):
         o = r.order
         if o and native_overlap([o], r):
-            out.append((r.coin, r.address, r.side, o, r.last_ts, r.alerted_ts, r.n, r.total, "mem", r.px_last, r))
+            # 'süren' kapısı HL alt emri dolumunun anı: elle / maker işlem iptal edilmiş emri canlı tutmasın
+            out.append((r.coin, r.address, r.side, o, r.nat_ts if r.nat_n else 0, r.alerted_ts, r.n, r.total, "mem",
+                        r.px_last, r))
     try:
         from . import twapfast
         for f in list(twapfast.F.open.values()):
@@ -1467,11 +1472,23 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
                  "filled_pct": (float(x.get("executed_usd") or 0) / pu * 100) if pu else None,
                  "minutes": float(x.get("order_min") or 0), "started_ts": int(x.get("order_ts") or 0),
                  "q_ts": int(x.get("lookup_ts") or x.get("ts") or 0)}
-            cands.append((x["coin"], x["address"], x["side"], o, r.last_ts, x.get("alerted_ts"), r.n, r.total, "db",
+            cands.append((x["coin"], x["address"], x["side"], o, r.nat_ts, x.get("alerted_ts"), r.n, r.total, "db",
                           r.px_last, None))
     # 3) anlık sorgu: bellekte taze emri olmayan (kayıttan gelen ya da sorgu anı bilinmeyen) alt emir dizileri
-    known = {(c[0], c[1], c[2]) for c in cands
-             if c[8] != "db" and c[3] and int(c[3].get("q_ts") or 0) and ts - int(c[3]["q_ts"]) < REFRESH_SEC * 2}
+    # "bilinen" = bellekte TAZE ve LİSTELENECEK kopya (en taze geçmişle süzülmüş, activated, bitişi gelmemiş): biten /
+    # iptal edilen kopya aynı anahtarın yeni TWAP'ının sorulmasını engellemesin
+    known = set()
+    for c in cands:
+        if c[8] == "db":
+            continue
+        o = _fresher(c[3], c[1], c[0], c[2], c[9], ts)
+        q = int((o or {}).get("q_ts") or 0)
+        if not o or o.get("status") != "activated" or not q or ts - q >= REFRESH_SEC * 2:
+            continue
+        t0, mins = int(o.get("started_ts") or 0), float(o.get("minutes") or 0)
+        if t0 and mins and t0 + int(mins * 60) <= ts:
+            continue
+        known.add((c[0], c[1], c[2]))
     todo = sorted((r for k, r in active.items() if k not in known), key=lambda r: -r.total)
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
     addrs: list[str] = []
@@ -1487,7 +1504,7 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
     # önbellek yalnız tazeyse (2 dk) VE adresin en yeni dizisinden sonra alınmışsa yeter — sonra açılan emir onda yok
     since = {}
     for r in todo:
-        since[r.address] = max(since.get(r.address, 0), int(r.first_ts))
+        since[r.address] = max(since.get(r.address, 0), int(r.nat_first_ts or r.first_ts))
     need = [a for a in addrs
             if not ((c := _newest_hist(a)) and ts - int(c[0]) < LIVE_Q_TTL and int(c[0]) >= since[a] - 5)]
     if need:
@@ -1529,7 +1546,7 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
         for o in parse_twap_orders(c[1], r.coin, r.side, r.px_last, ts):
             if o.get("status") == "activated":
                 o["q_ts"] = int(c[0])
-                cands.append((r.coin, r.address, r.side, o, r.last_ts, False, r.n, r.total,
+                cands.append((r.coin, r.address, r.side, o, r.nat_ts if r.nat_n else 0, False, r.n, r.total,
                               "ask" if r.address in asked else "mem", r.px_last, r))
     out: dict[tuple, dict] = {}
     _add_cands(out, cands, ts, vols)                 # her kopya en taze geçmişle süzülür (iptal → düşer)

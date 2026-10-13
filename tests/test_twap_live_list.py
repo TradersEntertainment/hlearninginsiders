@@ -334,6 +334,48 @@ def test_review2_marks_gate_persist_ceiling():
     asyncio.run(run())
 
 
+def test_review3_replacement_and_manual():
+    """Üçüncü inceleme: iptal edilip yerine konan TWAP sorulur; elle işlem iptal edilmiş emri canlı tutmaz."""
+    async def run():
+        from app.notify import Notifier
+        await _fresh()
+        cfg = _cfg()
+        # X alarm verildi; sonra iptal (bellekteki kopya terminated) ve aynı anahtarda Y başladı
+        feed("INJ", B, "sell")
+        x = [order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000, tid=1)]
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col({B: x}))
+        r = tl.REG.runs[("INJ", B, "sell")]
+        x_term = [order("INJ", B, side="A", status="terminated", minutes=300, start_ago=1200, ntl=5_000_000, tid=1)]
+        tl._lookup_cache[B] = (dbm.now() - 150, x_term)              # 10 dk yenilemesi iptali gördü (Y henüz yok)
+        r.order = dict(r.order, status="terminated", q_ts=dbm.now() - 150)
+        y = [order("INJ", B, side="A", status="terminated", minutes=300, start_ago=1200, ntl=5_000_000, tid=1),
+             order("INJ", B, side="A", minutes=120, start_ago=90, ntl=9_000_000, tid=2)]
+        tl._LIVE_Q.clear()
+        col = Col({B: y})
+        rows, info = await tl.live_twaps_full(col)
+        assert col.calls == [B] and [round(e["planned_usd"]) for e in rows] == [9_000_000], (rows, info)
+        # elle işlem: HL alt emri dilimleri 6 dk önce durdu, adres şimdi elle satıyor → listede yok
+        await _fresh()
+        feed("INJ", B, "sell", t_end=dbm.now() - 400)
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col({B: x}))
+        feed("INJ", B, "sell", n=3, t_end=dbm.now() - 2, native=False)
+        assert tl.live_twaps() == []
+        rows, _ = await tl.live_twaps_full(None)
+        assert rows == [], rows
+        # yeni HL alt emri bölümü: önbellek bölümün başından eskiyse yeniden sorulur (elle işlemden sonra yeni TWAP)
+        await _fresh()
+        feed("PUMP", A, "buy", n=5, t_end=dbm.now() - 1000, native=False)  # önce elle işlem
+        tl.live_q_put(A, dbm.now() - 60, [])                             # 1 dk önce sorulmuştu: emir yoktu
+        feed("PUMP", A, "buy", n=3, gap=20, t_end=dbm.now() - 2)         # 42 sn önce başlayan HL alt emri dolumları
+        assert tl.REG.runs[("PUMP", A, "buy")].nat_first_ts >= dbm.now() - 45
+        col2 = Col({A: [order("PUMP", A, ntl=4_000_000, start_ago=60)]})
+        rows, _ = await tl.live_twaps_full(col2)
+        assert col2.calls == [A] and [r["coin"] for r in rows] == ["PUMP"], rows
+        print("✅ inceleme 3) iptal edilip yerine konan TWAP sorulur ve listelenir; elle işlem iptal edilmiş emri canlı"
+              " tutmaz; yeni HL alt emri bölümünde eski önbellek yetmez")
+    asyncio.run(run())
+
+
 def test_message():
     now = dbm.now()
     rows = [{"coin": "INJ", "addr": B, "side": "sell", "planned_usd": 5e6, "executed_usd": 1.25e6, "filled_pct": 25.0,
