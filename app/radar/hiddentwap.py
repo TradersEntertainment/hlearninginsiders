@@ -20,8 +20,9 @@ Kapı (hepsi ÖLÇÜLEN; tahmin yok — plan, toplam ve süre GÖRÜNMEZ, yalnı
     dakika hacmi (0.5×) — ya da görülen ≥ hidden_twap_big_usd ($1M), hacimden bağımsız
   • bekleme: aynı adres + coin + yön 6 sa (twap_alert_cooldown; kendi anahtarı 'htwap')
 Bildirim: HIDDEN_TWAP_CHAT_ID (kullanıcının "🕵️ Gizli TWAP" grubu, env-only) tanımlıysa YALNIZ oraya; boşsa TWAP
-ile aynı yer (kripto → CRYPTO_CHAT_ID, hisse/endeks → ana sohbet) + TWAP ayna grubu. Tür 'htwap' (Bildirimler →
-🕵️ Gizli TWAP). Yalnız İLK uyarı (kullanıcı 12.10: TWAP'ta sonradan not yok).
+ile aynı yer (kripto → CRYPTO_CHAT_ID, hisse/endeks → ana sohbet) + TWAP ayna grubu. Tür 'htwap'. Yalnız İLK uyarı
+(kullanıcı 12.10: TWAP'ta sonradan not yok). AYAR SAYFASINDA YOK (kullanıcı 13.10: "ayarlara sokma beni, Railway'den
+değişken eklerim"): hepsi env — HIDDEN_TWAP_CHAT_ID, kapatmak HIDDEN_TWAP_ENABLED=0, eşikler HIDDEN_TWAP_*.
 🧪 LOG-HTWAP: kapılardan ÖNCE, dizi sabit lab tabanını (LAB_MIN $100K) ilk geçtiğinde bir kez — "önden
 girmek" ölçülsün (geçen + kalan; ayar değişse de örneklem değişmez).
 """
@@ -176,7 +177,7 @@ async def save_stats() -> None:
 async def diag_line(cfg) -> str:
     from ..telegram.format import short, usd
     if not enabled(cfg):
-        return "gizli twap: kapalı (hidden_twap_enabled=0 ya da canlı TWAP kapalı)"
+        return "gizli twap: kapalı (HIDDEN_TWAP_ENABLED=0 ya da canlı TWAP kapalı)"
     st = await kv_get(STATS_KV) or STATS
     rs = st.get("reasons") or {}
     head = (f"gizli twap: {st.get('considered', 0)} aday (emirsiz düzenli dizi) · {st.get('alerted', 0)} bildirim"

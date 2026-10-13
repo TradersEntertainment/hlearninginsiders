@@ -63,8 +63,6 @@ EDITABLE_FIELDS: dict[str, dict] = {
                     "desc": "Adresin HL TWAP emri sorgulanır: emir ≥ $1M, kalan ≥ $1M (ya da planın yarısı) ve coinin 24s hacminin ≥ %5'i ise (BTC/ETH %20); ⚡ hızlı TWAP (süresi ≤ 1 sa) mesajda işaretlenir ve ayrıca dakika hızıyla da geçebilir. Tahmin yok. Kripto → CRYPTO_CHAT_ID (tanımsızsa gönderilmez), hisse/endeks → ana sohbet; TWAP_MIRROR_CHAT_ID tanımlıysa her TWAP mesajının kopyası oraya da gider. Eşikler 'TWAP radarı' grubunda"},
     "notify_lowvol": {"type": "bool", "label": "🐘 Sessiz su devi", "group": "Bildirimler",
                       "desc": "Düşük hacimli hissede absürt boyutlu YENİ pozisyon açılınca haber (eşik aşağıda ayrı ayarda)"},
-    "notify_htwap": {"type": "bool", "label": "🕵️ Gizli TWAP (emirsiz dilimleme)", "group": "Bildirimler",
-                     "desc": "HL TWAP emri OLMADAN kendi botuyla düzenli dilim dilim alan / satan adres (ör. CBRS balinası). TWAP ile aynı yere (kripto → CRYPTO_CHAT_ID, hisse → ana sohbet) ve TWAP ayna grubuna gider. Eşikler '🕵️ Gizli TWAP' grubunda"},
     "notify_listing": {"type": "bool", "label": "🆕 Yeni hisse listelendi", "group": "Bildirimler",
                        "desc": "HL yeni bir hisse perp'i listelediğinde haber ver (ilk açılışta susar)"},
     "channel_auto_hours": {"type": "str", "label": "📣 Otomatik kanal yayını saatleri (TSİ)",
@@ -547,16 +545,6 @@ EDITABLE_FIELDS: dict[str, dict] = {
                             "desc": "Bildirilen emir İPTAL edilince (HL 'terminated'/'error') kanala ⛔ notu: gerçek dolan tutar, plan, süre, fiyat değişimi. ⚡ HIZLI'da takip tuşu yerine bu gelir"},
     "twap_alert_finish_note": {"type": "bool", "label": "🏁 Bitti notu (normal bitiş)", "group": "TWAP radarı",
                                "desc": "Emir planlandığı gibi bitince kanala 🏁 notu. Kullanıcı 12.10: 'iptal etmedikçe bildirim atma' (yeni TWAP sanılıyordu) — varsayılan KAPALI. 👁 takip edenin özel notu bundan bağımsız"},
-    "hidden_twap_enabled": {"type": "bool", "label": "🕵️ Gizli TWAP radarı", "group": "🕵️ Gizli TWAP",
-                            "desc": "Canlı TWAP sayacının düzenli bulduğu ama HL'de TWAP emri OLMAYAN diziler (kendi botuyla dilimleme). Plan/toplam görünmez; yalnız şimdiye kadar görülen ve hızı"},
-    "hidden_twap_min_usd": {"type": "float", "label": "Görülen en az ($)", "group": "🕵️ Gizli TWAP",
-                            "desc": "Dizinin şimdiye kadar görülen toplamı bu tutarı geçmeli (varsayılan $250K) VE hızı aşağıdaki kat kuralını sağlamalı"},
-    "hidden_twap_rate_x": {"type": "float", "label": "Hız ≥ dakika hacminin katı", "group": "🕵️ Gizli TWAP",
-                           "desc": "Dilimleme hızı / coinin 24s ortalama dakika hacmi (varsayılan 0.5×). CBRS balinası ~7×, BTC'de $250K'lık dilimleme ~0×"},
-    "hidden_twap_big_usd": {"type": "float", "label": "Hacimden bağımsız büyük ($)", "group": "🕵️ Gizli TWAP",
-                            "desc": "Görülen bu tutarı geçerse hız kuralına bakılmaz (varsayılan $1M; 0 = kapalı)"},
-    "hidden_twap_taker_min_pct": {"type": "float", "label": "En az taker payı (%)", "group": "🕵️ Gizli TWAP",
-                                  "desc": "Dilimlerin en az bu kadarı tahtayı süpürmeli (varsayılan %50) — pasif kotasyon / market yapıcı elensin. Aynı adres aynı coinde karşı yönde de dizi yapıyorsa ayrıca elenir"},
     "twap_follow_enabled": {"type": "bool", "label": "👁 Takip düğmesi (/takip_N)", "group": "TWAP radarı",
                             "desc": "TWAP alarmına 'emri takip et' düğmesi koyar. Basan kişi EMRİ izler: iptal edilirse ⛔, bitince 🏁 haber alır — yalnız basan, kanal sessiz kalır. Pozisyon takibinden farkı emrin izlenmesidir; spot TWAP'ta pozisyon yoktur ama emir vardır"},
     "twap_follow_poll_sec": {"type": "int", "label": "Takip: durum sorgu aralığı (sn)", "group": "TWAP radarı",
@@ -927,7 +915,8 @@ class Config:
         self.twap_alert_end_note = True      # ⛔ iptal notu
         self.twap_alert_finish_note = False  # 🏁 normal bitiş notu
         self.twap_follow_enabled = True
-        # 🕵️ Gizli TWAP (app/radar/hiddentwap.py): HL emri olmadan düzenli dilimleme
+        # 🕵️ Gizli TWAP (app/radar/hiddentwap.py): HL emri olmadan düzenli dilimleme. ENV-ONLY — kullanıcı
+        # 13.10: "ayarlara sokma beni, Railway'den değişken eklerim" → EDITABLE_FIELDS'ta / Bildirimler'de yok
         self.hidden_twap_enabled = convert_value("bool", os.getenv("HIDDEN_TWAP_ENABLED", "1"))
         self.hidden_twap_min_usd = float(os.getenv("HIDDEN_TWAP_MIN_USD", "250000"))
         self.hidden_twap_rate_x = float(os.getenv("HIDDEN_TWAP_RATE_X", "0.5"))
@@ -1048,7 +1037,6 @@ class Config:
         self.notify_wall = True
         self.notify_health = False  # bekçi sitede konuşur; Telegram istenirse açılır
         self.notify_listing = True
-        self.notify_htwap = True
         self.channel_auto_hours = os.getenv("CHANNEL_AUTO_HOURS", "")
         self.zombie_silent_hours = int(os.getenv("ZOMBIE_SILENT_HOURS", "12"))
         self.wall_window_pct = float(os.getenv("WALL_WINDOW_PCT", "2.0"))

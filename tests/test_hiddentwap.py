@@ -11,7 +11,8 @@ Pinlenenler:
     hisse → ana sohbet + PROPR notu; kapalıyken yok
   • 🧪 LOG-HTWAP: $100K'yı ilk geçişte bir kez, kapı sonucu ne olursa olsun
   • mesaj ölçülü: plan/toplam/süre görünmez denir, tahmin dili yok
-  • kablolama: tür (fan-out yok), ayarlar, .env, README, lab kuralı, /tani satırı
+  • kablolama: tür (fan-out yok), ayar sayfasında YOK (kullanıcı 13.10: yalnız Railway değişkeni; env okunur,
+    eski kayıtlı ayar yok sayılır, /bildirimler'de satır yok), .env, README, lab kuralı, /tani satırı
 """
 import asyncio
 import os
@@ -57,7 +58,8 @@ def _cfg(chat="-100"):
     cfg = Config()
     cfg.telegram_chat_id, cfg.crypto_chat_id = "111", chat
     cfg.twap_mirror_chat_id = ""
-    cfg.notify_twap = cfg.notify_htwap = True
+    cfg.notify_twap = True
+    cfg.hidden_twap_chat_id = ""
     cfg.twap_live_enabled = cfg.hidden_twap_enabled = True
     cfg.twap_alert_min_slices, cfg.twap_lookup_min_usd, cfg.twap_lookup_cooldown = 10, 50_000, 600
     cfg.twap_alert_cooldown = 21600
@@ -258,24 +260,57 @@ def test_wiring():
     from app import notify
     from app.lab import specs
     src = lambda p: open(os.path.join(ROOT, p), encoding="utf-8").read()   # noqa: E731
-    assert notify.KINDS["htwap"][0] == "notify_htwap" and "htwap" not in notify.PUBLIC_KINDS
+    assert notify.KINDS["htwap"] == ("", "🕵️ Gizli TWAP (emirsiz dilimleme)", "high") and "htwap" not in notify.PUBLIC_KINDS
     cfg = Config()
-    assert cfg.hidden_twap_enabled and cfg.notify_htwap and cfg.hidden_twap_min_usd == 250_000
+    assert cfg.hidden_twap_enabled and cfg.hidden_twap_min_usd == 250_000 and notify.kind_enabled(cfg, "htwap")
     assert cfg.hidden_twap_rate_x == 0.5 and cfg.hidden_twap_big_usd == 1_000_000 and cfg.hidden_twap_taker_min_pct == 50
-    for f in ("hidden_twap_enabled", "hidden_twap_min_usd", "hidden_twap_rate_x", "hidden_twap_big_usd",
-              "hidden_twap_taker_min_pct"):
-        assert EDITABLE_FIELDS[f]["group"] == "🕵️ Gizli TWAP" and len(EDITABLE_FIELDS[f]["desc"]) > 30, f
-    assert EDITABLE_FIELDS["notify_htwap"]["group"] == "Bildirimler"
+    # kullanıcı 13.10: "ayarlara sokma beni, Railway'den değişken eklerim" → ayar sayfasında / Bildirimler'de yok
+    names = ("hidden_twap_enabled", "hidden_twap_min_usd", "hidden_twap_rate_x", "hidden_twap_big_usd",
+             "hidden_twap_taker_min_pct", "hidden_twap_chat_id", "notify_htwap")
+    assert not [f for f in EDITABLE_FIELDS if f in names or "htwap" in f or "hidden_twap" in f]
+    assert not [f for f, v in EDITABLE_FIELDS.items() if "Gizli TWAP" in v["group"] + v["label"] + v["desc"]]
+    assert not hasattr(cfg, "notify_htwap")
+    # eski kayıtlı ayar (dashboard override) artık yok sayılır; env okunur
+    cfg.apply_overrides({"hidden_twap_min_usd": "1", "hidden_twap_enabled": "0", "notify_htwap": "0"})
+    assert cfg.hidden_twap_min_usd == 250_000 and cfg.hidden_twap_enabled and not cfg.overrides
+    env = {"HIDDEN_TWAP_CHAT_ID": " -100123 ", "HIDDEN_TWAP_ENABLED": "0", "HIDDEN_TWAP_MIN_USD": "400000",
+           "HIDDEN_TWAP_RATE_X": "1.5", "HIDDEN_TWAP_BIG_USD": "0", "HIDDEN_TWAP_TAKER_MIN_PCT": "70"}
+    old = {k: os.environ.get(k) for k in env}
+    try:
+        os.environ.update(env)
+        e = Config()
+        assert (e.hidden_twap_chat_id, e.hidden_twap_enabled, e.hidden_twap_min_usd, e.hidden_twap_rate_x,
+                e.hidden_twap_big_usd, e.hidden_twap_taker_min_pct) == ("-100123", False, 400_000, 1.5, 0, 70)
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    async def notif():                                   # /bildirimler: düğme satırı yok
+        await _fresh()
+        from app.telegram.bot import TelegramBot
+        out = []
+
+        async def send(text, chat_id=None):
+            out.append(text)
+        await TelegramBot._cmd_notifications(type("B", (), {"cfg": Config(), "send": staticmethod(send)})(), "1")
+        assert out and "Bildirim ayarları" in out[0] and "Gizli TWAP" not in out[0] and "⏳ TWAP" in out[0], out
+    asyncio.run(notif())
     rule = next(r for r in specs.RULES if r["id"] == "LOG-HTWAP")
     assert rule["evidence"] == "log" and rule["horizons_s"] == [900, 3600, 14400, 86400]
-    readme, env = src("README.md"), src(".env.example")
+    readme, env_ex = src("README.md"), src(".env.example")
     assert "### 🕵️ Gizli TWAP — HL emri olmadan dilimleme" in readme and "LOG-HTWAP" in readme
     for k in ("HIDDEN_TWAP_ENABLED=1", "HIDDEN_TWAP_MIN_USD=250000", "HIDDEN_TWAP_RATE_X=0.5",
               "HIDDEN_TWAP_BIG_USD=1000000", "HIDDEN_TWAP_TAKER_MIN_PCT=50"):
-        assert k in env, k
+        assert k in env_ex, k
+    assert "TEK GEREKEN BU" in env_ex and env_ex.index("HIDDEN_TWAP_CHAT_ID=") < env_ex.index("HIDDEN_TWAP_ENABLED=")
+    assert "**Ayarlar sayfasında yok**" in readme and "eşikler Ayarlar → 🕵️ Gizli TWAP" not in readme
+    assert "Bildirimler → 🕵️ Gizli TWAP" not in readme
     assert "hiddentwap.diag_line(cfg)" in src("app/diag.py")
     assert hasattr(fmt, "hidden_twap")
-    print("✅ kablolama) tür (fan-out yok), ayarlar, .env, README, LOG-HTWAP, /tani")
+    print("✅ kablolama) tür (fan-out yok), ayar sayfasında yok (env okunur, eski ayar yok sayılır), .env, README, LOG-HTWAP, /tani")
 
 
 if __name__ == "__main__":
