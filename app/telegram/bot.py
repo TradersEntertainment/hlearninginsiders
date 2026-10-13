@@ -640,6 +640,14 @@ class TelegramBot:
         msg = cq.get("message") or {}
         chat = msg.get("chat") or {}
         parts = str(cq.get("data") or "").split(":")
+        if len(parts) == 4 and parts[1] == "start" and parts[2] == "twap" and parts[3].isdigit():
+            # 👁 /twap listesindeki takip tuşu → /takip_N ile aynı yol (cevap mesajı sohbete gider)
+            if not await self._may_press(chat, cq.get("from") or {}):
+                await self._ack(cq_id, "Bu tuşu yalnız sahibi ya da kanal yöneticisi kullanabilir")
+                return
+            await self._ack(cq_id, "👁 takip başlatılıyor")
+            await self._cmd_track_start(f"takip_{int(parts[3])}", str(chat.get("id")))
+            return
         if len(parts) != 4 or parts[1] not in ("stop", "undo", "wake", "nowake") \
                 or parts[2] not in trackctl.KINDS or not parts[3].isdigit() \
                 or (parts[1] in ("wake", "nowake") and parts[2] != "pos"):
@@ -910,7 +918,8 @@ class TelegramBot:
         listened = any(x in valid for x in coins) if valid else None
         rows, info = await tl.live_twaps_full(coll, cfg=self.cfg, client=getattr(self, "client", None), coin=coins)
         await self.send(fmt.coin_twaps(coins[0], rows, info, quick_max=tl.quick_max(self.cfg), listened=listened,
-                                       name=(t or {}).get("symbol") or tick.upper()), chat_id)
+                                       name=(t or {}).get("symbol") or tick.upper()), chat_id,
+                        reply_markup=await self._follow_kb(rows[:fmt.LIVE_TWAP_TOP]))
         return True
 
     async def _twap_coins(self, tick: str) -> tuple[dict | None, list[str]]:
@@ -1091,7 +1100,30 @@ class TelegramBot:
         from ..radar import twaplive as tl
         rows, info = await tl.live_twaps_full(getattr(self, "collector", None), cfg=self.cfg,
                                               client=getattr(self, "client", None))
-        await self.send(fmt.live_twaps(rows, owner=owner, info=info, quick_max=tl.quick_max(self.cfg)), chat_id)
+        await self.send(fmt.live_twaps(rows, owner=owner, info=info, quick_max=tl.quick_max(self.cfg)), chat_id,
+                        reply_markup=await self._follow_kb(rows[:fmt.LIVE_TWAP_TOP]))
+
+    async def _follow_kb(self, rows: list[dict]):
+        """Listedeki her emir için 👁 takip tuşu: teklif satırı (kind='twap', ref = emrin başlangıcı) yazılır;
+        basınca /takip_N ile aynı yol (iptal ⛔ / bitiş 🏁 basana gelir)."""
+        if not rows or not getattr(self.cfg, "twap_follow_enabled", True):
+            return None
+        from .. import assets
+        pairs = []
+        try:
+            async with db() as conn:
+                for e in rows:
+                    cur = await conn.execute(
+                        """INSERT INTO track_offers(address,coin,symbol,side,notional,created_ts,kind,ref_ts)
+                           VALUES(?,?,?,?,?,?,'twap',?)""",
+                        (e["addr"], e["coin"], assets.label(e["coin"]), e["side"],
+                         float(e.get("planned_usd") or 0), now(), int(e.get("started_ts") or 0)))
+                    pairs.append((int(cur.lastrowid), assets.label(e["coin"])))
+                await conn.commit()
+        except Exception:                              # noqa: BLE001
+            log.debug("twap listesi takip tuşları yazılamadı", exc_info=True)
+            return None
+        return fmt.follow_list_kb(pairs)
 
     async def _cmd_whale(self, args: list[str], chat_id: str) -> None:
         if not args or not args[0].startswith("0x"):

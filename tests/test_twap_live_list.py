@@ -662,3 +662,44 @@ if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
             fn()
+
+
+def test_follow_buttons():
+    """Kullanıcı 13.10: "/twap listesinde her birinin kenarına takip butonu koy"."""
+    async def run():
+        await _fresh()
+        cfg = _cfg()
+        cfg.twap_follow_enabled = True
+        from app.telegram.bot import TelegramBot
+        feed("PUMP", A, "buy")
+        tl.REG.runs[("PUMP", A, "buy")].order = tl.parse_twap_orders([order("PUMP", A)], "PUMP", "buy", PX,
+                                                                      dbm.now())[0]
+        bot = TelegramBot(cfg, None, None, {})
+        bot.collector = Col({})
+        sent = []
+
+        async def fake_send(text, chat_id=None, reply_markup=None):
+            sent.append((str(chat_id), text, reply_markup))
+            return True
+        bot.send = fake_send
+
+        async def ack(*a, **k):
+            return None
+        bot._ack = ack
+        await bot._cmd_twap_live("111", owner=True)
+        kb = sent[-1][2]
+        btn = kb["inline_keyboard"][0][0]
+        assert btn["text"] == "👁 1. PUMP" and btn["callback_data"].startswith("trk:start:twap:"), kb
+        await bot._handle_update({"callback_query": {"id": "c1", "from": {"id": 111}, "data": btn["callback_data"],
+                                                     "message": {"message_id": 1, "chat": {"id": 111,
+                                                                                           "type": "private"}}}})
+        assert "TWAP emri takipte" in sent[-1][1] and sent[-1][2], sent[-1]
+        async with dbm.db() as c:
+            n = (await (await c.execute("SELECT COUNT(*) n FROM twap_follows")).fetchone())["n"]
+        assert n == 1
+        print("✅ takip tuşu) her satıra 👁 tuşu; basınca emir takibe girer (⛔/🏁 basana)")
+    asyncio.run(run())
+
+
+if __name__ == "__main__":
+    test_follow_buttons()

@@ -1981,6 +1981,13 @@ def lowvol_alert(p: dict) -> str:
 TRACK_CB = "trk"
 
 
+def follow_list_kb(pairs: list[tuple[int, str]]) -> dict | None:
+    """/twap ve /XPLtwap listesinin altında her satır için 👁 takip tuşu (satır no → teklif id). 3'lü sıralar."""
+    btn = [{"text": f"👁 {i}. {label}"[:30], "callback_data": f"{TRACK_CB}:start:twap:{int(oid)}"}
+           for i, (oid, label) in enumerate(pairs, 1)]
+    return {"inline_keyboard": [btn[k:k + 3] for k in range(0, len(btn), 3)]} if btn else None
+
+
 def stop_kb(kind: str, fid: int, wake: bool = False) -> dict:
     """Takip bildirimlerinin altındaki tuş — kind: pos (👣 #N) | wall (🧲) | twap (👁).
     Pozisyon takibinde ikinci satır ⏰: balina kapatırsa / yön değiştirirse seni ARA (wake.py)."""
