@@ -341,6 +341,38 @@ def test_one_alert_per_operation():
     asyncio.run(run())
 
 
+def test_message_ratio_and_send_failure():
+    async def run():
+        m = {"coin": "BTC", "address": A, "side": "buy", "n": 20, "avg_slice": 75_000, "median_gap": 30,
+             "taker_pct": 100.0, "total": 1_500_000, "dur": 570, "rate_day": 216e6, "px_first": 60_000,
+             "px_last": 60_100, "px_chg_pct": 0.17}
+        t = lambda x: fmt.hidden_twap(m, {"rate_x": x, "pos": {"none": True}})   # noqa: E731
+        assert "<b>7.2×</b>'i" in t(7.2) and "<b>%50.0</b>'i" in t(0.5) and "<b>%0.6</b>'i" in t(0.00576)
+        assert "<b>%0.1</b>'inden az" in t(0.0002) and "0.0×" not in t(0.0002) + t(0.00576)
+        assert "hacminin" not in t(None)
+        # gruba gönderilemedi → bekleme yanmaz, /tani uyarır, sonraki tur yeniden dener
+        await _fresh()
+        cfg = _cfg()
+
+        class Down(Bot):
+            async def send(self, text, chat_id=None):
+                return False
+        feed("PUMP", A, "buy", 20, 15_000)
+        await tl.evaluate(cfg, Notifier(cfg, Down()), None, Col([]))
+        assert ht.STATS["reasons"] == {"failed": 1} and await _kind("htwap") == 0
+        line = await ht.diag_line(cfg)
+        assert "⚠ HIDDEN_TWAP_CHAT_ID'ye gönderilemiyor" in line and "gönderilemedi (bot grupta mı" in line, line
+        bot = Bot()
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert [c for c, _ in bot.sent] == ["-555"] and "grup: HIDDEN_TWAP_CHAT_ID" in await ht.diag_line(cfg)
+        assert len(_q("LOG-HTWAP")) == 1, "🧪 ilk turda bir kez (gönderimden bağımsız)"
+        assert set(ht.REASON_TR) >= {"ok", "big", "small", "slow", "maker", "two_sided", "no_vol", "cooldown", "off",
+                                     "no_chat", "spot_thin", "ignored", "native", "native_order", "no_data",
+                                     "same_op", "failed"}
+        print("✅ mesaj/hata) oran 1× altında yüzde (0.0× yok); gruba gidemezse bekleme yanmaz, /tani uyarır, sonra gider")
+    asyncio.run(run())
+
+
 def test_only_own_group_never_normal_channels():
     """Kullanıcı 13.10: "bu gizli twap normal kanala gelmeyecek, sadece gizli twap variable'ı olan chate gidecek"."""
     async def run():

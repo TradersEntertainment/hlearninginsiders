@@ -3180,8 +3180,14 @@ def hidden_twap(m: dict, ctx: dict) -> str:
     dur = int(m.get("dur") or 0)
     per_min = float(m.get("rate_day") or 0) / 1440
     rate = f"dakikada ~{usd(per_min)}"
-    if x is not None:
-        rate += f" = coinin ortalama dakika hacminin <b>{float(x):.1f}×</b>'i"
+    if x is not None:                         # 1× altı yüzde olarak ("0.0×" yazmasın — büyük yolda x çok küçük olabilir)
+        xf = float(x)
+        if xf >= 1:
+            rate += f" = coinin ortalama dakika hacminin <b>{xf:.1f}×</b>'i"
+        elif xf >= 0.001:
+            rate += f" = coinin ortalama dakika hacminin <b>%{xf * 100:.1f}</b>'i"
+        else:
+            rate += " = coinin ortalama dakika hacminin <b>%0.1</b>'inden az"
     lines = [f"🕵️ <b>Gizli TWAP</b> · {'🪙 ' if spot else ''}<b>{sym}</b> · {_twap_side(m.get('side'))} · emirsiz dilimleme",
              f"👤 {alink(m['address'])} · HL'de TWAP emri yok — kendi botuyla dilimliyor",
              f"📏 {int(m.get('n') or 0)} dilim × ~{usd(m.get('avg_slice'))}, her {_gap_txt(m.get('median_gap'))}"

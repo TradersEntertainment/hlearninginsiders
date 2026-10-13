@@ -60,7 +60,7 @@ REASON_TR = {"ok": "bildirildi", "big": "bildirildi (büyük)", "small": "görü
              "spot_thin": "spot çifti ince", "ignored": "elenmiş adres (mm/vault//ignore)",
              "native": "HL TWAP alt emri dolumu görüldü", "native_order": "taze sorguda HL TWAP emri var",
              "no_data": "taze emir geçmişi alınamadı (sonraki tur)", "same_op": "aynı operasyon zaten bildirildi",
-             "failed": "gönderilemedi"}
+             "failed": "gönderilemedi (bot grupta mı, HIDDEN_TWAP_CHAT_ID doğru mu?)"}
 
 STATS: dict = {"considered": 0, "alerted": 0, "lab": 0, "reasons": {}, "last_ts": 0}
 OPS: dict[tuple, dict] = {}      # (coin, adres, yön) → {start, last, alerted, lab}
@@ -269,10 +269,14 @@ async def diag_line(cfg) -> str:
         return "gizli twap: kapalı (HIDDEN_TWAP_ENABLED=0 ya da canlı TWAP kapalı)"
     st = await kv_get(STATS_KV) or STATS
     rs = st.get("reasons") or {}
+    if not (getattr(cfg, "hidden_twap_chat_id", "") or "").strip():
+        where = " · ⚠ HIDDEN_TWAP_CHAT_ID yok → mesaj gönderilmiyor (yalnız ölçüm + 🧪)"
+    elif rs.get("failed") and not st.get("alerted"):
+        where = " · ⚠ HIDDEN_TWAP_CHAT_ID'ye gönderilemiyor (bot grupta mı, id doğru mu?)"
+    else:
+        where = " · grup: HIDDEN_TWAP_CHAT_ID"
     head = (f"gizli twap: {st.get('considered', 0)} dizi (emirsiz, düzenli) · {st.get('alerted', 0)} bildirim"
-            f" · 🧪 {st.get('lab', 0)} kayıt"
-            + (" · grup: HIDDEN_TWAP_CHAT_ID" if (getattr(cfg, "hidden_twap_chat_id", "") or "").strip()
-               else " · ⚠ HIDDEN_TWAP_CHAT_ID yok → mesaj gönderilmiyor (yalnız ölçüm + 🧪)"))
+            f" · 🧪 {st.get('lab', 0)} kayıt" + where)
     if rs:
         head += " · " + ", ".join(f"{REASON_TR.get(k, k)} {v}" for k, v in sorted(rs.items(), key=lambda kv: -kv[1])[:5])
     last = await kv_get(LAST_KV) or []
