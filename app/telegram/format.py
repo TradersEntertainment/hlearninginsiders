@@ -3222,13 +3222,17 @@ def hidden_twap(m: dict, ctx: dict) -> str:
 LIVE_TWAP_TOP = 15
 
 
-def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP) -> str:
-    """/twap: en büyük SÜREN HL TWAP emirleri (twaplive.live_twaps), planlanan büyüklüğe göre. Tahmin yok:
+def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, info: dict | None = None) -> str:
+    """/twap: en büyük SÜREN HL TWAP emirleri (twaplive.live_twaps_full), planlanan büyüklüğe göre. Tahmin yok:
     dolan = son sorgudaki HL rakamı; kalan süre planlanan bitişe göre."""
     head = "⏳ <b>Canlı TWAP'lar</b>"
-    foot = ("<i>Yalnız radarın HL'ye sorduğu süren emirler (dinlenen coinlerde ≥ $50K görülen ya da ilk dilimde"
-            " sorulan; HL tüm emirleri tek yerden vermiyor). Plan bugünkü fiyatla; dolan son sorgudaki HL rakamı."
+    info = info or {}
+    foot = ("<i>Dinlenen coinlerde dilimi görülen süren HL TWAP emirleri (HL tüm emirleri tek yerden vermiyor;"
+            " yeni dilim gelmeyen emir listede yok). Plan bugünkü fiyatla; dolan son sorgudaki HL rakamı."
             " 📣 = kanala bildirildi.</i>")
+    miss = int(info.get("failed") or 0) + int(info.get("skipped") or 0)
+    if miss:
+        foot = f"⚠ HL TWAP dilimi görülen {miss} adresin emri bu sefer sorulamadı (sonra yeniden dene).\n" + foot
     if owner:
         foot += "\nAyrıntı: /twap COIN · /twap 0xADRES · radar özeti: /twap durum"
     if not rows:

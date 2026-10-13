@@ -1263,62 +1263,175 @@ async def diag_coin(cfg, coin: str) -> str:
 
 
 LIVE_SILENT = 300           # /twap canlı listesi: bu kadar dilim gelmeyen emir "süren" sayılmaz (HL dilimi ~30 sn)
+LIVE_LOOKUPS = 8            # /twap başına en çok bu kadar anlık emir sorgusu (dilimi görülen ama emri bilinmeyen)
+LIVE_Q_TTL = 120            # anlık sorgu önbelleği (art arda /twap aynı adresi yeniden sormasın)
+LIVE_DB_MAX_AGE = 6 * 3600  # kayıtlı (twap_runs) emir: son sorgusu bundan eskiyse kullanılmaz
+_LIVE_Q: dict[str, tuple[int, list]] = {}
 
 
-def live_twaps(now_ts: int | None = None) -> list[dict]:
-    """/twap (kullanıcı 13.10: "hangi grupta yazarsam yazayım en büyük canlı TWAP'ları sıralasın"): şu an SÜREN
-    HL TWAP emirleri, planlanan büyüklüğe göre. Kaynak: canlı sayaç (REG — emri sorulmuş diziler) + ilk dilim
-    yolunun bildirdiği emirler (twapfast.F.open). Süren = HL 'activated', planlanan bitişi gelmemiş, emir bu
-    diziyle örtüşüyor (dizi öncesi bitmiş eski emir değil) ve son LIVE_SILENT sn içinde dilimi görüldü.
-    Tahmin yok: dolan = son sorgudaki HL rakamı (sorgu anı `q_ts`), kalan süre = planlanan bitiş − şimdi."""
-    ts = int(now_ts or now())
-    vols = VOL_CACHE.get("v") or {}
-    out: dict[tuple, dict] = {}
+def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts, alerted, n, seen,
+              src: str) -> None:
+    """Süren emir satırı: HL 'activated', planlanan bitişi gelmemiş, son LIVE_SILENT sn içinde dilim görülmüş.
+    Aynı emir (coin, adres, yön, başlangıç) birden çok kaynakta: en taze sorgu kalır, 📣 birleşir."""
+    if not o or o.get("status") != "activated":
+        return
+    t0 = int(o.get("started_ts") or 0)
+    mins = float(o.get("minutes") or 0)
+    end = t0 + int(mins * 60) if (t0 and mins) else None
+    if (end is not None and end <= ts) or ts - int(last_ts or 0) > LIVE_SILENT:
+        return
+    planned = float(o.get("planned_usd") or 0)
+    dv = (vols.get(coin) or (None, None))[0]
+    k = (coin, addr, side, t0)
+    e = {"coin": coin, "addr": addr, "side": side, "planned_usd": planned,
+         "executed_usd": o.get("executed_usd"), "filled_pct": o.get("filled_pct"), "minutes": mins,
+         "started_ts": t0, "left_sec": max(0, end - ts) if end is not None else None, "q_ts": int(q_ts or 0),
+         "last_ts": int(last_ts or 0), "alerted": bool(alerted), "n": int(n or 0), "seen_usd": float(seen or 0),
+         "vol_pct": (planned / float(dv) * 100) if dv else None, "spot": assets.is_spot(coin), "src": src}
+    cur = out.get(k)
+    if cur is None:
+        out[k] = e
+    elif e["q_ts"] > cur["q_ts"]:
+        e["alerted"] = e["alerted"] or cur["alerted"]
+        e["last_ts"] = max(cur["last_ts"], e["last_ts"])
+        out[k] = e
+    else:
+        cur["alerted"] = cur["alerted"] or e["alerted"]
+        cur["last_ts"] = max(cur["last_ts"], e["last_ts"])
 
-    def add(coin, addr, side, o, last_ts, q_ts, alerted, n, seen):
-        if not o or o.get("status") != "activated":
-            return
-        t0 = int(o.get("started_ts") or 0)
-        mins = float(o.get("minutes") or 0)
-        end = t0 + int(mins * 60) if (t0 and mins) else None
-        if (end is not None and end <= ts) or ts - int(last_ts or 0) > LIVE_SILENT:
-            return
-        planned = float(o.get("planned_usd") or 0)
-        dv = (vols.get(coin) or (None, None))[0]
-        k = (coin, addr, side, t0)
-        cur = out.get(k)
-        e = {"coin": coin, "addr": addr, "side": side, "planned_usd": planned,
-             "executed_usd": o.get("executed_usd"), "filled_pct": o.get("filled_pct"), "minutes": mins,
-             "started_ts": t0, "left_sec": max(0, end - ts) if end is not None else None, "q_ts": int(q_ts or 0),
-             "last_ts": int(last_ts or 0), "alerted": bool(alerted), "n": int(n or 0), "seen_usd": float(seen or 0),
-             "vol_pct": (planned / float(dv) * 100) if dv else None, "spot": assets.is_spot(coin)}
-        if cur is None:
-            out[k] = e
-        else:                                          # aynı emir iki kaynakta: en taze sorgu kalır, işaretler birleşir
-            if e["q_ts"] > cur["q_ts"]:
-                e["alerted"] = e["alerted"] or cur["alerted"]
-                out[k] = e
-            else:
-                cur["alerted"] = cur["alerted"] or e["alerted"]
-                cur["last_ts"] = max(cur["last_ts"], e["last_ts"])
 
+def _live_memory(out: dict, ts: int, vols: dict) -> None:
     for r in list(REG.runs.values()):
         o = r.order
         if not o or not native_overlap([o], r):
             continue
         c = _lookup_cache.get(r.address)
         q = int(r.lookup_ts or 0) if r.alerted_ts else (c[0] if c else int(r.lookup_ts or 0))
-        add(r.coin, r.address, r.side, o, r.last_ts, q, r.alerted_ts, r.n, r.total)
+        _live_add(out, ts, vols, r.coin, r.address, r.side, o, r.last_ts, q, r.alerted_ts, r.n, r.total, "mem")
     try:
         from . import twapfast
         for f in list(twapfast.F.open.values()):
             if f.get("ended"):
                 continue
-            add(f["coin"], f["addr"], f["side"], f.get("order"), max(int(f.get("last_ts") or 0),
-                int(f.get("last_slice") or 0)), f.get("lookup_ts"), True, f.get("n"), f.get("total"))
+            _live_add(out, ts, vols, f["coin"], f["addr"], f["side"], f.get("order"),
+                      max(int(f.get("last_ts") or 0), int(f.get("last_slice") or 0)), f.get("lookup_ts"), True,
+                      f.get("n"), f.get("total"), "fast")
     except Exception:                                  # noqa: BLE001
         log.debug("hızlı yol emirleri okunamadı", exc_info=True)
-    return sorted(out.values(), key=lambda e: (-e["planned_usd"], e["coin"]))
+
+
+def _live_sorted(out: dict) -> list[dict]:
+    return sorted(out.values(), key=lambda e: (-e["planned_usd"], e["coin"], e["addr"]))
+
+
+def live_twaps(now_ts: int | None = None) -> list[dict]:
+    """Yalnız bellek (canlı sayaç REG + ilk dilim yolu F.open) — G/Ç yok. /twap `live_twaps_full` kullanır."""
+    ts = int(now_ts or now())
+    out: dict[tuple, dict] = {}
+    _live_memory(out, ts, VOL_CACHE.get("v") or {})
+    return _live_sorted(out)
+
+
+def _native_active(ts: int) -> dict[tuple, Run]:
+    """Son LIVE_SILENT sn içinde HL TWAP alt emri dolumu (sıfır hash, adres taker) görülen diziler — emir sürüyor."""
+    return {r.key: r for r in list(REG.runs.values()) if r.nat_n and ts - int(r.last_ts) <= LIVE_SILENT}
+
+
+async def live_twaps_full(collector=None, now_ts: int | None = None,
+                          max_lookups: int = LIVE_LOOKUPS) -> tuple[list[dict], dict]:
+    """/twap (kullanıcı 13.10: "hangi grupta yazarsam yazayım en büyük canlı TWAP'ları sıralasın"): şu an SÜREN
+    HL TWAP emirleri, planlanan büyüklüğe göre. Bellek yeniden başlatmada sıfırlanır (13.10 20:39 deploy
+    sonrası liste boş geldi) — üç kaynak:
+      1) bellek: canlı sayacın emri sorulmuş dizileri + ilk dilim yolunun bildirdiği emirler
+      2) kayıt: twap_runs'taki süren emir (activated, bitişi gelmemiş, son sorgusu ≤ 6 sa) — YALNIZ aynı adres +
+         coin + yönde son 5 dk'da HL TWAP alt emri dolumu görülüyorsa (emir hâlâ dilim atıyor)
+      3) anlık sorgu: HL alt emri dolumu görülen ama emri bilinmeyen en büyük dizilerin (görülen $) adresleri
+         şimdi sorulur (en çok `max_lookups`, 2 dk önbellek)
+    Tahmin yok: dolan = son sorgudaki HL rakamı (sorgu anı `q_ts`), kalan süre = planlanan bitiş − şimdi.
+    Dönüş: (satırlar, bilgi {asked, failed, skipped})."""
+    ts = int(now_ts or now())
+    try:
+        vols = await volumes_cached()
+    except Exception:                                  # noqa: BLE001
+        vols = VOL_CACHE.get("v") or {}
+    out: dict[tuple, dict] = {}
+    _live_memory(out, ts, vols)
+    active = _native_active(ts)
+    # 2) kayıt
+    if active:
+        try:
+            async with db() as conn:
+                cur = await conn.execute(
+                    """SELECT coin, address, side, planned_usd, planned_sz, executed_usd, remaining_usd, order_ts,
+                              order_min, order_status, lookup_ts, ts, alerted_ts, n_slices, total
+                       FROM twap_runs WHERE order_status='activated' AND ended_ts IS NULL AND planned_usd > 0
+                         AND order_ts IS NOT NULL AND order_min IS NOT NULL
+                         AND order_ts + order_min * 60 > ? AND COALESCE(lookup_ts, ts) >= ?""",
+                    (ts, ts - LIVE_DB_MAX_AGE))
+                rows = [dict(x) for x in await cur.fetchall()]
+        except Exception:                              # noqa: BLE001
+            log.debug("twap_runs süren emirler okunamadı", exc_info=True)
+            rows = []
+        for x in rows:
+            r = active.get((x["coin"], x["address"], x["side"]))
+            if r is None:
+                continue
+            pu = float(x.get("planned_usd") or 0)
+            o = {"status": "activated", "planned_usd": pu, "planned_sz": x.get("planned_sz"),
+                 "executed_usd": x.get("executed_usd"), "remaining_usd": x.get("remaining_usd"),
+                 "filled_pct": (float(x.get("executed_usd") or 0) / pu * 100) if pu else None,
+                 "minutes": float(x.get("order_min") or 0), "started_ts": int(x.get("order_ts") or 0)}
+            _live_add(out, ts, vols, x["coin"], x["address"], x["side"], o, r.last_ts,
+                      int(x.get("lookup_ts") or x.get("ts") or 0), x.get("alerted_ts"), r.n, r.total, "db")
+    # 3) anlık sorgu
+    have = {(e["coin"], e["addr"], e["side"]) for e in out.values()}
+    todo = sorted((r for k, r in active.items() if k not in have), key=lambda r: -r.total)
+    info = {"asked": 0, "failed": 0, "skipped": 0}
+    fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
+    if todo and fn is None:
+        info["skipped"] = len({r.address for r in todo})
+        todo = []
+    picked, addrs = [], []
+    for r in todo:
+        if r.address not in addrs:
+            if len(addrs) >= max(0, int(max_lookups)):
+                continue
+            addrs.append(r.address)
+        picked.append(r)
+    info["skipped"] += len({r.address for r in todo} - set(addrs))
+    hist: dict[str, tuple[int, list]] = {}
+    need = []
+    for a in addrs:
+        c = max((x for x in (_LIVE_Q.get(a), _lookup_cache.get(a)) if x), key=lambda x: x[0], default=None)
+        if c and ts - int(c[0]) < LIVE_Q_TTL:
+            hist[a] = (int(c[0]), c[1])
+        else:
+            need.append(a)
+    if need:
+        async def ask(a):
+            try:
+                return await fn(a, timeout=5.0)
+            except TypeError:
+                return await fn(a)
+        res = await asyncio.gather(*(ask(a) for a in need), return_exceptions=True)
+        info["asked"] = len(need)
+        for a, h in zip(need, res):
+            if isinstance(h, Exception) or h is None:
+                info["failed"] += 1
+                continue
+            hist[a] = (ts, h)
+            _LIVE_Q[a] = (ts, h)
+        if len(_LIVE_Q) > 500:
+            for k in sorted(_LIVE_Q, key=lambda k: _LIVE_Q[k][0])[:250]:
+                _LIVE_Q.pop(k, None)
+    for r in picked:
+        got = hist.get(r.address)
+        if got is None:
+            continue
+        for o in parse_twap_orders(got[1], r.coin, r.side, r.px_last, ts):
+            if o.get("status") == "activated":
+                _live_add(out, ts, vols, r.coin, r.address, r.side, o, r.last_ts, got[0], False, r.n, r.total, "ask")
+    return _live_sorted(out), info
 
 
 async def diag_summary(cfg) -> str:

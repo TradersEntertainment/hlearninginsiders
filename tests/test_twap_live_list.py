@@ -136,6 +136,68 @@ def test_live_list_sources_and_filters():
     asyncio.run(run())
 
 
+def test_after_restart_db_and_ask():
+    """13.10 20:39: deploy'dan hemen sonra /twap boş geldi (bellek sıfırlanmıştı). Artık kayıt + anlık sorgu."""
+    async def run():
+        from app.notify import Notifier
+        await _fresh()
+        cfg = _cfg()
+        feed("INJ", B, "sell")
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None,
+                          Col({B: [order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000)]}))
+        async with dbm.db() as c:
+            n = (await (await c.execute("SELECT COUNT(*) n FROM twap_runs WHERE order_status='activated'"))
+                 .fetchone())["n"]
+        assert n == 1, "emir kayıtlı"
+        # --- restart: bellek boş; yeni HL alt emri dolumları geliyor (henüz 5 dk / 10 dilim yok) ---
+        tl.REG.clear()
+        tl._lookup_cache.clear()
+        tl.VOL_CACHE.update(ts=0, v={})
+        tf.F.clear()
+        tl._LIVE_Q.clear()
+        feed("INJ", B, "sell", n=3, t_end=dbm.now() - 2)          # kayıtlı emrin adresi dilim atıyor
+        feed("PUMP", A, "buy", n=2, ntl=40_000, t_end=dbm.now() - 3)   # emri bilinmeyen, görülen $80K
+        feed("WIF", C, "buy", n=2, ntl=1_000, t_end=dbm.now() - 3)     # emri bilinmeyen, küçük
+        feed("SOL", D, "buy", n=2, ntl=9_000, native=False)             # HL alt emri değil → sorulmaz
+        col = Col({A: [order("PUMP", A, ntl=7_000_000, start_ago=400, minutes=600)],
+                   C: [order("WIF", C, ntl=300_000, start_ago=100, minutes=60)]})
+        rows, info = await tl.live_twaps_full(col)
+        assert [(r["coin"], r["src"]) for r in rows] == [("PUMP", "ask"), ("INJ", "db"), ("WIF", "ask")], rows
+        assert sorted(col.calls) == sorted([A, C]) and info == {"asked": 2, "failed": 0, "skipped": 0}, info
+        inj = rows[1]
+        assert inj["alerted"] and abs(inj["planned_usd"] - 5e6) < 1 and abs(inj["filled_pct"] - 25) < 1e-6
+        assert abs(rows[0]["vol_pct"] - 7) < 1e-6, "hacim kv'den (VOL_CACHE boşken de)"
+        # 2 dk içinde yeniden /twap: yeniden sorulmaz
+        rows2, info2 = await tl.live_twaps_full(col)
+        assert len(col.calls) == 2 and info2["asked"] == 0 and [r["coin"] for r in rows2] == ["PUMP", "INJ", "WIF"]
+        # sorgu tavanı: en büyük görülen önce sorulur, kalanlar "sorulamadı" sayılır
+        tl._LIVE_Q.clear()
+        col3 = Col({A: [order("PUMP", A, ntl=7_000_000, start_ago=400, minutes=600)]})
+        rows3, info3 = await tl.live_twaps_full(col3, max_lookups=1)
+        assert col3.calls == [A] and info3 == {"asked": 1, "failed": 0, "skipped": 1}, info3
+        t = fmt.live_twaps(rows3, info=info3)
+        assert "⚠ HL TWAP dilimi görülen 1 adresin emri bu sefer sorulamadı" in t, t
+        # sorgu düştü / collector yok
+        tl._LIVE_Q.clear()
+
+        class Dead(Col):
+            async def fetch_twap_history(self, addr, timeout=6.0):
+                self.calls.append(addr)
+                return None
+        rows4, info4 = await tl.live_twaps_full(Dead({}))
+        assert info4["failed"] == 2 and [r["coin"] for r in rows4] == ["INJ"]
+        rows5, info5 = await tl.live_twaps_full(None)
+        assert info5["skipped"] == 2 and [r["coin"] for r in rows5] == ["INJ"]
+        # kayıtlı emir ama adres son 5 dk'da HL alt emri dilimi atmıyor → listede yok (iptal olmuş olabilir)
+        tl.REG.clear()
+        feed("INJ", B, "sell", n=3, t_end=dbm.now() - 900)
+        rows6, _ = await tl.live_twaps_full(None)
+        assert rows6 == []
+        print("✅ restart) kayıtlı emir + canlı HL dilimi → listede; emri bilinmeyen en büyükler anlık sorulur"
+              " (önbellek, tavan, düşen sorgu dürüst); dilim yoksa kayıt yetmez")
+    asyncio.run(run())
+
+
 def test_message():
     now = dbm.now()
     rows = [{"coin": "INJ", "addr": B, "side": "sell", "planned_usd": 5e6, "executed_usd": 1.25e6, "filled_pct": 25.0,
@@ -177,6 +239,7 @@ def test_routing_everywhere():
             sent.append((str(chat_id), text))
             return True
         bot.send = fake_send
+        bot.collector = Col({})
 
         async def msg(text, chat, uid, ctype="supergroup"):
             await bot._handle_update({"message": {"chat": {"id": chat, "type": ctype}, "from": {"id": uid},

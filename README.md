@@ -406,10 +406,14 @@ bildirilmez.
   10 dilim olmadıysa aday bile değildir — tahmin yok, beklenir.
 - **⏳ `/twap` (argümansız) — en büyük canlı TWAP'lar** (kullanıcı 13.10: "hangi grupta yazarsam yazayım"):
   şu an SÜREN HL TWAP emirleri, planlanan büyüklüğe göre (en çok 15 satır): plan, 24s hacme oranı, doldu %,
-  kalan süre, ⚡ (≤ 1 sa), 📣 (kanala bildirildi), adres. Kaynak `twaplive.live_twaps()`: canlı sayacın emri
-  sorulmuş dizileri + ilk dilim yolunun bildirdiği emirler; süren = HL `activated`, planlanan bitiş gelmemiş,
-  emir diziyle örtüşüyor ve son 5 dk'da dilim görüldü. Dolan = son sorgudaki HL rakamı (sorgu 5 dk'dan eskiyse
-  yaşı yazılır). Yalnız radarın sorduğu emirler (HL tüm emirleri tek yerden vermiyor). Sahibin her sohbetinde
+  kalan süre, ⚡ (≤ 1 sa), 📣 (kanala bildirildi), adres. Kaynak `twaplive.live_twaps_full()` — bellek
+  restart'ta sıfırlanır (13.10 20:39 deploy sonrası liste boş geldi), o yüzden üç kaynak: (1) canlı sayacın emri
+  sorulmuş dizileri + ilk dilim yolunun bildirdiği emirler, (2) `twap_runs`'taki süren emir — yalnız aynı adres +
+  coin + yönde son 5 dk'da HL TWAP alt emri dolumu (sıfır hash) görülüyorsa, (3) alt emir dolumu görülen ama
+  emri bilinmeyen en büyük dizilerin adresleri o an sorulur (en çok 8, 2 dk önbellek; sorulamayan sayısı ⚠ ile
+  yazılır). Süren = HL `activated`, planlanan bitiş gelmemiş, emir diziyle örtüşüyor ve son 5 dk'da dilim
+  görüldü. Dolan = son sorgudaki HL rakamı (sorgu 5 dk'dan eskiyse yaşı yazılır). HL tüm emirleri tek yerden
+  vermiyor: yalnız dinlenen coinlerde dilimi görülenler. Sahibin her sohbetinde
   ve botun kendi kanal/gruplarında (kripto kanalı, TWAP aynası, 🕵️ Gizli TWAP grubu …; sahip olmayan üye ve
   kanal gönderisi dahil) çalışır; `/twaplar` da aynı. Yabancı grupta sessiz.
 - **Kanal:** kripto → `CRYPTO_CHAT_ID` (boşsa gönderilmez), hisse/endeks → ana
