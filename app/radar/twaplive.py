@@ -361,8 +361,9 @@ async def lookup_order(collector, run: Run, now_ts: int, cfg, out: dict, force: 
     cool = int(getattr(cfg, "twap_lookup_cooldown", 600) or 0)
     cached = _lookup_cache.get(addr)
     hist = None
+    q_ts = now_ts
     if cached and not force and now_ts - cached[0] < cool:
-        hist = cached[1]
+        hist, q_ts = cached[1], int(cached[0])
     else:
         if out.get("lookups", 0) >= LOOKUP_MAX_PER_EVAL:
             out["lookup_capped"] = out.get("lookup_capped", 0) + 1
@@ -385,6 +386,8 @@ async def lookup_order(collector, run: Run, now_ts: int, cfg, out: dict, force: 
             for k in sorted(_lookup_cache, key=lambda k: _lookup_cache[k][0])[:500]:
                 _lookup_cache.pop(k, None)
     orders = parse_twap_orders(hist, run.coin, run.side, run.px_last, now_ts)
+    for o in orders:
+        o["q_ts"] = q_ts                            # HL cevabının anı (önbellekten geldiyse önbelleğinki)
     run.lookup_ts = now_ts
     run.order = orders[0] if orders else None
     return run.order
@@ -603,7 +606,7 @@ async def _rehydrate(window_sec: int) -> int:
                          "minutes": float(r.get("order_min") or 0), "started_ts": int(r.get("order_ts") or 0),
                          "left_sec": None,
                          "filled_pct": (exu / float(r["planned_usd"]) * 100) if float(r["planned_usd"]) else None,
-                         "reduce_only": False, "randomize": False}
+                         "reduce_only": False, "randomize": False, "q_ts": int(r.get("lookup_ts") or 0)}
         REG.runs[key] = run
         n += 1
     return n
@@ -665,6 +668,7 @@ async def _quick_refresh(collector, run: "Run", ts: int, out: dict) -> None:
     started = int((run.order or {}).get("started_ts") or 0)
     got = next((o for o in orders if started and abs(int(o.get("started_ts") or 0) - started) <= 2), None)
     if got is not None:
+        got["q_ts"] = ts
         run.order = got
 
 
@@ -1300,24 +1304,60 @@ def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts
         cur["last_ts"] = max(cur["last_ts"], e["last_ts"])
 
 
+def _fresher(o: dict | None, addr: str, coin: str, side: str, px, ts: int) -> dict | None:
+    """Adresin önbellekteki emir geçmişi bu emrin son sorgusundan TAZEYSE aynı emri (başlangıç ±2 sn) oradan al —
+    iptal edilmiş emir (aynı adres + coin + yönün başka TWAP'ı dilim atarken) 'süren' görünmesin. G/Ç yok."""
+    if not o:
+        return o
+    c = _lookup_cache.get(addr)
+    if not c or int(c[0]) <= int(o.get("q_ts") or 0):
+        return o
+    t0 = int(o.get("started_ts") or 0)
+    for x in parse_twap_orders(c[1], coin, side, px, ts):
+        if t0 and abs(int(x.get("started_ts") or 0) - t0) <= 2:
+            x["q_ts"] = int(c[0])
+            return x
+    return o
+
+
 def _live_memory(out: dict, ts: int, vols: dict) -> None:
+    """📣 burada geçici: kesin işaret live_twaps_full'da alerts_log'dan (gerçekten gönderilen emir) gelir."""
     for r in list(REG.runs.values()):
-        o = r.order
+        o = _fresher(r.order, r.address, r.coin, r.side, r.px_last, ts)
         if not o or not native_overlap([o], r):
             continue
-        c = _lookup_cache.get(r.address)
-        q = int(r.lookup_ts or 0) if r.alerted_ts else (c[0] if c else int(r.lookup_ts or 0))
+        q = int(o.get("q_ts") or 0)
         _live_add(out, ts, vols, r.coin, r.address, r.side, o, r.last_ts, q, r.alerted_ts, r.n, r.total, "mem")
     try:
         from . import twapfast
         for f in list(twapfast.F.open.values()):
             if f.get("ended"):
                 continue
-            _live_add(out, ts, vols, f["coin"], f["addr"], f["side"], f.get("order"),
-                      max(int(f.get("last_ts") or 0), int(f.get("last_slice") or 0)), f.get("lookup_ts"), True,
-                      f.get("n"), f.get("total"), "fast")
+            o = _fresher(f.get("order"), f["addr"], f["coin"], f["side"], f.get("px_last"), ts)
+            _live_add(out, ts, vols, f["coin"], f["addr"], f["side"], o,
+                      max(int(f.get("last_ts") or 0), int(f.get("last_slice") or 0)),
+                      int((o or {}).get("q_ts") or 0), True, f.get("n"), f.get("total"), "fast")
     except Exception:                                  # noqa: BLE001
         log.debug("hızlı yol emirleri okunamadı", exc_info=True)
+
+
+async def _announced(rows: list[dict]) -> None:
+    """📣 = bu EMİR gerçekten bildirildi (kullanıcıya 'kanala bildirildi' diyoruz): ilk dilim yolunun emir işareti
+    ('twap_fast', adres:coin:yön:başlangıç) ya da eski yolun GÖNDERİLMİŞ alarmı ('twap', metinli) emrin
+    başlangıcından sonra. Bekleme benimsemesi / kanalsız tur / aynı anahtarın eski emri 📣 sayılmaz."""
+    if not rows:
+        return
+    try:
+        async with db() as conn:
+            for e in rows:
+                key = f"{e['coin']}:{e['addr']}:{e['side']}"
+                cur = await conn.execute(
+                    """SELECT 1 FROM alerts_log WHERE (kind='twap_fast' AND key=?)
+                         OR (kind='twap' AND key=? AND ts >= ? AND COALESCE(payload,'') <> '') LIMIT 1""",
+                    (f"{key}:{int(e['started_ts'])}", key, int(e["started_ts"]) - 5))
+                e["alerted"] = (await cur.fetchone()) is not None
+    except Exception:                                  # noqa: BLE001
+        log.debug("📣 işareti okunamadı", exc_info=True)
 
 
 def _live_sorted(out: dict) -> list[dict]:
@@ -1383,8 +1423,8 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
                  "minutes": float(x.get("order_min") or 0), "started_ts": int(x.get("order_ts") or 0)}
             _live_add(out, ts, vols, x["coin"], x["address"], x["side"], o, r.last_ts,
                       int(x.get("lookup_ts") or x.get("ts") or 0), x.get("alerted_ts"), r.n, r.total, "db")
-    # 3) anlık sorgu
-    have = {(e["coin"], e["addr"], e["side"]) for e in out.values()}
+    # 3) anlık sorgu (sorgu anı bilinmeyen satır — restart — da yeniden sorulur)
+    have = {(e["coin"], e["addr"], e["side"]) for e in out.values() if e["q_ts"]}
     todo = sorted((r for k, r in active.items() if k not in have), key=lambda r: -r.total)
     info = {"asked": 0, "failed": 0, "skipped": 0}
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
@@ -1431,7 +1471,9 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
         for o in parse_twap_orders(got[1], r.coin, r.side, r.px_last, ts):
             if o.get("status") == "activated":
                 _live_add(out, ts, vols, r.coin, r.address, r.side, o, r.last_ts, got[0], False, r.n, r.total, "ask")
-    return _live_sorted(out), info
+    rows = _live_sorted(out)
+    await _announced(rows)
+    return rows, info
 
 
 async def diag_summary(cfg) -> str:

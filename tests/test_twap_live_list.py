@@ -198,6 +198,70 @@ def test_after_restart_db_and_ask():
     asyncio.run(run())
 
 
+def test_review_ghost_bell_query_age():
+    """İnceleme (13.10): iptal edilmiş emir 'süren' görünmesin; 📣 yalnız GERÇEKTEN gönderilen emirde; sorgu anı."""
+    async def run():
+        from app.notify import Notifier
+        await _fresh()
+        cfg = _cfg()
+        # 1) hızlı yolun bildirdiği X iptal; aynı adres + coin + yönde Y dilim atıyor → X F.open'da 'activated' kalmış
+        feed("PUMP", A, "buy")
+        x = tl.parse_twap_orders([order("PUMP", A, ntl=5_000_000, start_ago=3600, minutes=360, tid=1)], "PUMP", "buy",
+                                 PX, dbm.now())[0]
+        tf._adopt(("PUMP", A, "buy"), {"t0": dbm.now() - 3600, "ts": dbm.now() - 5, "px": PX}, x, dbm.now() - 3500,
+                  dbm.now() - 3500)
+        x["q_ts"] = dbm.now() - 3500
+        y_hist = [order("PUMP", A, status="terminated", ntl=5_000_000, start_ago=3600, minutes=360, tid=1),
+                  order("PUMP", A, ntl=3_000_000, start_ago=600, minutes=120, tid=2)]
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col({A: y_hist}))   # REG sorgusu önbelleği tazeler
+        rows, _ = await tl.live_twaps_full(None)
+        assert [(r["coin"], round(r["planned_usd"])) for r in rows] == [("PUMP", 3_000_000)], rows
+        # lifecycle da uzun emri dilim gelse 5 dk'da bir sorar → iptali görür (⛔ / ended)
+        tl._lookup_cache.clear()
+        rec = tf.F.open[("PUMP", A, "buy")]
+        rec["lookup_ts"] = dbm.now() - tf.OPEN_POLL - 1
+        rec["last_ts"] = dbm.now() - 5
+        await tf.lifecycle(cfg, Notifier(cfg, Bot()), Col({A: y_hist}), dbm.now())
+        assert rec["ended"], "iptal görüldü"
+        # 2) 📣: bekleme benimsemesi / kanalsız tur 📣 değil; gerçekten gönderilen ve hızlı yol işareti 📣
+        await _fresh()
+        cfg2 = _cfg()
+        cfg2.crypto_chat_id = ""                                # kanal yok, ayna yok → gönderilemez
+        feed("INJ", B, "sell")
+        await tl.evaluate(cfg2, Notifier(cfg2, Bot()), None,
+                          Col({B: [order("INJ", B, side="A", minutes=300, ntl=9_000_000)]}))
+        assert tl.REG.runs[("INJ", B, "sell")].alerted_ts, "kanalsız turda da alerted_ts yazılıyor (eski davranış)"
+        rows, _ = await tl.live_twaps_full(None)
+        assert [(r["coin"], r["alerted"]) for r in rows] == [("INJ", False)], rows
+        await dbm.alert_log("twap", f"INJ:{B}:sell", "⏳ TWAP …")      # gerçekten gönderilmiş olsaydı
+        rows, _ = await tl.live_twaps_full(None)
+        assert rows[0]["alerted"] is True
+        async with dbm.db() as c:                                     # aynı anahtarın ESKİ emri 1 sa önce bildirildi
+            await c.execute("INSERT INTO alerts_log(kind,key,ts,payload) VALUES('twap',?,?,'⏳ eski emir')",
+                            (f"PUMP:{C}:buy", dbm.now() - 3600))
+            await c.commit()
+        feed("PUMP", C, "buy")                                        # yeni emir: bekleme benimser (gönderim yok)
+        colc = Col({C: [order("PUMP", C, ntl=1_000_000, start_ago=60)]})
+        await tl.evaluate(cfg2, Notifier(cfg2, Bot()), None, colc)
+        rows, _ = await tl.live_twaps_full(colc)
+        assert {r["coin"]: r["alerted"] for r in rows} == {"INJ": True, "PUMP": False}, rows
+        # 3) sorgu anı: önbellekten gelen emir önbelleğin anını taşır; bilinmiyorsa dürüst not
+        r = tl.REG.runs[("INJ", B, "sell")]
+        assert int(r.order["q_ts"]) <= dbm.now() and int(r.order["q_ts"]) == tl._lookup_cache[B][0]
+        e = dict(rows[0], q_ts=0)
+        assert "(sorgu zamanı bilinmiyor)" in fmt.live_twaps([e])
+        assert "⚡" in fmt.live_twaps([dict(e, minutes=90)], quick_max=120)
+        assert "⚡" not in fmt.live_twaps([dict(e, minutes=90)], quick_max=60)
+        # STRAT_CHAT_ID da botun kendi sohbeti
+        from app.telegram.bot import TelegramBot
+        c3 = _cfg()
+        c3.strat_chat_id = "-888"
+        assert "-888" in TelegramBot._own_chats(type("B", (), {"cfg": c3})())
+        print("✅ inceleme) iptal edilen emir taze önbellekle düşer + lifecycle 5 dk'da sorar; 📣 yalnız gönderilen"
+              " emirde; sorgu anı önbellekten; bilinmiyorsa yazılır; ⚡ ayarlı süre; STRAT sohbeti")
+    asyncio.run(run())
+
+
 def test_message():
     now = dbm.now()
     rows = [{"coin": "INJ", "addr": B, "side": "sell", "planned_usd": 5e6, "executed_usd": 1.25e6, "filled_pct": 25.0,

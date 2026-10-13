@@ -862,7 +862,8 @@ class TelegramBot:
             getattr(self.cfg, "crypto_stocks_id", ""), getattr(self.cfg, "liq_attack_chat_id", ""),
             getattr(self.cfg, "pattern_chat_id", ""), getattr(self.cfg, "telegram_channel_id", ""),
             getattr(self.cfg, "sim_chat_id", ""), getattr(self.cfg, "account_chat_id", ""),
-            getattr(self.cfg, "twap_mirror_chat_id", ""), getattr(self.cfg, "hidden_twap_chat_id", ""))
+            getattr(self.cfg, "twap_mirror_chat_id", ""), getattr(self.cfg, "hidden_twap_chat_id", ""),
+            getattr(self.cfg, "strat_chat_id", ""))
             if v and str(v).strip()}
 
     def _owner_user_id(self) -> str:
@@ -1040,7 +1041,7 @@ class TelegramBot:
         """⏳ En büyük canlı TWAP'lar — sahibin her sohbetinde ve botun kendi kanal/gruplarında aynı liste."""
         from ..radar import twaplive as tl
         rows, info = await tl.live_twaps_full(getattr(self, "collector", None))
-        await self.send(fmt.live_twaps(rows, owner=owner, info=info), chat_id)
+        await self.send(fmt.live_twaps(rows, owner=owner, info=info, quick_max=tl.quick_max(self.cfg)), chat_id)
 
     async def _cmd_whale(self, args: list[str], chat_id: str) -> None:
         if not args or not args[0].startswith("0x"):

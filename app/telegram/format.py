@@ -3222,7 +3222,8 @@ def hidden_twap(m: dict, ctx: dict) -> str:
 LIVE_TWAP_TOP = 15
 
 
-def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, info: dict | None = None) -> str:
+def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, info: dict | None = None,
+               quick_max: float = 60) -> str:
     """/twap: en büyük SÜREN HL TWAP emirleri (twaplive.live_twaps_full), planlanan büyüklüğe göre. Tahmin yok:
     dolan = son sorgudaki HL rakamı; kalan süre planlanan bitişe göre."""
     head = "⏳ <b>Canlı TWAP'lar</b>"
@@ -3250,13 +3251,16 @@ def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, i
             ln += f" · doldu %{float(e['filled_pct']):.0f}"
         if e.get("left_sec") is not None:
             ln += f" · {dur_txt(e['left_sec'])} kaldı"
-        if e.get("minutes") and float(e["minutes"]) <= 60:
+        qm, mins = float(quick_max or 0), float(e.get("minutes") or 0)
+        if qm > 0 and 0 < mins <= qm:                   # twaplive.is_quick ile aynı kural (ayarlı süre)
             ln += " · ⚡"
         if e.get("alerted"):
             ln += " · 📣"
         ln += f" · {alink(e.get('addr') or '')}"
         q = int(e.get("q_ts") or 0)
-        if q and now() - q > 300:
+        if not q:
+            ln += " <i>(sorgu zamanı bilinmiyor)</i>"
+        elif now() - q > 300:
             ln += f" <i>(sorgu {dur_txt(now() - q)} önce)</i>"
         lines.append(ln)
     lines.append(foot)

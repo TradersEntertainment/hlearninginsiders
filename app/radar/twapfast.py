@@ -53,6 +53,8 @@ SILENT_SEC = 90             # bildirilmiş emrin dilimi bu kadar gelmezse (iptal
 QUICK_SILENT = 45           # ⚡ HIZLI (≤ 1 sa): bir dilim (30 sn) gecikince sorulur — iptal ⛔ ~1 dk içinde kanalda
 QUICK_RELOOK = 30
 QUICK_POLL = 60             # ⚡ HIZLI emir dilim gelse de dakikada bir sorulur (aynı adresin başka TWAP'ı iptali gizlemesin)
+OPEN_POLL = 300             # uzun emir de dilim gelse 5 dk'da bir sorulur: aynı adres + coin + yönün BAŞKA TWAP'ı dilim
+                            # atarken iptal gizlenmesin (⛔ notu gecikmesin, /twap iptal edilmiş emri "süren" göstermesin)
 OPEN_KV = "twapfast_open"   # bildirilen emirlerin kaydı — yeniden başlatmada bitiş/iptal notu kaybolmasın
 END_GRACE = 30              # planlanan bitişten bu kadar sonra emir sorulur (🏁/⛔ notu)
 END_GIVEUP = 600            # HL bitişten bu kadar sonra hâlâ 'activated' diyorsa not yazılmadan kapatılır
@@ -379,6 +381,7 @@ async def load_open(t: int) -> int:
 
 def _adopt(key: tuple, p: dict, order: dict, t: int, alert_ts: int | None) -> dict:
     """Bildirilen emri hızlı yolun KENDİ kaydına al (eski yolun sayacına dokunmadan): bitiş/iptal notu buradan."""
+    order.setdefault("q_ts", t)
     started = int(order.get("started_ts") or 0)
     r = F.open.get(key)
     if r is not None and r["started"] == started and not r["ended"]:
@@ -530,7 +533,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
         end_at = int(r["end_at"])
         quick = twaplive.is_quick(cfg, r.get("order"))
         due = (t >= end_at + END_GRACE or t - int(r["last_ts"]) > (QUICK_SILENT if quick else SILENT_SEC)
-               or (quick and t - int(r["lookup_ts"]) >= QUICK_POLL))
+               or t - int(r["lookup_ts"]) >= (QUICK_POLL if quick else OPEN_POLL))
         if not due:
             continue
         if t - int(r["lookup_ts"]) < (QUICK_RELOOK if quick else RELOOK_SEC) \
@@ -555,6 +558,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
                 o = x
                 break
         if o is not None:
+            o["q_ts"] = t                               # HL cevabının anı (/twap "sorgu N önce")
             r["order"] = o
         st = (o or {}).get("status")
         if st == "activated":
