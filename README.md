@@ -404,6 +404,14 @@ bildirilmez.
   `/twap PUMP`: coin dinleniyor mu, 24s hacim, bildirim için gereken emir; `/twap durum`:
   özet + son 50 karar (`twaplive_last` kv'si, tur tur ezilmez). Emir henüz 5 dk /
   10 dilim olmadıysa aday bile değildir — tahmin yok, beklenir.
+- **📅 Cumartesi hisse tabanı** (kullanıcı 13.10: "hafta sonu 24 saat baz alırsa yanlış olur… sadece hisseler için,
+  geçen hafta Cumartesi'ye kıyasla %10'dan büyük TWAP; Pazar değişmeden kalabilir"): TSİ Cumartesi günü hisse ve
+  endeks/emtia (HIP-3, kripto ve spot değil) TWAP'ı son 24s yerine **geçen Cumartesi'nin hacmiyle** (TSİ 00–24, HL
+  saatlik mumları, coin başına haftada 1 istek, kv'de) kıyaslanır; eşik `TWAP_ALERT_VOL_PCT_SAT` (%10; 0 = kapalı).
+  Ölçüm (5 hafta, 10 HIP-3 coin): Cumartesi sabahı son 24s hacim TWAP'ın yürüyeceği sonraki 24 saatin ~10 katıydı
+  (Cuma ABD seansı pencerede) → hafta sonu TWAP'ı 10 kat küçük görünüyordu; geçen hafta aynı saat ×1.04. Kriptoda
+  geçen hafta ×1.86 yanılttığı için kripto hariç; Pazar'da son 24s zaten hafta sonu → aynen. ⚡ hızlı ve 🕵️ gizli
+  TWAP'ın dakika hızı da bu tabana göre; mesajlar "geçen Cumartesi hacminin %X'i" der. Taban okunamazsa eski kural.
 - **⏳ `/twap` (argümansız) — en büyük canlı TWAP'lar** (kullanıcı 13.10: "hangi grupta yazarsam yazayım"):
   şu an SÜREN HL TWAP emirleri, planlanan büyüklüğe göre (en çok 15 satır): plan, 24s hacme oranı, doldu %,
   kalan süre, ⚡ (≤ 1 sa), 📣 (kanala bildirildi), adres. Kaynak `twaplive.live_twaps_full()` — bellek

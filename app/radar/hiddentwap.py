@@ -197,6 +197,7 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
         return _count("ignored", rid)
     if getattr(run, "nat_n", 0):
         return _count("native", rid)              # dizide HL TWAP alt emri dolumu: emir var demektir
+    day_vol, vol_ts, sat = twaplive.eff_vol(cfg, run.coin, day_vol, vol_ts, ts)   # Cumartesi hisse: geçen Cmt
     if not vol_ts or ts - int(vol_ts) > twaplive.VOL_MAX_AGE:
         day_vol = None
     g, x = gate(cfg, run, m, day_vol, twaplive.REG)
@@ -234,7 +235,7 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
     if not send_due:
         return _count(reason, rid)
     pos = await twaplive.position_ctx(client, run.coin, run.address)
-    ctx = {"day_vol": day_vol, "rate_x": x, "pos": pos, "gate": g, "klass": twaplive.klass_of(run.coin),
+    ctx = {"day_vol": day_vol, "rate_x": x, "pos": pos, "gate": g, "klass": twaplive.klass_of(run.coin), "sat": sat,
            "entity": ents.get(run.address) or ""}
     text = fmt.hidden_twap(m, ctx)
     op["alerted"] = ts                            # talep ÖNCE: teslimden sonraki DB hatası ikinci mesaj doğurmasın

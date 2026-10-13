@@ -3182,14 +3182,15 @@ def hidden_twap(m: dict, ctx: dict) -> str:
     dur = int(m.get("dur") or 0)
     per_min = float(m.get("rate_day") or 0) / 1440
     rate = f"dakikada ~{usd(per_min)}"
+    ref = "geçen Cumartesi'nin ortalama dakika hacminin" if ctx.get("sat") else "coinin ortalama dakika hacminin"
     if x is not None:                         # 1× altı yüzde olarak ("0.0×" yazmasın — büyük yolda x çok küçük olabilir)
         xf = float(x)
         if xf >= 1:
-            rate += f" = coinin ortalama dakika hacminin <b>{xf:.1f}×</b>'i"
+            rate += f" = {ref} <b>{xf:.1f}×</b>'i"
         elif xf >= 0.001:
-            rate += f" = coinin ortalama dakika hacminin <b>%{xf * 100:.1f}</b>'i"
+            rate += f" = {ref} <b>%{xf * 100:.1f}</b>'i"
         else:
-            rate += " = coinin ortalama dakika hacminin <b>%0.1</b>'inden az"
+            rate += f" = {ref} <b>%0.1</b>'inden az"
     lines = [f"🕵️ <b>Gizli TWAP</b> · {'🪙 ' if spot else ''}<b>{sym}</b> · {_twap_side(m.get('side'))} · emirsiz dilimleme",
              f"👤 {alink(m['address'])} · HL'de TWAP emri yok — kendi botuyla dilimliyor",
              f"📏 {int(m.get('n') or 0)} dilim × ~{usd(m.get('avg_slice'))}, her {_gap_txt(m.get('median_gap'))}"
@@ -3208,7 +3209,7 @@ def hidden_twap(m: dict, ctx: dict) -> str:
         lines.append("📍 pozisyon: bilinmiyor")
     pr = f"fiyat {px(m.get('px_first'))} → {px(m.get('px_last'))} (<b>{float(m.get('px_chg_pct') or 0):+.1f}%</b>)"
     if ctx.get("day_vol"):
-        pr += f" · 24s hacim {usd(ctx['day_vol'])}"
+        pr += f" · {'geçen Cumartesi hacmi' if ctx.get('sat') else '24s hacim'} {usd(ctx['day_vol'])}"
     lines.append(pr)
     if ctx.get("entity"):
         lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
@@ -3246,7 +3247,7 @@ def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, i
         ln = (f"{i}. {'🪙 ' if e.get('spot') else ''}<b>{sym}</b> {_twap_side(e.get('side'))} · plan "
               f"<b>{usd(e.get('planned_usd'))}</b>")
         if e.get("vol_pct") is not None:
-            ln += f" (24s hacmin %{float(e['vol_pct']):.1f}'i)"
+            ln += f" ({'geçen Cmt hacminin' if e.get('sat') else '24s hacmin'} %{float(e['vol_pct']):.1f}'i)"
         if e.get("filled_pct") is not None:
             ln += f" · doldu %{float(e['filled_pct']):.0f}"
         if e.get("left_sec") is not None:
@@ -3274,7 +3275,8 @@ def twap_alert(m: dict, ctx: dict) -> str:
     sym = esc(assets.label(coin))
     klass = ctx.get("klass") or "kripto"
     o = ctx.get("order") or {}
-    badge = (f"🐘 emir 24s hacmin <b>%{ctx['vol_pct']:.0f}</b>'i" if ctx.get("vol_pct") is not None
+    base = "geçen Cumartesi hacminin" if ctx.get("sat") else "24s hacmin"     # Cumartesi hisse tabanı
+    badge = (f"🐘 emir {base} <b>%{ctx['vol_pct']:.0f}</b>'i" if ctx.get("vol_pct") is not None
              else "💰 hacimden bağımsız büyük")
     quick = twap_quick(ctx)
     lines = [f"⏳ <b>TWAP</b>{' · ' + quick if quick else ''} · {'🪙 ' if spot else ''}<b>{sym}</b> · "
@@ -3297,7 +3299,7 @@ def twap_alert(m: dict, ctx: dict) -> str:
         lines.append("📍 pozisyon: bilinmiyor")
     pr = f"fiyat {px(m.get('px_first'))} → {px(m.get('px_last'))} (<b>{float(m.get('px_chg_pct') or 0):+.1f}%</b>)"
     if ctx.get("day_vol"):
-        pr += f" · 24s hacim {usd(ctx['day_vol'])}"
+        pr += f" · {'geçen Cumartesi hacmi' if ctx.get('sat') else '24s hacim'} {usd(ctx['day_vol'])}"
     if m.get("taker_pct") is not None:
         pr += f" · %{m['taker_pct']:.0f} taker"
     lines.append(pr)
@@ -3329,9 +3331,11 @@ def twap_fast(o: dict, ctx: dict) -> str:
     if ctx.get("per_min"):
         rate.append(f"dakikada ~<b>{usd(ctx['per_min'])}</b>")
     if ctx.get("rate_x") is not None:
-        rate.append(f"coinin 24s ortalama dakika hacminin <b>{float(ctx['rate_x']):.1f} katı</b>")
+        rate.append(f"coinin {'geçen Cumartesi' if ctx.get('sat') else '24s'} ortalama dakika hacminin"
+                    f" <b>{float(ctx['rate_x']):.1f} katı</b>")
     if ctx.get("vol_pct") is not None:
-        rate.append(f"emir 24s hacmin %{float(ctx['vol_pct']):.1f}'i")
+        rate.append(f"emir {'geçen Cumartesi hacminin' if ctx.get('sat') else '24s hacmin'}"
+                    f" %{float(ctx['vol_pct']):.1f}'i")
     lines = [head]
     if rate:
         lines.append("⏱ " + " · ".join(rate))
@@ -3360,7 +3364,7 @@ def twap_fast(o: dict, ctx: dict) -> str:
     if o.get("reduce_only"):
         extra.append("reduce-only (pozisyon kapatıyor)")
     if ctx.get("day_vol"):
-        extra.append(f"24s hacim {usd(ctx['day_vol'])}")
+        extra.append(f"{'geçen Cumartesi hacmi' if ctx.get('sat') else '24s hacim'} {usd(ctx['day_vol'])}")
     if ctx.get("gate") == "short":
         why = {"order_small": "emir toplamı tabanın altında", "vol_small": "emir/24s hacim eşiğinin altında",
                "order_left": "kalan eşiğin altında"}.get(ctx.get("why") or "")

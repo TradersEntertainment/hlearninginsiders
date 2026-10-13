@@ -204,6 +204,13 @@ def prefilter(cfg, coin: str, slice_usd: float, vol, now_ts: int) -> str:
     big = float(getattr(cfg, "twap_alert_big_usd", 0) or 0)
     if big > 0 and slice_usd * (2 * LONG_HORIZON_MIN + 1) / 0.8 >= big:
         return ""                                       # order_gate 'big'i hacim ve ince spottan ÖNCE yoklar
+    if twaplive.sat_missing(cfg, coin, now_ts):
+        return ""                                       # Cumartesi hisse: taban henüz yok → 24s'e göre ELEME, sor
+    if vol:
+        dv0, vts0, sat = twaplive.eff_vol(cfg, coin, vol[0], vol[1], now_ts)   # Cumartesi hisse: geçen Cumartesi
+        vol = (dv0, vts0)
+    else:
+        sat = False
     if not vol or not vol[0] or float(vol[0]) <= 0 or not vol[1] or now_ts - int(vol[1]) > twaplive.VOL_MAX_AGE:
         return "pre_novol"
     dv = float(vol[0])
@@ -216,7 +223,8 @@ def prefilter(cfg, coin: str, slice_usd: float, vol, now_ts: int) -> str:
         return "pre_spot_thin"
     if short_max > 0 and pre_x >= rx_min * PRE_SLACK and slice_usd * (2 * short_max + 1) / 0.8 >= short_min:
         return ""
-    need = max(float(getattr(cfg, "twap_alert_min_usd", 1_000_000) or 0), dv * twaplive.vol_pct_for(cfg, coin) / 100)
+    need = max(float(getattr(cfg, "twap_alert_min_usd", 1_000_000) or 0),
+               dv * twaplive.vol_pct_for(cfg, coin, sat) / 100)
     if big > 0:
         need = min(need, big)
     if slice_usd * (2 * LONG_HORIZON_MIN + 1) / 0.8 >= need:
@@ -255,7 +263,8 @@ def short_gate(cfg, order: dict, rx: float | None) -> str:
 def decide_gate(cfg, coin: str, order: dict, day_vol, vol_ts, now_ts: int) -> tuple[str, dict]:
     """(karar, ayrıntı). 'ok' | 'big' | 'short' bildirilir. Spot ince çift ve bitmiş emir kısa yoldan da geçemez."""
     det = twaplive.gate_detail(cfg, coin, order, day_vol, vol_ts, now_ts)
-    per_min, rx = rate_x(order, day_vol, vol_ts, now_ts)
+    dv, vts, _ = twaplive.eff_vol(cfg, coin, day_vol, vol_ts, now_ts)     # Cumartesi hisse: aynı taban
+    per_min, rx = rate_x(order, dv, vts, now_ts)
     det.update(per_min=per_min, rate_x=rx, minutes=order.get("minutes"))
     g = det["reason"]
     if g in ("ok", "big") or g in ("no_order", "order_done", "spot_thin"):
@@ -350,6 +359,10 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
         return "no_order"
     F.known[key] = int(order["started_ts"]) + int(float(order.get("minutes") or 0) * 60) + 120
     F.pending.pop(key, None)
+    try:
+        await twaplive.ensure_sat(cfg, client, [coin], t)   # Cumartesi hisse: geçen Cumartesi hacmi (haftada 1 istek)
+    except Exception:                                  # noqa: BLE001
+        log.debug("Cumartesi tabanı", exc_info=True)
     return await _decide(cfg, client, notifier, key, p, order, vols, t, ents.get(addr) or "")
 
 
@@ -458,7 +471,8 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
                     address=addr, coin=coin, side=side, total=float(order.get("planned_usd") or 0), first_ts=started))
             except Exception:                          # noqa: BLE001
                 log.debug("hızlı twap takip teklifi yazılamadı (%s)", coin, exc_info=True)
-        ctx = {"coin": coin, "address": addr, "side": side, "gate": g, "day_vol": day_vol,
+        ctx = {"coin": coin, "address": addr, "side": side, "gate": g,
+               "day_vol": det.get("day_vol") if det.get("sat") else day_vol, "sat": det.get("sat"),
                "vol_pct": det.get("vol_pct"), "per_min": det.get("per_min"), "rate_x": det.get("rate_x"),
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),

@@ -1040,7 +1040,8 @@ class TelegramBot:
     async def _cmd_twap_live(self, chat_id: str, owner: bool = True) -> None:
         """⏳ En büyük canlı TWAP'lar — sahibin her sohbetinde ve botun kendi kanal/gruplarında aynı liste."""
         from ..radar import twaplive as tl
-        rows, info = await tl.live_twaps_full(getattr(self, "collector", None))
+        rows, info = await tl.live_twaps_full(getattr(self, "collector", None), cfg=self.cfg,
+                                              client=getattr(self, "client", None))
         await self.send(fmt.live_twaps(rows, owner=owner, info=info, quick_max=tl.quick_max(self.cfg)), chat_id)
 
     async def _cmd_whale(self, args: list[str], chat_id: str) -> None:

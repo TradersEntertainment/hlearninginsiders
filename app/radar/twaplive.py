@@ -34,6 +34,8 @@ import asyncio
 import logging
 import statistics
 from collections import deque
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from .. import assets
 from ..db import alert_log, alert_recent, db, kv_get, kv_set, now
@@ -293,14 +295,108 @@ def parse_twap_orders(history, coin: str, side: str, mark, now_ts: int) -> list[
     return out
 
 
-def vol_pct_for(cfg, coin: str) -> float:
+def vol_pct_for(cfg, coin: str, sat: bool = False) -> float:
     """Hacim kuralı sınıfa göre: BTC/ETH `twap_alert_vol_pct_major` (%20 — $1-3M gürültü),
     diğerleri `twap_alert_vol_pct` (%5 — PUMP'ta $3M emir hacmin %4,8'iydi, %20 susturuyordu)."""
+    if sat:                                       # Cumartesi hisse: geçen Cumartesi hacmine göre (aşağıda)
+        return sat_pct(cfg)
     from .bigpos import MAJORS
     sym = (coin or "").split(":")[-1].upper()
     if sym in MAJORS:
         return float(getattr(cfg, "twap_alert_vol_pct_major", 20) or 0)
     return float(getattr(cfg, "twap_alert_vol_pct", 5) or 0)
+
+
+# ---------------- Cumartesi hisse tabanı ----------------
+# Kullanıcı 13.10: "hafta sonu 24 saat baz alırsa yanlış olur, hafta sonu gelecek yüksek TWAP'ları kaçırırız — bunu
+# sadece hisseler için yapalım; geçen hafta Cumartesi'ye kıyasla %10'dan büyük TWAP; Pazar değişmeden kalabilir".
+# Ölçüm (13.10, 10 HIP-3 hisse/emtia, 5 hafta saatlik mum): Cumartesi sabahı son 24s hacim, TWAP'ın yürüyeceği sonraki
+# 24 saatin ~10 katı (Cuma ABD seansı pencerede) → hafta sonu TWAP'ı 10 kat küçük görünüyordu; geçen hafta aynı saat
+# ×1.04. Kripto bu kuraldan HARİÇ (orada geçen hafta ×1.86 yanıltıyordu). Pazar: son 24s zaten hafta sonu → aynen.
+# Cumartesi = TSİ Cumartesi (Cuma 21:00 – Cmt 21:00 UTC ≈ ABD kapanışından sonraki 24 saat).
+TR_TZ = ZoneInfo("Europe/Istanbul")
+SAT_KV = "sat_vol"
+SAT_CACHE: dict[str, tuple[int, float]] = {}     # coin → (geçen Cumartesi TSİ başlangıcı, o günün toplam $ hacmi)
+_SAT_TRY: dict[str, int] = {}                     # coin → son deneme (veri yoksa 10 dk'da bir yeniden)
+_SAT_LOADED: list = [False]
+SAT_RETRY = 600
+
+
+def sat_pct(cfg) -> float:
+    return float(getattr(cfg, "twap_alert_vol_pct_sat", 10) or 0)
+
+
+def sat_window(now_ts: int) -> tuple[int, int] | None:
+    """Bugün TSİ Cumartesi ise GEÇEN haftanın Cumartesi'si (TSİ 00:00–24:00) → (başlangıç, bitiş) UTC sn."""
+    d = datetime.fromtimestamp(int(now_ts), TR_TZ)
+    if d.weekday() != 5:
+        return None
+    prev = d.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
+    return int(prev.timestamp()), int((prev + timedelta(days=1)).timestamp())
+
+
+def sat_applies(cfg, coin: str, now_ts: int) -> bool:
+    """Hisse / endeks-emtia (HIP-3, kripto değil, spot değil), TSİ Cumartesi ve kural açık (yüzde > 0)."""
+    return (sat_pct(cfg) > 0 and bool(coin) and klass_of(coin) != "kripto" and not assets.is_spot(coin)
+            and sat_window(now_ts) is not None)
+
+
+def eff_vol(cfg, coin: str, day_vol, vol_ts, now_ts: int) -> tuple:
+    """Kapının kullanacağı hacim: Cumartesi hissede geçen Cumartesi'nin hacmi (önbellekte varsa) → (hacim, an, True);
+    aksi halde son 24s (dayNtlVlm) aynen → (day_vol, vol_ts, False). Geçmiş günün sabit ölçümü olduğu için 'an' şimdi."""
+    if cfg is not None and sat_applies(cfg, coin, now_ts):
+        w = sat_window(now_ts)
+        c = SAT_CACHE.get(coin)
+        if c and w and int(c[0]) == w[0] and float(c[1] or 0) > 0:
+            return float(c[1]), int(now_ts), True
+    return day_vol, vol_ts, False
+
+
+def sat_missing(cfg, coin: str, now_ts: int) -> bool:
+    """Cumartesi hissede taban henüz okunamadı (önbellekte yok): ön süzgeç 24s'e göre ELEMESİN."""
+    return sat_applies(cfg, coin, now_ts) and not eff_vol(cfg, coin, None, None, now_ts)[2]
+
+
+async def ensure_sat(cfg, client, coins, now_ts: int, max_fetch: int = 12) -> int:
+    """Cumartesi hisse coinleri için geçen Cumartesi hacmini HL saatlik mumlarından oku (coin başına haftada 1 istek;
+    kv'de saklanır, restart'ta yeniden istenmez). Dönüş: okunan coin sayısı. Hata fırlatmaz."""
+    w = sat_window(now_ts)
+    if w is None or sat_pct(cfg) <= 0:
+        return 0
+    if not _SAT_LOADED[0]:
+        try:
+            for k, v in (await kv_get(SAT_KV) or {}).items():
+                SAT_CACHE[k] = (int(v[0]), float(v[1]))
+            _SAT_LOADED[0] = True
+        except Exception:                              # noqa: BLE001
+            log.debug("sat_vol okunamadı", exc_info=True)
+    if client is None or not hasattr(client, "candles"):
+        return 0
+    todo = [c for c in dict.fromkeys(coins or []) if sat_applies(cfg, c, now_ts)
+            and int((SAT_CACHE.get(c) or (0, 0))[0]) != w[0] and int(now_ts) - _SAT_TRY.get(c, 0) >= SAT_RETRY]
+    got = 0
+    for c in todo[:max(0, int(max_fetch))]:
+        _SAT_TRY[c] = int(now_ts)
+        try:
+            rows = await client.candles(c, "1h", w[0] * 1000, w[1] * 1000 - 1)
+            tot = 0.0
+            for x in rows or []:
+                t = int(x.get("t") or 0) // 1000
+                if w[0] <= t < w[1]:
+                    tot += float(x.get("v") or 0) * (float(x.get("o") or 0) + float(x.get("c") or 0)) / 2
+        except Exception:                              # noqa: BLE001
+            log.debug("geçen Cumartesi hacmi okunamadı %s", c, exc_info=True)
+            continue
+        if tot > 0:
+            SAT_CACHE[c] = (w[0], tot)
+            got += 1
+    if got:
+        try:
+            cut = w[0] - 7 * 86400
+            await kv_set(SAT_KV, {k: [v[0], v[1]] for k, v in SAT_CACHE.items() if v[0] > cut})
+        except Exception:                              # noqa: BLE001
+            log.debug("sat_vol yazılamadı", exc_info=True)
+    return got
 
 
 def left_floor(cfg, planned: float) -> float:
@@ -309,7 +405,7 @@ def left_floor(cfg, planned: float) -> float:
     return min(min_left, planned * 0.5) if planned > 0 else min_left
 
 
-def order_gate(cfg, order: dict | None, day_vol, vol_ts, now_ts: int, coin: str = "") -> str:
+def order_gate(cfg, order: dict | None, day_vol, vol_ts, now_ts: int, coin: str = "", sat: bool = False) -> str:
     """Emir verisiyle kapı: 'ok' | 'big' geçer; diğerleri nedenidir:
     no_order · order_done · order_small · order_left · no_vol · spot_thin · vol_small.
     `coin` hacim yüzdesinin sınıfını seçer (vol_pct_for) ve spot tabanını uygular."""
@@ -334,18 +430,21 @@ def order_gate(cfg, order: dict | None, day_vol, vol_ts, now_ts: int, coin: str 
     spot_min_vol = float(getattr(cfg, "spot_twap_min_day_vol", 0) or 0)
     if spot_min_vol > 0 and assets.is_spot(coin) and float(day_vol) < spot_min_vol:
         return "spot_thin"
-    if planned / float(day_vol) * 100 < vol_pct_for(cfg, coin):
+    if planned / float(day_vol) * 100 < vol_pct_for(cfg, coin, sat):
         return "vol_small"
     return "ok"
 
 
 def gate_detail(cfg, coin: str, order: dict | None, day_vol, vol_ts, now_ts: int) -> dict:
     """Kapı kararı SAYILARLA (teşhis): {reason, planned, left, vol_pct, pct_needed, need_usd,
-    left_need, day_vol}. need_usd = bildirim için gereken emir = max(min_usd, yüzde × hacim)."""
-    reason = order_gate(cfg, order, day_vol, vol_ts, now_ts, coin)
+    left_need, day_vol}. need_usd = bildirim için gereken emir = max(min_usd, yüzde × hacim).
+    Cumartesi hissede hacim = geçen Cumartesi'ninki (eff_vol) ve yüzde onun eşiği; `sat` ve ham 24s `day_vol_24h`."""
+    raw = day_vol
+    day_vol, vol_ts, sat = eff_vol(cfg, coin, day_vol, vol_ts, now_ts)
+    reason = order_gate(cfg, order, day_vol, vol_ts, now_ts, coin, sat)
     planned = float((order or {}).get("planned_usd") or 0)
     left = float((order or {}).get("remaining_usd") or 0)
-    pct = vol_pct_for(cfg, coin)
+    pct = vol_pct_for(cfg, coin, sat)
     dv = float(day_vol or 0)
     min_usd = float(getattr(cfg, "twap_alert_min_usd", 1_000_000) or 0)
     spot_min_vol = float(getattr(cfg, "spot_twap_min_day_vol", 0) or 0) if assets.is_spot(coin) else 0.0
@@ -353,7 +452,8 @@ def gate_detail(cfg, coin: str, order: dict | None, day_vol, vol_ts, now_ts: int
             "vol_pct": (planned / dv * 100) if dv else None, "pct_needed": pct,
             "need_usd": max(min_usd, dv * pct / 100) if dv else min_usd,
             "vol_need": spot_min_vol or None,
-            "left_need": left_floor(cfg, planned), "status": (order or {}).get("status")}
+            "left_need": left_floor(cfg, planned), "status": (order or {}).get("status"), "sat": sat,
+            "day_vol_24h": raw}
 
 
 _lookup_cache: dict[str, tuple[int, list]] = {}
@@ -778,7 +878,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
              "dur": int(run.last_ts - run.first_ts), "total": round(run.total),
              "reason": reason, "ts": ts}
         if detail:
-            d.update({k: detail.get(k) for k in ("planned", "left", "vol_pct", "pct_needed", "need_usd", "status")})
+            d.update({k: detail.get(k) for k in ("planned", "left", "vol_pct", "pct_needed", "need_usd", "status",
+                                                  "sat")})
         decisions.append(d)
     if not getattr(cfg, "twap_live_enabled", True):
         out["skipped"] = "kapalı"
@@ -803,6 +904,10 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
         return out
     vols = await volumes(client)
     VOL_CACHE.update(ts=ts, v=vols)
+    try:
+        await ensure_sat(cfg, client, [r.coin for r in cands], ts)   # Cumartesi hisse: geçen Cumartesi hacmi
+    except Exception:                                  # noqa: BLE001
+        log.debug("Cumartesi tabanı", exc_info=True)
     ents = await entities(list({r.address for r in cands}))
     from ..telegram import format as fmt
     for run in cands:
@@ -1011,7 +1116,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         offer = await _twap_offer(run)
                     except Exception:
                         log.debug("twap takip teklifi yazılamadı (%s)", run.coin, exc_info=True)
-                ctx = {"order": order, "day_vol": day_vol, "vol_pct": det["vol_pct"],
+                ctx = {"order": order, "day_vol": det["day_vol"] if det.get("sat") else day_vol,
+                       "vol_pct": det["vol_pct"], "sat": det.get("sat"),
                        "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or "",
                        "offer": offer, "quick_max": quick_max(cfg), "auto_end": auto_end(cfg, order)}
                 text = fmt.twap_alert(m, ctx)
@@ -1093,6 +1199,8 @@ def decision_line(d: dict) -> str:
     txt += f" → {REASON_TR.get(r, r)}"
     if r == "vol_small" and d.get("pct_needed") is not None:
         txt += f" (%{float(d['pct_needed']):g} gerekir)"
+    if d.get("sat"):
+        txt += " · taban: geçen Cumartesi hacmi"
     elif r == "order_left" and d.get("left") is not None:
         txt += f" (kalan {usd(d['left'])})"
     if d.get("hidden"):
@@ -1266,6 +1374,11 @@ async def diag_coin(cfg, coin: str) -> str:
         thin = bool(vol) and vol[0] < spot_min_vol
         lines.append(f"🪙 spot çifti · çiftin 24s hacmi ≥ {usd(spot_min_vol)} olmalı"
                      + (f" — şu an {usd(vol[0])}, <b>taban altı: alarm yok</b>" if thin else " ✓"))
+    if sat_applies(cfg, coin, now()):
+        sb = eff_vol(cfg, coin, None, None, now())
+        lines.append(f"📅 Cumartesi (hisse): taban geçen Cumartesi hacmi, eşik %{sat_pct(cfg):g}"
+                     + (f" — {usd(sb[0])} → bildirim için emir ≥ {usd(max(min_usd, sb[0] * sat_pct(cfg) / 100))}"
+                        if sb[2] else " — henüz okunmadı (ilk adayda okunur)"))
     if vol:
         lines.append(f"24s hacim {usd(vol[0])} · bildirim için emir ≥ {usd(max(min_usd, vol[0] * pct / 100))}"
                      f" (max({usd(min_usd)}, %{pct:g} × hacim)) · kalan ≥ min({usd(getattr(cfg, 'twap_alert_min_left_usd', 1e6))}, planın yarısı)")
@@ -1305,7 +1418,7 @@ def _newest_hist(addr: str):
 
 
 def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts, alerted, n, seen,
-              src: str) -> None:
+              src: str, cfg=None) -> None:
     """Süren emir satırı: HL 'activated', planlanan bitişi gelmemiş, son LIVE_SILENT sn içinde dilim görülmüş.
     Aynı emir (coin, adres, yön, başlangıç) birden çok kaynakta: en taze sorgu kalır, 📣 birleşir."""
     if not o or o.get("status") != "activated":
@@ -1316,7 +1429,8 @@ def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts
     if (end is not None and end <= ts) or ts - int(last_ts or 0) > LIVE_SILENT:
         return
     planned = float(o.get("planned_usd") or 0)
-    dv = (vols.get(coin) or (None, None))[0]
+    dv0, vts0 = vols.get(coin) or (None, None)
+    dv, _, sat = eff_vol(cfg, coin, dv0, vts0, ts)
     k = (coin, addr, side, t0)
     if k not in out and t0:                            # aynı emir: başlangıç kaynaktan kaynağa ±2 sn oynayabilir
         k = next((k2 for k2 in out if k2[:3] == k[:3] and abs(int(k2[3]) - t0) <= 2), k)
@@ -1324,7 +1438,8 @@ def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts
          "executed_usd": o.get("executed_usd"), "filled_pct": o.get("filled_pct"), "minutes": mins,
          "started_ts": t0, "left_sec": max(0, end - ts) if end is not None else None, "q_ts": int(q_ts or 0),
          "last_ts": int(last_ts or 0), "alerted": bool(alerted), "n": int(n or 0), "seen_usd": float(seen or 0),
-         "vol_pct": (planned / float(dv) * 100) if dv else None, "spot": assets.is_spot(coin), "src": src}
+         "vol_pct": (planned / float(dv) * 100) if dv else None, "spot": assets.is_spot(coin), "src": src,
+         "sat": bool(sat)}
     cur = out.get(k)
     if cur is None:
         out[k] = e
@@ -1375,13 +1490,13 @@ def _live_memory_cands(ts: int) -> list[tuple]:
     return out
 
 
-def _add_cands(out: dict, cands: list[tuple], ts: int, vols: dict) -> None:
+def _add_cands(out: dict, cands: list[tuple], ts: int, vols: dict, cfg=None) -> None:
     for coin, addr, side, o, last_ts, alerted, n, seen, src, px, run in cands:
         o = _fresher(o, addr, coin, side, px, ts)
         if run is not None and o and not native_overlap([o], run):
             continue
         _live_add(out, ts, vols, coin, addr, side, o, last_ts, int((o or {}).get("q_ts") or 0), alerted, n, seen,
-                  src)
+                  src, cfg)
 
 
 def _live_sorted(out: dict) -> list[dict]:
@@ -1427,7 +1542,7 @@ def _native_active(ts: int) -> dict[tuple, Run]:
 
 
 async def live_twaps_full(collector=None, now_ts: int | None = None,
-                          max_lookups: int = LIVE_LOOKUPS) -> tuple[list[dict], dict]:
+                          max_lookups: int = LIVE_LOOKUPS, cfg=None, client=None) -> tuple[list[dict], dict]:
     """/twap (kullanıcı 13.10: "hangi grupta yazarsam yazayım en büyük canlı TWAP'ları sıralasın"): şu an SÜREN
     HL TWAP emirleri, planlanan büyüklüğe göre. Bellek yeniden başlatmada sıfırlanır (13.10 20:39 deploy
     sonrası liste boş geldi) — kaynaklar:
@@ -1548,8 +1663,13 @@ async def live_twaps_full(collector=None, now_ts: int | None = None,
                 o["q_ts"] = int(c[0])
                 cands.append((r.coin, r.address, r.side, o, r.nat_ts if r.nat_n else 0, False, r.n, r.total,
                               "ask" if r.address in asked else "mem", r.px_last, r))
+    if cfg is not None:
+        try:                                          # Cumartesi hisse: hacim oranı geçen Cumartesi'ye göre
+            await ensure_sat(cfg, client, [c[0] for c in cands], ts)
+        except Exception:                              # noqa: BLE001
+            log.debug("Cumartesi tabanı", exc_info=True)
     out: dict[tuple, dict] = {}
-    _add_cands(out, cands, ts, vols)                 # her kopya en taze geçmişle süzülür (iptal → düşer)
+    _add_cands(out, cands, ts, vols, cfg)            # her kopya en taze geçmişle süzülür (iptal → düşer)
     rows = _live_sorted(out)
     await _announced(rows)
     return rows, info
