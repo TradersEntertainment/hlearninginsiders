@@ -527,9 +527,9 @@ EDITABLE_FIELDS: dict[str, dict] = {
                                 "desc": "Emrin henüz dolmamış kısmı bundan VE planın yarısından azsa bildirilmez — bitmek üzere olan TWAP'ın haberi işe yaramaz; küçük emir yarısı dolana kadar bildirilebilir (kullanıcı kuralı $1M)"},
     "twap_alert_vol_pct": {"type": "float", "label": "Bildirim kapısı — emir / 24s hacim (%) — BTC/ETH hariç", "group": "TWAP radarı",
                            "desc": "Emir toplamı coinin 24 saatlik hacminin en az bu yüzdesi olmalı (kullanıcı kuralı %5). PUMP: $3M emir, hacim $62M → %4,8 eskiden %20 kuralında sessizdi. BTC/ETH için ayrı yüzde aşağıda"},
-    "twap_alert_vol_pct_sat": {"type": "float", "label": "Cumartesi hisse — emir / geçen Cumartesi hacmi (%)",
+    "twap_alert_vol_pct_sat": {"type": "float", "label": "Cumartesi (kripto olmayan) — emir / geçen Cumartesi hacmi (%)",
                                "group": "TWAP radarı",
-                               "desc": "TSİ Cumartesi günü hisse/endeks (HIP-3, kripto değil) TWAP'ı son 24s yerine GEÇEN Cumartesi'nin hacmiyle kıyaslanır (son 24s Cuma ABD seansını içerdiği için ~10 kat şişikti; kullanıcı kuralı %10). Hızlı ve gizli TWAP'ın dakika hızı da bu tabana göre. Pazar ve kripto değişmez. 0 = kapalı (eski 24s kuralı)"},
+                               "desc": "TSİ Cumartesi günü kripto OLMAYAN her şeyin (HIP-3: hisse, endeks, emtia, FX, tahvil, ETF, pre-IPO — para: dex'indeki hisseler dahil; TOTAL2/BTCD/ANSEM gibi kriptoya bağlılar hariç) TWAP'ı son 24s yerine GEÇEN Cumartesi'nin hacmiyle kıyaslanır (son 24s Cuma ABD seansını içerdiği için ~10 kat şişikti; kullanıcı kuralı %10). Hızlı ve gizli TWAP'ın dakika hızı da bu tabana göre. Pazar ve kripto değişmez. 0 = kapalı (eski 24s kuralı)"},
     "twap_alert_vol_pct_major": {"type": "float", "label": "Bildirim kapısı — BTC/ETH emir / 24s hacim (%)", "group": "TWAP radarı",
                                  "desc": "Majörlerde $1-3M'lik TWAP gürültüdür; emir 24s hacmin bu yüzdesini geçmezse sessiz (kullanıcı kuralı %20)"},
     "twap_alert_big_usd": {"type": "float", "label": "Hacimden bağımsız bildirim ($)", "group": "TWAP radarı",
@@ -909,6 +909,8 @@ class Config:
         # Hacim kuralı sınıfa göre: BTC/ETH %20 (gürültü), diğerleri %5 (PUMP vakası)
         self.twap_alert_vol_pct = float(os.getenv("TWAP_ALERT_VOL_PCT", "5"))
         self.twap_alert_vol_pct_sat = float(os.getenv("TWAP_ALERT_VOL_PCT_SAT", "10"))   # Cumartesi hisse (geçen Cmt)
+        # HIP-3'te kriptoya bağlı (7/24) ek semboller (assets.CRYPTO_NATIVE'e ek; virgülle) — env-only
+        self.crypto_native_extra = os.getenv("CRYPTO_NATIVE_EXTRA", "")
         self.twap_alert_vol_pct_major = float(os.getenv("TWAP_ALERT_VOL_PCT_MAJOR", "20"))
         self.twap_alert_big_usd = float(os.getenv("TWAP_ALERT_BIG_USD", "0"))
         self.twap_alert_min_slices = int(os.getenv("TWAP_ALERT_MIN_SLICES", "10"))

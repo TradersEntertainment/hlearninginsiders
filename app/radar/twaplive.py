@@ -338,9 +338,10 @@ def sat_window(now_ts: int) -> tuple[int, int] | None:
 
 
 def sat_applies(cfg, coin: str, now_ts: int) -> bool:
-    """Hisse / endeks-emtia (HIP-3, kripto değil, spot değil), TSİ Cumartesi ve kural açık (yüzde > 0)."""
-    return (sat_pct(cfg) > 0 and bool(coin) and klass_of(coin) != "kripto" and not assets.is_spot(coin)
-            and sat_window(now_ts) is not None)
+    """Kripto OLMAYAN her şey (kullanıcı 13.10: "sadece hisseler değil, kripto olmayan her şeye"): HIP-3'te hisse,
+    endeks, emtia, FX, tahvil faizi, ETF, pre-IPO — `para:` dex'indeki AVGO/NET/10Y dahil; kriptoya bağlı olanlar
+    (TOTAL2, BTCD, ANSEM… assets.trades_24_7), ana dex kripto ve spot HARİÇ. TSİ Cumartesi ve kural açık (% > 0)."""
+    return (sat_pct(cfg) > 0 and bool(coin) and not assets.trades_24_7(coin) and sat_window(now_ts) is not None)
 
 
 def eff_vol(cfg, coin: str, day_vol, vol_ts, now_ts: int) -> tuple:
@@ -1406,7 +1407,7 @@ async def diag_coin(cfg, coin: str) -> str:
                      + (f" — şu an {usd(vol[0])}, <b>taban altı: alarm yok</b>" if thin else " ✓"))
     if sat_applies(cfg, coin, now()):
         sb = eff_vol(cfg, coin, None, None, now())
-        lines.append(f"📅 Cumartesi (hisse): taban geçen Cumartesi hacmi, eşik %{sat_pct(cfg):g}"
+        lines.append(f"📅 Cumartesi (kripto olmayan): taban geçen Cumartesi hacmi, eşik %{sat_pct(cfg):g}"
                      + (f" — {usd(sb[0])} → bildirim için emir ≥ {usd(max(min_usd, sb[0] * sat_pct(cfg) / 100))}"
                         if sb[2] else " — henüz okunmadı (ilk adayda okunur)"))
     if vol:

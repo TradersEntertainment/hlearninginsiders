@@ -89,14 +89,28 @@ def test_window_and_scope():
     assert tl.sat_window(U(2026, 10, 17, 21, 30)) is None, "Pazar 00:30 TSİ: değişmez"
     assert tl.sat_window(U(2026, 10, 14, 9, 0)) is None
     cfg = _cfg()
-    for coin, want in (("xyz:TSLA", True), ("xyz:GOLD", True), ("xyz:XYZ100", True), ("BTC", False),
-                       ("PUMP", False), ("para:ANSEM", False), ("@107", False)):
+    # kullanıcı 13.10: "sadece hisseler değil, kripto olmayan her şeye" — para: dex'indeki hisse / tahvil / ETF dahil
+    for coin, want in (("xyz:TSLA", True), ("xyz:GOLD", True), ("xyz:XYZ100", True), ("xyz:EUR", True),
+                       ("para:AVGO", True), ("para:NET", True), ("para:STX", True), ("para:10Y", True),
+                       ("para:SMH", True), ("para:UNITREE", True), ("io:OAI", True), ("mkts:US500", True),
+                       ("para:TOTAL2", False), ("para:OTHERS", False), ("para:BTCD", False), ("para:ANSEM", False),
+                       ("para:TREAD", False), ("mkts:BVIV", False),
+                       ("BTC", False), ("PUMP", False), ("STX", False), ("@107", False)):
         assert tl.sat_applies(cfg, coin, SAT) is want, coin
+    cfg2 = _cfg()
+    from app import assets
+    real = assets._extra
+    assets._extra = lambda name: {"UNITREE"} if name == "crypto_native_extra" else set()
+    try:
+        assert not tl.sat_applies(cfg2, "para:UNITREE", SAT), "CRYPTO_NATIVE_EXTRA env ile kriptoya bağlı sayılır"
+    finally:
+        assets._extra = real
     cfg.twap_alert_vol_pct_sat = 0
     assert not tl.sat_applies(cfg, "xyz:TSLA", SAT), "%0 = kapalı"
     c = Config()
     assert c.twap_alert_vol_pct_sat == 10 and EDITABLE_FIELDS["twap_alert_vol_pct_sat"]["group"] == "TWAP radarı"
-    print("✅ pencere/kapsam) TSİ Cumartesi, geçen Cmt 00–24 TSİ; Pazar ve hafta içi yok; hisse+endeks, kripto/spot yok")
+    print("✅ pencere/kapsam) TSİ Cumartesi, geçen Cmt 00–24 TSİ; Pazar ve hafta içi yok; kripto olmayan her şey"
+          " (para: hisse/tahvil/ETF dahil), kriptoya bağlı HIP-3 / ana dex / spot yok; env ile ek")
 
 
 def test_base_fetch_cache_and_gate():
@@ -243,7 +257,7 @@ def test_review_lab_race_texts():
             txt = await tl.diag_coin(cfg, "XYZ:tsla")
         finally:
             tl.sat_window, tl.now = real_win, real_now
-        assert "📅 Cumartesi (hisse): taban geçen Cumartesi hacmi, eşik %10 — $20.0M" in txt, txt
+        assert "📅 Cumartesi (kripto olmayan): taban geçen Cumartesi hacmi, eşik %10 — $20.0M" in txt, txt
         print("✅ inceleme) 🧪 ham 24s + ayrı Cumartesi alanı (AKI-TWAP-F bozulmaz); aynı coin tek istek; karar satırı"
               " ve ⚡ metni; /twap XYZ:tsla dex öneki")
     asyncio.run(run())

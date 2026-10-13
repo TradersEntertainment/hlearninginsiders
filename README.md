@@ -411,8 +411,11 @@ bildirilmez.
   satır eklenir: "⏳ XPL'de süren HL TWAP: N · en büyüğü … → /xpltwap" (sorgusuz — liq cevabı gecikmez). Sahibin her
   sohbetinde ve botun kendi kanal/gruplarında çalışır.
 - **📅 Cumartesi hisse tabanı** (kullanıcı 13.10: "hafta sonu 24 saat baz alırsa yanlış olur… sadece hisseler için,
-  geçen hafta Cumartesi'ye kıyasla %10'dan büyük TWAP; Pazar değişmeden kalabilir"): TSİ Cumartesi günü hisse ve
-  endeks/emtia (HIP-3, kripto ve spot değil) TWAP'ı son 24s yerine **geçen Cumartesi'nin hacmiyle** (TSİ 00–24, HL
+  geçen hafta Cumartesi'ye kıyasla %10'dan büyük TWAP; Pazar değişmeden kalabilir" · "sadece hisseler değil, kripto
+  olmayan her şeye"): TSİ Cumartesi günü **kripto olmayan her şeyin** (HIP-3: hisse, endeks, emtia, FX, tahvil faizi,
+  ETF, pre-IPO — `para:` dex'indeki AVGO/NET/10Y dahil; kriptoya bağlı TOTAL2/OTHERS/BTCD/ANSEM/TREAD/BVIV,
+  ana dex kripto ve spot hariç — `assets.trades_24_7`, ek semboller `CRYPTO_NATIVE_EXTRA` env) TWAP'ı son 24s
+  yerine **geçen Cumartesi'nin hacmiyle** (TSİ 00–24, HL
   saatlik mumları, coin başına haftada 1 istek, kv'de) kıyaslanır; eşik `TWAP_ALERT_VOL_PCT_SAT` (%10; 0 = kapalı).
   Ölçüm (5 hafta, 10 HIP-3 coin): Cumartesi sabahı son 24s hacim TWAP'ın yürüyeceği sonraki 24 saatin ~10 katıydı
   (Cuma ABD seansı pencerede) → hafta sonu TWAP'ı 10 kat küçük görünüyordu; geçen hafta aynı saat ×1.04. Kriptoda

@@ -24,6 +24,14 @@ NON_EQUITY: frozenset[str] = frozenset({
     "PURR", "PUMP", "FARTCOIN", "WLD", "ONDO", "ENA", "AAVE", "UNI", "PAXG",
 })
 
+# HIP-3'te KRİPTOYA BAĞLI (7/24, hafta sonu kapanmayan) enstrümanlar: kripto piyasa endeksleri, kripto token /
+# zihin payı perp'leri, kripto oynaklık endeksi. HIP-3'teki geri kalan her şey (hisse, endeks, emtia, FX, tahvil faizi,
+# ETF, pre-IPO — `para:` dex'indeki AVGO/NET/10Y dahil) geleneksel piyasa saatine bağlı sayılır (bkz. trades_24_7).
+# Ad tek başına yetmez: HL'de AVGO / NET adında spot token da var; para:STX Seagate, ana dex STX Stacks.
+CRYPTO_NATIVE: frozenset[str] = frozenset({
+    "TOTAL", "TOTAL2", "TOTAL3", "OTHERS", "BTCD", "USDTD", "ETHBTC", "ANSEM", "TREAD", "BVIV", "EVIV",
+})
+
 # Halka açık bilanço takvimi olmayan (pre-IPO / sentetik / sepet) enstrümanlar
 NO_CALENDAR: frozenset[str] = frozenset({
     "CXMT", "GIGADEV", "MINIMAX", "ZHIPU", "UNITREE", "PURRDAT", "DRAM",
@@ -187,6 +195,18 @@ def kind(symbol_or_coin: str) -> str:
     if sym in NO_CALENDAR or sym in _extra("no_calendar_extra"):
         return "no_calendar"
     return "equity"
+
+
+def trades_24_7(coin: str) -> bool:
+    """Kripto gibi 7/24 mü (hafta sonu hacmi çökmez): ana dex kripto, spot çifti ya da HIP-3'te kriptoya bağlı
+    enstrüman (CRYPTO_NATIVE + CRYPTO_NATIVE_EXTRA env). HIP-3'teki diğer her şey — dex'i 'kripto dex' sayılsa da
+    (para:AVGO, para:10Y) — geleneksel piyasa saatine bağlı: False. Kullanıcı 13.10 (Cumartesi tabanı):
+    "sadece hisseler değil, kripto olmayan her şeye yap"."""
+    c = (coin or "").strip()
+    if not c or ":" not in c or is_spot(c):
+        return True
+    sym = c.split(":")[-1].upper()
+    return sym in CRYPTO_NATIVE or sym in _extra("crypto_native_extra")
 
 
 def is_index_perp(coin_or_symbol: str) -> bool:
