@@ -6,9 +6,10 @@ sisteminden yapıyordu". twaplive'ın düzenli dizisi + emir sorgusu BAŞARILI v
 Pinlenenler:
   • kapı: taker payı, iki yönlü (market yapıcı), görülen tabanı + dakika hacmi katı, hacimden bağımsız büyük,
     hacim yok
-  • akış: emirsiz düzenli dizi → 🕵️ mesaj (kripto kanalı + ayna), 'htwap' bekleme (ikinci turda yok); eski
+  • akış: emirsiz düzenli dizi → 🕵️ mesaj YALNIZ HIDDEN_TWAP_CHAT_ID grubuna (kripto kanalı / ana sohbet / ayna
+    asla; değişken boşsa hiç mesaj yok, bekleme yakılmaz), 'htwap' bekleme (ikinci turda yok); eski
     TWAP akışı aynen ('twap' işareti yok, karar no_order, /twap satırında 🕵️ nedeni); sorgu düşerse karar yok;
-    hisse → ana sohbet + PROPR notu; kapalıyken yok
+    hisse de aynı gruba + PROPR notu; kapalıyken yok
   • 🧪 LOG-HTWAP: $100K'yı ilk geçişte bir kez, kapı sonucu ne olursa olsun
   • mesaj ölçülü: plan/toplam/süre görünmez denir, tahmin dili yok
   • kablolama: tür (fan-out yok), ayar sayfasında YOK (kullanıcı 13.10: yalnız Railway değişkeni; env okunur,
@@ -54,12 +55,12 @@ class Col:
         return self.hist
 
 
-def _cfg(chat="-100"):
+def _cfg(chat="-100", own="-555"):
     cfg = Config()
     cfg.telegram_chat_id, cfg.crypto_chat_id = "111", chat
     cfg.twap_mirror_chat_id = ""
     cfg.notify_twap = True
-    cfg.hidden_twap_chat_id = ""
+    cfg.hidden_twap_chat_id = own
     cfg.twap_live_enabled = cfg.hidden_twap_enabled = True
     cfg.twap_alert_min_slices, cfg.twap_lookup_min_usd, cfg.twap_lookup_cooldown = 10, 50_000, 600
     cfg.twap_alert_cooldown = 21600
@@ -152,7 +153,8 @@ def test_flow_alert_cooldown_and_old_path_untouched():
         out = await tl.evaluate(cfg, n, None, col)
         assert out["no_order"] == 1 and out["alerted"] == 0, out
         chats = [c for c, _ in bot.sent]
-        assert chats == ["-100", "-777"], bot.sent
+        assert chats == ["-555"], ("yalnız gizli TWAP grubu: kripto kanalı (-100) ve ayna (-777) değil", bot.sent)
+        assert tl.MIRROR["sent"] == 0
         txt = bot.sent[0][1]
         assert txt.startswith("🕵️ <b>Gizli TWAP</b> · <b>PUMP</b>"), txt
         assert "HL'de TWAP emri yok — kendi botuyla dilimliyor" in txt and "20 dilim" in txt and "her 30 sn" in txt
@@ -169,11 +171,11 @@ def test_flow_alert_cooldown_and_old_path_untouched():
         tl._lookup_cache.clear()
         feed("PUMP", A, "buy", 3, 15_000, t_end=dbm.now())
         await tl.evaluate(cfg, n, None, col)
-        assert len(bot.sent) == 2 and len(_q("LOG-HTWAP")) == 1 and ht.STATS["reasons"].get("cooldown") == 1
+        assert len(bot.sent) == 1 and len(_q("LOG-HTWAP")) == 1 and ht.STATS["reasons"].get("cooldown") == 1
         line = await ht.diag_line(cfg)
         assert line.startswith("gizli twap: 2 aday (emirsiz düzenli dizi) · 1 bildirim · 🧪 1 kayıt"), line
         assert "son: PUMP" in line
-        print("✅ akış) emirsiz düzenli dizi → 🕵️ kanal + ayna; 'htwap' bekleme; eski yol aynen (no_order, 'twap'"
+        print("✅ akış) emirsiz düzenli dizi → 🕵️ yalnız gizli TWAP grubu; 'htwap' bekleme; eski yol aynen (no_order, 'twap'"
               " işareti yok, LOG-TWAP yok); LOG-HTWAP bir kez; /tani")
     asyncio.run(run())
 
@@ -209,33 +211,56 @@ def test_lookup_fail_small_maker_off():
     asyncio.run(run())
 
 
-def test_own_group():
+def test_only_own_group_never_normal_channels():
+    """Kullanıcı 13.10: "bu gizli twap normal kanala gelmeyecek, sadece gizli twap variable'ı olan chate gidecek"."""
     async def run():
+        # değişken BOŞ: kripto kanalı + ayna tanımlı olsa da hiçbir yere gitmez; ölçüm + 🧪 sürer
         await _fresh()
-        cfg = _cfg()
+        cfg = _cfg(own="")
         cfg.twap_mirror_chat_id = "-777"
-        cfg.hidden_twap_chat_id = "-555"
         bot = Bot()
         feed("PUMP", A, "buy", 20, 15_000)
         await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
-        assert [c for c, _ in bot.sent] == ["-555"], "kendi grubu: yalnız oraya (TWAP kanalı ve ayna değil)"
-        assert await _kind("htwap") == 1 and tl.MIRROR["sent"] == 0
-        assert "grup: HIDDEN_TWAP_CHAT_ID" in await ht.diag_line(cfg)
-        # kripto kanalı tanımsız olsa da kendi grubuna gider
+        assert not bot.sent and tl.MIRROR["sent"] == 0, bot.sent
+        assert ht.STATS["reasons"] == {"no_chat": 1} and await _kind("htwap") == 0, "bekleme yakılmaz"
+        assert len(_q("LOG-HTWAP")) == 1 and _f(_q("LOG-HTWAP")[0])["kapi"] == "ok"
+        assert "⚠ HIDDEN_TWAP_CHAT_ID yok → mesaj gönderilmiyor" in await ht.diag_line(cfg)
+        assert "🕵️ gizli twap: HIDDEN_TWAP_CHAT_ID yok" in tl.decision_line((await dbm.kv_get(tl.LAST_KV))[0])
+        # değişken eklendi → süren dizi bir sonraki turda YALNIZ gruba
+        cfg.hidden_twap_chat_id = "-555"
+        tl._lookup_cache.clear()
+        feed("PUMP", A, "buy", 2, 15_000, t_end=dbm.now())
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
+        assert [c for c, _ in bot.sent] == ["-555"] and tl.MIRROR["sent"] == 0, bot.sent
+        assert await _kind("htwap") == 1 and "grup: HIDDEN_TWAP_CHAT_ID" in await ht.diag_line(cfg)
+        # kripto kanalı tanımsız olsa da gruba gider
         await _fresh()
         cfg2 = _cfg(chat="")
-        cfg2.hidden_twap_chat_id = "-555"
         bot2 = Bot()
         feed("PUMP", A, "buy", 20, 15_000)
         await tl.evaluate(cfg2, Notifier(cfg2, bot2), None, Col([]))
         assert [c for c, _ in bot2.sent] == ["-555"]
+        # normal TWAP mesajları bu gruba GİTMEZ (yalnız TWAP kanalı + ayna)
+        await _fresh()
+        cfg3 = _cfg()
+        cfg3.twap_mirror_chat_id = "-777"
+        bot3 = Bot()
+        feed("PUMP", B, "buy", 40, 50_000)
+        order = [{"time": dbm.now() - 1300, "state": {"coin": "PUMP", "user": B, "side": "B", "sz": "400000",
+                                                      "executedSz": "200000", "executedNtl": "2000000",
+                                                      "minutes": 60, "timestamp": (dbm.now() - 1300) * 1000,
+                                                      "reduceOnly": False, "randomize": False},
+                  "status": {"status": "activated"}, "twapId": 9}]
+        await tl.evaluate(cfg3, Notifier(cfg3, bot3), None, Col(order))
+        assert bot3.sent and "-555" not in [c for c, _ in bot3.sent], bot3.sent
         from app.telegram.bot import TelegramBot
         assert "-555" in TelegramBot._own_chats(type("B", (), {"cfg": cfg})())
-        print("✅ grup) HIDDEN_TWAP_CHAT_ID tanımlıysa yalnız oraya; kripto kanalı yoksa da; bot o grupta komut alır")
+        print("✅ grup) yalnız HIDDEN_TWAP_CHAT_ID: boşsa hiçbir yere (kripto kanalı/ayna değil, bekleme yakılmaz),"
+              " eklenince sonraki turda; kripto kanalı yoksa da; normal TWAP gruba gitmez; bot o grupta komut alır")
     asyncio.run(run())
 
 
-def test_equity_main_chat_and_propr_note():
+def test_equity_own_group_and_propr_note():
     async def run():
         await _fresh(vol=3e6, coin="xyz:CBRS")
         cfg = _cfg()
@@ -247,10 +272,10 @@ def test_equity_main_chat_and_propr_note():
             await c.commit()
         feed("xyz:CBRS", A, "buy", 40, 8_000, gap=32)            # CBRS balinası ölçüleri: ~$8K / 32 sn
         await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
-        assert len(bot.sent) == 1 and bot.sent[0][0] in (None, "", "111"), bot.sent
+        assert len(bot.sent) == 1 and bot.sent[0][0] == "-555", ("hisse de ana sohbete değil gruba", bot.sent)
         txt = bot.sent[0][1]
         assert "<b>CBRS</b>" in txt and "✅ <b>PROPR'da listeli</b>" in txt and "her 32 sn" in txt, txt
-        print("✅ hisse) CBRS benzeri dizi → ana sohbet + PROPR notu")
+        print("✅ hisse) CBRS benzeri dizi → gizli TWAP grubu (ana sohbet değil) + PROPR notu")
     asyncio.run(run())
 
 

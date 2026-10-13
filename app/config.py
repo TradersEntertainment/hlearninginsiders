@@ -935,7 +935,8 @@ class Config:
         # TWAP ayna grubu: her TWAP mesajının (ilk, hızlı, yarı, bitiş) kopyası. Diğer
         # chat id'leri gibi ENV-ONLY (EDITABLE_FIELDS'a girmez); boş = kapalı.
         self.twap_mirror_chat_id = (os.getenv("TWAP_MIRROR_CHAT_ID", "") or "").strip()
-        # 🕵️ Gizli TWAP grubu (env-only): tanımlıysa gizli TWAP uyarıları YALNIZ buraya (TWAP kanalı/ayna değil)
+        # 🕵️ Gizli TWAP grubu (env-only): gizli TWAP uyarıları YALNIZ buraya (TWAP kanalı/ayna/ana sohbet asla);
+        # boşsa gizli TWAP mesajı hiç gönderilmez (ölçüm + 🧪 sürer)
         self.hidden_twap_chat_id = (os.getenv("HIDDEN_TWAP_CHAT_ID", "") or "").strip()
         self.twap_live_window_min = int(os.getenv("TWAP_LIVE_WINDOW_MIN", "240"))
         self.twap_live_eval_sec = int(os.getenv("TWAP_LIVE_EVAL_SEC", "60"))

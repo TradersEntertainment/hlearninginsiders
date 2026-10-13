@@ -449,9 +449,10 @@ devralır (eski TWAP akışı, 'twap' bekleme işareti, 🧪 LOG-TWAP değişmez
   bekleme 6 sa (adres + coin + yön).
 - **Mesaj (🕵️ Gizli TWAP):** adres, dilim × büyüklük, aralık, taker payı, şimdiye kadar görülen + dakika hızı ve
   coinin dakika hacmine oranı, pozisyon (canlı), fiyat ilk→son. **Plan, toplam ve süre görünmez** (HL emri yok) —
-  mesaj bunu söyler. Yer: **`HIDDEN_TWAP_CHAT_ID`** (kullanıcının "🕵️ Gizli TWAP" grubu; env-only, botu ekle, grupta
-  `/id`) tanımlıysa **yalnız oraya** — TWAP kanalı ve ayna temiz kalır; boşsa TWAP ile aynı yer (kripto →
-  `CRYPTO_CHAT_ID`, hisse → ana sohbet) + TWAP ayna grubu. Bot o grupta komutlara da cevap verir. Yalnız ilk uyarı
+  mesaj bunu söyler. Yer: **yalnız `HIDDEN_TWAP_CHAT_ID`** (kullanıcının "🕵️ Gizli TWAP" grubu; env-only, botu ekle,
+  grupta `/id`) — TWAP kanalına, kripto kanalına, ana sohbete ve TWAP aynasına **hiç gitmez**; değişken boşsa mesaj
+  gönderilmez (ölçüm + 🧪 sürer, bekleme yakılmaz — eklenince süren dizi sonraki turda gelir). Bot o grupta
+  komutlara da cevap verir. Yalnız ilk uyarı
   (sonradan not yok). **Ayarlar sayfasında yok** (kullanıcı 13.10: yalnız Railway değişkeni) — tek gereken
   `HIDDEN_TWAP_CHAT_ID`; kapatmak `HIDDEN_TWAP_ENABLED=0`; eşikler istenirse `HIDDEN_TWAP_*` env'leri.
 - **🧪 LOG-HTWAP:** dizi sabit $100K tabanını ilk geçtiğinde, kapı sonucu ne olursa olsun (geçen + kalan) —
