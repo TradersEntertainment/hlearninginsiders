@@ -3169,6 +3169,48 @@ def twap_quick(ctx: dict, o: dict | None = None) -> str:
     return ""
 
 
+def hidden_twap(m: dict, ctx: dict) -> str:
+    """🕵️ Gizli TWAP: HL TWAP emri OLMADAN düzenli dilimleme (adres bazında, kendi botu). Plan / toplam /
+    süre GÖRÜNMEZ — yalnız şimdiye kadar görülen ve hızı. Tahmin yok."""
+    coin = m.get("coin") or ""
+    spot = assets.is_spot(coin)
+    sym = esc(assets.label(coin))
+    klass = ctx.get("klass") or "kripto"
+    x = ctx.get("rate_x")
+    dur = int(m.get("dur") or 0)
+    per_min = float(m.get("rate_day") or 0) / 1440
+    rate = f"dakikada ~{usd(per_min)}"
+    if x is not None:
+        rate += f" = coinin ortalama dakika hacminin <b>{float(x):.1f}×</b>'i"
+    lines = [f"🕵️ <b>Gizli TWAP</b> · {'🪙 ' if spot else ''}<b>{sym}</b> · {_twap_side(m.get('side'))} · emirsiz dilimleme",
+             f"👤 {alink(m['address'])} · HL'de TWAP emri yok — kendi botuyla dilimliyor",
+             f"📏 {int(m.get('n') or 0)} dilim × ~{usd(m.get('avg_slice'))}, her {_gap_txt(m.get('median_gap'))}"
+             + (f" · %{float(m['taker_pct']):.0f} taker" if m.get("taker_pct") is not None else ""),
+             f"💵 şimdiye kadar <b>{usd(m.get('total'))}</b> ({max(1, dur // 60)} dk) · {rate}"]
+    pos = ctx.get("pos")
+    if spot:
+        lines.append("📍 spot çifti — pozisyon, likidasyon ve funding yok")
+    elif pos and not pos.get("none"):
+        src = pos.get("src") or ""
+        when = f" {age_str(pos['ts'])} önce" if src != "canlı" and pos.get("ts") else ""
+        lines.append(f"📍 pozisyon: {_side_badge(pos.get('side') or '')} <b>{usd(pos.get('notional'))}</b> · {src}{when}")
+    elif pos and pos.get("none"):
+        lines.append("📍 pozisyon: bu coinde açık perp pozisyonu yok (canlı)")
+    else:
+        lines.append("📍 pozisyon: bilinmiyor")
+    pr = f"fiyat {px(m.get('px_first'))} → {px(m.get('px_last'))} (<b>{float(m.get('px_chg_pct') or 0):+.1f}%</b>)"
+    if ctx.get("day_vol"):
+        pr += f" · 24s hacim {usd(ctx['day_vol'])}"
+    lines.append(pr)
+    if ctx.get("entity"):
+        lines.append(f"🤖 adres etiketi: {esc(ctx['entity'])}")
+    if klass == "hisse" and is_listed(coin):
+        lines.append(PROPR_NOTE)
+    lines.append("<i>Plan, toplam ve süre görünmez (HL emri yok) — yalnız şimdiye kadar görülen dilimler ve hızı."
+                 " Ölçüm, tahmin değil.</i>")
+    return "\n".join(lines)
+
+
 def twap_alert(m: dict, ctx: dict) -> str:
     """İlk bildirim — EMİR VERİSİYLE: plan, dolan, kalan süre; hacme oranı. Tahmin yok."""
     coin = m.get("coin") or ""

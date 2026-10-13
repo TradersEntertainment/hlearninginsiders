@@ -782,6 +782,11 @@ async def _subsystems(cfg, state=None) -> list[str]:
         out.append("  " + await twapfast.diag_line())
     except Exception:                                  # noqa: BLE001
         pass
+    try:
+        from .radar import hiddentwap
+        out.append("  " + await hiddentwap.diag_line(cfg))
+    except Exception as e:                             # noqa: BLE001
+        out.append(f"  gizli twap okunamadı ({type(e).__name__}: {e})")
     if (getattr(cfg, "twap_mirror_chat_id", "") or "").strip():
         from .radar.twaplive import MIRROR
         out.append("  twap ayna grubu: " + (f"✓{MIRROR['sent']} kopya" + (

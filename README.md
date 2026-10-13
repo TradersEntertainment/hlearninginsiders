@@ -429,6 +429,36 @@ bildirilmez.
 - **Restart:** bekleme (6 saat) `alerts_log`'da; bildirilmiş turlar açılışta
   geri yüklenir, bitiş notu kaybolmaz. Ayarlar → **TWAP radarı**.
 
+### 🕵️ Gizli TWAP — HL emri olmadan dilimleme (`app/radar/hiddentwap.py`)
+
+Kullanıcı (13.10): "genel gizli TWAP'ları yakalayabilir miyiz — CBRS balinası TWAP'ı HL'den değil kendi
+sisteminden yapıyordu; genel yapamazsak o adamı takip edelim". Hyperliquid'de her işlemin alıcı ve satıcı
+adresi açık; canlı TWAP sayacı (twaplive) zaten her adres + coin + yön için dilimleri sayıp düzenli diziyi
+HL emir geçmişine soruyordu. Emir YOKSA eskiden `no_order` deyip bırakıyordu — gizli TWAP radarı o dalı
+devralır (eski TWAP akışı, 'twap' bekleme işareti, 🧪 LOG-TWAP değişmez). Tek CBRS adresini izleyen
+🔂 slicewatch (başladı / bitti, hesap grubu) aynen sürer.
+
+- **Ölçüm (13.10):** 25 dk canlı akışta taker emir dizisi ≥ 8 olan 1.017 koşunun 66'sı düzenliydi; $50K üstü 2
+  tane (biri 0xbf73…5d58'in GOOGL'daki ~$10M long'u 5 dk'da ~30 sn arayla kapatması). CBRS balinası
+  (0x30af…393e) 05–12.10: 4 operasyon, 7 dizi ($7–38M); slicewatch'ın "başladı" anından dizi sonuna fiyat 7'nin
+  6'sında onun yönünde, hacim ağırlıklı +%1.7 (küçük örneklem — kanıt değil; LOG-HTWAP bunu sürekli ölçer).
+- **Kapı:** twaplive'ın düzenli dizisi (≥ 10 dilim, ≥ 5 dk, ≥ $50K) + emir sorgusu BAŞARILI ve TWAP emri yok;
+  bilinen MM/vault elenmiş · taker payı ≥ `HIDDEN_TWAP_TAKER_MIN_PCT` (%50) · aynı adres aynı coinde karşı yönde
+  bu dizinin ≥ %25'i kadar dizi yapıyorsa market yapıcı sayılır · görülen ≥ `HIDDEN_TWAP_MIN_USD` ($250K) VE hız ≥
+  `HIDDEN_TWAP_RATE_X` (0.5) × coinin ortalama dakika hacmi — ya da görülen ≥ `HIDDEN_TWAP_BIG_USD` ($1M) ·
+  bekleme 6 sa (adres + coin + yön).
+- **Mesaj (🕵️ Gizli TWAP):** adres, dilim × büyüklük, aralık, taker payı, şimdiye kadar görülen + dakika hızı ve
+  coinin dakika hacmine oranı, pozisyon (canlı), fiyat ilk→son. **Plan, toplam ve süre görünmez** (HL emri yok) —
+  mesaj bunu söyler. Yer: TWAP ile aynı (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) + TWAP ayna grubu. Yalnız
+  ilk uyarı (sonradan not yok). Bildirimler → 🕵️ Gizli TWAP; eşikler Ayarlar → 🕵️ Gizli TWAP.
+- **🧪 LOG-HTWAP:** dizi sabit $100K tabanını ilk geçtiğinde, kapı sonucu ne olursa olsun (geçen + kalan) —
+  ufuklar 15 dk / 1 sa / 4 sa / 24 sa. "Önden girmek" sorusunun cevabı buradan çıkar.
+- **Kör noktalar:** yalnız dinlenen coinler (hisseler + hacimce ilk 120 kripto); düzenin oturması için ~5 dk ve
+  10 dilim gerekir (ilk dilimde yakalanmaz — yerel TWAP'taki sıfır hash işareti yok); emir sorgusu düşen turda
+  karar verilmez (veri yok ≠ emir yok).
+- `/tani`: `gizli twap: N aday · M bildirim · 🧪 K kayıt · <neden dağılımı> · son: …`; `/twap` son kararlarında
+  emirsiz diziler `🕵️ gizli twap: <neden>` ile işaretli.
+
 ### 🔎 İlk dilimde TWAP + ⚡ HIZLI TWAP (`app/radar/twapfast.py`)
 
 Kullanıcı (12.10): "5 dk'lık TWAP coini çok sert oynatıyor, 1. dakikada yakalayabilir miyiz?" Eski yol

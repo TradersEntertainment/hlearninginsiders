@@ -51,6 +51,10 @@ RULES: tuple[dict, ...] = (
     # üretim süreci DEĞİŞMEDİ (eski yolun kendi anı); bu ayrı aile ilk dilim anını kaydeder.
     _log("LOG-TWAPF", "akis", "Hızlı TWAP kararı (ilk dilimde doğrulanan emir)",
          horizons=(5 * 60, 15 * 60, H, 4 * H)),
+    # 13.10: 🕵️ gizli TWAP — HL emri olmadan düzenli dilimleme (adres bazlı); dizi sabit $100K tabanını ilk
+    # geçtiğinde, kapı sonucu ne olursa olsun. Soru: "önden girmek" (dizinin yönünde) maliyet sonrası kazandırır mı.
+    _log("LOG-HTWAP", "akis", "Gizli TWAP (HL emri olmadan düzenli dilimleme)",
+         horizons=(15 * 60, H, 4 * H, 24 * H)),
 )
 
 

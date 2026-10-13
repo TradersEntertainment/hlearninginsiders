@@ -872,7 +872,17 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 _lab_twap(run, order, det, g, ts, lookup_min, min_slices)   # 🧪 kapıdan ÖNCE: geçen + kalan
             if g not in ("ok", "big"):
                 out[g] = out.get(g, 0) + 1
-                decide(run, "lookup_fail" if (g == "no_order" and out.get("lookup_fail", 0) > lf_before) else g, det)
+                failed_lookup = g == "no_order" and out.get("lookup_fail", 0) > lf_before
+                decide(run, "lookup_fail" if failed_lookup else g, det)
+                if g == "no_order" and not failed_lookup:
+                    # 🕵️ Emir YOK (sorgu başarılı): kendi botuyla dilimleme — gizli TWAP radarı devralır.
+                    # Bu dalın eski davranışı (karar, sayaç, 'twap' işareti yok) DEĞİŞMEZ.
+                    try:
+                        from . import hiddentwap
+                        decisions[-1]["hidden"] = await hiddentwap.consider(cfg, notifier, client, run, m, day_vol,
+                                                                            ents, ts, out)
+                    except Exception:
+                        log.exception("gizli twap değerlendirme hatası %s", key)
                 # HL'de GERÇEK bir TWAP emri bulunduysa kapıdan geçmese de kaydet:
                 # /twaplar sekmesi "tüm TWAP emirleri"ni gösteriyor, yalnız kanala
                 # düşenleri değil. Bildirim alanları (alerted_ts) boş kalır — sayfa
@@ -958,6 +968,11 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
         except Exception:
             out["errors"] += 1
             log.exception("canlı twap değerlendirme hatası %s", getattr(run, "key", "?"))
+    try:
+        from . import hiddentwap
+        await hiddentwap.save_stats()
+    except Exception:
+        log.debug("gizli twap istatistiği", exc_info=True)
     decisions.sort(key=lambda d: -(d.get("planned") or d.get("total") or 0))
     del decisions[DECISIONS_MAX:]
     if decisions:
@@ -999,6 +1014,9 @@ def decision_line(d: dict) -> str:
         txt += f" (%{float(d['pct_needed']):g} gerekir)"
     elif r == "order_left" and d.get("left") is not None:
         txt += f" (kalan {usd(d['left'])})"
+    if d.get("hidden"):
+        from .hiddentwap import REASON_TR as HR
+        txt += f" · 🕵️ gizli twap: {HR.get(d['hidden'], d['hidden'])}"
     return txt
 
 
