@@ -793,6 +793,12 @@ async def _subsystems(cfg, state=None) -> list[str]:
             f" · ⚠️ {MIRROR['failed']} gönderilemedi (grup süper gruba dönüştüyse id değişir: grupta /id yaz,"
             " TWAP_MIRROR_CHAT_ID'yi güncelle)" if MIRROR["failed"] else "")
             if MIRROR["sent"] or MIRROR["failed"] else "tanımlı · bu açılıştan beri kopya yok"))
+    try:
+        from .radar import twaploose
+        if twaploose.chat_id(cfg):
+            out.append("  " + await twaploose.diag_line(cfg))
+    except Exception as e:                             # noqa: BLE001
+        out.append(f"  twap yan kanalı okunamadı ({type(e).__name__}: {e})")
     # 🧲 Yapışkan duvar: akış tetiği + seyrek tarama. "0 alarm"ın sebebi (evren boş,
     # akış yok, kanal tanımsız, defter hatası) burada ayrışmalı.
     sw = await kv_get("sticky_stats") or {}

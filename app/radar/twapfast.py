@@ -33,7 +33,7 @@ import logging
 from collections import deque
 
 from ..db import alert_log, alert_recent, kv_get, kv_set, now
-from . import twaplive
+from . import twaplive, twaploose
 
 log = logging.getLogger("radar.twapfast")
 
@@ -88,7 +88,14 @@ class Fast:
         self.vols: dict = {}                    # coin → (24s hacim, ts): ön süzgeç (döngü tazeler; G/Ç yok)
         self.open: dict[tuple, dict] = {}       # hızlı yolun BİLDİRDİĞİ emirler → bitiş/iptal notu (eski yoldan ayrı)
         self.cfg = None
+        self._lcfg = None
         self.clear_stats()
+
+    def loose_cfg(self):
+        """🔸 yan kanalın gevşek ayar görünümü (canlı vekil — ana ayar değişirse izler; bir kez kurulur)."""
+        if self._lcfg is None or self._lcfg._cfg is not self.cfg:
+            self._lcfg = twaploose.loose_cfg(self.cfg)
+        return self._lcfg
 
     def clear_stats(self) -> None:
         self.stats = {k: 0 for k in ("zero", "slices", "queued", "known_skip", "dropped_old", "capped", "lookups",
@@ -122,6 +129,8 @@ class Fast:
             r["sz"] += float(sz)
             r["px_last"] = float(px)
             r["last_ts"] = max(r["last_ts"], ts)
+        if twaploose.BY_KEY:                            # 🔸 yan kanalın bildirdiği emir: bitiş notu sayacı
+            twaploose.observe(key, px, sz, notional, ts)
         until = self.known.get(key)
         if until is not None:
             if ts <= until:
@@ -147,13 +156,19 @@ class Fast:
         p["max"] = max(p["max"], p["usd"])
         if p["queued"] or p["usd"] < float(min_usd or 0):
             return
+        loose = False
         if self.cfg is not None:
             why = prefilter(self.cfg, coin, p["usd"], self.vols.get(coin), ts)
+            if why and twaploose.enabled(self.cfg) and not prefilter(
+                    self.loose_cfg(), coin, p["usd"], self.vols.get(coin), ts):
+                why, loose = "", True                   # 🔸 yalnız gevşek eşikle: sorulur, ana adaylardan SONRA
+                twaploose.STATS["pre_queued"] += 1
             if why:                                     # dilim büyüdükçe (aynı saniyenin parçaları) yeniden bakılır
                 if p.get("pre_n") != p["n"]:
                     p["pre_n"] = p["n"]                 # sayaç dilim başına bir
                     st[why] = st.get(why, 0) + 1
                 return
+        p["loose"] = loose
         p["queued"] = now()                             # varış anı (işlem damgası değil: saat farkı sırayı bozmasın)
         st["queued"] += 1
         if self.event is not None:
@@ -416,6 +431,18 @@ def _adopt(key: tuple, p: dict, order: dict, t: int, alert_ts: int | None) -> di
     return r
 
 
+async def _loose(cfg, client, notifier, key: tuple, p: dict, order: dict, g: str, det: dict, vols: dict, t: int,
+                 entity: str) -> str:
+    """🔸 ana kapıdan kalan emir → yan kanal (gevşek eşik). Asla fırlatmaz; ana yolun durumuna dokunmaz."""
+    if not twaploose.enabled(cfg):
+        return "off"
+    try:
+        return await twaploose.fast_extra(cfg, client, notifier, key, p, order, g, det, vols, t, entity)
+    except Exception:                                  # noqa: BLE001
+        log.exception("twap yan kanalı (ilk dilim) %s", key)
+        return "error"
+
+
 async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols: dict, t: int,
                   entity: str = "") -> str:
     import types
@@ -442,7 +469,8 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
         return "cooldown"
     if g not in ("ok", "big", "short"):
         F.stats[g] = F.stats.get(g, 0) + 1
-        F.note(p, g, **info)
+        lres = await _loose(cfg, client, notifier, key, p, order, g, det, vols, t, entity)
+        F.note(p, g, **info, **({"loose": lres} if lres != "off" else {}))
         return g
     cool = int(getattr(cfg, "twap_alert_cooldown", 21600) or 0)
     if cool and (await alert_recent("twap", ckey, cool) or await alert_recent(FAST_CD, ckey, cool)):
@@ -456,7 +484,8 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
     chat, can = twaplive.chat_for(cfg, coin)
     if not can and not twaplive.mirror_chat(cfg):
         F.stats["no_chat"] += 1
-        F.note(p, "no_chat", **info)
+        lres = await _loose(cfg, client, notifier, key, p, order, "no_chat", det, vols, t, entity)
+        F.note(p, "no_chat", **info, **({"loose": lres} if lres != "off" else {}))
         return "no_chat"
     if fkey in twaplive.SENDING:                        # eski yol bu emri şu an gönderiyor
         F.stats["inflight_skip"] += 1
@@ -503,6 +532,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
             F.note(p, "failed", **info)
             await alert_log("fail:twap_fast", fkey, text)
             return "failed"
+        await twaploose.copy(cfg, notifier, text, f"a:{fkey}", coin, primary=chat if can else None)   # 🔸 kopya
         await alert_log("twap_fast", fkey, text)        # talep bırakılmadan: eski yol bu emri tekrar yazmaz
         if cool:
             await alert_log(FAST_CD, ckey, "")
@@ -614,6 +644,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
                             continue
                 await alert_log("twap_endo", okey, "")
                 await twaplive.mirror(cfg, notifier, text, f"end:{okey}", r["coin"], primary=chat if can else None)
+                await twaploose.copy(cfg, notifier, text, f"e:{okey}", r["coin"], primary=chat if can else None)
                 F.stats["ends"] += 1
                 sent += 1
             r["ended"], changed = t, True
@@ -650,7 +681,8 @@ async def dispatch(cfg, client, notifier, collector, t: int, tasks: set) -> int:
     if not ready:
         return 0
     vols = F.vols or await twaplive.volumes_cached(None)
-    ready.sort(key=lambda kp: -priority(kp[1], vols))
+    # 🔸 yalnız yan kanalın gevşek eşiğiyle sıraya girenler ana adaylardan SONRA ve dakika tavanının bir payıyla
+    ready.sort(key=lambda kp: (bool(kp[1].get("loose")), -priority(kp[1], vols)))
     cap = int(getattr(cfg, "twap_fast_lookups_min", 30) or 0)
     started = 0
     for key, p in ready:
@@ -662,6 +694,10 @@ async def dispatch(cfg, client, notifier, collector, t: int, tasks: set) -> int:
         waiters = getattr(collector, "_twap_waiters", None)
         if isinstance(waiters, dict) and len(waiters) >= WS_CEILING:
             F.stats["no_ws"] += 1                      # eski yol / takip / komut sorguları önce (sınır paylaşılıyor)
+            break
+        if p.get("loose") and ((cap > 0 and len(F.lookup_ts) >= max(1, int(cap * twaploose.QUERY_SHARE)))
+                               or (isinstance(waiters, dict) and len(waiters) >= WS_CEILING - 1)):
+            twaploose.STATS["pre_share"] += 1          # sıralı: kalanların hepsi yalnız-gevşek → sonraki tur
             break
         F.inflight.add(key)
         F.lookup_ts.append(t)
@@ -699,6 +735,13 @@ async def loop(cfg, client, notifier, collector=None) -> None:
             log.info("ilk dilim twap: %d bildirilmiş emir geri yüklendi (bitiş/iptal notu için)", n)
     except Exception:                                  # noqa: BLE001
         log.debug("twapfast_open okunamadı", exc_info=True)
+    try:
+        n = await twaploose.load_open(now())
+        if n:
+            log.info("twap yan kanalı: %d emir geri yüklendi (⛔ notu için)", n)
+    except Exception:                                  # noqa: BLE001
+        log.debug("twaploose_open okunamadı", exc_info=True)
+    loose_last = 0
     while True:
         try:
             await asyncio.wait_for(F.event.wait(), timeout=1.0)
@@ -715,11 +758,19 @@ async def loop(cfg, client, notifier, collector=None) -> None:
             if F.open and t - life_last >= 10:
                 life_last = t
                 await lifecycle(cfg, notifier, collector, t)
+            if twaploose.OPEN and t - loose_last >= 10:
+                loose_last = t
+                try:
+                    await twaploose.lifecycle(cfg, notifier, collector, t)
+                except Exception:                      # noqa: BLE001 — yan kanal ana döngüyü düşürmez
+                    log.exception("twap yan kanalı ömür turu")
             if t - last >= 30:
                 last = t
                 F.prune(t)
                 await beat("twapfast")
                 await kv_set(STATS_KV, F.snapshot(t))
+                if twaploose.chat_id(cfg):
+                    await twaploose.save_stats(t)
         except asyncio.CancelledError:
             raise
         except Exception as e:                         # noqa: BLE001
@@ -769,4 +820,7 @@ def recent_line(d: dict) -> str:
     else:
         txt += f" dilim {usd(d.get('slice') or 0)}"
     r = d.get("reason") or "?"
-    return txt + f" → {REASON_TR.get(r, r)}"
+    txt += f" → {REASON_TR.get(r, r)}"
+    if d.get("loose"):
+        txt += f" · 🔸 yan kanal: {twaploose.REASON_TR.get(d['loose'], REASON_TR.get(d['loose'], d['loose']))}"
+    return txt

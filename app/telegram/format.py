@@ -3169,6 +3169,12 @@ TWAP_AUTO_NOTE = {"cancel": "🔔 iptal edilirse ⛔ buraya otomatik yazılır",
                   "both": "🔔 iptal ⛔ / bitiş 🏁 buraya otomatik yazılır"}
 
 
+def twap_loose_head(parts: list[str]) -> str:
+    """🔸 yan kanal başlığı: ana kanal bu emri neden göndermedi — ölçü ve eşik, sayıyla (tahmin yok)."""
+    why = " · ".join(esc(p) for p in parts if p)
+    return "🔸 <b>Yan kanal</b> · ana kanal eşiğinin altında" + (f": {why}" if why else "")
+
+
 def twap_quick(ctx: dict, o: dict | None = None) -> str:
     """⚡ HIZLI rozeti: emir süresi ≤ ctx['quick_max'] dk (kullanıcı 12.10: "çok hızlı" = 1 saat). Süre HL
     emrinin kendi alanı (ölçüm, tahmin değil). Sınır verilmediyse rozet yok."""

@@ -1008,6 +1008,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                                     await alert_log("twap_endo", eo, "")
                                 await mirror(cfg, notifier, text, f"end:{eo}" if eo else f"end:{ekey}", run.coin, out,
                                              primary=chat if can else None)
+                                await _loose_copy(cfg, notifier, text, f"e:{eo or ekey}", run.coin,
+                                                  chat if can else None)
                         finally:
                             ENDING.discard(claim)
                     await persist(run, m)
@@ -1030,6 +1032,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                                 out["failed"] += 1
                         await mirror(cfg, notifier, text, f"prog:{pkey}", run.coin, out,
                                      primary=chat if can else None)
+                        await _loose_copy(cfg, notifier, text, f"p:{pkey}", run.coin, chat if can else None)
                     await persist(run, m)
                 continue
             # --- ilk alarm: düzenli dizi → emir sorgusu → kapı ---
@@ -1085,6 +1088,10 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 failed_lookup = g == "no_order" and out.get("lookup_fail", 0) > lf_before
                 capped = out.get("lookup_capped", 0) > lc_before     # bu tur sorulmadı: emir YOK sayılamaz
                 decide(run, "lookup_fail" if failed_lookup else ("lookup_capped" if capped and not order else g), det)
+                if own and not failed_lookup and not capped:
+                    lres = await _loose_extra(cfg, notifier, client, run, m, order, g, det, day_vol, vol_ts, ents, ts)
+                    if lres != "off":
+                        decisions[-1]["loose"] = lres     # 🔸 yan kanal (gevşek eşik) — ana yolun durumu değişmez
                 if (g == "no_order" or (g == "order_done" and not own)) and not failed_lookup and not capped \
                         and not run.nat_n:
                     # 🕵️ Emir YOK ya da dizi başlamadan bitmiş eski emir (sorgu başarılı): kendi botuyla dilimleme —
@@ -1155,6 +1162,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 if not can:                                   # ana kanal tanımsız (kripto) — yalnız ayna; durum eskisi gibi
                     out["no_chat"] += 1
                     await mirror(cfg, notifier, text, mkey, run.coin, out)
+                    await _loose_copy(cfg, notifier, text, f"a:{okey or mkey}", run.coin, None)
                     decide(run, "no_chat", det)
                     await persist(run, m)
                     continue
@@ -1164,6 +1172,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                     if okey:
                         await alert_log("twap_o", okey, "")   # 📣 (/twap): bildirilen EMİR (aynı anahtarın başka emri değil)
                 await mirror(cfg, notifier, text, mkey, run.coin, out, primary=chat)
+                await _loose_copy(cfg, notifier, text, f"a:{okey or mkey}", run.coin, chat)
                 if ok:
                     out["alerted"] += 1
                     decide(run, "alerted", det)
@@ -1201,6 +1210,27 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     return out
 
 
+async def _loose_copy(cfg, notifier, text: str, dkey: str, coin: str, primary) -> None:
+    """🔸 yan kanala kopya (twaploose.copy) — asla fırlatmaz, ana yolun sonucunu değiştirmez."""
+    try:
+        from . import twaploose
+        await twaploose.copy(cfg, notifier, text, dkey, coin, primary=primary)
+    except Exception:                                  # noqa: BLE001
+        log.debug("twap yan kanal kopyası %s", dkey, exc_info=True)
+
+
+async def _loose_extra(cfg, notifier, client, run: "Run", m, order, g, det, day_vol, vol_ts, ents, ts) -> str:
+    """🔸 ana kapıdan kalan emir → gevşek kapı → yan kanal (twaploose.slow_extra). Asla fırlatmaz."""
+    from . import twaploose
+    if not twaploose.enabled(cfg) or not order or not m:
+        return "off"
+    try:
+        return await twaploose.slow_extra(cfg, notifier, client, run, m, order, g, det, day_vol, vol_ts, ents, ts)
+    except Exception:                                  # noqa: BLE001
+        log.exception("twap yan kanalı (eski yol) %s:%s", run.coin, run.address[:10])
+        return "error"
+
+
 async def _remember(decisions: list[dict]) -> None:
     """Son kararları biriktir (aynı coin+adres+yön için en yenisi kalır, en çok LAST_MAX)."""
     last = await kv_get(LAST_KV) or []
@@ -1236,6 +1266,9 @@ def decision_line(d: dict) -> str:
     if d.get("hidden"):
         from .hiddentwap import REASON_TR as HR
         txt += f" · 🕵️ gizli twap: {HR.get(d['hidden'], d['hidden'])}"
+    if d.get("loose"):
+        from .twaploose import REASON_TR as LR
+        txt += f" · 🔸 yan kanal: {LR.get(d['loose'], REASON_TR.get(d['loose'], d['loose']))}"
     return txt
 
 

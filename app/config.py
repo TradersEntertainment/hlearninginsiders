@@ -944,6 +944,19 @@ class Config:
         # 🕵️ Gizli TWAP grubu (env-only): gizli TWAP uyarıları YALNIZ buraya (TWAP kanalı/ayna/ana sohbet asla);
         # boşsa gizli TWAP mesajı hiç gönderilmez (ölçüm + 🧪 sürer)
         self.hidden_twap_chat_id = (os.getenv("HIDDEN_TWAP_CHAT_ID", "") or "").strip()
+        # 🔸 TWAP yan kanalı (app/radar/twaploose.py, env-only — kullanıcı 14.10): eşikleri biraz gevşetilmiş TWAP
+        # bildirimleri. Boş = kapalı. Kanal = ana kanalın kopyaları + ana eşikten kalıp gevşek eşiği geçenler (🔸).
+        # Eşikler isteğe bağlı; her biri ana eşikten büyük olamaz (yan kanal ⊇ ana kanal).
+        self.twap_loose_chat_id = (os.getenv("TWAP_LOOSE_CHAT_ID", "") or "").strip()
+        self.twap_loose_only_extra = convert_value("bool", os.getenv("TWAP_LOOSE_ONLY_EXTRA", "0"))
+        self.twap_loose_min_usd = float(os.getenv("TWAP_LOOSE_MIN_USD", "500000"))
+        self.twap_loose_min_left_usd = float(os.getenv("TWAP_LOOSE_MIN_LEFT_USD", "500000"))
+        self.twap_loose_vol_pct = float(os.getenv("TWAP_LOOSE_VOL_PCT", "2.5"))
+        self.twap_loose_vol_pct_major = float(os.getenv("TWAP_LOOSE_VOL_PCT_MAJOR", "10"))
+        self.twap_loose_vol_pct_sat = float(os.getenv("TWAP_LOOSE_VOL_PCT_SAT", "5"))
+        self.twap_loose_fast_min_usd = float(os.getenv("TWAP_LOOSE_FAST_MIN_USD", "100000"))
+        self.twap_loose_fast_rate_x = float(os.getenv("TWAP_LOOSE_FAST_RATE_X", "1"))
+        self.twap_loose_spot_min_day_vol = float(os.getenv("TWAP_LOOSE_SPOT_MIN_DAY_VOL", "500000"))
         self.twap_live_window_min = int(os.getenv("TWAP_LIVE_WINDOW_MIN", "240"))
         self.twap_live_eval_sec = int(os.getenv("TWAP_LIVE_EVAL_SEC", "60"))
         self.notify_pattern = True

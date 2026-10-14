@@ -878,7 +878,7 @@ class TelegramBot:
             getattr(self.cfg, "pattern_chat_id", ""), getattr(self.cfg, "telegram_channel_id", ""),
             getattr(self.cfg, "sim_chat_id", ""), getattr(self.cfg, "account_chat_id", ""),
             getattr(self.cfg, "twap_mirror_chat_id", ""), getattr(self.cfg, "hidden_twap_chat_id", ""),
-            getattr(self.cfg, "strat_chat_id", ""))
+            getattr(self.cfg, "twap_loose_chat_id", ""), getattr(self.cfg, "strat_chat_id", ""))
             if v and str(v).strip()}
 
     def _owner_user_id(self) -> str:

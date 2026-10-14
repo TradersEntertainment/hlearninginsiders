@@ -29,6 +29,8 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "twap":      ("notify_twap",      "⏳ TWAP (düşük hacimli coinde büyük)",  "high"),
     # aynı anahtar (notify_twap): TWAP kapanırsa ayna da susar. PUBLIC_KINDS'te BİLEREK yok
     "twap_mirror": ("notify_twap",    "⏳ TWAP — ayna grubu (TWAP_MIRROR_CHAT_ID)", "high"),
+    # 🔸 gevşek eşikli yan kanal (TWAP_LOOSE_CHAT_ID): aynı anahtar — TWAP kapanırsa yan kanal da susar; fan-out yok
+    "twap_loose": ("notify_twap",     "⏳ TWAP — yan kanal, gevşek eşik (TWAP_LOOSE_CHAT_ID)", "high"),
     # BİLEREK PUBLIC_KINDS'te yok (adres bazlı takip; satılabilir bota gitmez). Ayar alanı YOK (boş): kullanıcı
     # 13.10 ayar sayfası istemiyor — yer HIDDEN_TWAP_CHAT_ID, kapatmak HIDDEN_TWAP_ENABLED=0 (Railway değişkeni)
     "htwap":     ("",                 "🕵️ Gizli TWAP (emirsiz dilimleme)",    "high"),

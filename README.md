@@ -564,6 +564,37 @@ gider. Env-only (Railway Variables; diğer chat id'leri gibi ayarlar sayfasında
   ayna da susar. Ayna grubu botun kendi sohbetidir: `/takip_N` orada da çalışır (takip haberi
   ilk basılan sohbete gider). Sessiz saat ayrı gruplara uygulanmaz.
 
+### 🔸 TWAP yan kanalı — gevşek eşik (`TWAP_LOOSE_CHAT_ID`)
+
+Kullanıcı 14.10: "TWAP bildirimleriyle ilgili şartları biraz gevşettiğimiz bir yan kanal da açalım". Env-only
+(Railway Variables; ayar sayfası yok): **tek gereken `TWAP_LOOSE_CHAT_ID`** (botu gruba ekle, grupta `/id`); boş = kapalı.
+Ana kanal (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) ve ayna **aynen sürer**; yan kanal tanımsızken hiçbir
+davranış değişmez (app/radar/twaploose.py).
+
+- **Ne gelir:** gevşek kapıyı geçen her HL TWAP emri —
+  1. ana hedefe giden her TWAP mesajının birebir **kopyası** (ilk alarm, 🔎 ilk dilim alarmı, ⛔ iptal; açıksa yarı ve
+     🏁). `TWAP_LOOSE_ONLY_EXTRA=1` → kopyalar gelmez.
+  2. ana eşiğin **altında kalıp gevşek eşiği geçen** emirler: aynı mesaj + başta **"🔸 Yan kanal · ana kanal eşiğinin
+     altında: emir $700K (ana kanal ≥ $1.0M)"** gibi bir satır (hangi eşik, bu emrin ölçüsü — sayıyla, tahmin yok).
+     Bu emirlerin ⛔ iptal notu (açıksa 🏁) da yalnız yan kanala yazılır: HL emri sorulur (⚡ dakikada bir, uzun 5 dk'da
+     bir; başka yolun ≤ 45 sn'lik taze cevabı varsa yeniden sorulmaz); ⚡ hızlıda takip tuşu yok (iptal kendiliğinden),
+     uzunda 👁 `/takip_N`. Emir sonradan ana kanala da giderse yan kanala ikinci kopya gelmez, iptal notunu ana yol
+     yazar (kopyası tek).
+- **Eşikler (varsayılan ≈ ana eşiklerin yarısı):** emir ≥ $500K (`TWAP_LOOSE_MIN_USD`), kalan ≥ $500K ya da planın
+  yarısı, emir / 24s hacim ≥ %2,5 (`TWAP_LOOSE_VOL_PCT`; BTC/ETH %10), 📅 Cumartesi kripto olmayan ≥ geçen Cumartesi
+  hacminin %5'i, ⚡ hızlı (≤ 1 sa) ≥ $100K ve dakika hızı ≥ ortalamanın 1 katı, spot çifti 24s hacmi ≥ $500K. Her eşik
+  **ana eşikten büyük olamaz** (min(yan, ana)) — yan kanal ana kanalın üst kümesi; ana eşik ayar sayfasında düşerse
+  yan kanal da izler; ana kapıda kapalı (0) kural yan kanalda da kapalı.
+- **Sorgu yükü:** 🔎 ilk dilim ön süzgeci gevşek eşikle de bakar; yalnız gevşek eşikle sıraya giren dilimler ana
+  adaylardan **sonra** ve dakika tavanının en çok %60'ıyla sorulur (soket dolarken önce ana yol). Eski yol ek sorgu
+  yapmaz (aynı turun emir cevabını kullanır).
+- **Tekrar / bekleme:** aynı emir bir kez (emir anahtarı, 7 gün); ana kanal bu adres + coin + yönü 6 sa içinde
+  bildirdiyse ek alarm yok; ana yolun bekleme / 📣 / 🧪 kapı kayıtlarına dokunulmaz. Fan-out yok; `notify_twap`
+  kapanırsa yan kanal da susar; sessiz saat ayrı gruplara uygulanmaz.
+- Yan kanal botun kendi sohbeti: `/twap`, `/twapf`, `/xpltwap`, `/takip_N` orada da çalışır. `/tani` "🔸 twap yan
+  kanalı" satırı: eşikler, kopya / ek alarm / bitiş notu sayısı, açık emir, gönderim hatası. `/twap durum` kararlarında
+  "🔸 yan kanal: gönderildi / zaten gönderildi / bekleme içinde".
+
 ### TWAP emir defteri: `/twaplar` (spot dahil)
 
 `/twap` sekmesi "birileri sessizce topluyor" hikâyesini anlatır: kanala düşmeye
