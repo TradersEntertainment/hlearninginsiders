@@ -432,6 +432,73 @@ def test_lifecycle_two_tracked_orders():
     print("✅ ömür) iptal edilmiş kardeş susturmayı uzatmaz, ⛔ hemen; 1 sn arayla iki emirde not doğru emirle")
 
 
+def test_phase_model_review_fixes():
+    """Evre modelinin incelemesi (a5d8e8a): (1) yeniden sorgu olağan dilimleri sıfırlamaz — hemen sonra aynı evreye düşen
+    yeni emir olağan sayılmaz; (2) yeni emrin bir alt emri dolmasa da sayılır (~1 dk); (3) F.older'daki kaydın sorgusu
+    kardeşi iptal gösterirse kardeşin ⛔ notu aynı turda."""
+    async def run():
+        cfg = _cfg()
+        cfg.twap_alert_cooldown = 0
+        # (1) X (kapı dışı) bilinir; Z başka evrede → tek yeniden sorgu (sa+338); Y (⚡, dilimi X'in 3 katı) X'in evresinde
+        await _fresh(cfg)
+        now = dbm.now()
+        sa = now - 1200
+        spec = [(sa, 90, 900_000), (sa + 307, 90, 900_000), (sa + 360, 10, 300_000)]
+        col = Col(lambda: _hist([x for x in spec if x[0] <= cur["t"]], {}))
+        cur = {"t": 0}
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        ev = sorted(_slices(sa, 90, 900_000, sa + 700) + _slices(sa + 307, 90, 900_000, sa + 700)
+                    + _slices(sa + 360, 10, 300_000, sa + 700))
+        first = None
+        for e in ev:
+            cur["t"] = e[0]
+            f = await _play(cfg, notifier, col, [e])
+            first = first or f
+        assert first is not None and first - (sa + 360) <= 70 and "plan <b>$300K</b>" in bot.sent[0][1], (first, bot.sent)
+        # (2) X bilinir; Y başka evrede, 2. alt emri dolmuyor (3.sü 2 kat)
+        for off in (3, 14, 27):
+            await _fresh(cfg)
+            now = dbm.now()
+            sa = now - 1200
+            cs = sa + 610 + off
+            spec = [(sa, 90, 900_000), (cs, 10, 300_000)]
+            col = Col(lambda: _hist([x for x in spec if x[0] <= cur["t"]], {}))
+            bot = Bot()
+            notifier = Notifier(cfg, bot)
+            y = _slices(cs, 10, 300_000, cs + 200)
+            y = [y[0], (y[2][0], y[2][1] * 2)] + y[3:]
+            ev = sorted(_slices(sa, 90, 900_000, cs + 200) + y)
+            first = None
+            for e in ev:
+                cur["t"] = e[0]
+                f = await _play(cfg, notifier, col, [e])
+                first = first or f
+            assert first is not None and first - cs <= 70, (off, first, cs)
+        # (3) A (10 dk) F.older'da, B (120 dk) F.open'da; A bitince sorgusu B'yi iptal gösteriyor → B'nin ⛔'u aynı turda
+        await _fresh(cfg)
+        now = dbm.now()
+        sa = now - 900
+        sb = sa + 47
+        spec, st = [(sa, 10, 900_000), (sb, 120, 4_000_000)], {}
+        col = Col(lambda: _hist(spec, st))
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        await _play(cfg, notifier, col, [(sa + 1, _slice_sz(900_000, 10))])
+        tf.F.known.pop(KEY, None)
+        await _play(cfg, notifier, col, [(sb + 1, _slice_sz(4_000_000, 120))])
+        assert tf.F.open[KEY]["started"] == sb and set(tf.F.older[KEY]) == {sa} and len(bot.sent) == 4
+        t1 = sa + 600 + 31
+        tf.F.open[KEY]["lookup_ts"], tf.F.open[KEY]["last_ts"] = t1 - 40, t1 - 10
+        tf.F.older[KEY][sa]["lookup_ts"], tf.F.older[KEY][sa]["last_ts"] = t1 - 40, t1 - 10
+        st[sa], st[sb] = "finished", "terminated"
+        assert await tf.lifecycle(cfg, notifier, col, t1) == 1
+        assert "TWAP iptal edildi" in bot.sent[-2][1] and "plan $4.0M" in bot.sent[-2][1], bot.sent[-2:]
+        assert KEY not in tf.F.known
+    asyncio.run(run())
+    print("✅ evre modeli incelemesi) yeniden sorgu olağan dilimi korur; atlanan alt emir sayılır; kardeşin ⛔'u aynı turda")
+
+
 def test_saturday_base_loaded_for_excluded_runs():
     async def run():
         cfg = _cfg()

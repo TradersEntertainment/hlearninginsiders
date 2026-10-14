@@ -587,8 +587,9 @@ async def _extra(cfg, notifier, okey: str, ckey: str, coin: str, text_fn, head: 
         return "main"                               # emir ana kanala zaten gitti (kopya da) — "eşik altı" denmez
     if await _cooldown(cfg, ckey):
         return "cooldown"
+    from ..telegram import format as fmt
     text = await text_fn()
-    ok = await _send(cfg, notifier, head + "\n" + text, dkey, coin, is_copy=False)
+    ok = await _send(cfg, notifier, fmt.side_note(text, head), dkey, coin, is_copy=False)
     if ok is None:
         return "dup"
     if not ok:
@@ -908,12 +909,12 @@ def big_head(cfg, coin: str = "", rule: str = "ok") -> str:
     from ..telegram.format import usd
     if rule == "weekend":
         wmn, wmx = big_weekend_limits(cfg)
-        return (f"🕐 <b>Büyük TWAP</b> · 📅 hafta sonu (ABD kapalı), kripto olmayan · plan ≥ {usd(wmn)} · süre < "
+        return (f"🕐 📅 hafta sonu (ABD kapalı), kripto olmayan · plan ≥ {usd(wmn)} · süre < "
                 + (f"{wmx / 60:g} sa" if wmx >= 60 and wmx % 60 == 0 else f"{wmx:g} dk"))
     mx = big_max_min(cfg)
     dur = f"{mx / 60:g} sa" if mx >= 60 and mx % 60 == 0 else f"{mx:g} dk"
     tag = f" ({'/'.join(sorted(big_majors(cfg)))})" if coin and big_is_major(cfg, coin) else ""
-    return f"🕐 <b>Büyük TWAP</b> · plan ≥ {usd(big_min_for(cfg, coin))}{tag} · süre ≤ {dur}"
+    return f"🕐 kanal kuralı: plan ≥ {usd(big_min_for(cfg, coin))}{tag} · süre ≤ {dur}"
 
 
 def big_note(coin: str, addr: str, side: str, reason: str, order: dict | None, path: str) -> None:
@@ -933,7 +934,8 @@ async def _big_send(cfg, notifier, okey: str, coin: str, text_fn, rule: str = "o
         BIG.sent.add(dkey)
         return "dup"
     text = await text_fn()
-    ok = await BIG.send(cfg, notifier, big_head(cfg, coin, rule) + "\n" + text, dkey, coin)
+    from ..telegram.format import side_note
+    ok = await BIG.send(cfg, notifier, side_note(text, big_head(cfg, coin, rule)), dkey, coin)
     if ok is None:
         return "dup"
     if not ok:

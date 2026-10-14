@@ -98,8 +98,8 @@ def test_telegram_messages():
     t = fmt.twap_alert(m, ctx)
     assert "@" not in t, f"ham borsa kimliği sızdı:\n{t}"
     assert "🪙" in t and "<b>USDT0/USDC</b>" in t, t
-    assert "1.7K USDT0/USDC ≈ $1.9M" in t, "emir satırı da okunur adla"
-    assert "📍 spot çifti — pozisyon, likidasyon ve funding yok" in t
+    assert "plan <b>$1.9M</b>" in t.split("\n")[0] and "1.7K USDT0/USDC" in t, "emir satırı da okunur adla"
+    assert "📍 spot çifti (pozisyon yok)" in t
     assert "açık perp pozisyonu yok" not in t, "spot'ta perp pozisyon satırı yazılmaz"
     p = fmt.twap_progress(m, ctx)
     e = fmt.twap_end(m, {"order": {}, "day_vol": 238_000})
@@ -108,7 +108,7 @@ def test_telegram_messages():
     # gerileme: perp mesajı bire bir aynı kalır
     pm, pctx = _msg(coin="INJ")
     assert "<b>INJ</b>" in fmt.twap_alert(pm, pctx) and "🪙" not in fmt.twap_alert(pm, pctx)
-    assert "📍 pozisyon: bu coinde açık perp pozisyonu yok" in fmt.twap_alert(pm, pctx)
+    assert "📍 açık perp pozisyonu yok" in fmt.twap_alert(pm, pctx)
     print("✅ telegram) alarm/yarılandı/bitti okunur adla; 🪙 + dürüst spot notu; perp değişmedi")
 
 

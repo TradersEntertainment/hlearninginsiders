@@ -83,7 +83,7 @@ def test_gate_and_config():
     assert lo.big_gate(cfg, o(150, 2e6), now) == "off"
     cfg.twap_big_max_min = 180
     assert lo.big_pre(cfg, 2_300) and not lo.big_pre(cfg, 2_000), "dilim ≥ $1M·0.8/361 ≈ $2.2K"
-    assert lo.big_head(cfg) == "🕐 <b>Büyük TWAP</b> · plan ≥ $1.0M · süre ≤ 3 sa"
+    assert lo.big_head(cfg) == "🕐 kanal kuralı: plan ≥ $1.0M · süre ≤ 3 sa"
     print("✅ kural) süren emir, 0 < süre ≤ 180 dk, plan ≥ $1M; ön süzgeç dilim ≥ ~$2.2K; env-only")
 
 
@@ -106,7 +106,9 @@ def test_fast_path_big_regardless_of_main():
         await _drain(cfg, notifier, col)
         assert [c for c, _ in bot.sent] == [BIGC], bot.sent
         text = bot.sent[0][1]
-        assert text.startswith("🕐 <b>Büyük TWAP</b> · plan ≥ $1.0M · süre ≤ 3 sa\n⏳ <b>TWAP başladı</b> · <b>SOL</b>"), text
+        lines = text.split("\n")
+        assert text.startswith("⏳ <b>TWAP başladı</b> · <b>SOL</b>"), text         # 14.10: emir en başta, not altta
+        assert lines[lines.index("🕐 kanal kuralı: plan ≥ $1.0M · süre ≤ 3 sa") + 1].startswith("👁"), text
         assert "plan <b>$5.0M</b>" in text and "/takip_" in text, "uzun emir: takip tuşu"
         assert ("SOL", A, "buy") not in tf.F.known and not _q("LOG-TWAPF")
         assert {k: v for k, v in tf.F.stats.items() if v != before.get(k)} == {}
@@ -120,7 +122,8 @@ def test_fast_path_big_regardless_of_main():
         tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, t1 + 2, 1000)
         await _drain(cfg, notifier, col2)
         assert [c for c, _ in bot.sent] == ["-100", "-200", BIGC], bot.sent
-        assert bot.sent[2][1].startswith("🕐 <b>Büyük TWAP</b>") and "⚡ <b>HIZLI · 10 dk</b>" in bot.sent[2][1]
+        assert bot.sent[2][1].startswith("⏳") and "🕐 kanal kuralı" in bot.sent[2][1] \
+            and "⚡ <b>HIZLI · 10 dk</b>" in bot.sent[2][1]
         assert "🔔 iptal edilirse ⛔ buraya otomatik yazılır" in bot.sent[2][1]
     asyncio.run(run())
     print("✅ ilk dilim) hacimden bağımsız: SOL $5M 2 sa → yalnız 🕐 (ana yol aynı); ana kanala giden emir de 🕐'a")
@@ -147,7 +150,8 @@ def test_slow_path_once_cancel_restart():
         out = await tl.evaluate(cfg, notifier, None, col)
         assert out["vol_small"] == 1 and [c for c, _ in bot.sent] == [BIGC], (out, bot.sent)
         text = bot.sent[0][1]
-        assert text.startswith("🕐 <b>Büyük TWAP</b>") and "doldu ≈" in text and "doldu <b>$0</b>" not in text, text
+        assert text.startswith("⏳") and "🕐 kanal kuralı" in text and "doldu ≈" in text and "doldu <b>$0</b>" not in text, \
+            text
         await tl.evaluate(cfg, notifier, None, col)
         assert len(bot.sent) == 1, "aynı emir bir kez"
         okey = f"PUMP:{A}:buy:{started}"
@@ -186,7 +190,7 @@ def test_disabled_and_with_loose():
         tf.observe("PUMP", A, "buy", PX, 2_000_000, 10_000, t0 + 2, 1000)
         await _drain(cfg, notifier, col)
         assert [c for c, _ in bot.sent] == ["-100", "-200", "-300", BIGC], bot.sent
-        assert "🔸" not in bot.sent[2][1] and bot.sent[3][1].startswith("🕐")
+        assert "🔸" not in bot.sent[2][1] and "🕐 kanal kuralı" in bot.sent[3][1] and bot.sent[3][1].startswith("⏳")
         # (b) ana kapıdan kalan ($1.2M = 24s $40M'ın %3'ü < %5) ama gevşeği (≥ %2,5) ve 🕐'u geçen emir: 🔸 ek + 🕐
         from app.hl import universe as uni
         await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": PX, "oi": 1, "f": 0, "v": 40e6, "p": None}},
@@ -202,7 +206,7 @@ def test_disabled_and_with_loose():
         tf.observe("PUMP", B2, "buy", PX, 2_000_000, 10_000, t0 + 2, 1000)
         await _drain(cfg, notifier, col)
         assert [c for c, _ in bot.sent] == ["-300", BIGC], bot.sent
-        assert bot.sent[0][1].startswith("🔸 <b>Yan kanal</b>") and bot.sent[1][1].startswith("🕐 <b>Büyük TWAP</b>")
+        assert "🔸 ana kanal eşiğinin altında" in bot.sent[0][1] and "🕐 kanal kuralı" in bot.sent[1][1]
         from app.telegram.bot import TelegramBot
         assert BIGC in TelegramBot(cfg, None, None, {})._own_chats()
     asyncio.run(run())
@@ -227,8 +231,8 @@ def test_btc_eth_major_floor():
             return {"status": "activated", "minutes": 120, "planned_usd": plan, "started_ts": now - 60}
         assert lo.big_gate(cfg, o(19e6), now, "BTC") == "small" and lo.big_gate(cfg, o(20e6), now, "BTC") == "ok"
         assert lo.big_gate(cfg, o(19e6), now, "SOL") == "ok"
-        assert lo.big_head(cfg, "BTC") == "🕐 <b>Büyük TWAP</b> · plan ≥ $20.0M (BTC/ETH) · süre ≤ 3 sa"
-        assert lo.big_head(cfg, "SOL") == "🕐 <b>Büyük TWAP</b> · plan ≥ $1.0M · süre ≤ 3 sa"
+        assert lo.big_head(cfg, "BTC") == "🕐 kanal kuralı: plan ≥ $20.0M (BTC/ETH) · süre ≤ 3 sa"
+        assert lo.big_head(cfg, "SOL") == "🕐 kanal kuralı: plan ≥ $1.0M · süre ≤ 3 sa"
         assert not lo.big_pre(cfg, 40_000, "BTC") and lo.big_pre(cfg, 45_000, "BTC") and lo.big_pre(cfg, 2_300, "SOL")
         tf.observe("BTC", A, "buy", 60_000, 20_700 / 60_000, 20_700, now, 1000)
         assert not tf.F.pending[("BTC", A, "buy")]["queued"], "BTC'de $20.7K dilim bu kanal için sorulmaz"
@@ -281,8 +285,7 @@ def test_weekend_stock_rule():
             assert lo.big_gate(cfg, o(250_000, 600), now, "SOL") == "long"
             assert lo.big_gate(cfg, o(250_000, 120), now, "xyz:TOTAL2") == "small", "kriptoya bağlı HIP-3 hariç"
             assert lo.big_gate(cfg, o(300_000, 120), now, "xyz:BTC") == "small", "HIP-3 BTC: $20M tabanı"
-            assert lo.big_head(cfg, T, "weekend") == ("🕐 <b>Büyük TWAP</b> · 📅 hafta sonu (ABD kapalı), kripto olmayan ·"
-                                                     " plan ≥ $200K · süre < 24 sa")
+            assert lo.big_head(cfg, T, "weekend") == "🕐 📅 hafta sonu (ABD kapalı), kripto olmayan · plan ≥ $200K · süre < 24 sa"
             assert lo.big_pre(cfg, 60, T, now) and not lo.big_pre(cfg, 60, T, None) and not lo.big_pre(cfg, 60, "SOL", now)
             # ilk dilim: 10 sa $300K emir, dilim ~$250 (< ana $1K tabanı) → yalnız 🕐 için sorulur
             t0 = now - 60
@@ -296,7 +299,7 @@ def test_weekend_stock_rule():
             assert {k: v for k, v in tf.F.stats.items() if v != before.get(k) and k not in ("zero", "slices")} == {}
             await _drain(cfg, notifier, col)
             assert [c for c, _ in bot.sent] == [BIGC], bot.sent
-            assert bot.sent[0][1].startswith("🕐 <b>Büyük TWAP</b> · 📅 hafta sonu (ABD kapalı)"), bot.sent[0][1]
+            assert bot.sent[0][1].startswith("⏳") and "🕐 📅 hafta sonu (ABD kapalı)" in bot.sent[0][1], bot.sent[0][1]
             assert "/takip_" in bot.sent[0][1]
             # 2. inceleme: 🔸 açık ve emir 🔸 kapısını da geçse ($600K, 24s $20M'ın %3'ü) küçük dilim 🔸'a SUNULMAZ
             from app.hl import universe as uni

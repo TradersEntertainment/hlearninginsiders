@@ -341,11 +341,12 @@ def test_evaluate_alert_crypto():
         assert out["best"]["coin"] == "INJ" and abs(out["best"]["planned"] - PLAN) < 1e-6 and out["best"]["status"] == "activated"
         assert len(bot.sent) == 1 and bot.sent[0][0] == "-100"
         txt = bot.sent[0][1]
-        assert f"⏳ <b>TWAP</b> · <b>INJ</b> · 🟢 ALIŞ · 🐘 emir 24s hacmin <b>%{PCT}</b>'i" in txt, txt
-        assert f"HL TWAP emri: <b>337.7K INJ ≈ {fmt.usd(PLAN)}</b> (bugünkü fiyatla) · 6 s 0 dk · " in txt, txt
+        assert txt.startswith(f"⏳ <b>TWAP</b> · <b>INJ</b> · 🟢 ALIŞ · <b>6 s 0 dk</b> · plan <b>{fmt.usd(PLAN)}</b>\n"
+                              f"🐘 emir 24s hacmin <b>%{PCT}</b>'i"), txt
+        assert "HL TWAP emri: 337.7K INJ (plan bugünkü fiyatla)" in txt, txt
         assert "'te başladı · <b>5 s 9 dk kaldı</b>" in txt, txt
         assert f"doldu <b>{fmt.usd(130_000 * MARK)}</b> (%38) · kalan ≈ {fmt.usd((SZ - 130_000) * MARK)}" in txt, txt
-        assert f"gördüğümüz 50 dilim × ~{fmt.usd(2200)}, her 30 sn" in txt and "pozisyon: bilinmiyor" in txt, txt
+        assert f"gördüğümüz 50 dilim × ~{fmt.usd(2200)}, her 30 sn" in txt and "📍 pozisyon bilinmiyor" in txt, txt
         assert "24s hacim $9.9M" in txt and "%100 taker" in txt and _no_projection(txt), txt
         assert await _alerts("twap") == 1 and await _alerts("sent:twap") == 1, "metin (kripto yolunda işaret gönderimden SONRA)"
         rows = await _runs()
@@ -502,7 +503,8 @@ def test_routing_and_quiet():
                 txt = bot.sent[0][1]
                 pct = round(20_000_000 * 0.2268 / 4.1e6 * 100)
                 assert "UANSEM" in txt and "🔴 SATIŞ" in txt and f"🐘 emir 24s hacmin <b>%{pct}</b>'i" in txt, txt
-                assert f"HL TWAP emri: <b>20.00M UANSEM ≈ {fmt.usd(20_000_000 * 0.2268)}</b>" in txt and _no_projection(txt), txt
+                assert f"plan <b>{fmt.usd(20_000_000 * 0.2268)}</b>" in txt.split("\n")[0] and _no_projection(txt), txt
+                assert "HL TWAP emri: 20.00M UANSEM (plan bugünkü fiyatla)" in txt, txt
             else:
                 # sessiz saat (ana sohbet): tek özet kaydı, tekrar yok, hata sayılmaz
                 assert bot.sent == [] and out["failed"] == 0 and out.get("quiet") == 1, out
@@ -679,13 +681,20 @@ def test_messages_and_wiring():
     o = tl.parse_twap_orders([order(started=now - 3030)], "INJ", "buy", MARK, now)[0]
     t = fmt.twap_alert(m, {"order": o, "day_vol": 9.9e6, "vol_pct": PLAN / 9.9e6 * 100,
                            "pos": {"side": "long", "notional": 1.2e6, "src": "canlı"}, "gate": "ok", "klass": "kripto", "entity": ""})
-    assert f"🐘 emir 24s hacmin <b>%{PCT}</b>'i" in t and f"HL TWAP emri: <b>337.7K INJ ≈ {fmt.usd(PLAN)}</b> (bugünkü fiyatla) · 6 s 0 dk · " in t, t
+    # 14.10 kullanıcı: "ilk 3-4 satırda her şeyi anlatmalı" — ne / hacme göre / ne zaman + dolan / kim + pozisyon
+    top = t.split("\n")
+    assert top[0] == f"⏳ <b>TWAP</b> · <b>INJ</b> · 🟢 ALIŞ · <b>6 s 0 dk</b> · plan <b>{fmt.usd(PLAN)}</b>", t
+    assert top[1].startswith(f"🐘 emir 24s hacmin <b>%{PCT}</b>'i · dakikada ~<b>"), t
+    assert top[2].startswith("🕐 ") and "kaldı" in top[2] and "doldu" in top[2], t
+    assert top[3].startswith("👤 ") and "📍 🟢LONG <b>$1.2M</b> (canlı)" in top[3], t
+    assert "HL TWAP emri: 337.7K INJ (plan bugünkü fiyatla)" in t, t
     assert "'te başladı · <b>5 s 9 dk kaldı</b>" in t and f"doldu <b>{fmt.usd(1_599_000)}</b> (%38) · kalan ≈ {fmt.usd(PLAN - 1_599_000)}" in t, t
-    assert f"gördüğümüz 42 dilim × ~{fmt.usd(2200)}, her 30 sn" in t and "📍 pozisyon: 🟢LONG <b>$1.2M</b> · canlı" in t, t
+    assert f"gördüğümüz 42 dilim × ~{fmt.usd(2200)}, her 30 sn" in t, t
     assert "+0.8%" in t and "24s hacim $9.9M" in t and "yatırım tavsiyesi" in t and _no_projection(t), t
     t2 = fmt.twap_alert({**m, "median_gap": 90}, {"order": {**o, "reduce_only": True, "left_sec": 0}, "day_vol": None,
                                                    "vol_pct": None, "pos": {"none": True, "src": "canlı"}, "gate": "big", "klass": "hisse"})
-    assert "💰 hacimden bağımsız büyük" in t2 and "reduce-only (pozisyon kapatıyor)" in t2 and "<b>süresi doldu</b>" in t2, t2
+    assert "💰 hacimden bağımsız büyük" in t2 and "<b>süresi doldu</b>" in t2, t2
+    assert "<b>reduce-only</b> (pozisyon kapatıyor)" in t2.split("\n")[3], "reduce-only ilk 4 satırda (kim + pozisyon)"
     assert "açık perp pozisyonu yok" in t2 and "her 2 dk" in t2 and "24s hacim" not in t2
     p = fmt.twap_progress(m, {"order": {**o, "executed_usd": 2.2e6, "filled_pct": 53.0}})
     assert "⏳ <b>TWAP yarılandı</b>" in p and f"doldu <b>{fmt.usd(2.2e6)}</b> / {fmt.usd(PLAN)} (%53)" in p and "kaldı" in p and _no_projection(p), p

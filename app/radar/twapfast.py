@@ -247,7 +247,8 @@ class Fast:
           yeni emir (en sık RELOOK_MIN_GAP'te bir)
         • boyut: bilinen evrede dilim o evrenin olağan diliminin RELOOK_BIG_X katını iki kez üst üste aşarsa — dilimleri
           bilinen emirle aynı saniyeye düşen ikinci emir (yeni emir bulamadıkça bu sezginin aralığı katlanır)
-        Yeniden sorgudan sonra o anki tüm evreler bilinir; olağan dilimler yeniden öğrenilir."""
+        Yeniden sorgudan sonra o anki tüm evreler bilinir; olağan dilimler korunur (boyut sezgisi yeni emir bulduysa o
+        evreninki yeniden öğrenilir)."""
         ks = self._ks(key)
         if ts - ks["last"] > COALESCE_SEC:              # yeni küme (dilim)
             _close_bucket(ks)
@@ -258,12 +259,12 @@ class Fast:
                 c = {"ph": ts % 30, "seen": ts, "known": False, "hits": 1, "typ": 0.0, "big": 0, "flag": False}
                 ks["cl"].append(c)
             else:
-                if ts - c["seen"] > 45:
-                    # evre bir alt emir atladı ve yeniden başladı: iptal + aynı evrede yeni emir olabilir (HL alt emri
-                    # dolmazsa da atlar — yanlış alarm tek sorgu) → yeni evre gibi
+                if ts - c["seen"] > 45 and c["known"]:
+                    # bilinen evre bir alt emir atladı ve yeniden başladı: iptal + aynı evrede yeni emir olabilir (HL
+                    # alt emri dolmazsa da atlar — yanlış alarm tek sorgu) → yeni evre gibi
                     c["known"], c["hits"], c["typ"], c["big"] = False, 1, 0.0, 0
                 elif ts - c["seen"] >= 20:
-                    c["hits"] += 1
+                    c["hits"] += 1                      # bilinmeyen evrede atlanan alt emir de sayılır (yeni emir gecikmesin)
                 c["ph"], c["seen"] = ts % 30, ts
             c["flag"] = False
             ks["cur"] = c
@@ -281,9 +282,9 @@ class Fast:
             why = "phase"
         if not why or ts < ks["mute"] or ts - ks["relook"] < (ks["gap"] if why == "size" else RELOOK_MIN_GAP):
             return False
-        ks["relook"], ks["why"] = ts, why
-        for x in ks["cl"]:                              # o anki evreler bilinir; olağan dilim yeniden öğrenilir
-            x["known"], x["big"], x["typ"] = True, 0, 0.0
+        ks["relook"], ks["why"], ks["why_c"] = ts, why, c
+        for x in ks["cl"]:                              # o anki evreler bilinir; olağan dilimler KORUNUR (sıfırlanırsa
+            x["known"], x["big"] = True, 0              # sorgudan hemen sonra başlayan aynı evreli emir olağan sayılırdı)
         return True
 
     def _ks(self, key: tuple) -> dict:
@@ -316,10 +317,14 @@ class Fast:
         return fresh
 
     def relook_done(self, key: tuple, fresh: bool) -> None:
-        """Boyut sezgisinin yeniden sorgusu yeni emir bulamadı → bu sezginin aralığı katlanır; yeni emir → en kısa."""
+        """Boyut sezgisinin yeniden sorgusu yeni emir bulamadı → bu sezginin aralığı katlanır; yeni emir → en kısa, ve
+        boyutu tetikleyen evrenin olağan dilimi (artık iki emir) bir sonraki kümeden yeniden öğrenilir."""
         ks = self._ks(key)
         if fresh:
             ks["gap"] = RELOOK_MIN_GAP
+            c = ks.get("why_c")
+            if ks.get("why") == "size" and c is not None:
+                c["relearn"] = True
         elif ks.get("why") == "size":
             ks["gap"] = min(RELOOK_MAX_GAP, ks["gap"] * 2)
 
@@ -419,6 +424,9 @@ def _close_bucket(ks: dict) -> None:
     """Kapanan küme: büyük değilse evresinin olağan dilimine katılır (üstel ortalama); büyükse sayaç sürer."""
     c = ks.get("cur")
     if c is None or ks["cur_sz"] <= 0:
+        return
+    if c.pop("relearn", False):
+        c["typ"], c["big"] = ks["cur_sz"], 0             # aynı evreye yeni emir eklendi (sorgu buldu): yeni olağan
         return
     if c["flag"]:
         return
@@ -867,19 +875,21 @@ def _near(started: int, live: set, tol: int = 2) -> bool:
     return any(abs(int(started) - x) <= tol for x in live)
 
 
-def _release(key: tuple, r: dict, t: int, live: set) -> None:
+def _release(key: tuple, r: dict, t: int, live: set, requeue: list | None = None) -> None:
     """Emir bitti: bastırma, anahtarın bildirilmiş ve HL'ye göre hâlâ SÜREN (`live`: bu turun sorgusunda 'activated')
     başka emri varsa onun bitişine iner, yoksa kalkar (aynı adres + coin + yönün yeni emri yeniden sorulabilsin).
     İzlenmeyen (kapı dışı / 🔸) emir susturmayı uzatamaz. HL'nin artık sürmüyor dediği bildirilmiş kardeş kayıt hemen
-    yeniden sorulur (⛔ notu 5 dk'lık yoklamayı beklemesin)."""
+    yeniden sorulur — `requeue` verilirse aynı turda (⛔ notu 5 dk'lık yoklamayı beklemesin)."""
     until = 0
-    for k, x, _o in F.records():
+    for k, x, o_ in F.records():
         if k != key or x is r or x["ended"]:
             continue
         if _near(int(x["started"]), live):
             until = max(until, int(x["end_at"]))
         else:
             x["lookup_ts"] = 0
+            if requeue is not None:
+                requeue.append((k, x, o_))
     if until >= t:
         F.known[key] = until + 120
     else:
@@ -911,7 +921,11 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
     sent = 0
     changed = False
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
-    for key, r, older in F.records():
+    queue = F.records()                                 # _release HL'de sürmeyen kardeşi sona ekler (aynı tur)
+    qi = 0
+    while qi < len(queue):
+        key, r, older = queue[qi]
+        qi += 1
         if r["ended"]:
             if t - r["ended"] > 600:
                 F.drop(key, r, older)
@@ -950,13 +964,13 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
             if t < end_at + END_GIVEUP:
                 continue                                # HL kapatmadı (iptal değil, sürüyor) — bekle
             r["ended"], changed = t, True
-            _release(key, r, t, live)
+            _release(key, r, t, live, queue)
             continue
         if o is None and t < end_at + END_GRACE:
             continue                                    # geçmişte görünmüyor ama süresi dolmadı — bekle
         if o is None or not twaplive.end_note_wanted(cfg, st in ("terminated", "error")):
             r["ended"], changed = t, True                # normal bitiş (🏁 kapalı) ya da emir yok → not yok
-            _release(key, r, t, live)
+            _release(key, r, t, live, queue)
             continue
         okey = f"{key[0]}:{key[1]}:{key[2]}:{int(r['started'])}"
         if okey in twaplive.ENDING:
@@ -985,7 +999,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
                 F.stats["ends"] += 1
                 sent += 1
             r["ended"], changed = t, True
-            _release(key, r, t, live)                        # aynı adres+coin+yönün YENİ emri yeniden sorulabilsin
+            _release(key, r, t, live, queue)                        # aynı adres+coin+yönün YENİ emri yeniden sorulabilsin
         finally:
             twaplive.ENDING.discard(okey)
         try:                                            # /twaplar sekmesinde 🔎 işareti (eski yolun satırı varsa)

@@ -9,7 +9,7 @@ Pinlenenler:
   • tanımsızken hiçbir şey değişmez (yan kanal mesajı yok, ön süzgeç aynı)
   • ana kanala giden her TWAP mesajı (ilk dilim / eski yol ilk alarm, ⛔) yan kanala BİREBİR kopya; TWAP_LOOSE_ONLY_EXTRA=1
     → kopya yok
-  • ana kapıdan kalıp gevşek kapıyı geçen emir yalnız yan kanala, "🔸 Yan kanal" başlığıyla (ana eşik + bu emrin
+  • ana kapıdan kalıp gevşek kapıyı geçen emir yalnız yan kanala, "🔸" notuyla (PROPR satırının altında; ana eşik + bu emrin
     ölçüsü, sayıyla); ana kanal / ayna / 'twap' bekleme / alerted_ts / twap_o DEĞİŞMEZ; aynı emir bir kez
   • yalnız-yan-kanal emrinin ⛔ iptal notu yan kanala (HL emri sorulur); emir sonradan ana kanala da giderse notu
     ana yol yazar ve kopyası tek gelir; yeniden başlatmada kayıt geri yüklenir
@@ -129,8 +129,11 @@ def test_fast_extra_and_cancel_note():
         await _drain(cfg, notifier, col)
         assert _chats(bot) == [LOOSE], bot.sent
         text = bot.sent[0][1]
-        assert text.startswith("🔸 <b>Yan kanal</b> · ana kanal eşiğinin altında: emir $150K (ana kanal ≥ $1.0M;"
-                               " ⚡ hızlıda ≥ $250K)\n⏳ <b>TWAP başladı</b>"), text
+        # 14.10 kullanıcı: "yan kanal olduğunu biliyorum, emir ve süresi en başta" — not altta (🔔 satırının üstünde)
+        lines = text.split("\n")
+        note = "🔸 ana kanal eşiğinin altında: emir $150K (ana kanal ≥ $1.0M; ⚡ hızlıda ≥ $250K)"
+        assert text.startswith("⏳ <b>TWAP başladı</b>") and note in lines, text
+        assert lines[lines.index(note) + 1].startswith("🔔"), text
         assert "⚡ <b>HIZLI · 5 dk</b>" in text and "🔔 iptal edilirse ⛔ buraya otomatik yazılır" in text
         assert await _kind("twap_fast") == 0 and await _kind("twap") == 0 and await _kind("twap_mirror") == 0
         assert await _kind("twap_lcd") == 1 and await _kind("twap_loose") == 1
@@ -228,8 +231,9 @@ def test_slow_extra_upgrade_and_end_copy():
         out = await tl.evaluate(cfg, notifier, None, col)
         assert out["order_small"] == 1 and out["alerted"] == 0 and _chats(bot) == [LOOSE], (out, bot.sent)
         text = bot.sent[0][1]
-        assert text.startswith("🔸 <b>Yan kanal</b> · ana kanal eşiğinin altında: emir $700K (ana kanal ≥ $1.0M)\n"
-                               "⏳ <b>TWAP</b>"), text
+        lines = text.split("\n")
+        note = "🔸 ana kanal eşiğinin altında: emir $700K (ana kanal ≥ $1.0M)"
+        assert text.startswith("⏳ <b>TWAP</b>") and lines[lines.index(note) + 1].startswith("👁"), text
         assert "/takip_" in text and "🔔" not in text, "uzun emir: takip tuşu"
         run_ = tl.REG.runs[("PUMP", A, "buy")]
         assert run_.alerted_ts is None and await _kind("twap") == 0 and await _kind("twap_o") == 0
@@ -344,7 +348,12 @@ def test_restart_and_diag_and_bot():
         from app.telegram.bot import TelegramBot
         bot = TelegramBot(cfg, None, None, {})
         assert LOOSE in bot._own_chats()
-        assert fmt.twap_loose_head(["a < b"]) == "🔸 <b>Yan kanal</b> · ana kanal eşiğinin altında: a &lt; b"
+        assert fmt.twap_loose_head(["a < b"]) == "🔸 ana kanal eşiğinin altında: a &lt; b"
+        from app.propr import PROPR_NOTE
+        base = "⏳ <b>TWAP başladı</b> · X\nsatır\n" + PROPR_NOTE + "\n🔔 iptal\n" + fmt.DISCLAIMER
+        assert fmt.side_note(base, "🔸 not").split("\n")[:4] == ["⏳ <b>TWAP başladı</b> · X", "satır", PROPR_NOTE,
+                                                                 "🔸 not"], "PROPR satırının altında"
+        assert fmt.side_note("⏳ a\nb\n" + fmt.DISCLAIMER, "🔸 not").split("\n")[:4] == ["⏳ a", "b", "🔸 not", ""]
     asyncio.run(run())
     print("✅ yeniden başlatma / tanı / bot) kayıt geri yüklenir; /tani satırı; yan kanal botun kendi sohbeti")
 
@@ -474,8 +483,9 @@ def test_no_chat_and_orphan_notes():
         _slow_feed(started)
         out = await tl.evaluate(cfg, notifier, None, col)
         assert out["no_chat"] == 1 and _chats(bot) == [LOOSE], (out, bot.sent)
-        assert bot.sent[0][1].startswith("🔸 <b>Yan kanal</b> · ana eşiği geçti; ana kanal tanımlı değil\n"), bot.sent
-        assert "altında" not in bot.sent[0][1].split("\n")[0]
+        assert bot.sent[0][1].startswith("⏳") and "🔸 ana eşiği geçti; ana kanal tanımlı değil" in \
+            bot.sent[0][1].split("\n"), bot.sent
+        assert "altında" not in bot.sent[0][1]
         state["st"] = "terminated"
         run_ = tl.REG.runs[("PUMP", A, "buy")]
         run_.lookup_ts = now - 700
