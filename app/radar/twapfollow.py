@@ -133,7 +133,15 @@ async def _one(cfg, f: dict, hist: list, ts: int, notifier, fmt, twaplive, out: 
         out["no_order"] += 1
         return
     status = (o.get("status") or "").lower()
-    filled = float(o.get("filled_pct") or 0)
+    # HL süren emir kaydı dolanı 0 yazar (yerleştirme görüntüsü) → yarılanma radarın gördüğü HL dilimlerinden, yalnız
+    # dilimler emrin başından beri görülüyorsa (alt sınırla "yarılandı" denmez)
+    ws = getattr(twaplive, "with_seen", None)
+    if ws is not None:
+        o = ws(o, f["coin"], f["address"], f["side"], ts)
+    if o.get("fill_hl0"):
+        filled = float(fmt.fill_amount(o)[1] or 0) if o.get("fill_full") else 0.0
+    else:
+        filled = float(o.get("filled_pct") or 0)
 
     async def _mark(**fields) -> None:
         sets = ", ".join(f"{k}=?" for k in fields)

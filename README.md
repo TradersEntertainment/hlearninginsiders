@@ -556,6 +556,18 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   kripto). Dilimi `twap_fast_min_slice_usd`'nin ($1.000) altındaki uzun TWAP'lar (ör. $1M / 24 sa ≈
   $350 dilim) eski yoldan gelir.
 
+### Süren emrin dolanı — HL kaydı 0 yazar
+
+HL'nin süren TWAP kaydı (`twapHistory` / `userTwapHistory`, durum `activated`) emir **verildiği anın** görüntüsüdür:
+`executedSz` / `executedNtl` HEP 0; HL dolanı yalnız bitiş / iptal kaydında yazar (14.10: 0xedcd… HYPE 150 dk emri
+`/twap` listesinde "doldu %0" görünüyordu, HL dilim dolumlarına göre %71'i dolmuştu). Süren emrin dolanı artık radarın
+**kendi gördüğü HL TWAP alt emri dolumlarından** ölçülür (sıfır hash, taker = emir sahibi; adet / emrin adedi):
+"doldu ≈ %71" dilimler emrin başından beri görülüyorsa, "≥" alt sınır (radar emrin başını görmedi — yeniden başlatma),
+hiç yazılmaz: coin dinlenmiyor / dilimler sustu / önceki emirle karışık (asla "%0"). Bitmiş / iptal kaydı HL'nin kendi
+rakamıyla. 👁 takibin yarılanma notu da bu ölçüyle çalışır (eskiden hiç gelmiyordu). **Kapı değişmedi:** "kalan"
+kuralı (`twap_alert_min_left_usd`) HL kaydıyla karar verir — süren emirde kalan = plan, yani bu kural fiilen hiç
+elemiyor (bugünkü davranış korunur).
+
 ### TWAP ayna grubu (`TWAP_MIRROR_CHAT_ID`)
 
 TWAP mesajları bugünkü yerlerine (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) gitmeye devam eder;

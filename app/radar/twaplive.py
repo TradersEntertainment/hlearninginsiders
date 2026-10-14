@@ -81,7 +81,8 @@ class Run:
     __slots__ = ("coin", "address", "side", "first_ts", "last_ts", "n", "total", "sz_total",
                  "pxsz", "px_first", "px_last", "tk_n", "known_n", "slices", "alerted_ts",
                  "alert_total", "progress_ts", "progress_step", "ended_ts", "day_volume",
-                 "rate_day", "gate", "order", "lookup_ts", "half_ts", "nat_n", "nat_ts", "nat_first_ts")
+                 "rate_day", "gate", "order", "lookup_ts", "half_ts", "nat_n", "nat_ts", "nat_first_ts", "nat_usd",
+                 "nat_sz")
 
     def __init__(self, coin: str, address: str, side: str, ts: int, px: float):
         self.coin, self.address, self.side = coin, address, side
@@ -105,6 +106,8 @@ class Run:
         self.nat_n = 0             # HL TWAP alt emri dolumu (sıfır hash, taker) sayısı — 🕵️ gizli TWAP'ı dışlar
         self.nat_ts = 0            # son HL alt emri dolumunun anı (/twap: emir hâlâ dilim atıyor mu)
         self.nat_first_ts = 0      # bu HL alt emri "bölümünün" ilk dolumu (öncesi LIVE_SILENT'ten uzun sustuysa yeni)
+        self.nat_usd = 0.0         # bu bölümün HL alt emri dolumları ($) — süren emrin DOLANI (HL kaydı 0 der, bkz. seen_fill)
+        self.nat_sz = 0.0          # aynısı adet olarak (doluluk % = adet / emrin adedi — fiyattan bağımsız)
 
     @property
     def key(self) -> tuple:
@@ -144,6 +147,9 @@ class Registry:
             r.nat_n += 1
             if not r.nat_ts or ts - r.nat_ts > LIVE_SILENT:
                 r.nat_first_ts = ts                    # yeni bölüm: önceki emir susmuştu (yeni TWAP olabilir)
+                r.nat_usd = r.nat_sz = 0.0
+            r.nat_usd += notional
+            r.nat_sz += sz
             if ts > r.nat_ts:
                 r.nat_ts = ts
         r.total += notional
@@ -293,6 +299,44 @@ def parse_twap_orders(history, coin: str, side: str, mark, now_ts: int) -> list[
             continue
     out.sort(key=lambda o: (o["status"] != "activated", -(o["started_ts"] or 0)))
     return out
+
+
+# ---------------- süren emrin dolanı ----------------
+# HL'nin süren emir kaydı (twapHistory / userTwapHistory 'activated') emir VERİLDİĞİ anın görüntüsüdür: executedSz /
+# executedNtl HEP 0 — HL dolanı yalnız bitiş / iptal kaydında yazar (14.10: 0xedcd… HYPE 150 dk emri listede "doldu %0"
+# görünüyordu, HL dilim dolumlarına göre %71'i dolmuştu). Süren emrin dolanı radarın KENDİ gördüğü HL TWAP alt emri
+# dolumlarından ölçülür (sıfır hash, taker = emir sahibi; Run.nat_usd). Kapı (kalan kuralı) bu ölçüyü KULLANMAZ — HL
+# kaydıyla bugünkü gibi karar verir; yalnız mesaj ve listelerdeki "doldu" doğru olsun.
+SEEN_SLACK = 90             # dilim bölümü emrin başlangıcından en çok bu kadar sapıyorsa "emrin başından beri görülüyor"
+
+
+def seen_fill(coin: str, addr: str, side: str, started_ts, now_ts: int | None = None) -> tuple | None:
+    """Süren emrin radarca görülen dolanı: (usd, tam, adet). tam = dilim bölümü emrin başından beri görülüyor (≈ HL'nin
+    dolanı); değilse ALT SINIR (radar emrin başını görmedi — yeniden başlatma, geç dinleme). None = ölçü yok (coin
+    dinlenmiyor, dilim yok / sustu) ya da bölüm bu emirden önce başlamış (önceki emirle karışık)."""
+    r = REG.runs.get((coin, (addr or "").lower(), side)) or REG.runs.get((coin, addr, side))
+    if r is None or not r.nat_n or not r.nat_first_ts or not started_ts or r.nat_usd <= 0:
+        return None
+    if now_ts and int(now_ts) - int(r.nat_ts) > LIVE_SILENT:
+        return None
+    f, s = int(r.nat_first_ts), int(started_ts)
+    if f < s - SEEN_SLACK:
+        return None
+    return float(r.nat_usd), f <= s + SEEN_SLACK, float(r.nat_sz)
+
+
+def with_seen(o: dict | None, coin: str, addr: str, side: str, now_ts: int | None = None) -> dict | None:
+    """Mesaj / liste için emir kopyası: HL'nin 'activated' kaydı 0 diyorsa (yerleştirme görüntüsü) `fill_hl0` ve radarın
+    gördüğü dolan (`fill_seen`, `fill_full`). Bitmiş / iptal kaydı ya da dolanı yazılı kayıt aynen döner."""
+    if not o or o.get("status") != "activated" or float(o.get("executed_usd") or 0) > 0 or not o.get("started_ts"):
+        return o
+    sf = seen_fill(coin, addr, side, o.get("started_ts"), now_ts)
+    w = {**o, "fill_hl0": True, "fill_seen": sf[0] if sf else None, "fill_full": bool(sf and sf[1]),
+         "fill_seen_sz": sf[2] if sf else None}
+    if sf and sf[2] > 0 and not float(o.get("planned_usd") or 0) and float(o.get("planned_sz") or 0) > 0:
+        px = sf[0] / sf[2]                              # fiyat verilmeden ayrıştırıldı (takip): dolum ortalamasıyla dönüşüm
+        w["planned_usd"] = float(o["planned_sz"]) * px
+    return w
 
 
 def vol_pct_for(cfg, coin: str, sat: bool = False) -> float:
@@ -1161,7 +1205,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         offer = await _twap_offer(run)
                     except Exception:
                         log.debug("twap takip teklifi yazılamadı (%s)", run.coin, exc_info=True)
-                ctx = {"order": order, "day_vol": det["day_vol"] if det.get("sat") else day_vol,
+                ctx = {"order": with_seen(order, run.coin, run.address, run.side, ts),
+                       "day_vol": det["day_vol"] if det.get("sat") else day_vol,
                        "vol_pct": det["vol_pct"], "sat": det.get("sat"),
                        "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or "",
                        "offer": offer, "quick_max": quick_max(cfg), "auto_end": auto_end(cfg, order)}
@@ -1404,8 +1449,9 @@ async def diag_address(cfg, collector, addr: str) -> str:
                 vol = vols.get(coin)
                 from . import twapfast
                 g, det = twapfast.decide_gate(cfg, coin, o, vol[0] if vol else None, vol[1] if vol else None, ts)
-                fill = f"doldu {usd(o['executed_usd'])} (%{o['filled_pct']:.0f})" if o.get("filled_pct") is not None else ""
-                lines.append(f"• {esc(assets.label(coin))} {side.upper()} {usd(o['planned_usd'])} · {fill} · kalan {usd(o['remaining_usd'])}"
+                from ..telegram.format import fill_short
+                fill = fill_short(with_seen(o, coin, addr, side, ts))
+                lines.append(f"• {esc(assets.label(coin))} {side.upper()} {usd(o['planned_usd'])} · {fill}"
                              f" · {int(o['minutes'])} dk · {esc(o['status'])}")
                 kap = f"  kapı: {twapfast.REASON_TR.get(g, g)}"
                 if g in ("short", "slow", "short_small", "short_left") and det.get("per_min"):
@@ -1513,8 +1559,11 @@ def _live_add(out: dict, ts: int, vols: dict, coin, addr, side, o, last_ts, q_ts
     k = (coin, addr, side, t0)
     if k not in out and t0:                            # aynı emir: başlangıç kaynaktan kaynağa ±2 sn oynayabilir
         k = next((k2 for k2 in out if k2[:3] == k[:3] and abs(int(k2[3]) - t0) <= 2), k)
+    o = with_seen(o, coin, addr, side, ts)
     e = {"coin": coin, "addr": addr, "side": side, "planned_usd": planned,
          "executed_usd": o.get("executed_usd"), "filled_pct": o.get("filled_pct"), "minutes": mins,
+         "fill_hl0": bool(o.get("fill_hl0")), "fill_seen": o.get("fill_seen"), "fill_full": bool(o.get("fill_full")),
+         "fill_seen_sz": o.get("fill_seen_sz"), "planned_sz": o.get("planned_sz"),
          "started_ts": t0, "left_sec": max(0, end - ts) if end is not None else None, "q_ts": int(q_ts or 0),
          "last_ts": int(last_ts or 0), "alerted": bool(alerted), "n": int(n or 0), "seen_usd": float(seen or 0),
          "vol_pct": (planned / float(dv) * 100) if dv else None, "spot": assets.is_spot(coin), "src": src,

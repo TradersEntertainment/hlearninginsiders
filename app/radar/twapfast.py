@@ -558,7 +558,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
                "auto_end": twaplive.auto_end(cfg, order),
                "why": det.get("reason")}
-        text = fmt.twap_fast(order, ctx)
+        text = fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)   # HL süren emirde dolanı 0 yazar
         ok = False
         if can:
             ok = await notifier.send("twap", text, priority="high", key=f"twap_fast:{fkey}", chat_id=chat, coin=coin)

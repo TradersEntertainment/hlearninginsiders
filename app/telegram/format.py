@@ -3273,10 +3273,48 @@ def _order_line(o: dict, sym: str) -> str:
     return " · ".join(parts)
 
 
-def _fill_line(o: dict) -> str:
+def fill_amount(o: dict | None) -> tuple:
+    """(dolan $, %, tür): 'hl' HL kaydı · 'seen' radarın gördüğü HL dilimleri (emrin başından beri) · 'min' alt sınır
+    (radar emrin başını görmedi) · 'none' bilinmiyor (HL süren emirde 0 yazar; bkz. twaplive.with_seen)."""
+    o = o or {}
+    plan = float(o.get("planned_usd") or 0)
+    if o.get("fill_hl0"):
+        v = o.get("fill_seen")
+        if v is None:
+            return None, None, "none"
+        psz, ssz = float(o.get("planned_sz") or 0), float(o.get("fill_seen_sz") or 0)
+        pct = (ssz / psz * 100) if (psz and ssz) else ((float(v) / plan * 100) if plan else None)   # adetle: fiyattan bağımsız
+        return float(v), pct, "seen" if o.get("fill_full") else "min"
     fp = o.get("filled_pct")
-    return (f"doldu <b>{usd(o.get('executed_usd'))}</b>" + (f" (%{fp:.0f})" if fp is not None else "")
-            + f" · kalan ≈ {usd(o.get('remaining_usd'))}")
+    return o.get("executed_usd"), (float(fp) if fp is not None else None), "hl"
+
+
+def fill_short(o: dict | None) -> str:
+    """Tek satırlık dolan (teşhis listeleri): 'doldu $X (%Y) · kalan $Z' · 'doldu ≈ …' · 'doldu ≥ …' · bilinmiyor."""
+    v, pct, kind = fill_amount(o)
+    pc = f" (%{pct:.0f})" if pct is not None else ""
+    if kind == "none":
+        return "dolan bilinmiyor (HL süren emirde 0 yazar, dilimleri görülmedi)"
+    if kind == "min":
+        return f"gördüğümüz dolum ≥ {usd(v)}{pc}"
+    if kind == "seen":
+        return f"doldu ≈ {usd(v)}{pc} · kalan ≈ {usd(max(0.0, float((o or {}).get('planned_usd') or 0) - float(v)))}"
+    return f"doldu {usd(v)}{pc} · kalan {usd((o or {}).get('remaining_usd'))}"
+
+
+def _fill_line(o: dict) -> str:
+    """Mesajdaki dolan satırı. Süren emirde HL kaydı dolanı 0 yazar (yerleştirme görüntüsü): dolan radarın gördüğü HL
+    dilimlerinden — emrin başından beri görülüyorsa '≈', değilse alt sınır; hiç görülmediyse söylenir (tahmin yok)."""
+    v, pct, kind = fill_amount(o)
+    pc = f" (%{pct:.0f})" if pct is not None else ""
+    if kind == "none":
+        return "dolan: HL süren emirde bildirmiyor (dilimleri görülmedi)"
+    if kind == "min":
+        return f"gördüğümüz dolum en az <b>{usd(v)}</b>{pc} (radar emrin başını görmedi)"
+    if kind == "seen":
+        left = max(0.0, float(o.get("planned_usd") or 0) - float(v))
+        return f"doldu ≈ <b>{usd(v)}</b>{pc} · kalan ≈ {usd(left)} (gördüğümüz HL dilimleri)"
+    return (f"doldu <b>{usd(v)}</b>{pc}" + f" · kalan ≈ {usd(o.get('remaining_usd'))}")
 
 
 TWAP_AUTO_NOTE = {"cancel": "🔔 iptal edilirse ⛔ buraya otomatik yazılır",
@@ -3362,7 +3400,12 @@ def _live_row(i: int, e: dict, quick_max: float = 60, show_coin: bool = True) ->
     ln = f"{i}. {head}{_twap_side(e.get('side'))} · plan <b>{usd(e.get('planned_usd'))}</b>"
     if e.get("vol_pct") is not None:
         ln += f" ({'geçen Cmt hacminin' if e.get('sat') else '24s hacmin'} %{float(e['vol_pct']):.1f}'i)"
-    if e.get("filled_pct") is not None:
+    if e.get("fill_hl0"):                               # HL süren emirde 0 yazar: radarın gördüğü dilimler
+        plan = float(e.get("planned_usd") or 0)
+        if e.get("fill_seen") is not None and plan > 0:
+            pct = fill_amount({**e, "fill_hl0": True})[1]
+            ln += f" · doldu {'≈' if e.get('fill_full') else '≥'}%{pct:.0f}"
+    elif e.get("filled_pct") is not None:
         ln += f" · doldu %{float(e['filled_pct']):.0f}"
     if e.get("left_sec") is not None:
         ln += f" · {dur_txt(e['left_sec'])} kaldı"
@@ -3383,11 +3426,11 @@ def _live_row(i: int, e: dict, quick_max: float = 60, show_coin: bool = True) ->
 def coin_twaps(coin: str, rows: list[dict], info: dict | None = None, quick_max: float = 60,
                listened: bool | None = None, top: int = LIVE_TWAP_TOP, name: str | None = None) -> str:
     """/XPLtwap (kullanıcı 13.10): bu coinde SÜREN HL TWAP emirleri, planlanan büyüklüğe göre; alış / satış toplamı.
-    Tahmin yok: plan bugünkü fiyatla, dolan son sorgudaki HL rakamı, kalan süre planlanan bitişe göre."""
+    Tahmin yok: plan bugünkü fiyatla, doldu radarın gördüğü HL dilimleri, kalan süre planlanan bitişe göre."""
     sym = esc(name or assets.label(coin))
     info = info or {}
     foot = ("<i>Dilimi görülen süren HL TWAP emirleri (HL tüm emirleri tek yerden vermiyor; yeni dilim gelmeyen emir"
-            " listede yok). Plan bugünkü fiyatla; dolan son sorgudaki HL rakamı. 📣 = kanala bildirildi.</i>")
+            " listede yok). Plan bugünkü fiyatla; doldu = radarın gördüğü HL dilimleri (HL süren emirde 0 yazar; ≈ baştan beri, ≥ alt sınır). 📣 = kanala bildirildi.</i>")
     miss = int(info.get("failed") or 0) + int(info.get("skipped") or 0)
     if miss:
         foot = f"⚠ HL TWAP dilimi görülen {miss} adresin emri bu sefer sorulamadı (sonra yeniden dene).\n" + foot
@@ -3433,7 +3476,7 @@ def live_twaps(rows: list[dict], owner: bool = True, top: int = LIVE_TWAP_TOP, i
             else "⏳ <b>Canlı TWAP'lar</b>")
     info = info or {}
     foot = ("<i>Dinlenen coinlerde dilimi görülen süren HL TWAP emirleri (HL tüm emirleri tek yerden vermiyor;"
-            " yeni dilim gelmeyen emir listede yok). Plan bugünkü fiyatla; dolan son sorgudaki HL rakamı."
+            " yeni dilim gelmeyen emir listede yok). Plan bugünkü fiyatla; doldu = radarın gördüğü HL dilimleri (HL süren emirde 0 yazar; ≈ baştan beri, ≥ alt sınır)."
             " 📣 = kanala bildirildi.</i>")
     miss = int(info.get("failed") or 0) + int(info.get("skipped") or 0)
     if miss:
@@ -3572,10 +3615,10 @@ def twap_progress(m: dict, ctx: dict) -> str:
     """Emrin yarısı doldu — tek not."""
     sym = esc(assets.label(m.get("coin") or ""))
     o = ctx.get("order") or {}
-    fp = o.get("filled_pct")
+    v, fp, kind = fill_amount(o)
     quick = twap_quick(ctx)
     line = (f"⏳ <b>TWAP yarılandı</b>{' · ' + quick if quick else ''} · <b>{sym}</b> · {_twap_side(m.get('side'))}"
-            f" · doldu <b>{usd(o.get('executed_usd'))}</b> / {usd(o.get('planned_usd'))}"
+            f" · doldu {'≈ ' if kind == 'seen' else ''}<b>{usd(v)}</b> / {usd(o.get('planned_usd'))}"
             + (f" (%{fp:.0f})" if fp is not None else ""))
     if o.get("left_sec") is not None:
         line += f" · {dur_txt(o['left_sec'])} kaldı"

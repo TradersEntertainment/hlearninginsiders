@@ -463,7 +463,7 @@ async def fast_extra(cfg, client, notifier, key: tuple, p: dict, order: dict, g:
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
                "auto_end": twaplive.auto_end(cfg, order), "why": ldet.get("reason")}
-        return fmt.twap_fast(order, ctx)
+        return fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)
 
     res = await _extra(cfg, notifier, okey, f"{coin}:{addr}:{side}", coin, text_fn, head)
     if res == "sent":
@@ -501,7 +501,8 @@ async def slow_extra(cfg, notifier, client, run, m: dict, order: dict, g: str, d
                 offer = await twaplive._twap_offer(run)
             except Exception:                      # noqa: BLE001
                 log.debug("yan kanal takip teklifi (%s)", run.coin, exc_info=True)
-        ctx = {"order": order, "day_vol": ldet["day_vol"] if ldet.get("sat") else day_vol,
+        ctx = {"order": twaplive.with_seen(order, run.coin, run.address, run.side, ts),
+               "day_vol": ldet["day_vol"] if ldet.get("sat") else day_vol,
                "vol_pct": ldet["vol_pct"], "sat": ldet.get("sat"), "pos": pos, "gate": lg,
                "klass": twaplive.klass_of(run.coin), "entity": ents.get(run.address) or "", "offer": offer,
                "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order)}
