@@ -579,17 +579,26 @@ davranış değişmez (app/radar/twaploose.py).
      Bu emirlerin ⛔ iptal notu (açıksa 🏁) da yalnız yan kanala yazılır: HL emri sorulur (⚡ dakikada bir, uzun 5 dk'da
      bir; başka yolun ≤ 45 sn'lik taze cevabı varsa yeniden sorulmaz); ⚡ hızlıda takip tuşu yok (iptal kendiliğinden),
      uzunda 👁 `/takip_N`. Emir sonradan ana kanala da giderse yan kanala ikinci kopya gelmez, iptal notunu ana yol
-     yazar (kopyası tek).
+     yazar (kopyası tek). Bitiş / yarı notu yalnız ilk alarmı yan kanalda görülmüş emrin kopyasıdır (kanal sonradan
+     tanımlandıysa "duyurulmamış emrin iptali" yazılmaz).
+  3. ana eşiği GEÇEN ama ana hedefi (kripto kanalı) ve aynası tanımsız emir: başlık **"🔸 Yan kanal · ana eşiği geçti;
+     ana kanal tanımlı değil"** (ilk dilim ve eski yol aynı).
 - **Eşikler (varsayılan ≈ ana eşiklerin yarısı):** emir ≥ $500K (`TWAP_LOOSE_MIN_USD`), kalan ≥ $500K ya da planın
   yarısı, emir / 24s hacim ≥ %2,5 (`TWAP_LOOSE_VOL_PCT`; BTC/ETH %10), 📅 Cumartesi kripto olmayan ≥ geçen Cumartesi
   hacminin %5'i, ⚡ hızlı (≤ 1 sa) ≥ $100K ve dakika hızı ≥ ortalamanın 1 katı, spot çifti 24s hacmi ≥ $500K. Her eşik
   **ana eşikten büyük olamaz** (min(yan, ana)) — yan kanal ana kanalın üst kümesi; ana eşik ayar sayfasında düşerse
   yan kanal da izler; ana kapıda kapalı (0) kural yan kanalda da kapalı.
-- **Sorgu yükü:** 🔎 ilk dilim ön süzgeci gevşek eşikle de bakar; yalnız gevşek eşikle sıraya giren dilimler ana
-  adaylardan **sonra** ve dakika tavanının en çok %60'ıyla sorulur (soket dolarken önce ana yol). Eski yol ek sorgu
-  yapmaz (aynı turun emir cevabını kullanır).
+- **Sorgu yükü ve ana yolun korunması:** 🔎 ilk dilim ön süzgeci gevşek eşikle de bakar; yalnız gevşek eşikle sıraya
+  giren dilimler ana adaylardan **sonra**, dakika tavanının en çok %60'ıyla, ana yola bir eşzamanlı yer ve soketten
+  bir yer bırakarak sorulur. Aynı saniyenin sonraki parçası dilimi ana ön süzgecin üstüne çıkarırsa aday ana sıraya
+  geçer. Yalnız-gevşek sorgu ana yolun "bilinen emir" bastırmasına (F.known), sayaçlarına, son kararlarına ve 🧪
+  LOG-TWAPF kaydına **yazmaz** (kendi kaydı twaploose'ta) — aynı adresin sonraki ana kapılık ⚡ emri ilk dilimde yine
+  sorulur. Böyle sorulan emir ana kapıyı geçiyorsa (24 sa'ten uzun emir; ön süzgeç öngöremez) ilk dilim yolu dokunmaz,
+  bugünkü gibi eski yol ana kanala yazar. Eski yol ek sorgu yapmaz (aynı turun emir cevabını kullanır). Dilim sayacı
+  (⛔ notunun fiyatı, sessizlik) collector'dan beslenir — ilk dilim yolu kapalıyken de.
 - **Tekrar / bekleme:** aynı emir bir kez (emir anahtarı, 7 gün); ana kanal bu adres + coin + yönü 6 sa içinde
-  bildirdiyse ek alarm yok; ana yolun bekleme / 📣 / 🧪 kapı kayıtlarına dokunulmaz. Fan-out yok; `notify_twap`
+  bildirdiyse ek alarm yok; gönderilemeyen ek alarm 5 dk sonra yeniden denenir; ana yolun bekleme / 📣 / 🧪 kapı
+  kayıtlarına dokunulmaz. Fan-out yok; `notify_twap`
   kapanırsa yan kanal da susar; sessiz saat ayrı gruplara uygulanmaz.
 - Yan kanal botun kendi sohbeti: `/twap`, `/twapf`, `/xpltwap`, `/takip_N` orada da çalışır. `/tani` "🔸 twap yan
   kanalı" satırı: eşikler, kopya / ek alarm / bitiş notu sayısı, açık emir, gönderim hatası. `/twap durum` kararlarında

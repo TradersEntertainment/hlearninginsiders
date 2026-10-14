@@ -3169,8 +3169,11 @@ TWAP_AUTO_NOTE = {"cancel": "🔔 iptal edilirse ⛔ buraya otomatik yazılır",
                   "both": "🔔 iptal ⛔ / bitiş 🏁 buraya otomatik yazılır"}
 
 
-def twap_loose_head(parts: list[str]) -> str:
-    """🔸 yan kanal başlığı: ana kanal bu emri neden göndermedi — ölçü ve eşik, sayıyla (tahmin yok)."""
+def twap_loose_head(parts: list[str], no_chat: bool = False) -> str:
+    """🔸 yan kanal başlığı: ana kanal bu emri neden göndermedi — ölçü ve eşik, sayıyla (tahmin yok). `no_chat`: emir
+    ana eşiği GEÇTİ ama ana hedef (kripto kanalı / ayna) tanımsız."""
+    if no_chat:
+        return "🔸 <b>Yan kanal</b> · ana eşiği geçti; ana kanal tanımlı değil"
     why = " · ".join(esc(p) for p in parts if p)
     return "🔸 <b>Yan kanal</b> · ana kanal eşiğinin altında" + (f": {why}" if why else "")
 

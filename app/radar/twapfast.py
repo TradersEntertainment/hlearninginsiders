@@ -129,8 +129,6 @@ class Fast:
             r["sz"] += float(sz)
             r["px_last"] = float(px)
             r["last_ts"] = max(r["last_ts"], ts)
-        if twaploose.BY_KEY:                            # 🔸 yan kanalın bildirdiği emir: bitiş notu sayacı
-            twaploose.observe(key, px, sz, notional, ts)
         until = self.known.get(key)
         if until is not None:
             if ts <= until:
@@ -154,23 +152,32 @@ class Fast:
         p["szt"] += float(sz)
         p["px"] = float(px)
         p["max"] = max(p["max"], p["usd"])
+        if p["queued"] and p.get("loose") and self.cfg is not None and p["usd"] >= float(min_usd or 0) \
+                and not prefilter(self.cfg, coin, p["usd"], self.vols.get(coin), ts):
+            p["loose"] = False                          # 🔸 dilim büyüdü, ana ön süzgeci geçti → ana aday (öncelik, pay yok)
+            st["queued"] += 1
+            if self.event is not None:
+                self.event.set()
         if p["queued"] or p["usd"] < float(min_usd or 0):
             return
         loose = False
         if self.cfg is not None:
             why = prefilter(self.cfg, coin, p["usd"], self.vols.get(coin), ts)
-            if why and twaploose.enabled(self.cfg) and not prefilter(
-                    self.loose_cfg(), coin, p["usd"], self.vols.get(coin), ts):
-                why, loose = "", True                   # 🔸 yalnız gevşek eşikle: sorulur, ana adaylardan SONRA
-                twaploose.STATS["pre_queued"] += 1
             if why:                                     # dilim büyüdükçe (aynı saniyenin parçaları) yeniden bakılır
                 if p.get("pre_n") != p["n"]:
-                    p["pre_n"] = p["n"]                 # sayaç dilim başına bir
+                    p["pre_n"] = p["n"]                 # sayaç dilim başına bir (yan kanal açık olsa da aynı)
                     st[why] = st.get(why, 0) + 1
-                return
+                # 🔸 yan kanal: ana ön süzgeçten kalan dilim gevşek eşikle sorulur — ana adaylardan SONRA, tavanın
+                # payıyla; ana yolun F.known / sayaç / 🧪 kayıtlarına dokunmadan (resolve)
+                if not (twaploose.enabled(self.cfg) and twaploose.wants(key, ts)
+                        and not prefilter(self.loose_cfg(), coin, p["usd"], self.vols.get(coin), ts)):
+                    return
+                loose = True
+                twaploose.STATS["pre_queued"] += 1
         p["loose"] = loose
         p["queued"] = now()                             # varış anı (işlem damgası değil: saat farkı sırayı bozmasın)
-        st["queued"] += 1
+        if not loose:
+            st["queued"] += 1
         if self.event is not None:
             self.event.set()
 
@@ -187,6 +194,7 @@ class Fast:
             self.pending.pop(k, None)
         for k in [k for k, u in self.known.items() if u < ref_ts]:
             self.known.pop(k, None)
+        twaploose.prune(ref_ts)
 
     def note(self, p: dict, reason: str, **kw) -> None:
         self.recent.appendleft({"coin": p["coin"], "addr": p["addr"], "side": p["side"], "reason": reason,
@@ -339,16 +347,31 @@ async def _pos(client, coin: str, addr: str):
         return None
 
 
+def _kn(p: dict) -> dict:
+    """Bastırma kaydı: 🔸 yalnız gevşek ön süzgeçle sorulan aday ana yolun F.known'una YAZMAZ (aynı adres + coin +
+    yönün ana kapılık yeni emri ilk dilimde yine sorulsun) — twaploose.KNOWN yalnız gevşek adayları susturur."""
+    return twaploose.KNOWN if p.get("loose") else F.known
+
+
+def _st(p: dict) -> dict:
+    return twaploose.STATS if p.get("loose") else F.stats
+
+
+def _note(p: dict, reason: str, **kw) -> None:
+    (twaploose.note if p.get("loose") else F.note)(p, reason, **kw)
+
+
 async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: dict) -> str:
-    """Tek dilim → emir sorgusu → kapı → bildirim. Dönüş: karar nedeni."""
+    """Tek dilim → emir sorgusu → kapı → bildirim. Dönüş: karar nedeni. 🔸 p['loose'] (yalnız gevşek ön süzgeç):
+    sayaç / bastırma / not twaploose'ta; ana yolun F.known, F.stats, F.recent ve 🧪 kayıtları değişmez."""
     coin, addr, side = key
-    F.stats["lookups"] += 1
+    _st(p)["lookups"] = _st(p).get("lookups", 0) + 1
     ents = await twaplive.entities([addr])
     if ents.get(addr) in ("mm", "vault"):
-        F.stats["mm"] += 1
-        F.known[key] = now() + 3600
+        _st(p)["mm"] = _st(p).get("mm", 0) + 1
+        _kn(p)[key] = now() + 3600
         F.pending.pop(key, None)
-        F.note(p, "mm")
+        _note(p, "mm")
         return "mm"
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
     hist = None
@@ -361,9 +384,9 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
     if hist is not None:
         twaplive.live_q_put(addr, t, hist)              # /twap: ilk dilimde sorulan taze geçmiş (yeni emir hemen görünür)
     if hist is None:
-        F.stats["lookup_fail"] += 1
+        _st(p)["lookup_fail"] = _st(p).get("lookup_fail", 0) + 1
         p["queued"], p["not_before"] = 0, t + RETRY_FAIL
-        F.note(p, "lookup_fail")
+        _note(p, "lookup_fail")
         return "lookup_fail"
     order = pick_order(hist, coin, side, p, t)
     if order is None:
@@ -371,12 +394,12 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
         if p["tries"] < 2:
             p["not_before"] = t + RETRY_NO_ORDER        # sırada kalır, bir kez daha
             return "retry"
-        F.stats["no_order"] += 1
-        F.known[key] = t + NO_ORDER_IGNORE
+        _st(p)["no_order"] = _st(p).get("no_order", 0) + 1
+        _kn(p)[key] = t + NO_ORDER_IGNORE
         F.pending.pop(key, None)
-        F.note(p, "no_order")
+        _note(p, "no_order")
         return "no_order"
-    F.known[key] = int(order["started_ts"]) + int(float(order.get("minutes") or 0) * 60) + 120
+    _kn(p)[key] = int(order["started_ts"]) + int(float(order.get("minutes") or 0) * 60) + 120
     F.pending.pop(key, None)
     try:                                                # Cumartesi hisse: geçen Cumartesi hacmi (haftada 1 istek)
         await asyncio.wait_for(twaplive.ensure_sat(cfg, client, [coin], t), twaplive.SAT_TIMEOUT)
@@ -443,6 +466,22 @@ async def _loose(cfg, client, notifier, key: tuple, p: dict, order: dict, g: str
         return "error"
 
 
+async def _decide_loose(cfg, client, notifier, key: tuple, p: dict, order: dict, g: str, det: dict, vols: dict,
+                        t: int, entity: str) -> str:
+    """🔸 Yalnız gevşek ön süzgeçle sorulan emir. Ana kapıyı geçiyorsa (24 sa'ten uzun emir: ön süzgeç onu
+    öngöremez) DOKUNULMAZ — bugünkü gibi eski yol ana kanala yazar, kopyası yan kanala gelir. Geçmiyorsa gevşek kapı
+    → yan kanal. 🧪 LOG-TWAPF, F.stats, F.recent, F.open değişmez."""
+    info = {"planned": round(float(order.get("planned_usd") or 0)), "minutes": order.get("minutes"),
+            "rate_x": det.get("rate_x"), "vol_pct": det.get("vol_pct")}
+    if g in ("ok", "big", "short"):
+        twaploose.STATS["strict_later"] += 1
+        twaploose.note(p, g, loose="main_later", **info)
+        return "strict_later"
+    lres = await _loose(cfg, client, notifier, key, p, order, g, det, vols, t, entity)
+    twaploose.note(p, g, loose=lres, **info)
+    return g
+
+
 async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols: dict, t: int,
                   entity: str = "") -> str:
     import types
@@ -452,6 +491,8 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
     vol = vols.get(coin)
     day_vol, vol_ts = vol if vol else (None, None)
     g, det = decide_gate(cfg, coin, order, day_vol, vol_ts, t)
+    if p.get("loose"):
+        return await _decide_loose(cfg, client, notifier, key, p, order, g, det, vols, t, entity)
     _lab_fast(p, order, det, g, t)
     started = int(order.get("started_ts") or 0)
     info = {"planned": round(float(order.get("planned_usd") or 0)), "minutes": order.get("minutes"),
@@ -644,7 +685,8 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
                             continue
                 await alert_log("twap_endo", okey, "")
                 await twaplive.mirror(cfg, notifier, text, f"end:{okey}", r["coin"], primary=chat if can else None)
-                await twaploose.copy(cfg, notifier, text, f"e:{okey}", r["coin"], primary=chat if can else None)
+                await twaploose.copy(cfg, notifier, text, f"e:{okey}", r["coin"], primary=chat if can else None,
+                                     okey=okey)
                 F.stats["ends"] += 1
                 sent += 1
             r["ended"], changed = t, True
@@ -688,16 +730,20 @@ async def dispatch(cfg, client, notifier, collector, t: int, tasks: set) -> int:
     for key, p in ready:
         if len(F.inflight) >= CONCURRENCY:
             break
+        waiters = getattr(collector, "_twap_waiters", None)
+        if p.get("loose"):
+            # 🔸 sıralı: buradan sonrası hep yalnız-gevşek. Ana yola bir eşzamanlı yer, dakika tavanının
+            # (1 − pay)'ı ve soketten bir yer BIRAKILIR; ana sayaçlar (capped / no_ws) değişmez
+            if len(F.inflight) >= CONCURRENCY - 1 \
+                    or (cap > 0 and len(F.lookup_ts) >= max(1, int(cap * twaploose.QUERY_SHARE))) \
+                    or (isinstance(waiters, dict) and len(waiters) >= WS_CEILING - 1):
+                twaploose.STATS["pre_share"] += 1
+                break
         if cap > 0 and len(F.lookup_ts) >= cap:
             F.stats["capped"] += 1
             break
-        waiters = getattr(collector, "_twap_waiters", None)
         if isinstance(waiters, dict) and len(waiters) >= WS_CEILING:
             F.stats["no_ws"] += 1                      # eski yol / takip / komut sorguları önce (sınır paylaşılıyor)
-            break
-        if p.get("loose") and ((cap > 0 and len(F.lookup_ts) >= max(1, int(cap * twaploose.QUERY_SHARE)))
-                               or (isinstance(waiters, dict) and len(waiters) >= WS_CEILING - 1)):
-            twaploose.STATS["pre_share"] += 1          # sıralı: kalanların hepsi yalnız-gevşek → sonraki tur
             break
         F.inflight.add(key)
         F.lookup_ts.append(t)

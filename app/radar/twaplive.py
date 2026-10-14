@@ -1009,7 +1009,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                                 await mirror(cfg, notifier, text, f"end:{eo}" if eo else f"end:{ekey}", run.coin, out,
                                              primary=chat if can else None)
                                 await _loose_copy(cfg, notifier, text, f"e:{eo or ekey}", run.coin,
-                                                  chat if can else None)
+                                                  chat if can else None, okey=eo)
                         finally:
                             ENDING.discard(claim)
                     await persist(run, m)
@@ -1032,7 +1032,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                                 out["failed"] += 1
                         await mirror(cfg, notifier, text, f"prog:{pkey}", run.coin, out,
                                      primary=chat if can else None)
-                        await _loose_copy(cfg, notifier, text, f"p:{pkey}", run.coin, chat if can else None)
+                        await _loose_copy(cfg, notifier, text, f"p:{pkey}", run.coin, chat if can else None,
+                                          okey=order_key(key, order))
                     await persist(run, m)
                 continue
             # --- ilk alarm: düzenli dizi → emir sorgusu → kapı ---
@@ -1139,6 +1140,11 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 if not can and not mirror_on:
                     out["no_chat"] += 1
                     decide(run, "no_chat", det)
+                    # 🔸 ana eşiği geçen emir, ana hedef / ayna tanımsız → yan kanala (ilk dilim yolundaki gibi)
+                    lres = await _loose_extra(cfg, notifier, client, run, m, order, "no_chat", det, day_vol, vol_ts,
+                                              ents, ts, claimed=True)
+                    if lres != "off":
+                        decisions[-1]["loose"] = lres
                     await persist(run, m)
                     continue
                 if can and not chat:
@@ -1210,22 +1216,26 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     return out
 
 
-async def _loose_copy(cfg, notifier, text: str, dkey: str, coin: str, primary) -> None:
-    """🔸 yan kanala kopya (twaploose.copy) — asla fırlatmaz, ana yolun sonucunu değiştirmez."""
+async def _loose_copy(cfg, notifier, text: str, dkey: str, coin: str, primary, okey: str | None = None) -> None:
+    """🔸 yan kanala kopya (twaploose.copy) — asla fırlatmaz, ana yolun sonucunu değiştirmez. Bitiş / yarı notunda
+    `okey`: yalnız ilk alarmı yan kanalda görülmüş emir."""
     try:
         from . import twaploose
-        await twaploose.copy(cfg, notifier, text, dkey, coin, primary=primary)
+        await twaploose.copy(cfg, notifier, text, dkey, coin, primary=primary, okey=okey)
     except Exception:                                  # noqa: BLE001
         log.debug("twap yan kanal kopyası %s", dkey, exc_info=True)
 
 
-async def _loose_extra(cfg, notifier, client, run: "Run", m, order, g, det, day_vol, vol_ts, ents, ts) -> str:
-    """🔸 ana kapıdan kalan emir → gevşek kapı → yan kanal (twaploose.slow_extra). Asla fırlatmaz."""
+async def _loose_extra(cfg, notifier, client, run: "Run", m, order, g, det, day_vol, vol_ts, ents, ts,
+                       claimed: bool = False) -> str:
+    """🔸 ana kapıdan kalan (ya da ana hedefi tanımsız, g='no_chat') emir → gevşek kapı → yan kanal
+    (twaploose.slow_extra). `claimed`: emrin SENDING talebi bu turda bizde. Asla fırlatmaz."""
     from . import twaploose
     if not twaploose.enabled(cfg) or not order or not m:
         return "off"
     try:
-        return await twaploose.slow_extra(cfg, notifier, client, run, m, order, g, det, day_vol, vol_ts, ents, ts)
+        return await twaploose.slow_extra(cfg, notifier, client, run, m, order, g, det, day_vol, vol_ts, ents, ts,
+                                          claimed=claimed)
     except Exception:                                  # noqa: BLE001
         log.exception("twap yan kanalı (eski yol) %s:%s", run.coin, run.address[:10])
         return "error"

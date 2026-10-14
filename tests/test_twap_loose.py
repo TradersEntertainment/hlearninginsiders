@@ -135,12 +135,12 @@ def test_fast_extra_and_cancel_note():
         assert await _kind("twap_lcd") == 1 and await _kind("twap_loose") == 1
         assert not tf.F.open, "ana yolun bitiş kaydı yok (ana kanala gitmedi)"
         okey = f"PUMP:{A}:buy:{started}"
-        assert okey in lo.OPEN and lo.BY_KEY[("PUMP", A, "buy")] == okey
+        assert okey in lo.OPEN and lo.BY_KEY[("PUMP", A, "buy")] == [okey]
         assert tf.F.recent[0]["reason"] == "short_small" and tf.F.recent[0]["loose"] == "sent"
         assert "🔸 yan kanal: gönderildi" in tf.recent_line(tf.F.recent[0])
         # dilim sayacı (sıcak yol) + iptal → ⛔ yalnız yan kanala
         for i in range(1, 4):
-            tf.observe("PUMP", A, "buy", PX * 1.02, 3_000_000, 15_000, started + 2 + 30 * i, 1000)
+            lo.observe(("PUMP", A, "buy"), PX * 1.02, 3_000_000, 15_000, started + 2 + 30 * i)   # collector kancası
         r = lo.OPEN[okey]
         assert r["n"] == 4 and abs(r["px_last"] - PX * 1.02) < 1e-12
         assert await lo.lifecycle(cfg, notifier, col, now) == 0 and not r["ended"], "henüz sorgu zamanı değil"
@@ -291,7 +291,8 @@ def test_prefilter_and_dispatch_share():
         assert tf.prefilter(lo.loose_cfg(cfg), "BTC", 80_000, (2e9, now), now) == ""
         tf.observe("BTC", A, "buy", 60_000, 80_000 / 60_000, 80_000, now, 1000)
         p = tf.F.pending[("BTC", A, "buy")]
-        assert p["queued"] and p["loose"] and lo.STATS["pre_queued"] == 1 and tf.F.stats["pre_low"] == 0
+        assert p["queued"] and p["loose"] and lo.STATS["pre_queued"] == 1 and tf.F.stats["pre_low"] == 1 \
+            and tf.F.stats["queued"] == 0, "ana sayaçlar bugünkü gibi"
         tf.observe("PUMP", A, "buy", PX, 3_000_000, 15_000, now, 1000)
         assert tf.F.pending[("PUMP", A, "buy")]["loose"] is False
         order = []
@@ -333,7 +334,7 @@ def test_restart_and_diag_and_bot():
         await lo.save_open()
         lo.reset()
         assert await lo.load_open(now) == 1 and okey in lo.OPEN and lo.OPEN[okey]["lookup_ts"] == 0
-        assert lo.BY_KEY[("PUMP", A, "buy")] == okey
+        assert lo.BY_KEY[("PUMP", A, "buy")] == [okey]
         lo.STATS["extra"] = 3
         await lo.save_stats(now)
         line = await lo.diag_line(cfg)
@@ -345,6 +346,201 @@ def test_restart_and_diag_and_bot():
         assert fmt.twap_loose_head(["a < b"]) == "🔸 <b>Yan kanal</b> · ana kanal eşiğinin altında: a &lt; b"
     asyncio.run(run())
     print("✅ yeniden başlatma / tanı / bot) kayıt geri yüklenir; /tani satırı; yan kanal botun kendi sohbeti")
+
+
+BTC_DV = 2e9
+
+
+async def _btc(cfg):
+    await _fresh_l(cfg)
+    from app.hl import universe as uni
+    await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": PX, "oi": 1, "f": 0, "v": DV, "p": None},
+                                             "BTC": {"m": 60_000, "oi": 1, "f": 0, "v": BTC_DV, "p": None}},
+                                       "ts": dbm.now()})
+    tf.F.vols = await tl.volumes(None)
+
+
+def btc_order(started, minutes, plan, status="activated"):
+    o = twap_order(started, minutes=minutes, plan=plan, status=status, coin="BTC")
+    sz = plan / 60_000
+    o["state"].update(sz=str(sz), executedSz=str(sz * 0.05), executedNtl=str(sz * 0.05 * 60_000))
+    return o
+
+
+def test_loose_lookup_keeps_main_state():
+    """İnceleme (14.10): yalnız gevşek ön süzgeçle sorulan emir ana yolun F.known'unu doldurup aynı adresin sonraki
+    ⚡ emrini ana kanalda kaçırtıyordu; 🧪 LOG-TWAPF ve ana sayaçlar da değişiyordu. Artık: KNOWN / sayaç yan kanalda,
+    ana yol bugünkü gibi. 24 sa'ten uzun emir ana kapıyı geçerse ilk dilim yolu dokunmaz (eski yol yazar)."""
+    async def run():
+        from test_twapfast import _q
+        cfg = _lcfg()
+        await _btc(cfg)
+        now = dbm.now()
+        t1 = now - 100
+        hist = {"h": [btc_order(t1, 30, 4_900_000)]}
+        col = Col(lambda: hist["h"])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        tf.observe("BTC", A, "buy", 60_000, 80_000 / 60_000, 80_000, t1 + 2, 1000)
+        assert tf.F.pending[("BTC", A, "buy")]["loose"]
+        before = dict(tf.F.stats)
+        await _drain(cfg, notifier, col)
+        assert ("BTC", A, "buy") not in tf.F.known and ("BTC", A, "buy") in lo.KNOWN, "ana bastırma yok"
+        assert not _q("LOG-TWAPF") and len(tf.F.recent) == 0, "🧪 ve ana karar listesi değişmez"
+        assert {k: v for k, v in tf.F.stats.items() if v != before.get(k)} == {}, tf.F.stats
+        assert lo.STATS["lookups"] == 1 and lo.RECENT[0]["reason"] == "slow", list(lo.RECENT)
+        # aynı adresin yeni ⚡ emri (5 dk $50M): ilk dilim ana yoldan sorulur ve ana kanala gider
+        t2 = now - 10
+        hist["h"] = [btc_order(t2, 5, 50_000_000), btc_order(t1, 30, 4_900_000)]
+        tf.observe("BTC", A, "buy", 60_000, 4_500_000 / 60_000, 4_500_000, t2 + 2, 1000)
+        p = tf.F.pending[("BTC", A, "buy")]
+        assert p["queued"] and not p["loose"]
+        await _drain(cfg, notifier, col)
+        assert _chats(bot)[:2] == ["-100", "-200"] and tf.F.stats["known_skip"] == 0, bot.sent
+        # yalnız-gevşek dilim aynı (yan kanalca bilinen) emirden: yeniden sorulmaz, ana sayaç bugünkü gibi pre_low
+        n_pre = tf.F.stats["pre_low"]
+        tf.F.known.clear()
+        tf.observe("BTC", A, "buy", 60_000, 80_000 / 60_000, 80_000, now, 1000)
+        assert not tf.F.pending[("BTC", A, "buy")]["queued"] and tf.F.stats["pre_low"] == n_pre + 1
+        assert lo.STATS["known_skip"] == 1
+        # 48 sa'lik $500M emir: ön süzgeç öngöremez, ana kapı geçer → ilk dilim yolu dokunmaz (eski yol yazar)
+        lo.KNOWN.clear()
+        tf.F.pending.clear()
+        t3 = now - 50
+        hist["h"] = [btc_order(t3, 2880, 500_000_000)]
+        n = len(bot.sent)
+        tf.observe("BTC", A, "buy", 60_000, 80_000 / 60_000, 80_000, now + 1, 1000)
+        assert tf.F.pending[("BTC", A, "buy")]["loose"]
+        await _drain(cfg, notifier, col)
+        assert len(bot.sent) == n and lo.STATS["strict_later"] == 1 and await _kind("twap_loose") <= 1
+    asyncio.run(run())
+    print("✅ inceleme) yalnız-gevşek sorgu ana yolun F.known / 🧪 / sayaçlarına dokunmaz; aynı adresin ⚡ emri ana"
+          " kanala gider; ana kapılık uzun emir eski yola kalır")
+
+
+def test_flag_upgrade_and_concurrency_slot():
+    """İnceleme: aynı saniyenin ikinci parçası dilimi ana ön süzgeç üstüne çıkarırsa aday ana sıraya geçer; yalnız-
+    gevşek adaylar eşzamanlı yerlerin hepsini tutamaz (ana yola bir yer kalır)."""
+    async def run():
+        cfg = _lcfg()
+        await _btc(cfg)
+        now = dbm.now()
+        tf.observe("BTC", A, "buy", 60_000, 1.0, 60_000, now, 1000)
+        p = tf.F.pending[("BTC", A, "buy")]
+        assert p["queued"] and p["loose"]
+        tf.observe("BTC", A, "buy", 60_000, 1.0, 60_000, now, 1000)            # aynı dilim: $120K ≥ $111K
+        assert p["loose"] is False and tf.F.stats["queued"] == 1
+        tf.F.pending.clear()
+        started = []
+        gate = asyncio.Event()
+
+        async def slow_resolve(cfg_, client, notifier, collector, key, p_, vols):
+            started.append((key[1][:4], bool(p_.get("loose"))))
+            await gate.wait()
+        orig = tf.resolve
+        tf.resolve = slow_resolve
+        try:
+            for i, ch in enumerate("bcd"):
+                tf.observe("BTC", "0x" + ch * 40, "buy", 60_000, 1.0, 60_000, now, 1000)
+            tasks: set = set()
+            assert await tf.dispatch(cfg, None, None, Col([]), now, tasks) == 2, "yalnız-gevşek: en çok CONCURRENCY-1"
+            tf.observe("PUMP", A, "buy", PX, 3_000_000, 15_000, now, 1000)       # ana aday gelir
+            assert await tf.dispatch(cfg, None, None, Col([]), now, tasks) == 1
+            await asyncio.sleep(0)
+            assert len(started) == 3 and started[-1] == ("0xaa", False), started
+            gate.set()
+            await asyncio.gather(*tasks)
+        finally:
+            tf.resolve = orig
+    asyncio.run(run())
+    print("✅ inceleme) büyüyen dilim ana sıraya geçer; ana yola bir eşzamanlı yer kalır")
+
+
+def test_no_chat_and_orphan_notes():
+    """Ana hedef + ayna tanımsız: ana eşiği geçen emir eski yoldan da yan kanala ('ana eşiği geçti' başlığıyla; 'eşiğin
+    altında' denmez), iptali bir kez. Yan kanalda duyurulmamış emrin ⛔ kopyası yazılmaz."""
+    async def run():
+        cfg = _lcfg(mirror="")
+        cfg.crypto_chat_id = ""
+        cfg.twap_fast_enabled = False
+        await _fresh_l(cfg)
+        now = dbm.now()
+        started = now - 400
+        state = {"st": "activated"}
+        col = Col(lambda: [twap_order(started, minutes=120, plan=3_000_000, ex_frac=0.2, status=state["st"])])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        _slow_feed(started)
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert out["no_chat"] == 1 and _chats(bot) == [LOOSE], (out, bot.sent)
+        assert bot.sent[0][1].startswith("🔸 <b>Yan kanal</b> · ana eşiği geçti; ana kanal tanımlı değil\n"), bot.sent
+        assert "altında" not in bot.sent[0][1].split("\n")[0]
+        state["st"] = "terminated"
+        run_ = tl.REG.runs[("PUMP", A, "buy")]
+        run_.lookup_ts = now - 700
+        tl._lookup_cache.clear()
+        await tl.evaluate(cfg, notifier, None, col)
+        okey = f"PUMP:{A}:buy:{started}"
+        lo.OPEN[okey]["lookup_ts"] = 0
+        await lo.lifecycle(cfg, notifier, col, now + 400)
+        assert [c for c, t in bot.sent if "TWAP iptal edildi" in t] == [LOOSE], bot.sent
+        # ilk dilim yolu: aynı başlık
+        lo.reset()
+        head = fmt.twap_loose_head([], no_chat=True)
+        assert "altında" not in head
+        # öksüz not: ana kanal emri yan kanal tanımlanmadan ÖNCE bildirdi → iptal kopyası yan kanala gitmez
+        cfg2 = _cfg()
+        await _fresh_l(cfg2)
+        now = dbm.now()
+        started = now - 200
+        st2 = {"st": "activated"}
+        col2 = Col(lambda: [twap_order(started, minutes=10, plan=600_000, status=st2["st"])])
+        bot2 = Bot()
+        n2 = Notifier(cfg2, bot2)
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, started + 2, 1000)
+        await _drain(cfg2, n2, col2)
+        cfg2.twap_loose_chat_id = LOOSE                                  # yan kanal sonradan tanımlandı
+        rec = tf.F.open[("PUMP", A, "buy")]
+        st2["st"] = "terminated"
+        rec["last_ts"], rec["lookup_ts"] = now - 46, now - 31
+        assert await tf.lifecycle(cfg2, n2, col2, now) == 1
+        assert _chats(bot2) == ["-100", "-200", "-100", "-200"] and lo.STATS["orphan_skip"] == 1, bot2.sent
+    asyncio.run(run())
+    print("✅ inceleme) ana hedef tanımsız: eski yoldan da yan kanala, doğru başlıkla, ⛔ bir kez; duyurulmamış emrin"
+          " ⛔ kopyası yok")
+
+
+def test_collector_feeds_counter_and_two_orders():
+    """İnceleme: ilk dilim yolu kapalıyken de collector sayacı besler (yoksa uzun emir 30 sn'de bir sorulurdu, ⛔
+    fiyatı donardı); aynı adres + coin + yönde iki emir: dolum başlangıcı önce olan en yeni emre."""
+    async def run():
+        import json
+        from app.hl.collector import Collector
+        from test_twapfast import ZERO
+        cfg = _lcfg()
+        cfg.twap_fast_enabled = False
+        await _fresh_l(cfg)
+        now = dbm.now()
+        o1 = tl.parse_twap_orders([twap_order(now - 3000, minutes=240, plan=900_000)], "PUMP", "buy", PX, now)[0]
+        o2 = tl.parse_twap_orders([twap_order(now - 60, minutes=30, plan=700_000)], "PUMP", "buy", PX, now)[0]
+        k1, k2 = f"PUMP:{A}:buy:{now - 3000}", f"PUMP:{A}:buy:{now - 60}"
+        lo._register(k1, "PUMP", A, "buy", o1, now - 2900, now - 2998, now - 2900, 4, 40_000, 8e6, PX, PX)
+        lo._register(k2, "PUMP", A, "buy", o2, now - 50, now - 58, now - 50, 1, 10_000, 2e6, PX, PX)
+        assert lo.BY_KEY[("PUMP", A, "buy")] == [k1, k2]
+        col = Collector(cfg, None)
+        col.valid_coins = col.crypto_coins = {"PUMP"}
+        data = [{"coin": "PUMP", "side": "B", "px": str(PX * 1.1), "sz": "2000000", "time": now * 1000,
+                 "tid": "z1", "hash": ZERO, "users": [A, "0x" + "e" * 40]}]
+        await col._handle(json.dumps({"channel": "trades", "data": data}))
+        assert lo.OPEN[k2]["n"] == 2 and abs(lo.OPEN[k2]["px_last"] - PX * 1.1) < 1e-12 and lo.OPEN[k2]["last_ts"] == now
+        assert lo.OPEN[k1]["n"] == 4, "eski emir yenisinin dolumunu almaz"
+        lo.observe(("PUMP", A, "buy"), PX, 1, 5, now - 100)                    # yenisi başlamadan önceki dolum → eskisi
+        assert lo.OPEN[k1]["n"] == 5 and lo.OPEN[k2]["n"] == 2
+        lo.OPEN[k2]["ended"] = now - 700
+        await lo.lifecycle(cfg, Notifier(cfg, Bot()), Col([]), now)
+        assert k2 not in lo.OPEN and lo.BY_KEY[("PUMP", A, "buy")] == [k1]
+    asyncio.run(run())
+    print("✅ inceleme) collector sayacı ilk dilim yolu kapalıyken de besler; aynı anahtarda iki emir ayrı sayılır")
 
 
 if __name__ == "__main__":

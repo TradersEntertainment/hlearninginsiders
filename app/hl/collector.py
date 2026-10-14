@@ -14,7 +14,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
-from ..radar import openmove, stickywall, twapfast, twaplive
+from ..radar import openmove, stickywall, twapfast, twaplive, twaploose
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -446,6 +446,11 @@ class Collector:
                         twapfast.observe(coin, addr, side, px, sz, notional, ts, fast_min)
                     except Exception:
                         twapfast.F.stats["errors"] += 1
+                if taker and zero and twaploose.BY_KEY:    # 🔸 yan kanalın bildirdiği emir: ⛔ notu sayacı
+                    try:                                    # (ilk dilim yolu kapalıyken de)
+                        twaploose.observe((coin, addr, side), px, sz, notional, ts)
+                    except Exception:
+                        twaploose.STATS["errors"] = twaploose.STATS.get("errors", 0) + 1
                 a = agg.setdefault((coin, addr, side), {
                     "ntl": 0.0, "sz": 0.0, "pxsz": 0.0, "tids": [],
                     "tk": 0.0, "known": 0.0, "ts": ts, "wrote": False})
