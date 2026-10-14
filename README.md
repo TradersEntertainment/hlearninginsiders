@@ -558,12 +558,19 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   $50K'yı beklemişti). Canlı ölçüm (7 dk): $250–1.000 arası yeni akış ~11, ön süzgeci geçen 1 — yük ihmal edilir.
 - **Eski yol gözlenen toplamı beklemez:** HL TWAP dizisi 10 dilim / 5 dk olunca, ortalama dilimi ≤ 24 sa'lik bir emirde
   ana / 🔸 / 🕐 kapısını geçebilecek büyüklükteyse (ilk dilim ön süzgeciyle aynı hesap) `twap_lookup_min_usd` ($50K)
-  beklenmeden sorulur (`/tani` "erken sorgu"). Küçük botlar (ortalama dilim kapıya yetmez) yine sorulmaz.
+  beklenmeden sorulur (`/tani` "canlı twap" satırında "erken sorgu"). Küçük botlar (ortalama dilim kapıya yetmez) ve
+  ortalama dilimi `twap_fast_min_slice_usd`'nin altındaki diziler (Cumartesi hissede tabansız ön süzgeç dahil — yalnız 🕐
+  hafta sonu kuralı istisna) yine sorulmaz. Adres önbelleği dizinin ilk HL alt emrinden eskiyse kullanılmaz (aynı adresin
+  başka coin'deki erken sorgusu yeni emri "emir yok" göstermesin).
 - **Aynı adres + coin + yönde ikinci emir:** okunan emrin anahtarı o emrin bitişi + 2 dk'ya kadar susturulur (aynı emrin
   dilimleri yeniden sorulmasın). 14.10 NEAR: 5 dk'lık emir sürerken aynı adres ikinci 5 dk'lık emri verdi; ikincisi
-  275 sn geç geldi. Artık bilinen anahtarda dilim temposu tek TWAP'ı aşarsa (tek HL TWAP 30 sn'de bir dilim: 65 sn'de
-  en çok 3; ≥ 4 → ikinci emir) susturma kalkar ve emir yeniden sorulur (en sık dakikada bir; `/tani` "aynı adreste yeni
-  emir için yeniden sorgu").
+  275 sn geç geldi. Artık bilinen anahtarda dilim temposu bilinen emirleri aşarsa (tek HL TWAP 30 sn'de bir dilim: 65
+  sn'de en çok 3; bilinen k emir → ≥ 3k+1 dilim) ya da dilimleri aynı saniyeye düşen ikinci emir 2 sn'lik kümeyi bilinen
+  emirlerin olağan diliminin 1,6 katına iki kez üst üste büyütürse susturma kalkar ve emir yeniden sorulur (`/tani` "aynı
+  adreste yeni emir için yeniden sorgu"). Bulunan emir bilinenlere eklenir (iki emir örtüştükçe dakikada bir boşa sorgu
+  yok); yeniden sorgu yeni emir bulamazsa aralık 1 → 2 → 4 … 10 dk katlanır. Sınır: ikinci emrin dilimi bilinenin ~%60'ından
+  küçük ve aynı saniyeye düşüyorsa sezilmez (eski yol 10 dilim / 5 dk sonra görür). Aynı anahtarın iki emri de
+  bildirildiyse her birinin ⛔/🏁 notu ayrı yazılır (eskisinin kaydı yenisi bildirilince silinmez).
 
 ### Süren emrin dolanı — HL kaydı 0 yazar
 
@@ -648,7 +655,7 @@ max 2-3 saat içinde $1M'dan yüksek TÜM TWAP'ları göndereceğimiz". Env-only
   Pazartesi 00:00, ABD kapalı; `offhours_close_hour` ile kayar). Kripto OLMAYAN HIP-3 (hisse, endeks, emtia, FX… —
   Cumartesi tabanıyla aynı küme; TOTAL2/BTCD gibi kriptoya bağlılar hariç) için plan ≥ `TWAP_BIG_WEEKEND_MIN_USD`
   ($200K) ve süre < `TWAP_BIG_WEEKEND_MAX_MIN` (1440 dk) → bu kanala; başlık "🕐 Büyük TWAP · 📅 hafta sonu (ABD kapalı),
-  kripto olmayan · plan ≥ $200K · süre < 24 sa". 24 sa'lik $200K emrin dilimi ~$70 — ilk dilim yolunun $1K tabanının
+  kripto olmayan · plan ≥ $200K · süre < 24 sa". 24 sa'lik $200K emrin dilimi ~$70 — ilk dilim yolunun $250 tabanının
   altında: hafta sonu bu coinlerde ≳ $55'lık dilim de YALNIZ bu kanal için sorulur (ana yol ve 🔸 kanal bu küçük
   dilimleri bugünkü gibi görmez, sayaçları değişmez).
 - **Mesaj:** ana kanalın mesajıyla aynı (emir, dolan, pozisyon, hacme oran, ⚡ HIZLI rozeti) + başta

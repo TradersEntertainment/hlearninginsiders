@@ -751,6 +751,7 @@ async def _subsystems(cfg, state=None) -> list[str]:
             f" · {tl.get('alerted', 0)} bildirim · {tl.get('progress', 0)} ilerleme · {tl.get('ended', 0)} bitiş"
             + (f" · {tl['lookups']} emir sorgusu" + (f" (⚠️ {tl['lookup_fail']} başarısız)" if tl.get("lookup_fail") else "")
                if tl.get("lookups") or tl.get("lookup_fail") else "")
+            + (f" · {tl['early']} erken sorgu" if tl.get("early") else "")
             + (f" · {tl['no_order']} emir yok" if tl.get("no_order") else "")
             + (f" · {tl['order_done']} bitmiş" if tl.get("order_done") else "")
             + (f" · {tl['order_small'] + tl.get('order_left', 0)} eşik altı" if tl.get("order_small") or tl.get("order_left") else "")

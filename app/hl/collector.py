@@ -387,7 +387,7 @@ class Collector:
         agg: dict[tuple, dict] = {}                # (coin, adres, yön) -> parti toplamı
         # ⚡ Hızlı TWAP: HL TWAP alt emrinin dolumu SIFIR HASH'le gelir, sahibi taker (bkz. twapfast.py)
         fast_on = bool(getattr(self.cfg, "twap_fast_enabled", True)) and bool(getattr(self.cfg, "twap_live_enabled", True))
-        fast_min = float(getattr(self.cfg, "twap_fast_min_slice_usd", 1000) or 0)
+        fast_min = float(getattr(self.cfg, "twap_fast_min_slice_usd", 250) or 0)
         for t in trades:
             try:
                 coin = t["coin"]

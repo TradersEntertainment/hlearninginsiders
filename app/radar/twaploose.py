@@ -816,7 +816,7 @@ def big_weekend_rule(cfg, coin: str, ts: int) -> bool:
 
 
 def big_slice_floor(cfg, coin: str, ts: int) -> float | None:
-    """Hafta sonu hissede ilk dilim yolunun en küçük dilimi: 24 sa'lik $200K emrin dilimi ~$70 — ana yolun $1K
+    """Hafta sonu hissede ilk dilim yolunun en küçük dilimi: 24 sa'lik $200K emrin dilimi ~$70 — ana yolun $250
     tabanının altında. Kural geçerli değilse None (taban aynen)."""
     if not big_weekend_rule(cfg, coin, ts):
         return None

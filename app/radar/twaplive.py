@@ -543,6 +543,9 @@ async def lookup_order(collector, run: Run, now_ts: int, cfg, out: dict, force: 
     cached = _lookup_cache.get(addr)
     hist = None
     q_ts = now_ts
+    if cached and run.nat_first_ts and int(cached[0]) < int(run.nat_first_ts):
+        cached = None                               # önbellek bu dizinin ilk HL alt emrinden ÖNCE: yeni emri içermez
+        #                                             (aynı adresin başka coin'deki erken sorgusu — 'no_order' olmasın)
     if cached and not force and now_ts - cached[0] < cool:
         hist, q_ts = cached[1], int(cached[0])
     else:
@@ -926,11 +929,17 @@ def _slice_could_pass(cfg, run: "Run", ts: int, out: dict | None = None) -> bool
     from . import twapfast, twaploose
     avg = run.total / run.n
     vol = (VOL_CACHE.get("v") or {}).get(run.coin)
-    ok = twapfast.prefilter(cfg, run.coin, avg, vol, ts) == ""
-    if not ok and twaploose.enabled(cfg):
-        ok = twapfast.prefilter(twaploose.loose_cfg(cfg), run.coin, avg, vol, ts) == ""
-    if not ok and twaploose.BIG.enabled(cfg):
-        ok = twaploose.big_pre(cfg, avg, run.coin, ts)
+    if avg >= float(getattr(cfg, "twap_fast_min_slice_usd", 250) or 0):
+        ok = twapfast.prefilter(cfg, run.coin, avg, vol, ts) == ""
+        if not ok and twaploose.enabled(cfg):
+            ok = twapfast.prefilter(twaploose.loose_cfg(cfg), run.coin, avg, vol, ts) == ""
+        if not ok and twaploose.BIG.enabled(cfg):
+            ok = twaploose.big_pre(cfg, avg, run.coin, ts)
+    else:
+        # ilk dilim yolu gibi: tabanın altındaki dilim (ön süzgeç Cumartesi hissede tabansız her dilimi geçirir) yalnız
+        # 🕐 hafta sonu kuralıyla
+        fl = twaploose.big_slice_floor(cfg, run.coin, ts) if twaploose.BIG.enabled(cfg) else None
+        ok = fl is not None and avg >= fl and twaploose.big_pre(cfg, avg, run.coin, ts)
     if ok and out is not None:
         out["early"] = out.get("early", 0) + 1
     return ok
@@ -1666,7 +1675,7 @@ def _live_memory_cands(ts: int) -> list[tuple]:
                         r.px_last, r))
     try:
         from . import twapfast
-        for f in list(twapfast.F.open.values()):
+        for _k, f, _old in twapfast.F.records():      # aynı anahtarın süren eski emri de (F.older)
             if not f.get("ended"):
                 out.append((f["coin"], f["addr"], f["side"], f.get("order"),
                             max(int(f.get("last_ts") or 0), int(f.get("last_slice") or 0)), True, f.get("n"),

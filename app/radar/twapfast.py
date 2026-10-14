@@ -58,11 +58,16 @@ OPEN_POLL = 300             # uzun emir de dilim gelse 5 dk'da bir sorulur: ayn�
 RELOOK_WIN = 65             # bilinen emrin anahtarında bu pencerede…
 RELOOK_SLICES = 4           # …bu kadar dilim (tek HL TWAP 30 sn'de bir: en çok 3) → aynı adres + coin + yönde YENİ emir
 RELOOK_MIN_GAP = 60         # yeniden sorgu en sık bu kadar (14.10 NEAR: üst üste iki 5 dk'lık emir, ikincisi 275 sn geç)
+RELOOK_MAX_GAP = 600        # yeniden sorgu yeni emir bulamadıkça aralık ikiye katlanır (bu kadara dek)
+RELOOK_BIG_X = 1.6          # dilim (2 sn'lik küme) bilinen emirlerin olağan dilim toplamının bu katı, iki kez üst üste →
+                            # dilimleri aynı saniyeye düşen ikinci emir (rastgele ±%20; HL telafi dilimi 3 kata dek: yanlış
+                            # alarm tek sorgu, sonra aralık katlanır)
 OPEN_KV = "twapfast_open"   # bildirilen emirlerin kaydı — yeniden başlatmada bitiş/iptal notu kaybolmasın
 END_GRACE = 30              # planlanan bitişten bu kadar sonra emir sorulur (🏁/⛔ notu)
 END_GIVEUP = 600            # HL bitişten bu kadar sonra hâlâ 'activated' diyorsa not yazılmadan kapatılır
 RELOOK_SEC = 60             # bildirilmiş emir için iki sorgu arası en az
 OPEN_MAX = 2000
+OLDER_MAX = 200             # aynı anahtarda yenisi bildirilmiş, hâlâ süren eski emir kayıtları (F.older)
 WS_CEILING = 6              # collector'da bekleyen emir sorgusu bundan azsa başlat (IP başına 10 kullanıcı sınırı)
 PRE_SLACK = 0.7             # ilk dilim nominalin 0.8-1.2'si (randomize): ön süzgeç bu payla gevşek
 LONG_HORIZON_MIN = 1440     # uzun TWAP ön süzgeci: en çok 24 saatlik emir varsayılır (daha uzunu eski yola kalır)
@@ -91,6 +96,8 @@ class Fast:
         self.stats: dict = {}
         self.vols: dict = {}                    # coin → (24s hacim, ts): ön süzgeç (döngü tazeler; G/Ç yok)
         self.open: dict[tuple, dict] = {}       # hızlı yolun BİLDİRDİĞİ emirler → bitiş/iptal notu (eski yoldan ayrı)
+        self.older: dict[tuple, dict] = {}      # anahtar → {başlangıç: kayıt}: aynı anahtarda YENİ emir bildirilince
+        #                                         bitmemiş eskisi buraya geçer (⛔/🏁 notu kaybolmasın)
         self.cfg = None
         self._lcfg = None
         self.clear_stats()
@@ -123,6 +130,7 @@ class Fast:
 
     def clear(self) -> None:
         self.open.clear()
+        self.older.clear()
         self.pending.clear()
         self.known.clear()
         self.kslices.clear()
@@ -141,23 +149,24 @@ class Fast:
         key = (coin, addr, side)
         r = self.open.get(key)
         if r is not None and not r["ended"]:           # bildirilmiş emir: bitiş notu için skaler sayaç
-            if ts - r["last_slice"] > COALESCE_SEC:
-                r["n"] += 1
-                r["last_slice"] = ts
-            r["total"] += float(notional)
-            r["sz"] += float(sz)
-            r["px_last"] = float(px)
-            r["last_ts"] = max(r["last_ts"], ts)
+            _count(r, px, sz, notional, ts)
+        if self.older:
+            # aynı anahtarın bildirilmiş ESKİ emri de sürüyor: dilimler ayırt edilemez, ikisine de yazılır (not HL'nin
+            # dolan tutarını yazar; sayaç yalnız fiyat ve sessizlik içindir)
+            for r2 in (self.older.get(key) or {}).values():
+                if not r2["ended"]:
+                    _count(r2, px, sz, notional, ts)
         until = self.known.get(key)
         luntil = twaploose.KNOWN.get(key)
+        relooked = False
         if (until is not None and ts <= until) or (luntil is not None and ts <= luntil):
-            if self._second_order(key, ts):
+            if self._second_order(key, ts, float(sz)):
                 # bilinen emrin yanında aynı adres + coin + yönde YENİ bir HL TWAP dilim atıyor: bastırma kalkar, bu dilim
                 # (her iki katmanda) yeniden değerlendirilir — emri bilinen eskisi değil, yenisi seçilir (pick_order)
                 self.known.pop(key, None)
                 twaploose.KNOWN.pop(key, None)
                 st["relook"] += 1
-                until = None
+                until, relooked = None, True
             elif until is not None and ts <= until:
                 st["known_skip"] += 1
                 return
@@ -170,6 +179,8 @@ class Fast:
             p = self.pending[key] = {"coin": coin, "addr": addr, "side": side, "t0": ts, "ts": ts, "usd": 0.0,
                                      "sz": 0.0, "px": float(px), "px0": float(px), "n": 0, "max": 0.0, "tot": 0.0,
                                      "szt": 0.0, "queued": 0, "tries": 0, "not_before": 0}
+        if relooked:
+            p["relook"] = ts                            # çözüm: bilinen emir mi çıktı (aralık katlanır) yoksa yeni mi
         if p["n"] == 0 or ts - p["ts"] > COALESCE_SEC:
             p["n"] += 1
             p["ts"], p["usd"], p["sz"] = ts, 0.0, 0.0
@@ -228,21 +239,72 @@ class Fast:
         if self.event is not None:
             self.event.set()
 
-    def _second_order(self, key: tuple, ts: int) -> bool:
-        """Bilinen (bastırılan) anahtarda dilim temposu: tek HL TWAP 30 sn'de bir dilim atar (65 sn'de en çok 3); daha
-        sık dilim → aynı anahtarda ikinci bir emir. En sık RELOOK_MIN_GAP'te bir doğru döner. Sıcak yol, G/Ç yok."""
-        ks = self.kslices.get(key)
-        if ks is None:
-            ks = self.kslices[key] = {"last": 0, "times": deque(maxlen=RELOOK_SLICES + 2), "relook": 0}
-        if ts - ks["last"] > COALESCE_SEC:
+    def _second_order(self, key: tuple, ts: int, sz: float = 0.0) -> bool:
+        """Bilinen (bastırılan) anahtarda AYNI adres + coin + yönde ikinci bir HL TWAP sezgisi (sıcak yol, G/Ç yok):
+        • tempo: tek HL TWAP 30 sn'de bir dilim atar (65 sn'de en çok 3); bilinen k emir en çok 3k → 3k+1 dilim yeni emir
+        • boyut: dilimi bilinenlerle aynı saniyeye düşen emir tempoyu değiştirmez — 2 sn'lik küme bilinen emirlerin olağan
+          dilim toplamının RELOOK_BIG_X katını iki küme üst üste aşarsa
+        Yeniden sorgu en sık RELOOK_MIN_GAP'te bir; yeni emir bulamadıkça aralık katlanır (relook_done)."""
+        ks = self._ks(key)
+        new_bucket = ts - ks["last"] > COALESCE_SEC
+        if new_bucket:
+            ks["prev_big"] = ks["cur_big"] and ts - ks["last"] <= 45
+            ks["cur_big"], ks["cur_sz"] = False, 0.0
             ks["times"].append(ts)
             ks["last"] = ts
+        ks["cur_sz"] += sz
+        if ts - ks["relook"] < ks["gap"]:
+            return False
+        k, nom = 0, 0.0
+        for end, nsz in ks["orders"].values():
+            if end >= ts:
+                k, nom = k + 1, nom + nsz
+        hit = False
+        if new_bucket:
             n = sum(1 for x in ks["times"] if ts - x <= RELOOK_WIN)
-            if n >= RELOOK_SLICES and ts - ks["relook"] >= RELOOK_MIN_GAP:
-                ks["relook"] = ts
-                ks["times"].clear()
-                return True
-        return False
+            hit = n >= RELOOK_SLICES + 3 * (max(1, k) - 1)
+        if not hit and nom > 0 and not ks["cur_big"] and ks["cur_sz"] >= RELOOK_BIG_X * nom:
+            ks["cur_big"] = True
+            hit = ks["prev_big"]
+        if hit:
+            ks["relook"] = ts
+            ks["times"].clear()
+            ks["prev_big"] = ks["cur_big"] = False
+        return hit
+
+    def _ks(self, key: tuple) -> dict:
+        ks = self.kslices.get(key)
+        if ks is None:
+            ks = self.kslices[key] = {"last": 0, "times": deque(maxlen=32), "relook": 0, "gap": RELOOK_MIN_GAP,
+                                      "orders": {}, "cur_sz": 0.0, "cur_big": False, "prev_big": False}
+        return ks
+
+    def know_order(self, key: tuple, order: dict) -> tuple[bool, int]:
+        """Sorgunun bulduğu emir anahtarın bilinen emirlerine yazılır (ikinci emir sezgisi bunlarla ölçer).
+        (yeni mi, bilinen süren emirlerin en geç bitişi)."""
+        ks = self._ks(key)
+        started = int(order.get("started_ts") or 0)
+        mins = float(order.get("minutes") or 0)
+        end = started + int(mins * 60)
+        fresh = started not in ks["orders"]
+        ks["orders"][started] = (end, float(order.get("planned_sz") or 0) / max(1.0, 2 * mins))
+        return fresh, max(e for e, _ in ks["orders"].values())
+
+    def relook_done(self, key: tuple, fresh: bool) -> None:
+        """Yeniden sorgu bilinen emri buldu → aralık katlanır (boşa sorgu tekrarlanmasın); yeni emir → en kısa aralık."""
+        ks = self._ks(key)
+        ks["gap"] = RELOOK_MIN_GAP if fresh else min(RELOOK_MAX_GAP, ks["gap"] * 2)
+
+    def forget_order(self, key: tuple, started: int, ref_ts: int) -> int:
+        """Emir bitti/iptal: bilinenlerden düşer. Dönüş: süren bilinen emirlerin en geç bitişi (yoksa 0)."""
+        ks = self.kslices.get(key)
+        if ks is not None:
+            ks["orders"].pop(int(started), None)
+        return self.active_until(key, ref_ts)
+
+    def active_until(self, key: tuple, ref_ts: int) -> int:
+        ks = self.kslices.get(key)
+        return max((e for e, _ in ks["orders"].values() if e >= ref_ts), default=0) if ks else 0
 
     def _evict(self, ref_ts: int) -> None:
         self.prune(ref_ts)
@@ -258,20 +320,76 @@ class Fast:
         for k in [k for k, u in self.known.items() if u < ref_ts]:
             self.known.pop(k, None)
         twaploose.prune(ref_ts)
-        for k in [k for k, v in self.kslices.items()
-                  if k not in self.known and k not in twaploose.KNOWN and ref_ts - v["last"] > RELOOK_WIN]:
-            self.kslices.pop(k, None)
+        for k, v in list(self.kslices.items()):
+            if k not in self.known and k not in twaploose.KNOWN and ref_ts - v["last"] > RELOOK_WIN:
+                self.kslices.pop(k, None)
+                continue
+            for st0 in [st0 for st0, (e, _) in v["orders"].items() if e + END_GIVEUP < ref_ts]:
+                v["orders"].pop(st0, None)
 
     def note(self, p: dict, reason: str, **kw) -> None:
         self.recent.appendleft({"coin": p["coin"], "addr": p["addr"], "side": p["side"], "reason": reason,
                                 "slice": round(p.get("max") or 0), "ts": now(), **kw})
 
+    def records(self) -> list[tuple]:
+        """(anahtar, kayıt, eski mi) — bildirilmiş tüm emirler (F.open + aynı anahtarın eski emirleri)."""
+        return [(k, r, False) for k, r in self.open.items()] + \
+            [(k, r, True) for k, d in self.older.items() for r in d.values()]
+
+    def drop(self, key: tuple, r: dict, older: bool) -> None:
+        if not older:
+            if self.open.get(key) is r:
+                self.open.pop(key, None)
+            return
+        d = self.older.get(key)
+        if d is not None:
+            d.pop(int(r["started"]), None)
+            if not d:
+                self.older.pop(key, None)
+
+    def find(self, key: tuple, started: int, ended_too: bool = False) -> dict | None:
+        """Bu emrin (anahtar + başlangıç) bitmemiş kaydı (`ended_too`: notu yazılıp kapanmış olanı da)."""
+        r = self.open.get(key)
+        if r is not None and int(r["started"]) == int(started) and (ended_too or not r["ended"]):
+            return r
+        r = (self.older.get(key) or {}).get(int(started))
+        return r if r is not None and (ended_too or not r["ended"]) else None
+
+    def place(self, key: tuple, r: dict) -> dict:
+        """Kaydı yerleştir: F.open[key] anahtarın EN YENİ emri; bitmemiş daha eski emir F.older'a geçer."""
+        cur = self.open.get(key)
+        started = int(r["started"])
+        if cur is None or cur["ended"] or int(cur["started"]) == started:
+            self.open[key] = r
+            return r
+        d = self.older.setdefault(key, {})
+        if started > int(cur["started"]):
+            d[int(cur["started"])] = cur
+            self.open[key] = r
+        else:
+            d[started] = r
+        if sum(len(v) for v in self.older.values()) > OLDER_MAX:
+            k0, r0 = min(((k, x) for k, v in self.older.items() for x in v.values()), key=lambda kv: kv[1]["alert_ts"])
+            self.drop(k0, r0, True)
+        return r
+
     def snapshot(self, t: int) -> dict:
         lat = sorted(self.lat)
-        return {**self.stats, "pending": len(self.pending), "known": len(self.known), "open": len(self.open),
+        return {**self.stats, "pending": len(self.pending), "known": len(self.known),
+                "open": len(self.open) + sum(len(v) for v in self.older.values()),
                 "inflight": len(self.inflight), "lat_med": lat[len(lat) // 2] if lat else None,
                 "lat_max": lat[-1] if lat else None, "recent": list(self.recent)[:10],
                 "mirror": dict(twaplive.MIRROR), "ts": t}
+
+
+def _count(r: dict, px: float, sz: float, notional: float, ts: int) -> None:
+    if ts - r["last_slice"] > COALESCE_SEC:
+        r["n"] += 1
+        r["last_slice"] = ts
+    r["total"] += float(notional)
+    r["sz"] += float(sz)
+    r["px_last"] = float(px)
+    r["last_ts"] = max(r["last_ts"], ts)
 
 
 F = Fast()
@@ -461,11 +579,16 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
             p["not_before"] = t + RETRY_NO_ORDER        # sırada kalır, bir kez daha
             return "retry"
         _st(p)["no_order"] = _st(p).get("no_order", 0) + 1
-        _kn(p)[key] = t + NO_ORDER_IGNORE
+        if p.pop("relook", 0):
+            F.relook_done(key, False)
+        _kn(p)[key] = max(t + NO_ORDER_IGNORE, int(_kn(p).get(key) or 0), F.active_until(key, t) + 120)
         F.pending.pop(key, None)
         _note(p, "no_order")
         return "no_order"
-    _kn(p)[key] = int(order["started_ts"]) + int(float(order.get("minutes") or 0) * 60) + 120
+    fresh, until = F.know_order(key, order)
+    if p.pop("relook", 0):
+        F.relook_done(key, fresh)
+    _kn(p)[key] = until + 120                           # aynı anahtarın bilinen tüm süren emirleri (en geç bitiş)
     F.pending.pop(key, None)
     try:                                                # Cumartesi hisse: geçen Cumartesi hacmi (haftada 1 istek)
         await asyncio.wait_for(twaplive.ensure_sat(cfg, client, [coin], t), twaplive.SAT_TIMEOUT)
@@ -482,7 +605,7 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
 async def save_open() -> None:
     """F.open → kv (küçük: en çok birkaç düzine emir). Dilim sayaçları bir sonraki kayıtta güncellenir."""
     try:
-        await kv_set(OPEN_KV, [{k: v for k, v in r.items()} for r in F.open.values() if not r.get("ended")])
+        await kv_set(OPEN_KV, [{k: v for k, v in r.items()} for _, r, _o in F.records() if not r.get("ended")])
     except Exception:                                  # noqa: BLE001
         log.debug("twapfast_open yazılamadı", exc_info=True)
 
@@ -494,11 +617,12 @@ async def load_open(t: int) -> int:
     for r in (await kv_get(OPEN_KV) or []):
         try:
             key = (r["coin"], r["addr"], r["side"])
-            if key in F.open or t > int(r["end_at"]) + END_GIVEUP:
+            if F.find(key, int(r["started"])) is not None or t > int(r["end_at"]) + END_GIVEUP:
                 continue
             r["lookup_ts"], r["ended"] = 0, 0
-            F.open[key] = r
-            F.known[key] = int(r["end_at"]) + 120
+            F.place(key, r)                             # aynı anahtarın iki emri: yenisi F.open, eskisi F.older
+            F.know_order(key, r.get("order") or {"started_ts": r["started"], "minutes": 0})
+            F.known[key] = max(int(F.known.get(key) or 0), int(r["end_at"]) + 120)
             n += 1
         except (KeyError, TypeError, ValueError):
             continue
@@ -509,20 +633,20 @@ def _adopt(key: tuple, p: dict, order: dict, t: int, alert_ts: int | None) -> di
     """Bildirilen emri hızlı yolun KENDİ kaydına al (eski yolun sayacına dokunmadan): bitiş/iptal notu buradan."""
     order.setdefault("q_ts", t)
     started = int(order.get("started_ts") or 0)
-    r = F.open.get(key)
-    if r is not None and r["started"] == started and not r["ended"]:
+    r = F.find(key, started)
+    if r is not None:
         return r
     if len(F.open) >= OPEN_MAX:
         for k in sorted(F.open, key=lambda k: F.open[k]["alert_ts"])[: OPEN_MAX // 10]:
             F.open.pop(k, None)
-    r = F.open[key] = {"coin": key[0], "addr": key[1], "side": key[2], "started": started,
+    r = {"coin": key[0], "addr": key[1], "side": key[2], "started": started,
                        "end_at": started + int(float(order.get("minutes") or 0) * 60), "order": order,
                        "alert_ts": alert_ts or t, "first_ts": int(p.get("t0") or t), "last_ts": int(p.get("ts") or t),
                        "last_slice": int(p.get("ts") or t), "n": int(p.get("n") or 1),
                        "total": float(p.get("tot") or p.get("max") or 0), "sz": float(p.get("szt") or 0),
                        "px_first": float(p.get("px0") or p.get("px") or 0), "px_last": float(p.get("px") or 0),
                        "lookup_ts": t, "ended": 0}
-    return r
+    return F.place(key, r)                              # aynı anahtarın süren eski emri F.older'a (notu kaybolmaz)
 
 
 async def _loose(cfg, client, notifier, key: tuple, p: dict, order: dict, g: str, det: dict, vols: dict, t: int,
@@ -578,7 +702,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
     if await alert_recent("twap_fast", fkey, 86400):
         # yeniden başlatma: AYNI emir zaten bildirildi — kapı şimdi ne derse desin (kalan azaldı, hız düştü)
         # bitiş/iptal notu sözü sürer
-        if key not in F.open:
+        if F.find(key, started, ended_too=True) is None:
             _adopt(key, p, order, t, None)
             await save_open()
         F.stats["cooldown"] += 1
@@ -679,6 +803,16 @@ def _end_measure(r: dict) -> dict:
             "px_first": pf, "px_last": pl, "px_chg_pct": ((pl - pf) / pf * 100) if pf else 0.0}
 
 
+def _release(key: tuple, r: dict, t: int) -> None:
+    """Emir bitti: bilinenlerden düşer; bastırma anahtarın SÜREN bilinen emri varsa onun bitişine iner, yoksa kalkar
+    (aynı adres + coin + yönün yeni emri yeniden sorulabilsin)."""
+    until = F.forget_order(key, int(r["started"]), t)
+    if until:
+        F.known[key] = until + 120
+    else:
+        F.known.pop(key, None)
+
+
 async def lifecycle(cfg, notifier, collector, t: int) -> int:
     """İlk dilim yolunun bildirdiği emirler → ⛔ iptal notu (🏁 normal bitiş yalnız ayar açıksa; ana hedef + ayna). Emir sorulur: planlanan bitiş + 30 sn'de,
     dilimler kesilince (90 sn; ⚡ HIZLI'da 45 sn) ve ⚡ HIZLI'da ayrıca dakikada bir (aynı adres+coin+yönün başka
@@ -690,10 +824,10 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
     sent = 0
     changed = False
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
-    for key, r in list(F.open.items()):
+    for key, r, older in F.records():
         if r["ended"]:
             if t - r["ended"] > 600:
-                F.open.pop(key, None)
+                F.drop(key, r, older)
             continue
         end_at = int(r["end_at"])
         quick = twaplive.is_quick(cfg, r.get("order"))
@@ -731,13 +865,13 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
             if t < end_at + END_GIVEUP:
                 continue                                # HL kapatmadı (iptal değil, sürüyor) — bekle
             r["ended"], changed = t, True
-            F.known.pop(key, None)
+            _release(key, r, t)
             continue
         if o is None and t < end_at + END_GRACE:
             continue                                    # geçmişte görünmüyor ama süresi dolmadı — bekle
         if o is None or not twaplive.end_note_wanted(cfg, st in ("terminated", "error")):
             r["ended"], changed = t, True                # normal bitiş (🏁 kapalı) ya da emir yok → not yok
-            F.known.pop(key, None)
+            _release(key, r, t)
             continue
         okey = f"{key[0]}:{key[1]}:{key[2]}:{int(r['started'])}"
         if okey in twaplive.ENDING:
@@ -766,7 +900,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
                 F.stats["ends"] += 1
                 sent += 1
             r["ended"], changed = t, True
-            F.known.pop(key, None)                      # aynı adres+coin+yönün YENİ emri yeniden sorulabilsin
+            _release(key, r, t)                        # aynı adres+coin+yönün YENİ emri yeniden sorulabilsin
         finally:
             twaplive.ENDING.discard(okey)
         try:                                            # /twaplar sekmesinde 🔎 işareti (eski yolun satırı varsa)
@@ -881,7 +1015,7 @@ async def loop(cfg, client, notifier, collector=None) -> None:
                 F.vols = await twaplive.volumes_cached(None)
             if getattr(cfg, "twap_fast_enabled", True) and getattr(cfg, "twap_live_enabled", True):
                 await dispatch(cfg, client, notifier, collector, t, tasks)
-            if F.open and t - life_last >= 10:
+            if (F.open or F.older) and t - life_last >= 10:
                 life_last = t
                 await lifecycle(cfg, notifier, collector, t)
             if (twaploose.OPEN or twaploose.BIG.open) and t - loose_last >= 10:
