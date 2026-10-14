@@ -280,6 +280,7 @@ def test_weekend_stock_rule():
             assert lo.big_gate(cfg, o(250_000, 120), now, "SOL") == "small", "kripto: hafta sonu kuralı yok"
             assert lo.big_gate(cfg, o(250_000, 600), now, "SOL") == "long"
             assert lo.big_gate(cfg, o(250_000, 120), now, "xyz:TOTAL2") == "small", "kriptoya bağlı HIP-3 hariç"
+            assert lo.big_gate(cfg, o(300_000, 120), now, "xyz:BTC") == "small", "HIP-3 BTC: $20M tabanı"
             assert lo.big_head(cfg, T, "weekend") == ("🕐 <b>Büyük TWAP</b> · 📅 hafta sonu (ABD kapalı), kripto olmayan ·"
                                                      " plan ≥ $200K · süre < 24 sa")
             assert lo.big_pre(cfg, 60, T, now) and not lo.big_pre(cfg, 60, T, None) and not lo.big_pre(cfg, 60, "SOL", now)
@@ -297,6 +298,20 @@ def test_weekend_stock_rule():
             assert [c for c, _ in bot.sent] == [BIGC], bot.sent
             assert bot.sent[0][1].startswith("🕐 <b>Büyük TWAP</b> · 📅 hafta sonu (ABD kapalı)"), bot.sent[0][1]
             assert "/takip_" in bot.sent[0][1]
+            # 2. inceleme: 🔸 açık ve emir 🔸 kapısını da geçse ($600K, 24s $20M'ın %3'ü) küçük dilim 🔸'a SUNULMAZ
+            from app.hl import universe as uni
+            await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {T: {"m": PX, "oi": 1, "f": 0, "v": 20e6, "p": None}},
+                                               "ts": dbm.now()})
+            tf.F.vols = await tl.volumes(None)
+            B3 = "0x" + "f" * 40
+            h3 = [twap_order(t0, minutes=1200, plan=600_000, ex_frac=0.0, coin=T, side="A")]
+            h3[0]["state"]["user"] = B3
+            bot.sent.clear()
+            tf.observe(T, B3, "sell", PX, 250 / PX, 250, t0 + 2, 1000)
+            assert tf.F.pending[(T, B3, "sell")]["big_only"]
+            await _drain(cfg, notifier, Col(lambda: h3))
+            assert [c for c, _ in bot.sent] == [BIGC], bot.sent
+            assert lo.RECENT[0]["loose"] == "big_only"
             # hafta içi: aynı küçük dilim sorulmaz
             wk["on"] = False
             tf.F.pending.clear()

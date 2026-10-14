@@ -515,6 +515,11 @@ async def _decide_loose(cfg, client, notifier, key: tuple, p: dict, order: dict,
         twaploose.STATS["strict_later"] += 1
         twaploose.note(p, g, loose="main_later", **info)
         return "strict_later"
+    if p.get("big_only"):
+        # YALNIZ 🕐 kuralıyla sıraya girdi (🔸 ön süzgeci geçmedi ya da ana tabanın altındaki hafta sonu dilimi): 🔸 kanala
+        # sunulmaz — 🔸 bu emri bugünkü gibi eski yoldan görür; 🕐 kararı resolve'da (big_fast)
+        twaploose.note(p, g, loose="big_only", **info)
+        return g
     lres = await _loose(cfg, client, notifier, key, p, order, g, det, vols, t, entity)
     twaploose.note(p, g, loose=lres, **info)
     return g

@@ -52,7 +52,7 @@ OVERRIDES = {
 REASON_TR = {"sent": "gönderildi", "dup": "zaten gönderildi", "cooldown": "bekleme içinde",
              "failed": "gönderilemedi", "main": "ana kanala gitmiş", "inflight": "ana yol şu an gönderiyor",
              "error": "hata", "off": "kapalı", "main_later": "ana kapıyı geçiyor (eski yol ana kanala yazar)",
-             "backoff": "az önce gönderilemedi (sonra yeniden)"}
+             "backoff": "az önce gönderilemedi (sonra yeniden)", "big_only": "yalnız 🕐 için soruldu"}
 
 KNOWN: dict[tuple, int] = {}            # yalnız-yan-kanal adayının bastırması (ana yolun F.known'u DEĞİL; iki kanal ortak)
 RECENT: deque = deque(maxlen=20)        # yalnız-yan-kanal adaylarının son kararları (/tani)
@@ -810,8 +810,8 @@ def big_weekend_rule(cfg, coin: str, ts: int) -> bool:
     assets.trades_24_7 değil; Cumartesi tabanıyla aynı küme) ve hafta sonu ve kural açık."""
     from .. import assets
     mn, mx = big_weekend_limits(cfg)
-    if mn <= 0 or mx <= 0 or not coin or assets.trades_24_7(coin):
-        return False
+    if mn <= 0 or mx <= 0 or not coin or assets.trades_24_7(coin) or big_is_major(cfg, coin):
+        return False                                    # HIP-3'teki BTC/ETH olsa da $20M tabanı geçerli
     return big_weekend_on(cfg, ts)
 
 
