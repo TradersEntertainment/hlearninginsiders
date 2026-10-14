@@ -47,8 +47,8 @@ Detaylı mimari için: [PLAN.md](PLAN.md)
 
 ## Telegram Komutları
 
-**📖 `/komutlar`** (eş: `/komut`, `/commands`) — TÜM komutlar ve işlevleri, bölüm bölüm, eş anlamlılarıyla
-(kullanıcı 14.10). Sahip her şeyi görür (🔒 = yalnız sahip); botun kanal / gruplarında yalnız orada çalışanlar
+**📖 `/komutlar`** (eş: `/help`, `/komut`, `/commands`; DM'de `/start` da) — TÜM komutlar ve işlevleri, bölüm bölüm,
+eş anlamlılarıyla ve argüman biçimleriyle (kullanıcı 14.10: "/help de olur"). Sahip her şeyi görür (🔒 = yalnız sahip); botun kanal / gruplarında yalnız orada çalışanlar
 listelenir. Liste `app/telegram/format.py::COMMANDS`; `tests/test_komutlar.py` bot.py / admin.py'deki her komut
 adının listede olduğunu denetler (yeni komut eklenince listeye yazılmazsa test düşer).
 

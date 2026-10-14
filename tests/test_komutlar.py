@@ -92,10 +92,17 @@ def test_routing():
         n = len(sent)
         await msg("/komutlar", -999, 42)
         assert len(sent) == n, "yabancı grup sessiz"
-        await msg("/help", 111, 111, "private")
-        assert "/komutlar" in sent[-1][1]
+        await msg("/help", 111, 111, "private")                      # kullanıcı 14.10: "/help de olur"
+        assert "🔒 /tani" in sent[-1][1] and "Chat id: <code>111</code>" in sent[-1][1]
+        await msg("/help", -100, 42)                                  # grupta: o grupta çalışanlar
+        assert sent[-1][0] == "-100" and "Bu grupta çalışan komutlar" in sent[-1][1]
+        await msg("/start", -100, 42)
+        assert "chat id" in sent[-1][1]
+        await msg("/simulasyon", -100, 42)                            # listedeki eş grupta da çalışır
+        assert sent[-1][0] == "-100" and "sim" in sent[-1][1].lower()
     asyncio.run(run())
-    print("✅ yönlendirme) /komutlar · /komut · /commands: DM, kendi grubu (üye / sahip), kanal gönderisi; yabancı grup sessiz")
+    print("✅ yönlendirme) /komutlar · /komut · /commands · /help: DM, kendi grubu (üye / sahip), kanal gönderisi;"
+          " yabancı grup sessiz; /simulasyon grupta da")
 
 
 if __name__ == "__main__":

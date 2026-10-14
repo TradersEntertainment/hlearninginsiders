@@ -2937,7 +2937,8 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
          False),
         ("/twapf", "⚡ yalnız hızlı TWAP'lar (süre ≤ 1 sa), büyükten küçüğe · eş: /hizlitwap /twaphizli", False),
         ("/xpltwap", "o coinde süren HL TWAP'lar (her coin için /TICKERtwap: /hypetwap, /tslatwap, /xpl_twap)", False),
-        ("/twap durum", "TWAP radarının özeti + son kararlar (niye gelmedi?)", True),
+        ("/twap durum", "TWAP radarının özeti + son kararlar (niye gelmedi?) · eş: /twap özet · /twap radar · /twap tanı",
+         True),
         ("/twap PUMP", "coin teşhisi: dinleniyor mu, 24s hacim, bildirim için gereken emir", True),
         ("/twap 0xADRES", "adresin dizileri, HL TWAP emirleri ve her emrin kapı kararı", True),
         ("/twaptakipler", "👁 takip edilen TWAP emirleri · eş: /twaptakip", False),
@@ -2945,7 +2946,8 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
     ("💥 Coin · liq · pozisyon", [
         ("/hype · /pump · /sndk", "o coinin liq'e EN YAKIN büyük pozisyonları + grafik (canlı fiyat, kalan mesafe); "
          "altında o coinde süren TWAP satırı — her ticker için /TICKER", False),
-        ("/scan SNDK", "coini şimdi tara, en büyük pozisyonları göster", True),
+        ("/scan SNDK", "hisseyi (HIP-3) şimdi tara, en büyük pozisyonları göster — ana dex kripto için /hype gibi "
+         "/TICKER", True),
         ("/devler", "Hyperliquid'in en büyük açık pozisyonları · eş: /big /biggest", True),
         ("/duvartakipler", "🧲 takip edilen yapışkan duvarlar · eş: /duvartakip", False),
     ]),
@@ -2953,12 +2955,14 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
         ("/takip_N", "mesajdaki pozisyonu / TWAP emrini / duvarı takibe al (N mesajda yazar)", False),
         ("/takip 0xADRES SEMBOL", "herhangi bir balinayı teklif beklemeden ELLE takibe al", False),
         ("/takipler", "aktif pozisyon takipleri · eş: /takip /trackers", False),
-        ("/birak_N", "takibi bırak (bildirimdeki 🛑 tuşu da olur; ↩️ ile geri alınır) · eş: /bırak_N", False),
+        ("/birak_N · /birak_twap_N · /birak_duvar_N", "pozisyon / 👁 TWAP emri / 🧲 duvar takibini bırak (bildirimdeki"
+         " 🛑 tuşu da olur; ↩️ ile geri alınır) · eş: /bırak_N", False),
     ]),
     ("📈 Hisse · seans · bilanço", [
         ("/acilis", "🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor · eş: /açılış /acılıs",
          False),
-        ("/5dk · /15dk", "⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu", False),
+        ("/5dk · /15dk", "⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu"
+         " · eş: /5 · /5 dk · /10dakika", False),
         ("/5dk 15:30", "⏱ ölçümü haber saatine kur (TSİ; 3 dk geriye de gider)", False),
         ("/seans", "🕰 ABD seans karnesi (XYZ100 + SP500): Asya → Londra → New York, bugün + geçmiş · eş: /seanslar",
          False),
@@ -2982,9 +2986,12 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
         ("/forget 0xADRES", "adresin sicilini sıfırla + watchlist'ten çıkar · eş: /unut", True),
     ]),
     ("🚨 Uyandırma alarmı", [
-        ("/alarm", "gece bir şey olursa seni Telegram'dan ARAR: /alarm SNDK 480 (fiyat) · /alarm SNDK %3 (hareket) · "
-         "/alarm 0xADRES (hesap)", True),
-        ("/alarmlar", "kurulu alarmlar (silme tuşlarıyla)", True),
+        ("/alarm", "gece bir şey olursa seni Telegram'dan ARAR; argümansız: örnekler + kurulu alarmlar", True),
+        ("/alarm SNDK 480", "fiyat 480'e gelince (yön şimdiki fiyattan)", True),
+        ("/alarm SNDK 480 520", "480 altı ya da 520 üstü", True),
+        ("/alarm SNDK %3", "şimdiki fiyattan ±%3", True),
+        ("/alarm 0xADRES", "o hesabın pozisyonları liq'e %2 kala ya da kapanınca (/alarm 0x… %3 ile eşik)", True),
+        ("/alarmlar", "kurulu alarmlar (🗑 ile kaldır)", True),
         ("/alarm_test", "deneme: mesaj + Telegram araması · eş: /alarmtest", True),
         ("/uyandim", "çalan aramaları durdur · eş: /uyandım", True),
     ]),
@@ -2996,8 +3003,7 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
          False),
     ]),
     ("🔧 Sistem", [
-        ("/komutlar", "bu liste · eş: /komut /commands", False),
-        ("/help", "kısa yardım · eş: /start", True),
+        ("/komutlar", "bu liste · eş: /help /komut /commands (DM'de /start da)", False),
         ("/id", "bu sohbetin chat id'si (grupta /start da)", False),
         ("/bildirimler", "bildirim ayarları + son gönderilenler · eş: /notifications /notif", True),
         ("/status", "bot durumu", True),
@@ -3013,7 +3019,8 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
     ]),
 ]
 
-COMMAND_KEYS = "<i>👆 Tuşlar: 👁 takip et · 🛑 takibi bırak · ↩️ geri al · 📊 ölçüm ara sonucu</i>"
+COMMAND_KEYS = ("<i>👆 Tuşlar: 👁 takip et · 🛑 takibi bırak · ↩️ geri al · 📊 ölçüm ara sonucu"
+                " · ⏰ kapanırsa beni uyandır (takip mesajında, yalnız sen) · 🗑 alarmı kaldır</i>")
 
 
 def commands_text(owner: bool = True) -> str:
@@ -3040,7 +3047,7 @@ def help_text() -> str:
         "🕵️ <b>HL Insider Radar</b>\n"
         "Earnings öncesi Hyperliquid hisse perp'lerindeki balina pozisyonlarını izler.\n\n"
         "Komutlar (📖 TAMAMI, eş anlamlılarıyla: /komutlar):\n"
-        "/scan SNDK — coini şimdi tara, en büyük pozları göster\n"
+        "/scan SNDK — hisseyi (HIP-3) şimdi tara, en büyük pozları göster\n"
         "/hype, /pump, /sndk — o coinin liq'e EN YAKIN büyük pozisyonları + grafik (canlı fiyat, kalan mesafe)\n"
         "/upcoming — yaklaşan HL-eşleşen earnings'ler\n"
         "/refresh — takvimi ŞİMDİ tüm kaynaklardan yenile (eksik earnings görürsen bas)\n"

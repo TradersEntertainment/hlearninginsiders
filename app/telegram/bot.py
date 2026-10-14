@@ -452,7 +452,7 @@ class TelegramBot:
         if not is_owner:
             if await self._dispatch_track(cmd, args, chat_id):
                 return                     # kanaldan /takip_N, /birak_N, /takipler
-            if cmd in ("sim", "sım"):
+            if cmd in ("sim", "sım", "simulasyon", "simülasyon"):
                 await self._cmd_sim(chat_id)   # coin çözümlemesine düşmesin
             elif cmd in ("start", "id"):
                 await self.send(f"Bu sohbetin chat id'si: <code>{chat_id}</code>", chat_id)
@@ -461,8 +461,8 @@ class TelegramBot:
                     await self._cmd_coin_liq(cmd, chat_id)
             return
 
-        if cmd in ("start", "help"):
-            await self.send(fmt.help_text() + f"\n\nChat id: <code>{chat_id}</code>", chat_id)
+        if cmd in ("start", "help"):                  # kullanıcı 14.10: "/help de olur" → tam komut listesi
+            await self.send(fmt.commands_text(owner=True) + f"\n\nChat id: <code>{chat_id}</code>", chat_id)
         elif cmd == "id":
             await self.send(f"Chat id: <code>{chat_id}</code>", chat_id)
         elif cmd in ("komutlar", "komut", "commands"):
@@ -829,7 +829,7 @@ class TelegramBot:
             return True                    # ⏱ /5dk — coin-liq aramasına düşmesin
         if cmd.startswith("takip_"):
             await self._cmd_track_start(cmd, chat_id)
-        elif cmd in ("komutlar", "komut", "commands"):
+        elif cmd in ("komutlar", "komut", "commands", "help"):
             await self.send(fmt.commands_text(owner=False), chat_id)    # 📖 bu grupta çalışan komutlar
         elif cmd in ("twaptakipler", "twaptakip"):
             await self._cmd_twap_follow_list(chat_id)
