@@ -391,8 +391,9 @@ def wants(key: tuple, ts: int) -> bool:
 def prune(ref_ts: int) -> None:
     for k in [k for k, u in KNOWN.items() if u < ref_ts]:
         KNOWN.pop(k, None)
-    for k in [k for k, u in FAILED.items() if u < ref_ts]:
-        FAILED.pop(k, None)
+    for side in (LOOSE, BIG):
+        for k in [k for k, u in side.failed.items() if u < ref_ts]:
+            side.failed.pop(k, None)
 
 
 def note(p: dict, reason: str, **kw) -> None:
@@ -682,7 +683,7 @@ async def slow_extra(cfg, notifier, client, run, m: dict, order: dict, g: str, d
             except Exception:                      # noqa: BLE001
                 log.debug("yan kanal takip teklifi (%s)", run.coin, exc_info=True)
         ctx = {"order": twaplive.with_seen(order, run.coin, run.address, run.side, ts),
-               "day_vol": ldet["day_vol"] if ldet.get("sat") else day_vol,
+               "day_vol": ldet["day_vol"] if ldet.get("sat") else day_vol, "vol_prec": 1,
                "vol_pct": ldet["vol_pct"], "sat": ldet.get("sat"), "pos": pos, "gate": lg,
                "klass": twaplive.klass_of(run.coin), "entity": ents.get(run.address) or "", "offer": offer,
                "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order)}
@@ -1012,7 +1013,7 @@ async def big_slow(cfg, notifier, client, run, m: dict, order: dict, det: dict, 
             except Exception:                      # noqa: BLE001
                 log.debug("🕐 takip teklifi (%s)", run.coin, exc_info=True)
         ctx = {"order": twaplive.with_seen(order, run.coin, run.address, run.side, ts),
-               "day_vol": det.get("day_vol") if det.get("sat") else day_vol,
+               "day_vol": det.get("day_vol") if det.get("sat") else day_vol, "vol_prec": 1,
                "vol_pct": det.get("vol_pct"), "sat": det.get("sat"), "pos": pos, "gate": "ok",
                "klass": twaplive.klass_of(run.coin), "entity": ents.get(run.address) or "", "offer": offer,
                "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order)}

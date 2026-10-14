@@ -328,6 +328,71 @@ def test_weekend_stock_rule():
           " (ana yol / 🔸 aynı); hafta içi / kripto / kural kapalı → yok")
 
 
+def test_review_sort_alerted_branch_precision_prune():
+    """İnceleme (14.10): (a) 🕐 kapalıyken 🔸 adaylarının sorgu sırası bugünkü gibi (dakika hızı / ortalama), 🕐 açıkken
+    🔸 adayları önce, yalnız-🕐 adaylar sonra ($'a göre); (b) ana kanalın 6 sa içinde bildirdiği adresin yeni emri eski
+    yoldan da 🕐'a gelir (bildirilmiş tur dalı); (c) yan kanal mesajında küçük oran %0 değil %0.8; (d) 🕐 geri çekilme
+    kaydı budanır."""
+    async def run():
+        # (a) iki 🔸 adayı (BTC $80K → öncelik 0.115; WIF $10K, 24s $100M → 0.288) + bir yalnız-🕐 aday ($500K), tek yer
+        for big in ("", BIGC):
+            cfg = _bcfg(loose="-300")
+            cfg.twap_big_chat_id = big
+            await _fresh_b(cfg, btc=True)
+            now = dbm.now()
+            vols = {**tf.F.vols, "WIF": (100e6, now), "ARB": (1e9, now)}
+            for coin, usd, big_only in (("BTC", 80_000, False), ("WIF", 10_000, False), ("ARB", 500_000, True)):
+                tf.F.pending[(coin, A, "buy")] = {"coin": coin, "addr": A, "side": "buy", "max": usd, "usd": usd,
+                                                  "queued": now, "not_before": 0, "loose": True, "big_only": big_only,
+                                                  "tries": 0, "ts": now, "n": 1}
+            got = []
+
+            async def fake(cfg_, client, notifier, collector, key, p_, vols_):
+                got.append(key[0])
+            orig, ov = tf.resolve, tf.F.vols
+            tf.resolve, tf.F.vols = fake, vols
+            try:
+                for _ in range(3):
+                    tf.F.lookup_ts.clear()
+                    tf.F.lookup_ts.extend([now] * (int(30 * lo.QUERY_SHARE) - 1))   # her turda tek yer
+                    tasks: set = set()
+                    await tf.dispatch(cfg, None, None, Col([]), now, tasks)
+                    await asyncio.gather(*tasks)
+                    for c in got:
+                        tf.F.pending.pop((c, A, "buy"), None)
+            finally:
+                tf.resolve, tf.F.vols = orig, ov
+            assert got == ["WIF", "BTC", "ARB"], (big, got)
+        # (b) + (c)
+        cfg = _bcfg()
+        cfg.twap_fast_enabled = False
+        await _fresh_b(cfg)
+        from app.hl import universe as uni
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": PX, "oi": 1, "f": 0, "v": 200e6, "p": None}},
+                                           "ts": dbm.now()})
+        now = dbm.now()
+        started = now - 400
+        await dbm.alert_log("twap", f"PUMP:{A}:buy", "")              # ana kanal bu adresi az önce bildirdi
+        col = Col(lambda: [twap_order(started, minutes=150, plan=1_630_000, ex_frac=0.0)])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 2_200_000, 11_000, started + 2 + 30 * i, 1, True)
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert [d["reason"] for d in out["decisions"]] == ["cooldown"] and bot.sent == []
+        await tl.evaluate(cfg, notifier, None, col)                   # bildirilmiş tur: emir sorulur → 🕐
+        assert [c for c, _ in bot.sent] == [BIGC], bot.sent
+        assert "🐘 emir 24s hacmin <b>%0.8</b>'i" in bot.sent[0][1], bot.sent[0][1]
+        await tl.evaluate(cfg, notifier, None, col)
+        assert len(bot.sent) == 1, "bir kez"
+        # (d)
+        lo.BIG.failed["a:x"] = now - 1
+        lo.prune(now)
+        assert "a:x" not in lo.BIG.failed
+    asyncio.run(run())
+    print("✅ inceleme) 🔸 sırası 🕐 kapalıyken aynı; ana kanalın bildirdiği adresin emri de 🕐'a; %0.8; geri çekilme budanır")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

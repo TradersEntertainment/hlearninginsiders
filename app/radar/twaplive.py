@@ -960,6 +960,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
            "decisions": []}
     decisions: list[dict] = out["decisions"]
     big_q: list[tuple] = []         # 🕐 büyük kanal adayları — turun SONUNDA (ana kararlardan sonra, onlardan bağımsız)
+    from . import twaploose as _tlo
+    big_on = _tlo.BIG.enabled(cfg)
 
     def decide(run: "Run", reason: str, detail: dict | None = None) -> None:
         """Bu turun aday kararı — /tani "son elenenler" ve /twap komutu bunu okur."""
@@ -1017,6 +1019,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         await persist(run, m)             # twap_runs iptal edilmiş eski emri 'activated' tutmasın
                 order = run.order
                 mm = m or _scalar_measure(run)
+                if big_on and order and order.get("status") == "activated" and native_overlap([order], run):
+                    big_q.append((run, mm, order, None, None))   # 🕐: ana kanalın bildirdiği adresin (yeni) emri de
                 active = bool(order and order.get("status") == "activated")
                 done = bool(order and order.get("status") in ("finished", "terminated", "error"))
                 if done or (is_ended(run, mm, ts) and not active):
@@ -1271,6 +1275,15 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
         if twaploose.BIG.enabled(cfg):
             for run, m, order, det, day_vol in big_q:
                 try:
+                    if twaploose.big_gate(cfg, order, ts, run.coin) not in twaploose.BIG_PASS:
+                        continue                        # her tur bakılır: kural dışı emirde ölçü hesaplanmaz
+                    okey = order_key(f"{run.coin}:{run.address}:{run.side}", order)
+                    if okey and f"a:{okey}" in twaploose.BIG.sent:
+                        continue
+                    if det is None:                     # bildirilmiş turdan: ölçü (hacme oran) burada
+                        vol = vols.get(run.coin)
+                        day_vol = vol[0] if vol else None
+                        det = gate_detail(cfg, run.coin, order, day_vol, vol[1] if vol else None, ts)
                     await twaploose.big_slow(cfg, notifier, client, run, m, order, det, day_vol, ents, ts)
                 except Exception:                      # noqa: BLE001
                     log.exception("🕐 büyük twap (eski yol) %s:%s", run.coin, run.address[:10])

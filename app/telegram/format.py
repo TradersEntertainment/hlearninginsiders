@@ -3502,7 +3502,9 @@ def twap_alert(m: dict, ctx: dict) -> str:
     klass = ctx.get("klass") or "kripto"
     o = ctx.get("order") or {}
     base = "geçen Cumartesi hacminin" if ctx.get("sat") else "24s hacmin"     # Cumartesi hisse tabanı
-    badge = (f"🐘 emir {base} <b>%{ctx['vol_pct']:.0f}</b>'i" if ctx.get("vol_pct") is not None
+    vp = ctx.get("vol_pct")
+    prec = int(ctx.get("vol_prec") or 0)                # yan kanallar küçük oranlarda ondalık ister (%0 yazmasın)
+    badge = (f"🐘 emir {base} <b>%{float(vp):.{prec}f}</b>'i" if vp is not None
              else "💰 hacimden bağımsız büyük")
     quick = twap_quick(ctx)
     lines = [f"⏳ <b>TWAP</b>{' · ' + quick if quick else ''} · {'🪙 ' if spot else ''}<b>{sym}</b> · "

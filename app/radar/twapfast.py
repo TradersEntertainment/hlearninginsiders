@@ -91,16 +91,19 @@ class Fast:
         self._lcfg = None
         self.clear_stats()
 
-    def _extra_wants(self, coin: str, key: tuple, slice_usd: float, ts: int, small: bool = False) -> bool:
-        """Ana ön süzgeçten kalan dilim yalnız yan kanallar için sorulsun mu? (sıcak yol, G/Ç yok). `small`: ana tabanın
-        altındaki dilim — yalnız 🕐 hafta sonu kuralı için (🔸 kanal bugünkü gibi bu dilimleri görmez)."""
+    def _extra_wants(self, coin: str, key: tuple, slice_usd: float, ts: int, small: bool = False) -> str:
+        """Ana ön süzgeçten kalan dilim yalnız yan kanallar için sorulsun mu? (sıcak yol, G/Ç yok) '' hayır · 'loose'
+        🔸 gevşek eşik geçirdi (🕐 de olabilir) · 'big' YALNIZ 🕐 kuralı geçirdi. `small`: ana tabanın altındaki dilim —
+        yalnız 🕐 hafta sonu kuralı için (🔸 kanal bugünkü gibi bu dilimleri görmez)."""
         cfg = self.cfg
         big_on, lo_on = twaploose.BIG.enabled(cfg), twaploose.enabled(cfg) and not small
         if not (big_on or lo_on) or not twaploose.wants(key, ts):
-            return False
+            return ""
+        if lo_on and not prefilter(self.loose_cfg(), coin, slice_usd, self.vols.get(coin), ts):
+            return "loose"
         if big_on and twaploose.big_pre(cfg, slice_usd, coin, ts):
-            return True
-        return lo_on and not prefilter(self.loose_cfg(), coin, slice_usd, self.vols.get(coin), ts)
+            return "big"
+        return ""
 
     def loose_cfg(self):
         """🔸 yan kanalın gevşek ayar görünümü (canlı vekil — ana ayar değişirse izler; bir kez kurulur)."""
@@ -169,6 +172,7 @@ class Fast:
                 # 🔸 dilim büyüdü, ana ön süzgeci geçti → TAZE ana aday (öncelik, pay yok, sıra süresi baştan). Sorgusu
                 # sürüyorsa dokunulmaz: yalnız-gevşek çözüm ana bastırmaya yazmaz, sonraki dilim ana yoldan sorulur
                 p["loose"], p["queued"], p["tries"], p["not_before"] = False, now(), 0, 0
+                p["big_only"] = False
                 st["queued"] += 1
                 if self.event is not None:
                     self.event.set()
@@ -197,9 +201,11 @@ class Fast:
                 # 🔸 / 🕐 yan kanallar: ana ön süzgeçten kalan dilim gevşek eşikle ya da büyük kanalın kuralıyla
                 # (≤ 3 sa, ≥ $1M) sorulur — ana adaylardan SONRA, tavanın payıyla; ana yolun F.known / sayaç / 🧪
                 # kayıtlarına dokunmadan (resolve)
-                if not self._extra_wants(coin, key, p["usd"], ts, small):
+                ew = self._extra_wants(coin, key, p["usd"], ts, small)
+                if not ew:
                     return
                 loose = True
+                p["big_only"] = ew == "big"             # sıralama: 🔸 adayları bugünkü öncelikle, 🕐-yalnız $'a göre
                 twaploose.STATS["pre_queued"] += 1
         p["loose"] = loose
         p["queued"] = now()                             # varış anı (işlem damgası değil: saat farkı sırayı bozmasın)
@@ -756,9 +762,11 @@ async def dispatch(cfg, client, notifier, collector, t: int, tasks: set) -> int:
         return 0
     vols = F.vols or await twaplive.volumes_cached(None)
     # 🔸 yalnız yan kanalın gevşek eşiğiyle sıraya girenler ana adaylardan SONRA ve dakika tavanının bir payıyla
-    # yalnız-yan-kanal katmanı kendi içinde dilim $'ına göre (🕐 kural mutlak tutar: BTC'nin dev dilimi önce)
-    ready.sort(key=lambda kp: (bool(kp[1].get("loose")),
-                               -(float(kp[1].get("max") or 0) if kp[1].get("loose") else priority(kp[1], vols))))
+    # yalnız-yan-kanal katmanı: önce 🔸 adayları bugünkü öncelikle (dakika hızı / ortalama), sonra YALNIZ 🕐 kuralıyla
+    # sıraya girenler dilim $'ına göre (🕐 kural mutlak tutar). 🕐 kapalıyken sıra bugünküyle aynı
+    ready.sort(key=lambda kp: (bool(kp[1].get("loose")), bool(kp[1].get("loose") and kp[1].get("big_only")),
+                               -(float(kp[1].get("max") or 0) if (kp[1].get("loose") and kp[1].get("big_only"))
+                                 else priority(kp[1], vols))))
     cap = int(getattr(cfg, "twap_fast_lookups_min", 30) or 0)
     started = 0
     for key, p in ready:
