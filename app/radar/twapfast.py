@@ -59,7 +59,7 @@ RELOOK_WIN = 65             # bilinen emrin anahtarında bu pencerede…
 RELOOK_SLICES = 4           # …bu kadar dilim (tek HL TWAP 30 sn'de bir: en çok 3) → aynı adres + coin + yönde YENİ emir
 RELOOK_MIN_GAP = 60         # yeniden sorgu en sık bu kadar (14.10 NEAR: üst üste iki 5 dk'lık emir, ikincisi 275 sn geç)
 RELOOK_MAX_GAP = 600        # yeniden sorgu yeni emir bulamadıkça aralık ikiye katlanır (bu kadara dek)
-RELOOK_BIG_X = 1.6          # dilim (2 sn'lik küme) bilinen emirlerin olağan dilim toplamının bu katı, iki kez üst üste →
+RELOOK_BIG_X = 1.6          # dilim (2 sn'lik küme) bilinen emirlerin olağan dilim toplamının bu katı, ~30 sn arayla iki kez →
                             # dilimleri aynı saniyeye düşen ikinci emir (rastgele ±%20; HL telafi dilimi 3 kata dek: yanlış
                             # alarm tek sorgu, sonra aralık katlanır)
 OPEN_KV = "twapfast_open"   # bildirilen emirlerin kaydı — yeniden başlatmada bitiş/iptal notu kaybolmasın
@@ -242,69 +242,77 @@ class Fast:
     def _second_order(self, key: tuple, ts: int, sz: float = 0.0) -> bool:
         """Bilinen (bastırılan) anahtarda AYNI adres + coin + yönde ikinci bir HL TWAP sezgisi (sıcak yol, G/Ç yok):
         • tempo: tek HL TWAP 30 sn'de bir dilim atar (65 sn'de en çok 3); bilinen k emir en çok 3k → 3k+1 dilim yeni emir
-        • boyut: dilimi bilinenlerle aynı saniyeye düşen emir tempoyu değiştirmez — 2 sn'lik küme bilinen emirlerin olağan
-          dilim toplamının RELOOK_BIG_X katını iki küme üst üste aşarsa
+        • boyut: dilimi bilinen bir emirle aynı saniyeye düşen emir tempoyu değiştirmez — 2 sn'lik küme bilinen emirlerin
+          olağan dilim toplamının RELOOK_BIG_X katını ~30 sn arayla iki kez aşarsa (arada başka emrin dilimi olabilir)
         Yeniden sorgu en sık RELOOK_MIN_GAP'te bir; yeni emir bulamadıkça aralık katlanır (relook_done)."""
         ks = self._ks(key)
         new_bucket = ts - ks["last"] > COALESCE_SEC
         if new_bucket:
-            ks["prev_big"] = ks["cur_big"] and ts - ks["last"] <= 45
             ks["cur_big"], ks["cur_sz"] = False, 0.0
             ks["times"].append(ts)
             ks["last"] = ts
         ks["cur_sz"] += sz
-        if ts - ks["relook"] < ks["gap"]:
-            return False
         k, nom = 0, 0.0
         for end, nsz in ks["orders"].values():
             if end >= ts:
                 k, nom = k + 1, nom + nsz
-        hit = False
-        if new_bucket:
+        pair = False
+        if nom > 0 and not ks["cur_big"] and ks["cur_sz"] >= RELOOK_BIG_X * nom:
+            ks["cur_big"] = True                        # aralıkta da kaydedilir: eşi aralık bitince gelebilir
+            pair = 20 <= ks["last"] - ks["big_ts"] <= 45
+            ks["big_ts"] = ks["last"]
+        if ts - ks["relook"] < ks["gap"] or ts < ks["mute"]:
+            return False
+        hit = pair
+        if not hit and new_bucket:
             n = sum(1 for x in ks["times"] if ts - x <= RELOOK_WIN)
             hit = n >= RELOOK_SLICES + 3 * (max(1, k) - 1)
-        if not hit and nom > 0 and not ks["cur_big"] and ks["cur_sz"] >= RELOOK_BIG_X * nom:
-            ks["cur_big"] = True
-            hit = ks["prev_big"]
         if hit:
             ks["relook"] = ts
             ks["times"].clear()
-            ks["prev_big"] = ks["cur_big"] = False
+            ks["big_ts"] = 0
         return hit
 
     def _ks(self, key: tuple) -> dict:
         ks = self.kslices.get(key)
         if ks is None:
             ks = self.kslices[key] = {"last": 0, "times": deque(maxlen=32), "relook": 0, "gap": RELOOK_MIN_GAP,
-                                      "orders": {}, "cur_sz": 0.0, "cur_big": False, "prev_big": False}
+                                      "orders": {}, "cur_sz": 0.0, "cur_big": False, "big_ts": 0, "mute": 0}
         return ks
 
-    def know_order(self, key: tuple, order: dict) -> tuple[bool, int]:
-        """Sorgunun bulduğu emir anahtarın bilinen emirlerine yazılır (ikinci emir sezgisi bunlarla ölçer).
-        (yeni mi, bilinen süren emirlerin en geç bitişi)."""
-        ks = self._ks(key)
-        started = int(order.get("started_ts") or 0)
-        mins = float(order.get("minutes") or 0)
-        end = started + int(mins * 60)
-        fresh = started not in ks["orders"]
-        ks["orders"][started] = (end, float(order.get("planned_sz") or 0) / max(1.0, 2 * mins))
-        return fresh, max(e for e, _ in ks["orders"].values())
+    def learn_orders(self, key: tuple, orders: list, live: set | None = None) -> bool:
+        """Sorgunun gösterdiği, dilimle örtüşen emirler anahtarın bilinen emirlerine yazılır (ikinci emir sezgisi
+        tempoyu / dilim boyunu bunlarla ölçer; YALNIZ sezgi için — susturma süresi bulunan emrin kendi bitişinden).
+        `live`: HL'de hâlâ 'activated' olan başlangıçlar — dışındakiler (iptal / bitmiş) düşer. Dönüş: yeni emir var mı."""
+        ks = self._ks(key) if orders else self.kslices.get(key)
+        if ks is None:
+            return False
+        if live is not None:
+            for st0 in [x for x in ks["orders"] if x not in live]:
+                ks["orders"].pop(st0, None)
+        fresh = False
+        for o in orders:
+            started = int(o.get("started_ts") or 0)
+            if not started:
+                continue
+            mins = float(o.get("minutes") or 0)
+            fresh = fresh or started not in ks["orders"]
+            ks["orders"][started] = (started + int(mins * 60), float(o.get("planned_sz") or 0) / max(1.0, 2 * mins))
+        return fresh
 
     def relook_done(self, key: tuple, fresh: bool) -> None:
-        """Yeniden sorgu bilinen emri buldu → aralık katlanır (boşa sorgu tekrarlanmasın); yeni emir → en kısa aralık."""
+        """Yeniden sorgu yeni emir bulamadı → aralık katlanır (boşa sorgu tekrarlanmasın); yeni emir → en kısa aralık."""
         ks = self._ks(key)
         ks["gap"] = RELOOK_MIN_GAP if fresh else min(RELOOK_MAX_GAP, ks["gap"] * 2)
 
-    def forget_order(self, key: tuple, started: int, ref_ts: int) -> int:
-        """Emir bitti/iptal: bilinenlerden düşer. Dönüş: süren bilinen emirlerin en geç bitişi (yoksa 0)."""
+    def forget_order(self, key: tuple, started: int) -> None:
         ks = self.kslices.get(key)
         if ks is not None:
             ks["orders"].pop(int(started), None)
-        return self.active_until(key, ref_ts)
 
-    def active_until(self, key: tuple, ref_ts: int) -> int:
-        ks = self.kslices.get(key)
-        return max((e for e, _ in ks["orders"].values() if e >= ref_ts), default=0) if ks else 0
+    def mute(self, key: tuple, until: int) -> None:
+        """mm / vault: anahtar emir yüzünden değil adres yüzünden susturuldu — ikinci emir sezgisi bu sürede bakmaz."""
+        self._ks(key)["mute"] = int(until)
 
     def _evict(self, ref_ts: int) -> None:
         self.prune(ref_ts)
@@ -483,15 +491,25 @@ def decide_gate(cfg, coin: str, order: dict, day_vol, vol_ts, now_ts: int) -> tu
     return (sg or g), det
 
 
-def pick_order(hist, coin: str, side: str, p: dict, now_ts: int) -> dict | None:
-    """Dilimin emri: aktif, bu coin + yön, başlangıcı dilimden önce (+5 sn pay), bitişi dilimden sonra."""
-    for o in twaplive.parse_twap_orders(hist, coin, side, p.get("px"), now_ts):
+def overlapping(orders: list, p: dict) -> list:
+    """Dilimle örtüşen emirler (en yeni önce): aktif, başlangıcı dilimden önce (+5 sn pay), bitişi dilimden sonra."""
+    out = []
+    for o in orders:
         if o.get("status") != "activated" or not o.get("started_ts"):
             continue
         t0, mins = int(o["started_ts"]), float(o.get("minutes") or 0)
         if t0 <= int(p["ts"]) + 5 and t0 + mins * 60 >= int(p["ts"]) - 60:
-            return o
-    return None
+            out.append(o)
+    return out
+
+
+def _live(orders: list) -> set:
+    return {int(o["started_ts"]) for o in orders if o.get("status") == "activated" and o.get("started_ts")}
+
+
+def pick_order(hist, coin: str, side: str, p: dict, now_ts: int) -> dict | None:
+    """Dilimin emri: örtüşenlerin en yenisi (bu coin + yön)."""
+    return next(iter(overlapping(twaplive.parse_twap_orders(hist, coin, side, p.get("px"), now_ts), p)), None)
 
 
 def priority(p: dict, vols: dict) -> float:
@@ -554,6 +572,7 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
     if ents.get(addr) in ("mm", "vault"):
         _st(p)["mm"] = _st(p).get("mm", 0) + 1
         _kn(p)[key] = now() + 3600
+        F.mute(key, now() + 3600)
         F.pending.pop(key, None)
         _note(p, "mm")
         return "mm"
@@ -572,7 +591,10 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
         p["queued"], p["not_before"] = 0, t + RETRY_FAIL
         _note(p, "lookup_fail")
         return "lookup_fail"
-    order = pick_order(hist, coin, side, p, t)
+    orders = twaplive.parse_twap_orders(hist, coin, side, p.get("px"), t)
+    over = overlapping(orders, p)
+    fresh = F.learn_orders(key, over, _live(orders))    # dilimle örtüşen TÜM emirler (ikinci emir sezgisi için)
+    order = over[0] if over else None                   # en yenisi değerlendirilir
     if order is None:
         p["tries"] += 1
         if p["tries"] < 2:
@@ -581,14 +603,13 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
         _st(p)["no_order"] = _st(p).get("no_order", 0) + 1
         if p.pop("relook", 0):
             F.relook_done(key, False)
-        _kn(p)[key] = max(t + NO_ORDER_IGNORE, int(_kn(p).get(key) or 0), F.active_until(key, t) + 120)
+        _kn(p)[key] = t + NO_ORDER_IGNORE
         F.pending.pop(key, None)
         _note(p, "no_order")
         return "no_order"
-    fresh, until = F.know_order(key, order)
     if p.pop("relook", 0):
         F.relook_done(key, fresh)
-    _kn(p)[key] = until + 120                           # aynı anahtarın bilinen tüm süren emirleri (en geç bitiş)
+    _kn(p)[key] = int(order["started_ts"]) + int(float(order.get("minutes") or 0) * 60) + 120
     F.pending.pop(key, None)
     try:                                                # Cumartesi hisse: geçen Cumartesi hacmi (haftada 1 istek)
         await asyncio.wait_for(twaplive.ensure_sat(cfg, client, [coin], t), twaplive.SAT_TIMEOUT)
@@ -621,7 +642,7 @@ async def load_open(t: int) -> int:
                 continue
             r["lookup_ts"], r["ended"] = 0, 0
             F.place(key, r)                             # aynı anahtarın iki emri: yenisi F.open, eskisi F.older
-            F.know_order(key, r.get("order") or {"started_ts": r["started"], "minutes": 0})
+            F.learn_orders(key, [r["order"]] if r.get("order") else [])
             F.known[key] = max(int(F.known.get(key) or 0), int(r["end_at"]) + 120)
             n += 1
         except (KeyError, TypeError, ValueError):
@@ -804,10 +825,13 @@ def _end_measure(r: dict) -> dict:
 
 
 def _release(key: tuple, r: dict, t: int) -> None:
-    """Emir bitti: bilinenlerden düşer; bastırma anahtarın SÜREN bilinen emri varsa onun bitişine iner, yoksa kalkar
-    (aynı adres + coin + yönün yeni emri yeniden sorulabilsin)."""
-    until = F.forget_order(key, int(r["started"]), t)
-    if until:
+    """Emir bitti: bastırma, anahtarın bildirilmiş ve SÜREN başka emri varsa onun bitişine iner, yoksa kalkar (aynı
+    adres + coin + yönün yeni emri yeniden sorulabilsin). Yalnız ana yolun izlediği emirler sayılır — izlenmeyen
+    (kapı dışı / 🔸) emrin iptali görülmez, susturmayı uzatamaz."""
+    F.forget_order(key, int(r["started"]))
+    until = max((int(x["end_at"]) for k, x, _o in F.records() if k == key and x is not r and not x["ended"]),
+                default=0)
+    if until >= t:
         F.known[key] = until + 120
     else:
         F.known.pop(key, None)
@@ -852,8 +876,10 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
         if hist is None:
             continue                                    # sorgu başarısız: sonraki tur
         twaplive.live_q_put(r["addr"], t, hist)         # /twap: eski yolun / kaydın aynı emir kopyası da iptali görsün
+        orders = twaplive.parse_twap_orders(hist, r["coin"], r["side"], r["px_last"], t)
+        F.learn_orders(key, [], _live(orders))          # iptal / bitmiş emirler ikinci emir sezgisinden düşer
         o = None
-        for x in twaplive.parse_twap_orders(hist, r["coin"], r["side"], r["px_last"], t):
+        for x in orders:
             if abs(int(x.get("started_ts") or 0) - int(r["started"])) <= 2:
                 o = x
                 break

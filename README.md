@@ -558,19 +558,23 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   $50K'yı beklemişti). Canlı ölçüm (7 dk): $250–1.000 arası yeni akış ~11, ön süzgeci geçen 1 — yük ihmal edilir.
 - **Eski yol gözlenen toplamı beklemez:** HL TWAP dizisi 10 dilim / 5 dk olunca, ortalama dilimi ≤ 24 sa'lik bir emirde
   ana / 🔸 / 🕐 kapısını geçebilecek büyüklükteyse (ilk dilim ön süzgeciyle aynı hesap) `twap_lookup_min_usd` ($50K)
-  beklenmeden sorulur (`/tani` "canlı twap" satırında "erken sorgu"). Küçük botlar (ortalama dilim kapıya yetmez) ve
-  ortalama dilimi `twap_fast_min_slice_usd`'nin altındaki diziler (Cumartesi hissede tabansız ön süzgeç dahil — yalnız 🕐
-  hafta sonu kuralı istisna) yine sorulmaz. Adres önbelleği dizinin ilk HL alt emrinden eskiyse kullanılmaz (aynı adresin
-  başka coin'deki erken sorgusu yeni emri "emir yok" göstermesin).
+  beklenmeden sorulur (`/tani` "canlı twap" satırında "erken sorgu": o tur HL'ye gerçekten sorulanlar). İlk dilim
+  tabanının altındaki dilimli diziler de (ilk dilim yolu onları hiç sormaz) böyle sorulur. Küçük botlar (ortalama dilim
+  kapıya yetmez) yine sorulmaz; Cumartesi hissede taban henüz okunmamışken ön süzgeç her dilimi geçirdiğinden ortalaması
+  `twap_fast_min_slice_usd`'nin altındaki dizi o zaman yalnız 🕐 hafta sonu kuralıyla sorulur. Adres önbelleği dizinin
+  ilk HL alt emrinden eskiyse kullanılmaz (aynı adresin başka coin'deki erken sorgusu yeni emri "emir yok" göstermesin).
 - **Aynı adres + coin + yönde ikinci emir:** okunan emrin anahtarı o emrin bitişi + 2 dk'ya kadar susturulur (aynı emrin
   dilimleri yeniden sorulmasın). 14.10 NEAR: 5 dk'lık emir sürerken aynı adres ikinci 5 dk'lık emri verdi; ikincisi
   275 sn geç geldi. Artık bilinen anahtarda dilim temposu bilinen emirleri aşarsa (tek HL TWAP 30 sn'de bir dilim: 65
   sn'de en çok 3; bilinen k emir → ≥ 3k+1 dilim) ya da dilimleri aynı saniyeye düşen ikinci emir 2 sn'lik kümeyi bilinen
   emirlerin olağan diliminin 1,6 katına iki kez üst üste büyütürse susturma kalkar ve emir yeniden sorulur (`/tani` "aynı
-  adreste yeni emir için yeniden sorgu"). Bulunan emir bilinenlere eklenir (iki emir örtüştükçe dakikada bir boşa sorgu
-  yok); yeniden sorgu yeni emir bulamazsa aralık 1 → 2 → 4 … 10 dk katlanır. Sınır: ikinci emrin dilimi bilinenin ~%60'ından
-  küçük ve aynı saniyeye düşüyorsa sezilmez (eski yol 10 dilim / 5 dk sonra görür). Aynı anahtarın iki emri de
-  bildirildiyse her birinin ⛔/🏁 notu ayrı yazılır (eskisinin kaydı yenisi bildirilince silinmez).
+  adreste yeni emir için yeniden sorgu"). Sorgunun gösterdiği, dilimle örtüşen tüm emirler bilinenlere eklenir (iki emir
+  örtüştükçe dakikada bir boşa sorgu yok), HL'nin iptal / bitmiş dediği emirler düşer; yeniden sorgu yeni emir bulamazsa
+  aralık 1 → 2 → 4 … 10 dk katlanır. mm / vault susturması (1 sa) sırasında bu sezgi bakmaz. Susturma süresi her zaman
+  bulunan emrin kendi bitişi (+2 dk); emir bitince bildirilmiş ve süren başka emir varsa onun bitişine iner, yoksa kalkar.
+  Sınır: ikinci emrin dilimi bilinenin ~%60'ından küçük ve aynı saniyeye düşüyorsa sezilmez (eski yol 10 dilim / 5 dk
+  sonra görür). Aynı anahtarın iki emri de bildirildiyse her birinin ⛔/🏁 notu ayrı yazılır (eskisinin kaydı yenisi
+  bildirilince silinmez).
 
 ### Süren emrin dolanı — HL kaydı 0 yazar
 

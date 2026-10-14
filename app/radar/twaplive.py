@@ -919,29 +919,26 @@ def order_key(key: str, order: dict | None) -> str | None:
 
 # ---------------- değerlendirme turu ----------------
 
-def _slice_could_pass(cfg, run: "Run", ts: int, out: dict | None = None) -> bool:
+def _slice_could_pass(cfg, run: "Run", ts: int) -> bool:
     """Gözlenen toplam `twap_lookup_min_usd`'nin ($50K) altındaki HL TWAP dizisi de 10 dilim / 5 dk sonra sorulsun mu:
     ortalama dilim, ≤ 24 sa'lik bir emirde ana / 🔸 / 🕐 kapılarından birini geçebilecek büyüklükte mi (ilk dilim
     yolunun ön süzgeciyle aynı hesap; G/Ç yok, hacim son turun önbelleğinden). Kullanıcı 14.10: TRX 6,5 sa $564K emir
-    (~$721 dilim) $50K'yı bekleyip 36 dk geç geldi."""
+    (~$721 dilim) $50K'yı bekleyip 36 dk geç geldi. İlk dilim tabanının altındaki dilim de (ilk dilim yolu onu hiç
+    sormaz) buradan sorulur — yalnız Cumartesi hissede taban henüz okunmamışken ön süzgeç her dilimi geçirir: o zaman
+    taban altı ortalama yalnız 🕐 hafta sonu kuralıyla."""
     if not run.nat_n or run.n <= 0:
         return False                                   # HL TWAP alt emri değil (🕐 gizli TWAP kendi tabanıyla)
     from . import twapfast, twaploose
     avg = run.total / run.n
-    vol = (VOL_CACHE.get("v") or {}).get(run.coin)
-    if avg >= float(getattr(cfg, "twap_fast_min_slice_usd", 250) or 0):
-        ok = twapfast.prefilter(cfg, run.coin, avg, vol, ts) == ""
-        if not ok and twaploose.enabled(cfg):
-            ok = twapfast.prefilter(twaploose.loose_cfg(cfg), run.coin, avg, vol, ts) == ""
-        if not ok and twaploose.BIG.enabled(cfg):
-            ok = twaploose.big_pre(cfg, avg, run.coin, ts)
-    else:
-        # ilk dilim yolu gibi: tabanın altındaki dilim (ön süzgeç Cumartesi hissede tabansız her dilimi geçirir) yalnız
-        # 🕐 hafta sonu kuralıyla
+    if sat_missing(cfg, run.coin, ts) and avg < float(getattr(cfg, "twap_fast_min_slice_usd", 250) or 0):
         fl = twaploose.big_slice_floor(cfg, run.coin, ts) if twaploose.BIG.enabled(cfg) else None
-        ok = fl is not None and avg >= fl and twaploose.big_pre(cfg, avg, run.coin, ts)
-    if ok and out is not None:
-        out["early"] = out.get("early", 0) + 1
+        return fl is not None and avg >= fl and twaploose.big_pre(cfg, avg, run.coin, ts)
+    vol = (VOL_CACHE.get("v") or {}).get(run.coin)
+    ok = twapfast.prefilter(cfg, run.coin, avg, vol, ts) == ""
+    if not ok and twaploose.enabled(cfg):
+        ok = twapfast.prefilter(twaploose.loose_cfg(cfg), run.coin, avg, vol, ts) == ""
+    if not ok and twaploose.BIG.enabled(cfg):
+        ok = twaploose.big_pre(cfg, avg, run.coin, ts)
     return ok
 
 
@@ -1009,9 +1006,17 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     out["keys"] = len(REG.runs)
     min_slices = int(getattr(cfg, "twap_alert_min_slices", 10) or 0)
     lookup_min = float(getattr(cfg, "twap_lookup_min_usd", 50_000) or 0)
+    early: set = set()                                 # $50K beklenmeden aday olanlar (/tani: gerçekten sorulanlar)
+
+    def _early(r) -> bool:
+        if _slice_could_pass(cfg, r, ts):
+            early.add(r.key)
+            return True
+        return False
+
     cands = [r for r in REG.runs.values()
              if r.alerted_ts or (r.n >= min_slices and r.last_ts - r.first_ts >= LOOKUP_MIN_DUR
-                                 and (r.total >= lookup_min or _slice_could_pass(cfg, r, ts, out)))]
+                                 and (r.total >= lookup_min or _early(r)))]
     out["cands"] = len(cands)
     sample = getattr(collector, "twap_sample", None) if collector is not None else None
     if sample:
@@ -1154,7 +1159,10 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 continue
             lf_before = out.get("lookup_fail", 0)
             lc_before = out.get("lookup_capped", 0)
+            lk_before = out.get("lookups", 0)
             order = await lookup_order(collector, run, ts, cfg, out)
+            if run.key in early and out.get("lookups", 0) > lk_before:
+                out["early"] = out.get("early", 0) + 1       # önbellekten değil: bu tur HL'ye soruldu
             if cool and order and native_overlap([order], run):
                 # Bu turun sorgusu (taze ya da önbellek) örtüşen HL emri gösteriyor: benimse, tekrar sayılmaz. Sorgu
                 # düştü / tavana takıldıysa BENİMSEME (alerted_ts kalıcıdır — eski emir bot dizisine yapışırdı):

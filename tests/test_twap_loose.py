@@ -643,7 +643,6 @@ def test_small_slices_not_delayed():
         # (b) eski yol
         cfg = _lcfg()
         cfg.twap_fast_enabled = False
-        cfg.twap_fast_min_slice_usd = Config().twap_fast_min_slice_usd   # varsayılan $250 (erken sorgu da bu tabanla)
         await _fresh_l(cfg)
         PXT = 0.3333
         await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"TRX": {"m": PXT, "oi": 1, "f": 0, "v": 1.9e6, "p": None},

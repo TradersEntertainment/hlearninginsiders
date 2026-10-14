@@ -179,10 +179,14 @@ def test_slow_path_cache_and_sat_floor():
             assert not tl._slice_could_pass(cfg, tiny, now), "ortalama $40 < taban"
             tl.observe("PUMP", "0x" + "d" * 40, "buy", PX, 400_000, 2_000, started + 1, 1, True)
             ok = tl.REG.runs[("PUMP", "0x" + "d" * 40, "buy")]
-            out = {}
-            assert tl._slice_could_pass(cfg, ok, now, out) and out["early"] == 1, "tabanın üstü sorulur"
+            assert tl._slice_could_pass(cfg, ok, now), "tabanın üstü sorulur"
         finally:
             tl.sat_missing = orig
+        # taban altı dilim (ilk dilim yolu hiç sormaz) Cumartesi dışında ön süzgeçle yine erken sorulur
+        tl.VOL_CACHE.update(ts=now, v=await tl.volumes(None))
+        tl.observe("PUMP", "0x" + "e" * 40, "buy", PX, 160_000, 800, started + 1, 1, True)
+        below = tl.REG.runs[("PUMP", "0x" + "e" * 40, "buy")]
+        assert cfg.twap_fast_min_slice_usd == 1000 and tl._slice_could_pass(cfg, below, now), "$800 < $1K taban: erken"
         # #5: /tani
         from app import diag
         await dbm.kv_set("twaplive_stats", {"ts": now, "keys": 3, "cands": 1, "early": 2})
@@ -191,6 +195,118 @@ def test_slow_path_cache_and_sat_floor():
     asyncio.run(run())
     print("✅ eski yol) önbellek dizinin ilk alt emrinden eskiyse yeniden sorulur; Cumartesi taban altı dilim sorulmaz;"
           " /tani erken sorgu")
+
+
+def test_untracked_orders_counted_and_released():
+    """İnceleme (b2271cf): (a) yalnız seçilen emir öğreniliyordu — anahtarda zaten iki emir varken (biri taban altı
+    dilimli) tempo hep 'yeni emir' sanıp aralığı katlıyor, gerçekten yeni emri 5 dk geciktiriyordu; (b) izlenmeyen
+    (kapı dışı) iptal edilmiş emrin planlanan bitişi, bildirilen emrin ⛔ notundan sonra susturmayı uzatıp yeni emri
+    ilk dilimde gizliyordu."""
+    async def run():
+        # (a)
+        cfg = _cfg()
+        cfg.twap_alert_cooldown = 0
+        await _fresh(cfg)
+        now = dbm.now()
+        s0 = now - 1347
+        sb, sc = s0 + 47, now - 100
+        col = Col(lambda: [twap_order(sc, minutes=5, plan=900_000), twap_order(sb, minutes=60, plan=2_000_000),
+                           twap_order(s0, minutes=60, plan=96_000)])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        a, b, c = _slice_sz(96_000, 60), _slice_sz(2_000_000, 60), _slice_sz(900_000, 5)
+        ev = [(s0 + 1 + 30 * i, a) for i in range(0, 45) if s0 + 1 + 30 * i <= now] \
+            + [(sb + 1 + 30 * j, b) for j in range(0, 45) if sb + 1 + 30 * j <= now] \
+            + [(sc + 1 + 30 * k, c) for k in range(0, 4)]
+        ev.sort()
+        first = await _play(cfg, notifier, col, [e for e in ev if e[0] < sc])
+        assert first is not None and len(bot.sent) == 2 and "plan <b>$2.0M</b>" in bot.sent[0][1], bot.sent
+        assert set(tf.F.kslices[KEY]["orders"]) == {s0, sb}, "dilimle örtüşen iki emir de bilinir"
+        assert tf.F.stats["relook"] == 0, tf.F.stats["relook"]
+        first = await _play(cfg, notifier, col, [e for e in ev if e[0] >= sc])
+        assert first is not None and first - sc <= 70 and "plan <b>$900K</b>" in bot.sent[2][1], (first, sc, bot.sent)
+        assert tf.F.stats["relook"] == 1
+        # (b)
+        await _fresh(cfg)
+        now = dbm.now()
+        sx, so = now - 600, now - 553
+        hist = {"h": [twap_order(so, minutes=10, plan=900_000),
+                      twap_order(sx, minutes=60, plan=600_000)]}
+        col = Col(lambda: hist["h"])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        x, o = _slice_sz(600_000, 60), _slice_sz(900_000, 10)
+        await _play(cfg, notifier, col, [(sx + 1, x)])
+        assert bot.sent == [] and tf.F.known[KEY] == sx + 3600 + 120, "X kapı dışı (yavaş), anahtar susturuldu"
+        ev = sorted([(sx + 1 + 30 * i, x) for i in range(1, 6)] + [(so + 1 + 30 * j, o) for j in range(0, 4)])
+        await _play(cfg, notifier, col, ev)
+        assert len(bot.sent) == 2 and "plan <b>$900K</b>" in bot.sent[0][1], bot.sent
+        assert tf.F.known[KEY] == so + 600 + 120, "susturma bulunan emrin KENDİ bitişi (kapı dışı X'inki değil)"
+        hist["h"] = [twap_order(so, minutes=10, plan=900_000, status="terminated"),
+                     twap_order(sx, minutes=60, plan=600_000, status="terminated")]
+        tf.F.open[KEY]["lookup_ts"] = 0
+        assert await tf.lifecycle(cfg, notifier, col, now - 300) == 1 and "TWAP iptal edildi" in bot.sent[-1][1]
+        assert KEY not in tf.F.known and not tf.F.kslices[KEY]["orders"], "iptaller bilinenlerden düştü, susturma yok"
+        sp = now - 200
+        hist["h"] = [twap_order(sp, minutes=60, plan=2_400_000)] + hist["h"]
+        n = len(bot.sent)
+        assert await _play(cfg, notifier, col, [(sp + 1, _slice_sz(2_400_000, 60))]) == sp + 1
+        assert len(bot.sent) == n + 2 and "plan <b>$2.4M</b>" in bot.sent[n][1], bot.sent[n:]
+    asyncio.run(run())
+    print("✅ inceleme) örtüşen tüm emirler bilinir (yeni emir gecikmez); izlenmeyen iptal edilmiş emir susturmayı uzatmaz")
+
+
+def test_loose_known_own_end_and_mm_no_relook():
+    from test_twap_loose import _fresh_l, _lcfg
+    from app.radar import twaploose as lo
+
+    async def run():
+        # 🔸 yalnız-gevşek çözüm twaploose.KNOWN'u bulduğu emrin KENDİ bitişine yazar (ana yolun uzun emrine değil)
+        cfg = _lcfg()
+        await _fresh_l(cfg)
+        now = dbm.now()
+        so, sx = now - 300, now - 60
+        tf.F.learn_orders(KEY, tl.parse_twap_orders([twap_order(so, minutes=60, plan=2_000_000)], "PUMP", "buy", PX,
+                                                     now))
+        col = Col(lambda: [twap_order(sx, minutes=5, plan=80_000), twap_order(so, minutes=60, plan=2_000_000)])
+        p = {"coin": "PUMP", "addr": A, "side": "buy", "t0": sx + 1, "ts": sx + 1, "usd": 2_000.0, "sz": 2_000 / PX,
+             "px": PX, "px0": PX, "n": 1, "max": 2_000.0, "tot": 2_000.0, "szt": 2_000 / PX, "queued": now, "tries": 0,
+             "not_before": 0, "loose": True}
+        tf.F.pending[KEY] = p
+        await tf.resolve(cfg, None, Notifier(cfg, Bot()), col, KEY, p, tf.F.vols)
+        assert lo.KNOWN[KEY] == sx + 300 + 120 and KEY not in tf.F.known, (lo.KNOWN.get(KEY), tf.F.known.get(KEY))
+        # mm / vault: iki örtüşen emir dakikada bir yeniden sorgu doğurmaz (susturma adres yüzünden)
+        cfg = _cfg()
+        await _fresh(cfg)
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO addresses(address, first_seen, entity) VALUES(?,?,?)", (A, now - 9000, "vault"))
+            await c.commit()
+        s0 = now - 2400
+        col = Col(lambda: [twap_order(s0 + 15, minutes=60, plan=900_000), twap_order(s0, minutes=60, plan=900_000)])
+        bot = Bot()
+        x = _slice_sz(900_000, 60)
+        ev = sorted([(s0 + 1 + 30 * i, x) for i in range(0, 80)] + [(s0 + 16 + 30 * i, x) for i in range(0, 80)])
+        await _play(cfg, Notifier(cfg, bot), col, ev)
+        assert tf.F.stats["mm"] == 1 and tf.F.stats["relook"] == 0 and bot.sent == [], tf.F.stats
+    asyncio.run(run())
+    print("✅ inceleme) 🔸 susturma kendi emrinin bitişi; mm / vault anahtarında yeniden sorgu yok")
+
+
+def test_early_counter_counts_real_lookups():
+    async def run():
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        started = now - 400
+        tl.VOL_CACHE.update(ts=now, v=await tl.volumes(None))
+        col = Col(lambda: [twap_order(started, minutes=60, plan=600_000)])
+        for i in range(13):
+            tl.observe("PUMP", A, "buy", PX, 160_000, 800, started + 2 + 30 * i, 1, True)
+        outs = [await tl.evaluate(cfg, Notifier(cfg, Bot()), None, col) for _ in range(3)]
+        assert [o.get("early", 0) for o in outs] == [1, 0, 0] and col.calls == [A], ([o.get("early") for o in outs],
+                                                                                  col.calls)
+    asyncio.run(run())
+    print("✅ /tani) erken sorgu sayacı yalnız HL'ye gerçekten sorulanları sayar (önbellekten dönen tur sayılmaz)")
 
 
 if __name__ == "__main__":
