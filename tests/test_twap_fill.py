@@ -91,10 +91,21 @@ def test_partial_mixed_and_finished():
     tl.REG.clear()
     slices(started + 2, 214, native=False)
     assert tl.with_seen(o, "HYPE", A, "sell", now)["fill_seen"] is None
+    # aynı coin + yönde aynı anda iki süren emir (son HL cevabında): dilimler ayrışmaz → yazılmaz
+    tl.REG.clear()
+    slices(started + 2, 214)
+    two = [hl_order(started), {**hl_order(now - 600, sz=5000.0, minutes=60), "twapId": 2314999}]
+    tl._LIVE_Q.clear()
+    tl.live_q_put(A, now, two)
+    assert tl.with_seen(o, "HYPE", A, "sell", now)["fill_seen"] is None
+    tl._LIVE_Q.clear()
+    tl.live_q_put(A, now, [hl_order(started)])
+    assert tl.with_seen(o, "HYPE", A, "sell", now)["fill_full"]
+    tl._LIVE_Q.clear()
     # bitmiş kayıt HL'nin kendi dolanını yazar → aynen
     fin = tl.parse_twap_orders([hl_order(started, "finished", ex_sz=20000.0)], "HYPE", "sell", PX, now)[0]
     assert tl.with_seen(fin, "HYPE", A, "sell", now) is fin and fmt.fill_amount(fin)[2] == "hl"
-    print("✅ kenarlar) baştan görülmediyse alt sınır (≥); önceki emirle karışık / susmuş / elle işlem → yazılmaz;"
+    print("✅ kenarlar) baştan görülmediyse alt sınır (≥); önceki emirle karışık / susmuş / elle işlem / eşzamanlı iki emir → yazılmaz;"
           " bitmiş kayıt HL'nin")
 
 

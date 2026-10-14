@@ -563,7 +563,7 @@ HL'nin süren TWAP kaydı (`twapHistory` / `userTwapHistory`, durum `activated`)
 `/twap` listesinde "doldu %0" görünüyordu, HL dilim dolumlarına göre %71'i dolmuştu). Süren emrin dolanı artık radarın
 **kendi gördüğü HL TWAP alt emri dolumlarından** ölçülür (sıfır hash, taker = emir sahibi; adet / emrin adedi):
 "doldu ≈ %71" dilimler emrin başından beri görülüyorsa, "≥" alt sınır (radar emrin başını görmedi — yeniden başlatma),
-hiç yazılmaz: coin dinlenmiyor / dilimler sustu / önceki emirle karışık (asla "%0"). Bitmiş / iptal kaydı HL'nin kendi
+hiç yazılmaz: coin dinlenmiyor / dilimler sustu / önceki emirle karışık / aynı coin + yönde aynı anda iki emir (asla "%0"). Bitmiş / iptal kaydı HL'nin kendi
 rakamıyla. 👁 takibin yarılanma notu da bu ölçüyle çalışır (eskiden hiç gelmiyordu). **Kapı değişmedi:** "kalan"
 kuralı (`twap_alert_min_left_usd`) HL kaydıyla karar verir — süren emirde kalan = plan, yani bu kural fiilen hiç
 elemiyor (bugünkü davranış korunur).

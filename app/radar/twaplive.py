@@ -322,7 +322,22 @@ def seen_fill(coin: str, addr: str, side: str, started_ts, now_ts: int | None = 
     f, s = int(r.nat_first_ts), int(started_ts)
     if f < s - SEEN_SLACK:
         return None
+    if _concurrent(coin, r.address, side, now_ts or r.nat_ts) > 1:
+        return None                                     # aynı coin + yönde aynı anda iki emir: dilimler ayrışmaz
     return float(r.nat_usd), f <= s + SEEN_SLACK, float(r.nat_sz)
+
+
+def _concurrent(coin: str, addr: str, side: str, ts: int) -> int:
+    """Adresin son HL emir geçmişinde (önbellek, sorgu yok) bu coin + yönde şu an süren emir sayısı."""
+    h = _newest_hist(addr)
+    if not h:
+        return 0
+    n = 0
+    for o in parse_twap_orders(h[1], coin, side, None, int(ts)):
+        t0, mins = int(o.get("started_ts") or 0), float(o.get("minutes") or 0)
+        if o.get("status") == "activated" and t0 and t0 <= int(ts) <= t0 + mins * 60 + 60:
+            n += 1
+    return n
 
 
 def with_seen(o: dict | None, coin: str, addr: str, side: str, now_ts: int | None = None) -> dict | None:
