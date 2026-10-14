@@ -962,7 +962,9 @@ class Config:
         self.twap_big_chat_id = (os.getenv("TWAP_BIG_CHAT_ID", "") or "").strip()
         self.twap_big_min_usd = float(os.getenv("TWAP_BIG_MIN_USD", "1000000"))
         self.twap_big_max_min = float(os.getenv("TWAP_BIG_MAX_MIN", "180"))
-        self.twap_big_exclude = (os.getenv("TWAP_BIG_EXCLUDE", "BTC,ETH") or "")   # kullanıcı 14.10: "btc eth hariç"
+        # kullanıcı 14.10: "btc eth kaldırmak yerine 20-30M diyelim" → bu coinlerde plan tabanı ayrı (varsayılan $20M)
+        self.twap_big_majors = (os.getenv("TWAP_BIG_MAJORS", "BTC,ETH") or "")
+        self.twap_big_major_min_usd = float(os.getenv("TWAP_BIG_MAJOR_MIN_USD", "20000000"))
         self.twap_live_window_min = int(os.getenv("TWAP_LIVE_WINDOW_MIN", "240"))
         self.twap_live_eval_sec = int(os.getenv("TWAP_LIVE_EVAL_SEC", "60"))
         self.notify_pattern = True

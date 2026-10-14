@@ -783,22 +783,26 @@ def recent_line(d: dict) -> str:
 
 BIG = Side("big", "twap_big", "twap_big_chat_id", "TWAP_BIG_CHAT_ID", "twapbig_open", "twapbig_stats")
 BIG_REASON = {"ok": "geçer", "long": "süre sınırın üstünde", "small": "plan sınırın altında",
-              "order_done": "emir bitmiş", "no_order": "emir yok", "off": "kapalı", "excluded": "hariç coin (BTC/ETH)"}
+              "order_done": "emir bitmiş", "no_order": "emir yok", "off": "kapalı"}
 
 
 def big_min_usd(cfg) -> float:
     return float(getattr(cfg, "twap_big_min_usd", 1_000_000) or 0)
 
 
-def big_max_min(cfg) -> float:
-    return float(getattr(cfg, "twap_big_max_min", 180) or 0)
+def big_major_min_usd(cfg) -> float:
+    return float(getattr(cfg, "twap_big_major_min_usd", 20_000_000) or 0)
 
 
-def big_excluded(cfg, coin: str) -> bool:
-    """Hariç coinler (TWAP_BIG_EXCLUDE, varsayılan BTC,ETH — kullanıcı 14.10 "btc eth hariç"): ana dex, HIP-3 dex'teki
-    aynı sembol ve spot sarmalı (UBTC/USDC, UETH/USDC) dahil."""
-    raw = getattr(cfg, "twap_big_exclude", "BTC,ETH")
-    ex = {x.strip().upper() for x in (raw.split(",") if isinstance(raw, str) else (raw or [])) if x and x.strip()}
+def big_majors(cfg) -> set[str]:
+    raw = getattr(cfg, "twap_big_majors", "BTC,ETH")
+    return {x.strip().upper() for x in (raw.split(",") if isinstance(raw, str) else (raw or [])) if x and x.strip()}
+
+
+def big_is_major(cfg, coin: str) -> bool:
+    """Ayrı (yüksek) tabanlı coin mi — TWAP_BIG_MAJORS (varsayılan BTC,ETH): ana dex, HIP-3'teki aynı sembol ve spot
+    sarmalı (UBTC/USDC, UETH/USDC) dahil."""
+    ex = big_majors(cfg)
     if not ex or not coin:
         return False
     from .. import assets
@@ -808,21 +812,33 @@ def big_excluded(cfg, coin: str) -> bool:
     return base in ex
 
 
+def big_min_for(cfg, coin: str) -> float:
+    """Plan tabanı: BTC/ETH (kullanıcı 14.10: "btc eth kaldırmak yerine 20-30M diyelim") TWAP_BIG_MAJOR_MIN_USD ($20M);
+    diğerleri TWAP_BIG_MIN_USD ($1M). Ayrı taban 0 ise genel taban."""
+    if big_is_major(cfg, coin):
+        m = big_major_min_usd(cfg)
+        if m > 0:
+            return max(m, big_min_usd(cfg))
+    return big_min_usd(cfg)
+
+
+def big_max_min(cfg) -> float:
+    return float(getattr(cfg, "twap_big_max_min", 180) or 0)
+
+
 def big_pre(cfg, slice_usd: float, coin: str = "") -> bool:
     """İlk dilim ön süzgeci (G/Ç yok): bu dilim ≤ sınır dk'lık ≥ $1M bir emirden olabilir mi? Dilim ≈ plan / (2m+1)
-    (randomize ±%20 → 0.8 payı) → plan ≤ dilim · (2m+1) / 0.8. Hariç coin (BTC/ETH) için sorgu yok."""
-    mx, mn = big_max_min(cfg), big_min_usd(cfg)
-    return mx > 0 and not big_excluded(cfg, coin) and float(slice_usd or 0) * (2 * mx + 1) / 0.8 >= mn
+    (randomize ±%20 → 0.8 payı) → plan ≤ dilim · (2m+1) / 0.8. BTC/ETH'de taban $20M → dilim ≳ $44K."""
+    mx, mn = big_max_min(cfg), big_min_for(cfg, coin)
+    return mx > 0 and float(slice_usd or 0) * (2 * mx + 1) / 0.8 >= mn
 
 
 def big_gate(cfg, order: dict | None, now_ts: int, coin: str = "") -> str:
-    """'ok' geçer; diğerleri neden: no_order · order_done · long (süre > sınır ya da bilinmiyor) · small · excluded
-    (BTC/ETH) · off."""
+    """'ok' geçer; diğerleri neden: no_order · order_done · long (süre > sınır ya da bilinmiyor) · small (plan < taban;
+    BTC/ETH'de ayrı taban) · off."""
     mx = big_max_min(cfg)
     if mx <= 0:
         return "off"
-    if big_excluded(cfg, coin):
-        return "excluded"
     if not order:
         return "no_order"
     if order.get("status") != "activated":
@@ -833,16 +849,17 @@ def big_gate(cfg, order: dict | None, now_ts: int, coin: str = "") -> str:
     t0 = int(order.get("started_ts") or 0)
     if t0 and int(now_ts) > t0 + mins * 60:
         return "order_done"
-    if float(order.get("planned_usd") or 0) < big_min_usd(cfg):
+    if float(order.get("planned_usd") or 0) < big_min_for(cfg, coin):
         return "small"
     return "ok"
 
 
-def big_head(cfg) -> str:
+def big_head(cfg, coin: str = "") -> str:
     from ..telegram.format import usd
     mx = big_max_min(cfg)
     dur = f"{mx / 60:g} sa" if mx >= 60 and mx % 60 == 0 else f"{mx:g} dk"
-    return f"🕐 <b>Büyük TWAP</b> · plan ≥ {usd(big_min_usd(cfg))} · süre ≤ {dur}"
+    tag = f" ({'/'.join(sorted(big_majors(cfg)))})" if coin and big_is_major(cfg, coin) else ""
+    return f"🕐 <b>Büyük TWAP</b> · plan ≥ {usd(big_min_for(cfg, coin))}{tag} · süre ≤ {dur}"
 
 
 def big_note(coin: str, addr: str, side: str, reason: str, order: dict | None, path: str) -> None:
@@ -862,7 +879,7 @@ async def _big_send(cfg, notifier, okey: str, coin: str, text_fn) -> str:
         BIG.sent.add(dkey)
         return "dup"
     text = await text_fn()
-    ok = await BIG.send(cfg, notifier, big_head(cfg) + "\n" + text, dkey, coin)
+    ok = await BIG.send(cfg, notifier, big_head(cfg, coin) + "\n" + text, dkey, coin)
     if ok is None:
         return "dup"
     if not ok:
@@ -970,9 +987,11 @@ async def big_diag_line(cfg) -> str:
     if not BIG.chat_id(cfg):
         return "🕐 büyük twap kanalı: tanımsız (TWAP_BIG_CHAT_ID boş)"
     mx = big_max_min(cfg)
-    ex = str(getattr(cfg, "twap_big_exclude", "BTC,ETH") or "").replace(" ", "")
-    parts = [f"plan ≥ {usd(big_min_usd(cfg))} · süre ≤ {mx:g} dk · hacimden bağımsız"
-             + (f" · hariç: {ex.replace(',', '/')}" if ex else "")]
+    maj = "/".join(sorted(big_majors(cfg)))
+    parts = [f"plan ≥ {usd(big_min_usd(cfg))}"
+             + (f" ({maj} ≥ {usd(max(big_major_min_usd(cfg), big_min_usd(cfg)))})" if maj and big_major_min_usd(cfg) > 0
+                else "")
+             + f" · süre ≤ {mx:g} dk · hacimden bağımsız"]
     st = await kv_get(BIG.stats_kv) or {}
     if st.get("ts"):
         parts.append(f"✓{st.get('alerts', 0)} alarm · {st.get('ends', 0)} bitiş notu · {st.get('open', 0)} açık emir")

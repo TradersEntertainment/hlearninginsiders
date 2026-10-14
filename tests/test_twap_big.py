@@ -5,7 +5,7 @@ max 2-3 saat içinde $1M'dan yüksek tüm TWAP'ları göndereceğimiz".
 
 Pinlenenler:
   • kural: süren emir, 0 < süre ≤ TWAP_BIG_MAX_MIN (180), plan ≥ TWAP_BIG_MIN_USD ($1M); hacim / ana kapı fark etmez
-  • BTC ve ETH HARİÇ (kullanıcı 14.10: "btc eth hariç"; HIP-3 aynı sembol + spot UBTC/UETH; dilimleri sorulmaz bile)
+  • BTC ve ETH'de taban $20M (kullanıcı 14.10: "btc eth kaldırmak yerine 20-30M"; HIP-3 aynı sembol + spot UBTC/UETH)
   • ilk dilim: ana ön süzgeç (SOL: dilim ≥ $27.8K) elese de dilim ≤ 3 sa'lik ≥ $1M emirden olabiliyorsa sorulur
     (yalnız-yan-kanal katmanı: ana yolun F.known / sayaç / 🧪 kayıtları değişmez); ana kanala giden emir de buraya gelir
   • eski yol: ana kararlardan sonra, aynı emir bir kez; ⛔ iptal notu buraya, bir kez; yeniden başlatmada kayıt geri gelir
@@ -208,34 +208,51 @@ def test_disabled_and_with_loose():
     print("✅ tanımsız) bugünkü gibi; 🔸 ile birlikte: her kanala bir kez; 🕐 kanal botun kendi sohbeti")
 
 
-def test_btc_eth_excluded():
-    """Kullanıcı 14.10: "btc eth hariç" — ana dex, HIP-3'teki aynı sembol, spot sarmalı (UBTC/UETH); dilimleri bu kanal
-    için sorulmaz (HL yükü de düşer). TWAP_BIG_EXCLUDE boşsa hepsi gelir."""
+def test_btc_eth_major_floor():
+    """Kullanıcı 14.10: "btc eth kaldırmak yerine 20-30M diyelim" — BTC / ETH (HIP-3 aynı sembol, spot UBTC/UETH) için
+    plan tabanı $20M; ön süzgeç de bu tabanla (BTC'de dilim ≳ $44K değilse sorulmaz). Ayarla değişir."""
     async def run():
         from app import assets
         cfg = _bcfg()
         await _fresh_b(cfg, btc=True)
         assets.SPOT_NAMES.update({"@142": "UBTC/USDC", "@151": "UETH/USDC", "@107": "PURR/USDC"})
         for c in ("BTC", "ETH", "xyz:BTC", "@142", "@151"):
-            assert lo.big_excluded(cfg, c), c
+            assert lo.big_is_major(cfg, c) and lo.big_min_for(cfg, c) == 20_000_000, c
         for c in ("SOL", "HYPE", "@107", "xyz:TSLA"):
-            assert not lo.big_excluded(cfg, c), c
+            assert not lo.big_is_major(cfg, c) and lo.big_min_for(cfg, c) == 1_000_000, c
         now = dbm.now()
-        o = {"status": "activated", "minutes": 60, "planned_usd": 50e6, "started_ts": now - 60}
-        assert lo.big_gate(cfg, o, now, "BTC") == "excluded" and lo.big_gate(cfg, o, now, "SOL") == "ok"
-        assert not lo.big_pre(cfg, 200_000, "ETH") and lo.big_pre(cfg, 200_000, "SOL")
+
+        def o(plan):
+            return {"status": "activated", "minutes": 120, "planned_usd": plan, "started_ts": now - 60}
+        assert lo.big_gate(cfg, o(19e6), now, "BTC") == "small" and lo.big_gate(cfg, o(20e6), now, "BTC") == "ok"
+        assert lo.big_gate(cfg, o(19e6), now, "SOL") == "ok"
+        assert lo.big_head(cfg, "BTC") == "🕐 <b>Büyük TWAP</b> · plan ≥ $20.0M (BTC/ETH) · süre ≤ 3 sa"
+        assert lo.big_head(cfg, "SOL") == "🕐 <b>Büyük TWAP</b> · plan ≥ $1.0M · süre ≤ 3 sa"
+        assert not lo.big_pre(cfg, 40_000, "BTC") and lo.big_pre(cfg, 45_000, "BTC") and lo.big_pre(cfg, 2_300, "SOL")
         tf.observe("BTC", A, "buy", 60_000, 20_700 / 60_000, 20_700, now, 1000)
-        assert not tf.F.pending[("BTC", A, "buy")]["queued"], "BTC dilimi bu kanal için sorulmaz"
-        cfg.twap_big_exclude = ""
-        assert not lo.big_excluded(cfg, "BTC") and lo.big_gate(cfg, o, now, "BTC") == "ok"
-        assert "hariç" not in await lo.big_diag_line(cfg)
-        cfg.twap_big_exclude = "BTC,ETH"
+        assert not tf.F.pending[("BTC", A, "buy")]["queued"], "BTC'de $20.7K dilim bu kanal için sorulmaz"
+        # BTC 2 sa $25M emir (24s $2B'nin %1,25'i, ana kapı %20 ister): 🕐 kanala
+        t0 = now - 60
+        col = Col(lambda: [{**twap_order(t0, minutes=120, plan=25_000_000, coin="BTC"),
+                            "state": {**twap_order(t0, minutes=120, plan=25_000_000, coin="BTC")["state"],
+                                      "sz": str(25_000_000 / 60_000), "executedSz": "0.0", "executedNtl": "0.0"}}])
+        bot = Bot()
+        tf.F.pending.clear()
+        tf.observe("BTC", A, "buy", 60_000, 104_000 / 60_000, 104_000, t0 + 2, 1000)
+        assert tf.F.pending[("BTC", A, "buy")]["loose"]
+        await _drain(cfg, Notifier(cfg, bot), col)
+        assert [c for c, _ in bot.sent] == [BIGC] and "plan ≥ $20.0M (BTC/ETH)" in bot.sent[0][1], bot.sent
+        cfg.twap_big_major_min_usd = 30_000_000                       # "30M" denirse
+        assert lo.big_gate(cfg, o(25e6), now, "BTC") == "small"
+        cfg.twap_big_major_min_usd = 0                                 # ayrı taban kapalı → genel $1M
+        assert lo.big_min_for(cfg, "BTC") == 1_000_000
+        cfg.twap_big_major_min_usd = 20_000_000
         line = await lo.big_diag_line(cfg)
-        assert "hariç: BTC/ETH" in line, line
+        assert "plan ≥ $1.0M (BTC/ETH ≥ $20.0M)" in line, line
         for k in ("@142", "@151", "@107"):
             assets.SPOT_NAMES.pop(k, None)
     asyncio.run(run())
-    print("✅ hariç) BTC / ETH (HIP-3 aynı sembol, spot UBTC/UETH) 🕐 kanala gelmez, dilimleri sorulmaz; ayar boşsa gelir")
+    print("✅ BTC/ETH) taban $20M (HIP-3 aynı sembol, spot UBTC/UETH); ön süzgeç de; ayarla 30M / kapalı")
 
 
 if __name__ == "__main__":
