@@ -105,23 +105,26 @@ def test_relook_backoff_when_nothing_new():
         cfg = _cfg()
         await _fresh(cfg)
         now = dbm.now()
-        s0 = now - 700
-        col = Col(lambda: [twap_order(s0, minutes=30, plan=600_000)])   # HL geçmişinde yalnız bilinen emir
+        s0 = now - 1300
+        col = Col(lambda: [twap_order(s0, minutes=60, plan=600_000)])   # HL geçmişinde yalnız bilinen emir
         bot = Bot()
         notifier = Notifier(cfg, bot)
-        x = _slice_sz(600_000, 30)
+        x = _slice_sz(600_000, 60)
         await _play(cfg, notifier, col, [(s0 + 1, x)])
         assert len(col.calls) == 1 and KEY in tf.F.known, "emir okundu (kapı dışı: dakika hızı düşük), anahtar susturuldu"
-        # 10 dk boyunca 15 sn'de bir dilim (tempo iki emir gibi) ama sorgu hep bilinen emri buluyor
-        ev = [(s0 + 1 + 15 * i, x) for i in range(2, 42)]
+        # (a) evre: 15 sn'de bir dilim (iki evre) ama sorgu bilinen emri buluyor → tek yeniden sorgu, sonra iki evre bilinir
+        await _play(cfg, notifier, col, [(s0 + 1 + 15 * i, x) for i in range(2, 30)])
+        assert tf.F.stats["relook"] == 1 and len(col.calls) == 2, (tf.F.stats["relook"], col.calls)
+        # (b) boyut: tek evrede ikişer büyük dilim (HL telafi dilimi gibi) — yeni emir yok → aralık katlanır
+        ev, t0 = [], s0 + 1 + 15 * 30
+        for i in range(40):
+            ev.append((t0 + 30 * i, x * (2.5 if i % 4 in (2, 3) else 1.0)))
         await _play(cfg, notifier, col, ev)
-        # aralık 60 → 120 → 240 → 480: 10 dk'da en çok 3 yeniden sorgu (eskiden ~10)
-        assert 1 <= tf.F.stats["relook"] <= 3 and len(col.calls) == 1 + tf.F.stats["relook"], \
-            (tf.F.stats["relook"], col.calls)
-        assert tf.F.kslices[KEY]["gap"] > tf.RELOOK_MIN_GAP
+        n = tf.F.stats["relook"] - 1
+        assert 1 <= n <= 4 and tf.F.kslices[KEY]["gap"] > tf.RELOOK_MIN_GAP, (n, tf.F.kslices[KEY]["gap"])
         assert bot.sent == [], "bilinen emir yeniden değerlendirilir ama yazılmaz"
     asyncio.run(run())
-    print("✅ yeniden sorgu) yeni emir bulamazsa aralık katlanır")
+    print("✅ yeniden sorgu) yeni evre bir kez sorulur, sonra bilinir; boyut sezgisi yeni emir bulamazsa aralık katlanır")
 
 
 def test_coalesced_second_order_by_slice_size():
@@ -198,10 +201,9 @@ def test_slow_path_cache_and_sat_floor():
 
 
 def test_untracked_orders_counted_and_released():
-    """İnceleme (b2271cf): (a) yalnız seçilen emir öğreniliyordu — anahtarda zaten iki emir varken (biri taban altı
-    dilimli) tempo hep 'yeni emir' sanıp aralığı katlıyor, gerçekten yeni emri 5 dk geciktiriyordu; (b) izlenmeyen
-    (kapı dışı) iptal edilmiş emrin planlanan bitişi, bildirilen emrin ⛔ notundan sonra susturmayı uzatıp yeni emri
-    ilk dilimde gizliyordu."""
+    """İnceleme (b2271cf): (a) anahtarda zaten iki emir varken (biri taban altı dilimli) yeni emir 5 dk gecikiyordu —
+    artık A'nın evresi bir kez sorulup bilinir, aynı saniyeye düşen C dilim boyundan sezilir; (b) izlenmeyen (kapı dışı)
+    iptal edilmiş emrin planlanan bitişi, bildirilen emrin ⛔ notundan sonra susturmayı uzatıp yeni emri gizliyordu."""
     async def run():
         # (a)
         cfg = _cfg()
@@ -221,11 +223,10 @@ def test_untracked_orders_counted_and_released():
         ev.sort()
         first = await _play(cfg, notifier, col, [e for e in ev if e[0] < sc])
         assert first is not None and len(bot.sent) == 2 and "plan <b>$2.0M</b>" in bot.sent[0][1], bot.sent
-        assert set(tf.F.kslices[KEY]["orders"]) == {s0, sb}, "dilimle örtüşen iki emir de bilinir"
-        assert tf.F.stats["relook"] == 0, tf.F.stats["relook"]
+        assert tf.F.stats["relook"] == 1 and len(col.calls) == 2, "A'nın evresi bir kez sorulur, sonra bilinir"
         first = await _play(cfg, notifier, col, [e for e in ev if e[0] >= sc])
         assert first is not None and first - sc <= 70 and "plan <b>$900K</b>" in bot.sent[2][1], (first, sc, bot.sent)
-        assert tf.F.stats["relook"] == 1
+        assert tf.F.stats["relook"] == 2
         # (b)
         await _fresh(cfg)
         now = dbm.now()
@@ -246,7 +247,7 @@ def test_untracked_orders_counted_and_released():
                      twap_order(sx, minutes=60, plan=600_000, status="terminated")]
         tf.F.open[KEY]["lookup_ts"] = 0
         assert await tf.lifecycle(cfg, notifier, col, now - 300) == 1 and "TWAP iptal edildi" in bot.sent[-1][1]
-        assert KEY not in tf.F.known and not tf.F.kslices[KEY]["orders"], "iptaller bilinenlerden düştü, susturma yok"
+        assert KEY not in tf.F.known, "izlenen tek emir bitti: susturma yok (kapı dışı X'in planı uzatmaz)"
         sp = now - 200
         hist["h"] = [twap_order(sp, minutes=60, plan=2_400_000)] + hist["h"]
         n = len(bot.sent)
@@ -266,8 +267,6 @@ def test_loose_known_own_end_and_mm_no_relook():
         await _fresh_l(cfg)
         now = dbm.now()
         so, sx = now - 300, now - 60
-        tf.F.learn_orders(KEY, tl.parse_twap_orders([twap_order(so, minutes=60, plan=2_000_000)], "PUMP", "buy", PX,
-                                                     now))
         col = Col(lambda: [twap_order(sx, minutes=5, plan=80_000), twap_order(so, minutes=60, plan=2_000_000)])
         p = {"coin": "PUMP", "addr": A, "side": "buy", "t0": sx + 1, "ts": sx + 1, "usd": 2_000.0, "sz": 2_000 / PX,
              "px": PX, "px0": PX, "n": 1, "max": 2_000.0, "tot": 2_000.0, "szt": 2_000 / PX, "queued": now, "tries": 0,
@@ -307,6 +306,153 @@ def test_early_counter_counts_real_lookups():
                                                                                   col.calls)
     asyncio.run(run())
     print("✅ /tani) erken sorgu sayacı yalnız HL'ye gerçekten sorulanları sayar (önbellekten dönen tur sayılmaz)")
+
+
+def _hist(spec, st):
+    """spec: [(başlangıç, dk, plan)], st: {başlangıç: durum} → HL geçmişi (en yeni önce)."""
+    return [twap_order(a, minutes=m, plan=pl, status=st.get(a, "activated")) for a, m, pl in sorted(spec, reverse=True)]
+
+
+def _slices(start, mins, plan, until, stop=None):
+    return [(start + 1 + 30 * i, _slice_sz(plan, mins)) for i in range(0, 2 * int(mins) + 1)
+            if start + 1 + 30 * i <= until and (stop is None or start + 1 + 30 * i <= stop)]
+
+
+def test_phase_detection_review_cases():
+    """Son inceleme (d4c8028..f52109a): emir SAYIMI yerine gözlenen dilim EVRESİ (an mod 30).
+    (a) izlenmeyen emir iptal → evresi dilim kesilince düşer; C hangi anda başlarsa başlasın sorulur
+    (b) aynı saniyede başlamış iki bilinen emir (tek evre) yeni evredeki C'yi gizlemez
+    (c) aynı saniyede iki emir: olağan dilim ikisinin toplamı — boşa yeniden sorgu yok
+    (d) bilinen emir bitip yerine hemen yenisi (roll-over): bitişte boşa sorgu yok, yenisi ≤ ~1 dk"""
+    async def scenario(spec, cancel, c_spec, until_off=None):
+        cfg = _cfg()
+        cfg.twap_alert_cooldown = 0
+        await _fresh(cfg)
+        now = dbm.now()
+        st = {}
+        allspec = spec + [c_spec]
+        col = Col(lambda: _hist([x for x in allspec if x[0] <= dbm.now() + 99999 and (x is not c_spec or C["on"])], st))
+        C = {"on": False}
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        ev = []
+        for a, m, pl in spec:
+            ev += _slices(a, m, pl, now, cancel.get(a))
+        ev.sort()
+        cs = c_spec[0]
+        await _play(cfg, notifier, col, [e for e in ev if e[0] < cs])
+        for a in cancel:
+            st[a] = "terminated"
+        C["on"] = True
+        ev2 = sorted([e for e in ev if e[0] >= cs] + _slices(cs, c_spec[1], c_spec[2], now))
+        first = await _play(cfg, notifier, col, ev2)
+        return first, bot, col
+
+    async def run():
+        # (a) A, B kapı dışı 90 dk $900K (47 sn arayla); A 300. sn'de iptal; C (10 dk $300K, ⚡) iptalden 5..50 sn sonra
+        for off in range(5, 55, 5):
+            now = dbm.now()
+            sa = now - 900
+            first, bot, col = await scenario([(sa, 90, 900_000), (sa + 47, 90, 900_000)], {sa: sa + 300},
+                                             (sa + 300 + off, 10, 300_000))
+            cs = sa + 300 + off
+            assert first is not None and first - cs <= 70 and "plan <b>$300K</b>" in bot.sent[0][1], (off, first, cs)
+        # (b) A, B aynı evrede (1 sn arayla), C başka evrede
+        now = dbm.now()
+        sa = now - 900
+        first, bot, col = await scenario([(sa, 90, 900_000), (sa + 1, 90, 900_000)], {}, (sa + 314, 10, 300_000))
+        assert first is not None and first - (sa + 314) <= 70, first
+        # (c) A, B aynı saniyede: 5 dk boyunca boşa yeniden sorgu yok; C yine ≤ ~1 dk
+        now = dbm.now()
+        sa = now - 900
+        first, bot, col = await scenario([(sa, 90, 900_000), (sa + 0, 90, 899_000)], {}, (sa + 614, 10, 300_000))
+        assert first is not None and first - (sa + 614) <= 70, first
+        assert tf.F.stats["relook"] <= 1 and len(col.calls) <= 2, (tf.F.stats["relook"], col.calls)
+        # (d) A (10 dk) + B (90 dk), ikisi kapı dışı; A bitince 12 sn sonra A2 (5 dk $900K)
+        now = dbm.now()
+        sa = now - 900
+        first, bot, col = await scenario([(sa, 10, 200_000), (sa + 47, 90, 900_000)], {},
+                                         (sa + 600 + 12, 5, 900_000))
+        assert first is not None and first - (sa + 612) <= 70, first
+        assert tf.F.stats["relook"] == 2 and len(col.calls) == 3, "B'nin evresi + A2 (A'nın bitişinde sorgu yok)"
+    asyncio.run(run())
+    print("✅ evre sezgisi) iptal edilen emrin evresi düşer; aynı evrede / aynı saniyede bilinen emirler yeni emri gizlemez;"
+          " roll-over ≤ ~1 dk")
+
+
+def test_lifecycle_two_tracked_orders():
+    """(e) eski kardeş iptal edildiyse yenisi bitince susturma kalkar ve kardeşin ⛔ notu hemen yazılır; (f) 1 sn arayla
+    başlamış iki bildirilmiş emir: her kaydın notu KENDİ emrinin rakamlarıyla."""
+    async def run():
+        cfg = _cfg()
+        cfg.twap_alert_cooldown = 0
+        await _fresh(cfg)
+        now = dbm.now()
+        # (e) A 120 dk $4M (bildirilir), B 10 dk $900K (bildirilir); A, B'nin bitişinden 20 sn önce iptal
+        sa = now - 900
+        sb = sa + 47
+        spec, st = [(sa, 120, 4_000_000), (sb, 10, 900_000)], {}
+        col = Col(lambda: _hist(spec, st))
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        await _play(cfg, notifier, col, sorted(_slices(sa, 120, 4_000_000, sb + 120) + _slices(sb, 10, 900_000,
+                                                                                               sb + 120)))
+        assert len(bot.sent) == 4 and tf.F.open[KEY]["started"] == sb and set(tf.F.older[KEY]) == {sa}, bot.sent
+        t1 = sb + 600 + 31
+        for r in tf.F.records():                        # B'nin dilimleri A'nın kaydını da taze tuttu; son yoklama yakın:
+            r[1]["lookup_ts"], r[1]["last_ts"] = t1 - 40, t1 - 10   # A 5 dk'lık yoklamayı bekliyor olurdu
+        st[sa], st[sb] = "terminated", "finished"
+        # B normal bitti (not yok, varsayılan); sorgusu A'yı iptal gösterdi → A aynı turda yeniden sorulur, ⛔ hemen
+        assert await tf.lifecycle(cfg, notifier, col, t1) == 1
+        assert "TWAP iptal edildi" in bot.sent[-2][1] and "plan $4.0M" in bot.sent[-2][1], bot.sent[-2:]
+        assert not [t for _, t in bot.sent if "TWAP bitti" in t]
+        assert KEY not in tf.F.known, "A HL'de sürmüyor: susturma A'nın planına uzamaz"
+        # (f) A 60 dk $2.4M ve B 10 dk $1.5M, 1 sn arayla; ikisi bildirilir; B iptal → B'nin ⛔ notu B'nin rakamlarıyla
+        await _fresh(cfg)
+        now = dbm.now()
+        sa = now - 500
+        sb = sa + 1
+        spec, st = [(sa, 60, 2_400_000)], {}
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        await _play(cfg, notifier, col, [(sa + 1, _slice_sz(2_400_000, 60))])
+        spec.append((sb, 10, 1_500_000))                # B (1 sn sonra) de bildirilmiş olsun
+        tf.F.known.pop(KEY, None)
+        await _play(cfg, notifier, col, [(sb + 1, _slice_sz(1_500_000, 10))])
+        assert len(bot.sent) == 4 and tf.F.open[KEY]["started"] == sb and set(tf.F.older[KEY]) == {sa}, \
+            [t[:60] for _, t in bot.sent]
+        st[sb] = "terminated"
+        for r in tf.F.records():
+            r[1]["lookup_ts"] = 0
+        assert await tf.lifecycle(cfg, notifier, col, sa + 300) == 1
+        ends = [t for c, t in bot.sent if "TWAP iptal edildi" in t and c == "-100"]
+        assert len(ends) == 1 and "plan $1.5M" in ends[0], ends
+        assert not tf.F.find(KEY, sa)["ended"], "A sürüyor"
+    asyncio.run(run())
+    print("✅ ömür) iptal edilmiş kardeş susturmayı uzatmaz, ⛔ hemen; 1 sn arayla iki emirde not doğru emirle")
+
+
+def test_saturday_base_loaded_for_excluded_runs():
+    async def run():
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        asked = []
+        orig_m, orig_e = tl.sat_missing, tl.ensure_sat
+
+        async def ens(cfg_, client, coins, ts, max_fetch=12):
+            asked.extend(coins)
+            return 0
+        tl.sat_missing, tl.ensure_sat = (lambda *a, **k: True), ens
+        try:
+            for i in range(13):
+                tl.observe("PUMP", A, "buy", PX, 8_000, 40, now - 400 + 30 * i, 1, True)
+            out = await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col(lambda: []))
+            assert out["cands"] == 0 and asked == ["PUMP"], (out.get("cands"), asked)
+        finally:
+            tl.sat_missing, tl.ensure_sat = orig_m, orig_e
+    asyncio.run(run())
+    print("✅ Cumartesi) taban yüzünden elenen dizinin coin'i için taban yine okunur (kısıt geçici)")
 
 
 if __name__ == "__main__":

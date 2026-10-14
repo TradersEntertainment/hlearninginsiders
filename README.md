@@ -565,89 +565,20 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   ilk HL alt emrinden eskiyse kullanılmaz (aynı adresin başka coin'deki erken sorgusu yeni emri "emir yok" göstermesin).
 - **Aynı adres + coin + yönde ikinci emir:** okunan emrin anahtarı o emrin bitişi + 2 dk'ya kadar susturulur (aynı emrin
   dilimleri yeniden sorulmasın). 14.10 NEAR: 5 dk'lık emir sürerken aynı adres ikinci 5 dk'lık emri verdi; ikincisi
-  275 sn geç geldi. Artık bilinen anahtarda dilim temposu bilinen emirleri aşarsa (tek HL TWAP 30 sn'de bir dilim: 65
-  sn'de en çok 3; bilinen k emir → ≥ 3k+1 dilim) ya da dilimleri aynı saniyeye düşen ikinci emir 2 sn'lik kümeyi bilinen
-  emirlerin olağan diliminin 1,6 katına iki kez üst üste büyütürse susturma kalkar ve emir yeniden sorulur (`/tani` "aynı
-  adreste yeni emir için yeniden sorgu"). Sorgunun gösterdiği, dilimle örtüşen tüm emirler bilinenlere eklenir (iki emir
-  örtüştükçe dakikada bir boşa sorgu yok), HL'nin iptal / bitmiş dediği emirler düşer; yeniden sorgu yeni emir bulamazsa
-  aralık 1 → 2 → 4 … 10 dk katlanır. mm / vault susturması (1 sa) sırasında bu sezgi bakmaz. Susturma süresi her zaman
-  bulunan emrin kendi bitişi (+2 dk); emir bitince bildirilmiş ve süren başka emir varsa onun bitişine iner, yoksa kalkar.
-  Sınır: ikinci emrin dilimi bilinenin ~%60'ından küçük ve aynı saniyeye düşüyorsa sezilmez (eski yol 10 dilim / 5 dk
-  sonra görür). Aynı anahtarın iki emri de bildirildiyse her birinin ⛔/🏁 notu ayrı yazılır (eskisinin kaydı yenisi
-  bildirilince silinmez).
-
-### Süren emrin dolanı — HL kaydı 0 yazar
-
-HL'nin süren TWAP kaydı (`twapHistory` / `userTwapHistory`, durum `activated`) emir **verildiği anın** görüntüsüdür:
-`executedSz` / `executedNtl` HEP 0; HL dolanı yalnız bitiş / iptal kaydında yazar (14.10: 0xedcd… HYPE 150 dk emri
-`/twap` listesinde "doldu %0" görünüyordu, HL dilim dolumlarına göre %71'i dolmuştu). Süren emrin dolanı artık radarın
-**kendi gördüğü HL TWAP alt emri dolumlarından** ölçülür (sıfır hash, taker = emir sahibi; adet / emrin adedi):
-"doldu ≈ %71" dilimler emrin başından beri görülüyorsa, "≥" alt sınır (radar emrin başını görmedi — yeniden başlatma),
-hiç yazılmaz: coin dinlenmiyor / dilimler sustu / önceki emirle karışık / aynı coin + yönde aynı anda iki emir (asla "%0"). Bitmiş / iptal kaydı HL'nin kendi
-rakamıyla. 👁 takibin yarılanma notu da bu ölçüyle çalışır (eskiden hiç gelmiyordu). **Kapı değişmedi:** "kalan"
-kuralı (`twap_alert_min_left_usd`) HL kaydıyla karar verir — süren emirde kalan = plan, yani bu kural fiilen hiç
-elemiyor (bugünkü davranış korunur).
-
-### TWAP ayna grubu (`TWAP_MIRROR_CHAT_ID`)
-
-TWAP mesajları bugünkü yerlerine (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) gitmeye devam eder;
-**her TWAP mesajının birebir kopyası** (ilk alarm, 🔎 ilk dilim alarmı, ⛔ iptal; açıksa yarı ve 🏁) ayrıca bu gruba
-gider. Env-only (Railway Variables; diğer chat id'leri gibi ayarlar sayfasında yok); boş = kapalı.
-
-- Grup id'si: botu gruba ekle, grupta `/id` yaz (normal grup `-540…`, süper grup/kanal `-100…`).
-  Grup süper gruba dönüşürse id değişir — gönderim düşerse `/tani` "twap ayna grubu" satırı uyarır.
-- Kopya kendi tekrar kaydıyla gider (ana gönderim düşüp her tur yeniden denense de ayna bir kez);
-  ana hedefle aynıysa ikinci kopya yok; satılabilir bota fan-out edilmez. `notify_twap` kapanırsa
-  ayna da susar. Ayna grubu botun kendi sohbetidir: `/takip_N` orada da çalışır (takip haberi
-  ilk basılan sohbete gider). Sessiz saat ayrı gruplara uygulanmaz.
-
-### 🔸 TWAP yan kanalı — gevşek eşik (`TWAP_LOOSE_CHAT_ID`)
-
-Kullanıcı 14.10: "TWAP bildirimleriyle ilgili şartları biraz gevşettiğimiz bir yan kanal da açalım". Env-only
-(Railway Variables; ayar sayfası yok): **tek gereken `TWAP_LOOSE_CHAT_ID`** (botu gruba ekle, grupta `/id`); boş = kapalı.
-Ana kanal (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) ve ayna **aynen sürer**; yan kanal tanımsızken hiçbir
-davranış değişmez (app/radar/twaploose.py).
-
-- **Ne gelir:** gevşek kapıyı geçen her HL TWAP emri —
-  1. ana hedefe giden her TWAP mesajının birebir **kopyası** (ilk alarm, 🔎 ilk dilim alarmı, ⛔ iptal; açıksa yarı ve
-     🏁). `TWAP_LOOSE_ONLY_EXTRA=1` → kopyalar gelmez.
-  2. ana eşiğin **altında kalıp gevşek eşiği geçen** emirler: aynı mesaj + başta **"🔸 Yan kanal · ana kanal eşiğinin
-     altında: emir $700K (ana kanal ≥ $1.0M)"** gibi bir satır (hangi eşik, bu emrin ölçüsü — sayıyla, tahmin yok).
-     Bu emirlerin ⛔ iptal notu (açıksa 🏁) da yalnız yan kanala yazılır: HL emri sorulur (⚡ dakikada bir, uzun 5 dk'da
-     bir; başka yolun ≤ 45 sn'lik taze cevabı varsa yeniden sorulmaz); ⚡ hızlıda takip tuşu yok (iptal kendiliğinden),
-     uzunda 👁 `/takip_N`. Emir sonradan ana kanala da giderse yan kanala ikinci kopya gelmez, iptal notunu ana yol
-     yazar (kopyası tek). Bitiş / yarı notu yalnız ilk alarmı yan kanalda görülmüş emrin kopyasıdır (kanal sonradan
-     tanımlandıysa "duyurulmamış emrin iptali" yazılmaz).
-  3. ana eşiği GEÇEN ama ana hedefi (kripto kanalı) ve aynası tanımsız emir: başlık **"🔸 Yan kanal · ana eşiği geçti;
-     ana kanal tanımlı değil"** (ilk dilim ve eski yol aynı).
-- **Eşikler (varsayılan ≈ ana eşiklerin yarısı):** emir ≥ $500K (`TWAP_LOOSE_MIN_USD`), kalan ≥ $500K ya da planın
-  yarısı, emir / 24s hacim ≥ %2,5 (`TWAP_LOOSE_VOL_PCT`; BTC/ETH %10), 📅 Cumartesi kripto olmayan ≥ geçen Cumartesi
-  hacminin %5'i, ⚡ hızlı (≤ 1 sa) ≥ $100K ve dakika hızı ≥ ortalamanın 1 katı, spot çifti 24s hacmi ≥ $500K. Her eşik
-  **ana eşikten büyük olamaz** (min(yan, ana)) — yan kanal ana kanalın üst kümesi; ana eşik ayar sayfasında düşerse
-  yan kanal da izler; ana kapıda kapalı (0) kural yan kanalda da kapalı.
-- **Sorgu yükü ve ana yolun korunması:** 🔎 ilk dilim ön süzgeci gevşek eşikle de bakar; yalnız gevşek eşikle sıraya
-  giren dilimler ana adaylardan **sonra**, dakika tavanının en çok %60'ıyla, ana yola bir eşzamanlı yer ve soketten
-  bir yer bırakarak sorulur. Aynı saniyenin sonraki parçası dilimi ana ön süzgecin üstüne çıkarırsa aday ana sıraya
-  geçer. Yalnız-gevşek sorgu ana yolun "bilinen emir" bastırmasına (F.known), sayaçlarına, son kararlarına ve 🧪
-  LOG-TWAPF kaydına **yazmaz** (kendi kaydı twaploose'ta) — aynı adresin sonraki ana kapılık ⚡ emri ilk dilimde yine
-  sorulur. Böyle sorulan emir ana kapıyı geçiyorsa (24 sa'ten uzun emir; ön süzgeç öngöremez) ilk dilim yolu dokunmaz,
-  bugünkü gibi eski yol ana kanala yazar. Eski yol ek sorgu yapmaz (aynı turun emir cevabını kullanır). Dilim sayacı
-  (⛔ notunun fiyatı, sessizlik) collector'dan beslenir — ilk dilim yolu kapalıyken de.
-- **Tekrar / bekleme:** aynı emir bir kez (emir anahtarı, 7 gün); ana kanal bu adres + coin + yönü 6 sa içinde
-  bildirdiyse ek alarm yok; gönderilemeyen ek alarm 5 dk sonra yeniden denenir (ana hedef tanımsızken de); ana yolun
-  bekleme / 📣 / 🧪 kapı kayıtlarına ve sayaçlarına dokunulmaz. Ömür turu en çok 3 HL sorgusu yapar (ilk dilim
-  döngüsü beklemesin); `notify_twap` kapalıyken biten emir notsuz kapanır (açılınca geç ⛔ yazılmaz). Fan-out yok; `notify_twap`
-  kapanırsa yan kanal da susar; sessiz saat ayrı gruplara uygulanmaz.
-- Yan kanal botun kendi sohbeti: `/twap`, `/twapf`, `/xpltwap`, `/takip_N` orada da çalışır. `/tani` "🔸 twap yan
-  kanalı" satırı: eşikler, kopya / ek alarm / bitiş notu sayısı, açık emir, yalnız-gevşek sorgular ve son kararları,
-  gönderim hatası. `/twap durum` kararlarında
-  "🔸 yan kanal: gönderildi / zaten gönderildi / bekleme içinde".
-
-### 🕐 Büyük TWAP kanalı — ≥ $1M, ≤ 3 sa (`TWAP_BIG_CHAT_ID`)
-
-Kullanıcı 14.10 (HYPE 0xedcd… 150 dk $1,6M satış, 24s hacmin %0,7'si — ana ve 🔸 kanala gelmedi): "yeni kanal kuralım:
-max 2-3 saat içinde $1M'dan yüksek TÜM TWAP'ları göndereceğimiz". Env-only: **tek gereken `TWAP_BIG_CHAT_ID`**; boş = kapalı.
-
+  275 sn geç geldi. Artık bilinen anahtarda dilimlerin **evresi** izlenir: HL TWAP 30 sn'de bir alt emir atar, her emrin
+  dilimleri sabit bir evrede (an mod 30, ±2 sn) gelir. Bilinmeyen bir evrede ~30 sn arayla iki dilim (ya da bir alt emir
+  atlayıp yeniden başlayan evre) → yeni emir: susturma kalkar, emir yeniden sorulur (en sık dakikada bir; `/tani` "aynı
+  adreste yeni emir için yeniden sorgu"). Sorgudan sonra o anki evreler bilinir (iki emir örtüştükçe boşa sorgu yok);
+  dilimi kesilen (biten / iptal) emrin evresi 65 sn sonra düşer — iptal edilen emir yeni emri gizlemez. Dilimleri bilinen
+  emirle aynı saniyeye düşen ikinci emir evreyi değiştirmez: o evrenin dilimi olağan diliminin 1,6 katını iki kez üst
+  üste aşarsa sorulur (HL telafi dilimi de bunu yapabilir: yeni emir bulunamazsa bu sezginin aralığı 1 → 2 → 4 … 10 dk
+  katlanır). mm / vault (1 sa) ve "emir yok" (5 dk) susturması sırasında bu sezgi bakmaz. Susturma süresi her zaman
+  bulunan emrin kendi bitişi (+2 dk); bildirilmiş emir bitince, HL'ye göre hâlâ süren bildirilmiş kardeşi varsa onun
+  bitişine iner, yoksa kalkar (kardeş HL'de sürmüyorsa ⛔ notu aynı turda yazılır).
+  Sınırlar (ilk dilim yolu görmez, eski yol 10 dilim / 5 dk sonra görür): yeni emrin dilimi bilinen emrinkiyle aynı
+  saniyeye düşüyor ve ondan ~%60 küçükse; iptal edilen emrin evresinde, alt emir atlamadan, benzer büyüklükte hemen
+  yeni emir verilirse; iki emir aynı evrede neredeyse aynı anda başlarsa (yalnız en yenisi değerlendirilir). Aynı
+  anahtarın iki emri de bildirildiyse her birinin ⛔/🏁 notu ayrı, kendi emrinin rakamlarıyla yazılır.
 - **Kural (hacimden bağımsız):** süren HL TWAP emri, `0 < süre ≤ TWAP_BIG_MAX_MIN` (180 dk) ve plan (bugünkü fiyatla)
   `≥ TWAP_BIG_MIN_USD` ($1M) → bu kanala, **emir başına bir kez** — ana ya da 🔸 kanala gitmiş olsa da (her kanal kendi
   kuralıyla); adres beklemesi yok (aynı adresin her yeni emri ayrı). mm/vault etiketli adres ana yoldaki gibi elenir.
