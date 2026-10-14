@@ -782,8 +782,45 @@ def recent_line(d: dict) -> str:
 # etiketli adresler ana yoldaki gibi elenir. Ana yolun ve 🔸 kanalın durumuna DOKUNMAZ.
 
 BIG = Side("big", "twap_big", "twap_big_chat_id", "TWAP_BIG_CHAT_ID", "twapbig_open", "twapbig_stats")
-BIG_REASON = {"ok": "geçer", "long": "süre sınırın üstünde", "small": "plan sınırın altında",
-              "order_done": "emir bitmiş", "no_order": "emir yok", "off": "kapalı"}
+BIG_REASON = {"ok": "geçer", "weekend": "📅 hafta sonu hisse kuralıyla geçer", "long": "süre sınırın üstünde",
+              "small": "plan sınırın altında", "order_done": "emir bitmiş", "no_order": "emir yok", "off": "kapalı"}
+BIG_PASS = ("ok", "weekend")
+_WK: dict = {"min": -1, "h": None, "on": False}      # hafta sonu penceresi önbelleği (sıcak yol: dakikada bir hesap)
+
+
+def big_weekend_on(cfg, ts: int) -> bool:
+    """Hafta sonu mu — botun ortak penceresi (hourstats.weekend_window: TSİ Cumartesi 00:00 → Pazartesi 00:00, ABD
+    kapalı; `offhours_close_hour` ile kayar). Dakikada bir hesaplanır."""
+    h = int(getattr(cfg, "offhours_close_hour", 0) or 0)
+    m = int(ts) // 60
+    if _WK["min"] != m or _WK["h"] != h:
+        from . import hourstats
+        _WK.update(min=m, h=h, on=hourstats.weekend_window(int(ts), h) is not None)
+    return bool(_WK["on"])
+
+
+def big_weekend_limits(cfg) -> tuple[float, float]:
+    return (float(getattr(cfg, "twap_big_weekend_min_usd", 200_000) or 0),
+            float(getattr(cfg, "twap_big_weekend_max_min", 1440) or 0))
+
+
+def big_weekend_rule(cfg, coin: str, ts: int) -> bool:
+    """📅 Hafta sonu kuralı bu coin için şu an geçerli mi: kripto OLMAYAN (HIP-3 hisse, endeks, emtia, FX… —
+    assets.trades_24_7 değil; Cumartesi tabanıyla aynı küme) ve hafta sonu ve kural açık."""
+    from .. import assets
+    mn, mx = big_weekend_limits(cfg)
+    if mn <= 0 or mx <= 0 or not coin or assets.trades_24_7(coin):
+        return False
+    return big_weekend_on(cfg, ts)
+
+
+def big_slice_floor(cfg, coin: str, ts: int) -> float | None:
+    """Hafta sonu hissede ilk dilim yolunun en küçük dilimi: 24 sa'lik $200K emrin dilimi ~$70 — ana yolun $1K
+    tabanının altında. Kural geçerli değilse None (taban aynen)."""
+    if not big_weekend_rule(cfg, coin, ts):
+        return None
+    mn, mx = big_weekend_limits(cfg)
+    return max(1.0, mn * 0.8 / (2 * mx + 1))
 
 
 def big_min_usd(cfg) -> float:
@@ -826,36 +863,52 @@ def big_max_min(cfg) -> float:
     return float(getattr(cfg, "twap_big_max_min", 180) or 0)
 
 
-def big_pre(cfg, slice_usd: float, coin: str = "") -> bool:
+def big_pre(cfg, slice_usd: float, coin: str = "", ts: int | None = None) -> bool:
     """İlk dilim ön süzgeci (G/Ç yok): bu dilim ≤ sınır dk'lık ≥ $1M bir emirden olabilir mi? Dilim ≈ plan / (2m+1)
-    (randomize ±%20 → 0.8 payı) → plan ≤ dilim · (2m+1) / 0.8. BTC/ETH'de taban $20M → dilim ≳ $44K."""
+    (randomize ±%20 → 0.8 payı) → plan ≤ dilim · (2m+1) / 0.8. BTC/ETH'de taban $20M → dilim ≳ $44K. 📅 hafta sonu
+    hissede ≤ 24 sa'lik ≥ $200K → dilim ≳ $55."""
     mx, mn = big_max_min(cfg), big_min_for(cfg, coin)
-    return mx > 0 and float(slice_usd or 0) * (2 * mx + 1) / 0.8 >= mn
+    sl = float(slice_usd or 0)
+    if mx > 0 and sl * (2 * mx + 1) / 0.8 >= mn:
+        return True
+    if ts is not None and big_weekend_rule(cfg, coin, ts):
+        wmn, wmx = big_weekend_limits(cfg)
+        return sl * (2 * wmx + 1) / 0.8 >= wmn
+    return False
 
 
 def big_gate(cfg, order: dict | None, now_ts: int, coin: str = "") -> str:
-    """'ok' geçer; diğerleri neden: no_order · order_done · long (süre > sınır ya da bilinmiyor) · small (plan < taban;
-    BTC/ETH'de ayrı taban) · off."""
+    """'ok' (genel kural) / 'weekend' (📅 hafta sonu hisse kuralı) geçer; diğerleri neden: no_order · order_done ·
+    long (süre > sınır ya da bilinmiyor) · small (plan < taban; BTC/ETH'de ayrı taban) · off."""
     mx = big_max_min(cfg)
-    if mx <= 0:
+    wk = big_weekend_rule(cfg, coin, now_ts)
+    if mx <= 0 and not wk:
         return "off"
     if not order:
         return "no_order"
     if order.get("status") != "activated":
         return "order_done"
     mins = float(order.get("minutes") or 0)
-    if mins <= 0 or mins > mx:
-        return "long"
     t0 = int(order.get("started_ts") or 0)
-    if t0 and int(now_ts) > t0 + mins * 60:
+    if mins > 0 and t0 and int(now_ts) > t0 + mins * 60:
         return "order_done"
-    if float(order.get("planned_usd") or 0) < big_min_for(cfg, coin):
-        return "small"
-    return "ok"
+    planned = float(order.get("planned_usd") or 0)
+    if mx > 0 and 0 < mins <= mx and planned >= big_min_for(cfg, coin):
+        return "ok"
+    if wk:
+        wmn, wmx = big_weekend_limits(cfg)
+        if 0 < mins < wmx and planned >= wmn:            # kullanıcı: "1 günden kısa"
+            return "weekend"
+        return "long" if (mins <= 0 or mins >= wmx) else "small"
+    return "long" if (mins <= 0 or mins > mx) else "small"
 
 
-def big_head(cfg, coin: str = "") -> str:
+def big_head(cfg, coin: str = "", rule: str = "ok") -> str:
     from ..telegram.format import usd
+    if rule == "weekend":
+        wmn, wmx = big_weekend_limits(cfg)
+        return (f"🕐 <b>Büyük TWAP</b> · 📅 hafta sonu (ABD kapalı), kripto olmayan · plan ≥ {usd(wmn)} · süre < "
+                + (f"{wmx / 60:g} sa" if wmx >= 60 and wmx % 60 == 0 else f"{wmx:g} dk"))
     mx = big_max_min(cfg)
     dur = f"{mx / 60:g} sa" if mx >= 60 and mx % 60 == 0 else f"{mx:g} dk"
     tag = f" ({'/'.join(sorted(big_majors(cfg)))})" if coin and big_is_major(cfg, coin) else ""
@@ -868,7 +921,7 @@ def big_note(coin: str, addr: str, side: str, reason: str, order: dict | None, p
                            "minutes": (order or {}).get("minutes")})
 
 
-async def _big_send(cfg, notifier, okey: str, coin: str, text_fn) -> str:
+async def _big_send(cfg, notifier, okey: str, coin: str, text_fn, rule: str = "ok") -> str:
     """Tekrar / geri çekilme → mesaj. Dönüş: 'sent' | 'dup' | 'backoff' | 'failed'."""
     dkey = f"a:{okey}"
     if dkey in BIG.sent or dkey in BIG.sending:
@@ -879,7 +932,7 @@ async def _big_send(cfg, notifier, okey: str, coin: str, text_fn) -> str:
         BIG.sent.add(dkey)
         return "dup"
     text = await text_fn()
-    ok = await BIG.send(cfg, notifier, big_head(cfg, coin) + "\n" + text, dkey, coin)
+    ok = await BIG.send(cfg, notifier, big_head(cfg, coin, rule) + "\n" + text, dkey, coin)
     if ok is None:
         return "dup"
     if not ok:
@@ -898,8 +951,8 @@ async def big_fast(cfg, client, notifier, key: tuple, p: dict, order: dict, vols
     coin, addr, side = key
     bg = big_gate(cfg, order, t, coin)
     started = int((order or {}).get("started_ts") or 0)
-    if bg != "ok" or not started:
-        return bg if bg != "ok" else "no_order"
+    if bg not in BIG_PASS or not started:
+        return bg if bg not in BIG_PASS else "no_order"
     import types
     from . import twapfast
     from ..telegram import format as fmt
@@ -925,7 +978,7 @@ async def big_fast(cfg, client, notifier, key: tuple, p: dict, order: dict, vols
                "auto_end": twaplive.auto_end(cfg, order)}
         return fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)
 
-    res = await _big_send(cfg, notifier, okey, coin, text_fn)
+    res = await _big_send(cfg, notifier, okey, coin, text_fn, bg)
     if res == "sent":
         BIG.register(okey, coin, addr, side, order, t, int(p.get("t0") or t), int(p.get("ts") or t),
                      int(p.get("n") or 1), float(p.get("tot") or p.get("max") or 0), float(p.get("szt") or 0),
@@ -944,8 +997,8 @@ async def big_slow(cfg, notifier, client, run, m: dict, order: dict, det: dict, 
         return "off"
     bg = big_gate(cfg, order, ts, run.coin)
     okey = twaplive.order_key(f"{run.coin}:{run.address}:{run.side}", order)
-    if bg != "ok" or not okey:
-        return bg if bg != "ok" else "no_order"
+    if bg not in BIG_PASS or not okey:
+        return bg if bg not in BIG_PASS else "no_order"
     if f"a:{okey}" in BIG.sent:
         return "dup"                                    # her turda bakılır: hızlı çıkış (DB'ye sormadan)
     from ..telegram import format as fmt
@@ -965,7 +1018,7 @@ async def big_slow(cfg, notifier, client, run, m: dict, order: dict, det: dict, 
                "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order)}
         return fmt.twap_alert(m, ctx)
 
-    res = await _big_send(cfg, notifier, okey, run.coin, text_fn)
+    res = await _big_send(cfg, notifier, okey, run.coin, text_fn, bg)
     if res == "sent":
         BIG.register(okey, run.coin, run.address, run.side, order, ts, run.first_ts, run.last_ts, run.n, run.total,
                      run.sz_total, m.get("px_first") or run.px_first, m.get("px_last") or run.px_last)
@@ -992,6 +1045,10 @@ async def big_diag_line(cfg) -> str:
              + (f" ({maj} ≥ {usd(max(big_major_min_usd(cfg), big_min_usd(cfg)))})" if maj and big_major_min_usd(cfg) > 0
                 else "")
              + f" · süre ≤ {mx:g} dk · hacimden bağımsız"]
+    wmn, wmx = big_weekend_limits(cfg)
+    if wmn > 0 and wmx > 0:
+        parts.append(f"📅 hafta sonu kripto olmayan: plan ≥ {usd(wmn)} · süre < {wmx:g} dk"
+                     + (" (şu an hafta sonu)" if big_weekend_on(cfg, now()) else ""))
     st = await kv_get(BIG.stats_kv) or {}
     if st.get("ts"):
         parts.append(f"✓{st.get('alerts', 0)} alarm · {st.get('ends', 0)} bitiş notu · {st.get('open', 0)} açık emir")

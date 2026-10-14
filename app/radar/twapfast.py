@@ -91,13 +91,14 @@ class Fast:
         self._lcfg = None
         self.clear_stats()
 
-    def _extra_wants(self, coin: str, key: tuple, slice_usd: float, ts: int) -> bool:
-        """Ana ön süzgeçten kalan dilim yalnız yan kanallar için sorulsun mu? (sıcak yol, G/Ç yok)"""
+    def _extra_wants(self, coin: str, key: tuple, slice_usd: float, ts: int, small: bool = False) -> bool:
+        """Ana ön süzgeçten kalan dilim yalnız yan kanallar için sorulsun mu? (sıcak yol, G/Ç yok). `small`: ana tabanın
+        altındaki dilim — yalnız 🕐 hafta sonu kuralı için (🔸 kanal bugünkü gibi bu dilimleri görmez)."""
         cfg = self.cfg
-        big_on, lo_on = twaploose.BIG.enabled(cfg), twaploose.enabled(cfg)
+        big_on, lo_on = twaploose.BIG.enabled(cfg), twaploose.enabled(cfg) and not small
         if not (big_on or lo_on) or not twaploose.wants(key, ts):
             return False
-        if big_on and twaploose.big_pre(cfg, slice_usd, coin):
+        if big_on and twaploose.big_pre(cfg, slice_usd, coin, ts):
             return True
         return lo_on and not prefilter(self.loose_cfg(), coin, slice_usd, self.vols.get(coin), ts)
 
@@ -174,19 +175,29 @@ class Fast:
             elif why and p.get("pre_n") != p["n"]:
                 p["pre_n"] = p["n"]                     # yalnız-gevşek aday sıradayken de ana sayaç dilim başına bir
                 st[why] = st.get(why, 0) + 1
-        if p["queued"] or p["usd"] < float(min_usd or 0):
+        if p["queued"]:
             return
+        small = p["usd"] < float(min_usd or 0)
+        if small:
+            # 📅 hafta sonu hisse (🕐 büyük kanal): 24 sa'lik $200K emrin dilimi ~$70 — ana tabanın altındaki dilim YALNIZ
+            # yan kanal katmanında sorulabilir (ana yol bu dilimi bugünkü gibi hiç görmez, sayacı da değişmez)
+            fl = twaploose.big_slice_floor(self.cfg, coin, ts) if (self.cfg is not None
+                                                                   and twaploose.BIG.enabled(self.cfg)) else None
+            if fl is None or p["usd"] < fl:
+                return
         loose = False
         if self.cfg is not None:
             why = prefilter(self.cfg, coin, p["usd"], self.vols.get(coin), ts)
+            if small:
+                why = why or "pre_small"                # ana yol küçük dilimi asla sormaz (sayaç da tutmaz)
             if why:                                     # dilim büyüdükçe (aynı saniyenin parçaları) yeniden bakılır
-                if p.get("pre_n") != p["n"]:
+                if not small and p.get("pre_n") != p["n"]:
                     p["pre_n"] = p["n"]                 # sayaç dilim başına bir (yan kanal açık olsa da aynı)
                     st[why] = st.get(why, 0) + 1
                 # 🔸 / 🕐 yan kanallar: ana ön süzgeçten kalan dilim gevşek eşikle ya da büyük kanalın kuralıyla
                 # (≤ 3 sa, ≥ $1M) sorulur — ana adaylardan SONRA, tavanın payıyla; ana yolun F.known / sayaç / 🧪
                 # kayıtlarına dokunmadan (resolve)
-                if not self._extra_wants(coin, key, p["usd"], ts):
+                if not self._extra_wants(coin, key, p["usd"], ts, small):
                     return
                 loose = True
                 twaploose.STATS["pre_queued"] += 1

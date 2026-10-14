@@ -634,6 +634,14 @@ max 2-3 saat içinde $1M'dan yüksek TÜM TWAP'ları göndereceğimiz". Env-only
   **BTC ve ETH'de taban $20M** (kullanıcı 14.10: "btc eth kaldırmak yerine 20-30M diyelim"; `TWAP_BIG_MAJORS=BTC,ETH`,
   `TWAP_BIG_MAJOR_MIN_USD=20000000` — HIP-3'teki aynı sembol ve spot UBTC/UETH dahil). Ön süzgeç de bu tabanla bakar:
   BTC/ETH'de dilim ≳ $44K değilse bu kanal için sorulmaz (yoğun küçük dilim akışı sorgu tavanını yemez).
+- **📅 Hafta sonu hisse kuralı** (kullanıcı 14.10: "hafta sonu TWAP'la hisse satan çok oluyor ve fiyatı aşırı etkiliyor —
+  sadece hafta sonu, hisseyse $200K+ ve 1 günden kısa"): hafta sonu = botun ortak penceresi (TSİ Cumartesi 00:00 →
+  Pazartesi 00:00, ABD kapalı; `offhours_close_hour` ile kayar). Kripto OLMAYAN HIP-3 (hisse, endeks, emtia, FX… —
+  Cumartesi tabanıyla aynı küme; TOTAL2/BTCD gibi kriptoya bağlılar hariç) için plan ≥ `TWAP_BIG_WEEKEND_MIN_USD`
+  ($200K) ve süre < `TWAP_BIG_WEEKEND_MAX_MIN` (1440 dk) → bu kanala; başlık "🕐 Büyük TWAP · 📅 hafta sonu (ABD kapalı),
+  kripto olmayan · plan ≥ $200K · süre < 24 sa". 24 sa'lik $200K emrin dilimi ~$70 — ilk dilim yolunun $1K tabanının
+  altında: hafta sonu bu coinlerde ≳ $55'lık dilim de YALNIZ bu kanal için sorulur (ana yol ve 🔸 kanal bu küçük
+  dilimleri bugünkü gibi görmez, sayaçları değişmez).
 - **Mesaj:** ana kanalın mesajıyla aynı (emir, dolan, pozisyon, hacme oran, ⚡ HIZLI rozeti) + başta
   "🕐 Büyük TWAP · plan ≥ $1.0M · süre ≤ 3 sa". ⚡ hızlıda iptal ⛔ kendiliğinden buraya, uzunda 👁 `/takip_N` (+ ⛔ yine
   buraya); 🏁 normal bitiş yalnız `twap_alert_finish_note` açıksa.

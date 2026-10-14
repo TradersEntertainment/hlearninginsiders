@@ -965,6 +965,10 @@ class Config:
         # kullanıcı 14.10: "btc eth kaldırmak yerine 20-30M diyelim" → bu coinlerde plan tabanı ayrı (varsayılan $20M)
         self.twap_big_majors = (os.getenv("TWAP_BIG_MAJORS", "BTC,ETH") or "")
         self.twap_big_major_min_usd = float(os.getenv("TWAP_BIG_MAJOR_MIN_USD", "20000000"))
+        # 📅 hafta sonu kripto olmayan (hisse, endeks, emtia…) — kullanıcı 14.10: "hafta sonu TWAP'la hisse satan çok
+        # oluyor ve fiyatı aşırı etkiliyor: sadece hafta sonu, hisseyse $200K+ ve 1 günden kısa". 0 = kural kapalı
+        self.twap_big_weekend_min_usd = float(os.getenv("TWAP_BIG_WEEKEND_MIN_USD", "200000"))
+        self.twap_big_weekend_max_min = float(os.getenv("TWAP_BIG_WEEKEND_MAX_MIN", "1440"))   # süre bundan KISA
         self.twap_live_window_min = int(os.getenv("TWAP_LIVE_WINDOW_MIN", "240"))
         self.twap_live_eval_sec = int(os.getenv("TWAP_LIVE_EVAL_SEC", "60"))
         self.notify_pattern = True

@@ -9,6 +9,7 @@ Pinlenenler:
   • ilk dilim: ana ön süzgeç (SOL: dilim ≥ $27.8K) elese de dilim ≤ 3 sa'lik ≥ $1M emirden olabiliyorsa sorulur
     (yalnız-yan-kanal katmanı: ana yolun F.known / sayaç / 🧪 kayıtları değişmez); ana kanala giden emir de buraya gelir
   • eski yol: ana kararlardan sonra, aynı emir bir kez; ⛔ iptal notu buraya, bir kez; yeniden başlatmada kayıt geri gelir
+  • 📅 hafta sonu kripto olmayan HIP-3: plan ≥ $200K ve süre < 24 sa da gelir (kullanıcı 14.10)
   • tanımsızken hiçbir şey değişmez; env-only; botun kendi sohbeti; /tani satırı
 """
 import asyncio
@@ -253,6 +254,78 @@ def test_btc_eth_major_floor():
             assets.SPOT_NAMES.pop(k, None)
     asyncio.run(run())
     print("✅ BTC/ETH) taban $20M (HIP-3 aynı sembol, spot UBTC/UETH); ön süzgeç de; ayarla 30M / kapalı")
+
+
+def test_weekend_stock_rule():
+    """Kullanıcı 14.10: "hafta sonu TWAP'la hisse satan çok oluyor, fiyatı aşırı etkiliyor — big TWAP grubuna sadece hafta
+    sonu, hisseyse $200K+ ve 1 günden kısa". Hafta sonu = botun ortak penceresi (TSİ Cmt 00:00 → Pzt 00:00, ABD kapalı);
+    kripto olmayan HIP-3 (hisse, endeks, emtia…). İlk dilim: 24 sa'lik $200K emrin ~$70'lık dilimi de sorulur (yalnız 🕐
+    için; ana yol / 🔸 kanal bu dilimleri bugünkü gibi görmez)."""
+    async def run():
+        cfg = _bcfg(loose="-300")
+        await _fresh_b(cfg)
+        now = dbm.now()
+        orig = lo.big_weekend_on
+        wk = {"on": True}
+        lo.big_weekend_on = lambda c, ts: wk["on"]
+        try:
+            def o(plan, minutes):
+                return {"status": "activated", "minutes": minutes, "planned_usd": plan, "started_ts": now - 60}
+            T = "xyz:TSLA"
+            assert lo.big_gate(cfg, o(250_000, 600), now, T) == "weekend"
+            assert lo.big_gate(cfg, o(150_000, 600), now, T) == "small"
+            assert lo.big_gate(cfg, o(250_000, 1440), now, T) == "long", "1 günden kısa"
+            assert lo.big_gate(cfg, o(250_000, 1439), now, T) == "weekend"
+            assert lo.big_gate(cfg, o(2_000_000, 120), now, T) == "ok", "genel kural da geçer"
+            assert lo.big_gate(cfg, o(250_000, 120), now, "SOL") == "small", "kripto: hafta sonu kuralı yok"
+            assert lo.big_gate(cfg, o(250_000, 600), now, "SOL") == "long"
+            assert lo.big_gate(cfg, o(250_000, 120), now, "xyz:TOTAL2") == "small", "kriptoya bağlı HIP-3 hariç"
+            assert lo.big_head(cfg, T, "weekend") == ("🕐 <b>Büyük TWAP</b> · 📅 hafta sonu (ABD kapalı), kripto olmayan ·"
+                                                     " plan ≥ $200K · süre < 24 sa")
+            assert lo.big_pre(cfg, 60, T, now) and not lo.big_pre(cfg, 60, T, None) and not lo.big_pre(cfg, 60, "SOL", now)
+            # ilk dilim: 10 sa $300K emir, dilim ~$250 (< ana $1K tabanı) → yalnız 🕐 için sorulur
+            t0 = now - 60
+            col = Col(lambda: [twap_order(t0, minutes=600, plan=300_000, ex_frac=0.0, coin=T, side="A")])
+            bot = Bot()
+            notifier = Notifier(cfg, bot)
+            before = dict(tf.F.stats)
+            tf.observe(T, A, "sell", PX, 250 / PX, 250, t0 + 2, 1000)
+            p = tf.F.pending[(T, A, "sell")]
+            assert p["queued"] and p["loose"]
+            assert {k: v for k, v in tf.F.stats.items() if v != before.get(k) and k not in ("zero", "slices")} == {}
+            await _drain(cfg, notifier, col)
+            assert [c for c, _ in bot.sent] == [BIGC], bot.sent
+            assert bot.sent[0][1].startswith("🕐 <b>Büyük TWAP</b> · 📅 hafta sonu (ABD kapalı)"), bot.sent[0][1]
+            assert "/takip_" in bot.sent[0][1]
+            # hafta içi: aynı küçük dilim sorulmaz
+            wk["on"] = False
+            tf.F.pending.clear()
+            lo.KNOWN.clear()
+            tf.observe(T, "0x" + "d" * 40, "sell", PX, 250 / PX, 250, now, 1000)
+            assert not tf.F.pending[(T, "0x" + "d" * 40, "sell")]["queued"]
+            # 🕐 kapalıyken (yalnız 🔸 açık) hafta sonu da küçük dilim sorulmaz — 🔸 kanal bugünkü gibi
+            wk["on"] = True
+            cfg.twap_big_chat_id = ""
+            tf.observe(T, "0x" + "e" * 40, "sell", PX, 250 / PX, 250, now, 1000)
+            assert not tf.F.pending[(T, "0x" + "e" * 40, "sell")]["queued"]
+            cfg.twap_big_chat_id = BIGC
+            cfg.twap_big_weekend_min_usd = 0                               # kural kapalı → genel kural (≤ 3 sa)
+            assert lo.big_gate(cfg, o(250_000, 600), now, T) == "long"
+            cfg.twap_big_weekend_min_usd = 200_000
+            assert "📅 hafta sonu kripto olmayan: plan ≥ $200K · süre < 1440 dk (şu an hafta sonu)" in \
+                await lo.big_diag_line(cfg)
+        finally:
+            lo.big_weekend_on = orig
+        # gerçek pencere: Cumartesi TSİ → evet, Çarşamba → hayır
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tr = ZoneInfo("Europe/Istanbul")
+        sat = int(datetime(2026, 10, 17, 14, 0, tzinfo=tr).timestamp())
+        wed = int(datetime(2026, 10, 14, 14, 0, tzinfo=tr).timestamp())
+        assert lo.big_weekend_on(cfg, sat) and not lo.big_weekend_on(cfg, wed)
+    asyncio.run(run())
+    print("✅ 📅 hafta sonu) kripto olmayan HIP-3: plan ≥ $200K ve süre < 24 sa → 🕐; küçük dilim yalnız 🕐 için sorulur"
+          " (ana yol / 🔸 aynı); hafta içi / kripto / kural kapalı → yok")
 
 
 if __name__ == "__main__":
