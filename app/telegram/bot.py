@@ -465,6 +465,8 @@ class TelegramBot:
             await self.send(fmt.help_text() + f"\n\nChat id: <code>{chat_id}</code>", chat_id)
         elif cmd == "id":
             await self.send(f"Chat id: <code>{chat_id}</code>", chat_id)
+        elif cmd in ("komutlar", "komut", "commands"):
+            await self.send(fmt.commands_text(owner=True), chat_id)     # 📖 tüm komutlar (14.10)
         elif cmd == "upcoming":
             await self.send(fmt.upcoming_list(await upcoming_events(14)), chat_id)
         elif cmd == "refresh":
@@ -827,6 +829,8 @@ class TelegramBot:
             return True                    # ⏱ /5dk — coin-liq aramasına düşmesin
         if cmd.startswith("takip_"):
             await self._cmd_track_start(cmd, chat_id)
+        elif cmd in ("komutlar", "komut", "commands"):
+            await self.send(fmt.commands_text(owner=False), chat_id)    # 📖 bu grupta çalışan komutlar
         elif cmd in ("twaptakipler", "twaptakip"):
             await self._cmd_twap_follow_list(chat_id)
         elif cmd in ("twap", "twaplar"):

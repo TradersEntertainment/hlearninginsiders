@@ -2928,11 +2928,118 @@ def movewin_peek(w: dict, rows: list[dict], floor: float, elapsed: int, done: bo
     return head[:limit]
 
 
+# 📖 /komutlar — kullanıcı 14.10: "/komutlar yazarsam mümkün olan tüm komutlar ve işlevlerini göreyim".
+# (bölüm, [(komut, işlev, yalnız sahip mi)]). Eş anlamlılar "eş:" ile; tests/test_komutlar.py bot.py / admin.py'deki
+# HER komut adının burada geçtiğini denetler — yeni komut eklenince buraya da yazılmalı.
+COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
+    ("⏳ TWAP", [
+        ("/twap", "en büyük canlı (süren) HL TWAP'lar, planlanan büyüklüğe göre; her satırda 👁 takip tuşu · eş: /twaplar",
+         False),
+        ("/twapf", "⚡ yalnız hızlı TWAP'lar (süre ≤ 1 sa), büyükten küçüğe · eş: /hizlitwap /twaphizli", False),
+        ("/xpltwap", "o coinde süren HL TWAP'lar (her coin için /TICKERtwap: /hypetwap, /tslatwap, /xpl_twap)", False),
+        ("/twap durum", "TWAP radarının özeti + son kararlar (niye gelmedi?)", True),
+        ("/twap PUMP", "coin teşhisi: dinleniyor mu, 24s hacim, bildirim için gereken emir", True),
+        ("/twap 0xADRES", "adresin dizileri, HL TWAP emirleri ve her emrin kapı kararı", True),
+        ("/twaptakipler", "👁 takip edilen TWAP emirleri · eş: /twaptakip", False),
+    ]),
+    ("💥 Coin · liq · pozisyon", [
+        ("/hype · /pump · /sndk", "o coinin liq'e EN YAKIN büyük pozisyonları + grafik (canlı fiyat, kalan mesafe); "
+         "altında o coinde süren TWAP satırı — her ticker için /TICKER", False),
+        ("/scan SNDK", "coini şimdi tara, en büyük pozisyonları göster", True),
+        ("/devler", "Hyperliquid'in en büyük açık pozisyonları · eş: /big /biggest", True),
+        ("/duvartakipler", "🧲 takip edilen yapışkan duvarlar · eş: /duvartakip", False),
+    ]),
+    ("👁 Takip", [
+        ("/takip_N", "mesajdaki pozisyonu / TWAP emrini / duvarı takibe al (N mesajda yazar)", False),
+        ("/takip 0xADRES SEMBOL", "herhangi bir balinayı teklif beklemeden ELLE takibe al", False),
+        ("/takipler", "aktif pozisyon takipleri · eş: /takip /trackers", False),
+        ("/birak_N", "takibi bırak (bildirimdeki 🛑 tuşu da olur; ↩️ ile geri alınır) · eş: /bırak_N", False),
+    ]),
+    ("📈 Hisse · seans · bilanço", [
+        ("/acilis", "🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor · eş: /açılış /acılıs",
+         False),
+        ("/5dk · /15dk", "⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu", False),
+        ("/5dk 15:30", "⏱ ölçümü haber saatine kur (TSİ; 3 dk geriye de gider)", False),
+        ("/seans", "🕰 ABD seans karnesi (XYZ100 + SP500): Asya → Londra → New York, bugün + geçmiş · eş: /seanslar",
+         False),
+        ("/seans NVDA", "🕰 tek hissenin seans karnesi", False),
+        ("/upcoming", "yaklaşan HL-eşleşen bilançolar (14 gün)", True),
+        ("/refresh", "bilanço takvimini ŞİMDİ tüm kaynaklardan yenile", True),
+        ("/settime SHAZ bmo", "bilanço saatini elle düzelt (bmo / amc / 16:30 / 09:30et [YYYY-AA-GG]) · eş: /saat", True),
+        ("/gecmis", "geçmiş bilanço arşivi (kim ne pozisyondaydı, kimin yönü tuttu) · eş: /history /arsiv", True),
+        ("/winners", "bilanço yön sicili (en çok tutturan adresler) · eş: /kazananlar", True),
+    ]),
+    ("🐋 Hesaplar · adresler", [
+        ("/hesaplar", "👤 izlenen hesaplar (pozisyon, duvar, emirler, son 1 sa dolumlar) + 🔂 durum · eş: /hesap", False),
+        ("/balina", "🔂 dilimli alım-satım: şu an ne yapıyor, kaç saattir, ne kadar · eş: /dilim /dilimli /dilimler",
+         False),
+        ("/whale 0xADRES", "adres karnesi + açık pozisyonları", True),
+        ("/watch 0xADRES", "adresi watchlist'e ekle", True),
+        ("/unwatch 0xADRES", "watchlist'ten çıkar", True),
+        ("/watchlist", "sicilli adresler", True),
+        ("/ignore 0xADRES", "adresi ele (MM/vault gibi davran, alarm üretme)", True),
+        ("/unignore 0xADRES", "elemeyi kaldır", True),
+        ("/forget 0xADRES", "adresin sicilini sıfırla + watchlist'ten çıkar · eş: /unut", True),
+    ]),
+    ("🚨 Uyandırma alarmı", [
+        ("/alarm", "gece bir şey olursa seni Telegram'dan ARAR: /alarm SNDK 480 (fiyat) · /alarm SNDK %3 (hareket) · "
+         "/alarm 0xADRES (hesap)", True),
+        ("/alarmlar", "kurulu alarmlar (silme tuşlarıyla)", True),
+        ("/alarm_test", "deneme: mesaj + Telegram araması · eş: /alarmtest", True),
+        ("/uyandim", "çalan aramaları durdur · eş: /uyandım", True),
+    ]),
+    ("🧪 Laboratuvar · simülasyon", [
+        ("/strat", "strateji laboratuvarı: kurallar, olay sayısı, kayıttan sonraki ölçüm (salt okunur) "
+         "· eş: /strateji /stratejiler", False),
+        ("/strat KURAL", "tek kuralın ayrıntısı", False),
+        ("/sim", "liq simülasyonu (kâğıt üstü): bakiye, açık işlem, son kapanışlar · eş: /sım /simulasyon /simülasyon",
+         False),
+    ]),
+    ("🔧 Sistem", [
+        ("/komutlar", "bu liste · eş: /komut /commands", False),
+        ("/help", "kısa yardım · eş: /start", True),
+        ("/id", "bu sohbetin chat id'si (grupta /start da)", False),
+        ("/bildirimler", "bildirim ayarları + son gönderilenler · eş: /notifications /notif", True),
+        ("/status", "bot durumu", True),
+        ("/saglik", "sistem sağlığı (hangi görev canlı) · eş: /sağlık /health", True),
+        ("/tani", "TAM sistem dökümü (ters giden bir şey varsa kopyalayıp gönder) · eş: /tanı /diag", True),
+    ]),
+    ("💳 Satış (yönetim)", [
+        ("/kullanicilar", "satılabilir botun kullanıcıları · eş: /kullanıcılar /users /satis /satış", True),
+        ("/odemeler", "son ödemeler · eş: /ödemeler /payments", True),
+        ("/pro_ver ID GÜN", "kullanıcıya elle Pro süre ver", True),
+        ("/duyuru METİN", "engelsiz tüm kullanıcılara DM", True),
+        ("/iade CHARGE_ID", "Stars ödemesini iade et · eş: /refund", True),
+    ]),
+]
+
+COMMAND_KEYS = "<i>👆 Tuşlar: 👁 takip et · 🛑 takibi bırak · ↩️ geri al · 📊 ölçüm ara sonucu</i>"
+
+
+def commands_text(owner: bool = True) -> str:
+    """📖 /komutlar — tüm komutlar ve işlevleri, bölüm bölüm. Sahip her şeyi görür (🔒 = yalnız sen: DM ya da kendi
+    hesabınla); botun kanal / gruplarında yalnız orada çalışan komutlar listelenir."""
+    lines = ["📖 <b>Tüm komutlar</b>"]
+    lines.append("🔒 = yalnız sen (DM'de ya da grupta kendi hesabınla) · diğerleri botun kanal / gruplarında herkes için"
+                 if owner else "Bu grupta çalışan komutlar (sahibin ek komutları DM'de):")
+    for title, rows in COMMANDS:
+        shown = [(c, d, o) for c, d, o in rows if owner or not o]
+        if not shown:
+            continue
+        lines.append("")
+        lines.append(f"<b>{title}</b>")
+        for c, d, o in shown:
+            lines.append(f"{'🔒 ' if owner and o else ''}{esc(c)} — {esc(d)}")
+    lines.append("")
+    lines.append(COMMAND_KEYS)
+    return "\n".join(lines)
+
+
 def help_text() -> str:
     return (
         "🕵️ <b>HL Insider Radar</b>\n"
         "Earnings öncesi Hyperliquid hisse perp'lerindeki balina pozisyonlarını izler.\n\n"
-        "Komutlar:\n"
+        "Komutlar (📖 TAMAMI, eş anlamlılarıyla: /komutlar):\n"
         "/scan SNDK — coini şimdi tara, en büyük pozları göster\n"
         "/hype, /pump, /sndk — o coinin liq'e EN YAKIN büyük pozisyonları + grafik (canlı fiyat, kalan mesafe)\n"
         "/upcoming — yaklaşan HL-eşleşen earnings'ler\n"

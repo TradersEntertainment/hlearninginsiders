@@ -47,6 +47,11 @@ Detaylı mimari için: [PLAN.md](PLAN.md)
 
 ## Telegram Komutları
 
+**📖 `/komutlar`** (eş: `/komut`, `/commands`) — TÜM komutlar ve işlevleri, bölüm bölüm, eş anlamlılarıyla
+(kullanıcı 14.10). Sahip her şeyi görür (🔒 = yalnız sahip); botun kanal / gruplarında yalnız orada çalışanlar
+listelenir. Liste `app/telegram/format.py::COMMANDS`; `tests/test_komutlar.py` bot.py / admin.py'deki her komut
+adının listede olduğunu denetler (yeni komut eklenince listeye yazılmazsa test düşer).
+
 `/hype`, `/pump`, `/sndk` gibi çıplak coin komutları o coinin liq'e en yakın
 büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 
