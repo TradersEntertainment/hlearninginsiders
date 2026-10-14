@@ -633,6 +633,105 @@ def test_review2_retry_counters_notify_alias():
           " sayaca yazılmaz; ana sıraya geçen aday taze; notify kapalıyken geç ⛔ yok; düşen emrin 🏁 kopyası gider")
 
 
+def test_small_slices_not_delayed():
+    """Kullanıcı 14.10: TRX 6,5 sa $564K emir (~$721 dilim, 24s hacim $1.9M) 🔸 kanala 36 dk geç geldi — ilk dilim yolu
+    $1K altı dilimi sormuyordu, eski yol gözlenen $50K'yı bekliyordu (72 dilim). Artık: (a) ilk dilim tabanı $250
+    (varsayılan) → ilk dilimde; (b) eski yol 10 dilim / 5 dk sonra, ortalama dilim kapıya yetebilecekse $50K
+    beklemeden sorar. Küçük botlar (ortalama dilim kapıya yetmez) yine sorulmaz."""
+    async def run():
+        from app.hl import universe as uni
+        # (b) eski yol
+        cfg = _lcfg()
+        cfg.twap_fast_enabled = False
+        await _fresh_l(cfg)
+        PXT = 0.3333
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"TRX": {"m": PXT, "oi": 1, "f": 0, "v": 1.9e6, "p": None},
+                                                 "PUMP": {"m": PX, "oi": 1, "f": 0, "v": DV, "p": None}},
+                                           "ts": dbm.now()})
+        tl.VOL_CACHE.update(ts=dbm.now(), v=await tl.volumes(None))
+        now = dbm.now()
+        started = now - 400
+        sz = 1_690_000
+        hist = [{"time": started * 1000, "twapId": 9, "status": {"status": "activated"},
+                 "state": {"coin": "TRX", "user": A, "side": "B", "sz": str(sz), "executedSz": "0.0",
+                           "executedNtl": "0.0", "minutes": 390, "timestamp": started * 1000, "randomize": False,
+                           "reduceOnly": False}}]
+        col = Col(lambda: hist)
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        for i in range(13):                                            # 6 dk, 13 × $721 = $9.4K (< $50K)
+            tl.observe("TRX", A, "buy", PXT, 721 / PXT, 721, started + 2 + 30 * i, 1, True)
+        tiny = "0x" + "9" * 40
+        for i in range(13):                                            # küçük bot: $40 dilim → sorulmaz
+            tl.observe("TRX", tiny, "buy", PXT, 40 / PXT, 40, started + 2 + 30 * i, 1, True)
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert col.calls == [A] and out.get("early") == 1, (col.calls, out.get("early"))
+        assert [c for c, _ in bot.sent] == [LOOSE], bot.sent
+        assert "emir $563K (ana kanal ≥ $1.0M)" in bot.sent[0][1], bot.sent[0][1]
+        # (a) ilk dilim yolu: $721 dilim varsayılan tabanla ($250) sorulur
+        cfg2 = _lcfg()
+        assert Config().twap_fast_min_slice_usd == 250
+        await _fresh_l(cfg2)
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"TRX": {"m": PXT, "oi": 1, "f": 0, "v": 1.9e6, "p": None}},
+                                           "ts": dbm.now()})
+        tf.F.vols = await tl.volumes(None)
+        bot2 = Bot()
+        tf.observe("TRX", A, "buy", PXT, 721 / PXT, 721, started + 2, Config().twap_fast_min_slice_usd)
+        assert tf.F.pending[("TRX", A, "buy")]["queued"]
+        await _drain(cfg2, Notifier(cfg2, bot2), Col(lambda: hist))
+        assert [c for c, _ in bot2.sent] == [LOOSE], bot2.sent
+    asyncio.run(run())
+    print("✅ küçük dilim) TRX $721 dilimli $564K emir: ilk dilimde ($250 tabanı) ya da eski yolda 5 dk sonra ($50K"
+          " beklemeden); küçük bot sorulmaz")
+
+
+def test_second_order_same_key_not_blind():
+    """Kullanıcı 14.10 (NEAR, 0x7491…d90f): 15:16:26 95K NEAR 5 dk (≈ $487K, kapı dışı) sürerken 15:18:59 150K NEAR
+    5 dk (≈ $770K, 🔸 ⚡) — ikincisi 275 sn geç geldi: ilk emir okununca anahtar (coin + adres + yön) ilk emrin bitişi +
+    2 dk'ya kadar susturuluyordu. Artık bilinen anahtarda dilim temposu tek TWAP'ı aşınca (65 sn'de ≥ 4 dilim) yeniden
+    sorulur → ikinci emir ~1 dk içinde."""
+    async def run():
+        from app.hl import universe as uni
+        cfg = _lcfg()
+        await _fresh_l(cfg)
+        PXN = 5.13
+        await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"NEAR": {"m": PXN, "oi": 1, "f": 0, "v": 167e6, "p": None}},
+                                           "ts": dbm.now()})
+        tf.F.vols = await tl.volumes(None)
+        now = dbm.now()
+        t1, t2 = now - 300, now - 147                                  # ikinci emir ilkinden 153 sn sonra
+
+        def hl(start, sz, status="activated"):
+            return {"time": start * 1000, "status": {"status": status},
+                    "state": {"coin": "NEAR", "user": A, "side": "B", "sz": str(sz), "executedSz": "0.0",
+                              "executedNtl": "0.0", "minutes": 5, "timestamp": start * 1000, "randomize": False,
+                              "reduceOnly": False}}
+        hist = {"h": [hl(t1, 95_000)]}
+        col = Col(lambda: hist["h"])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        s1 = 95_000 * PXN / 11                                         # ~$44K dilim (5 dk = 11 dilim)
+        s2 = 150_000 * PXN / 11                                        # ~$70K
+        tf.observe("NEAR", A, "buy", PXN, s1 / PXN, s1, t1 + 1, 250)
+        await _drain(cfg, notifier, col, t1 + 2)
+        assert bot.sent == [] and ("NEAR", A, "buy") in tf.F.known, "ilk emir kapı dışı, anahtar bastırıldı"
+        hist["h"] = [hl(t2, 150_000), hl(t1, 95_000)]
+        events = sorted([(t1 + 1 + 30 * i, s1) for i in range(1, 10)] + [(t2 + 1 + 30 * i, s2) for i in range(0, 5)])
+        alerted_at = None
+        for ts, usd in events:
+            tf.observe("NEAR", A, "buy", PXN, usd / PXN, usd, ts, 250)
+            if tf.F.pending.get(("NEAR", A, "buy"), {}).get("queued"):
+                await _drain(cfg, notifier, col, ts)
+                if bot.sent and alerted_at is None:
+                    alerted_at = ts
+        assert tf.F.stats["relook"] >= 1, tf.F.stats
+        assert alerted_at is not None and alerted_at - t2 <= 70, (alerted_at, t2)
+        assert [c for c, _ in bot.sent] == [LOOSE] and "plan <b>$770K</b>" in bot.sent[0][1], bot.sent
+    asyncio.run(run())
+    print("✅ aynı anahtarda ikinci emir) bilinen emrin yanında yeni TWAP ~1 dk içinde sorulur (eskiden ilk emrin bitişi"
+          " + 2 dk'ya kadar kör)")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

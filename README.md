@@ -553,8 +553,17 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   İlk dilim kararı ayrı aile: **LOG-TWAPF** (ilk dilim anı; geçen + kalan). İlk dilim yolunun kendi 6 sa beklemesi
   (aynı adres+coin+yön) yalnız ilk dilim yoluu susturur.
 - **Kapsam:** eski yolla aynı (WS'in dinlediği coinler: hisseler + hacimce ilk `crypto_watch_top`
-  kripto). Dilimi `twap_fast_min_slice_usd`'nin ($1.000) altındaki uzun TWAP'lar (ör. $1M / 24 sa ≈
-  $350 dilim) eski yoldan gelir.
+  kripto). Dilimi `twap_fast_min_slice_usd`'nin altındaki TWAP'lar eski yoldan gelir. Taban 14.10'da $1.000 → **$250**
+  (kullanıcı: TRX 6,5 sa $564K emir, ~$721 dilim, yan kanala 36 dk geç geldi — ilk dilim yolu sormamış, eski yol gözlenen
+  $50K'yı beklemişti). Canlı ölçüm (7 dk): $250–1.000 arası yeni akış ~11, ön süzgeci geçen 1 — yük ihmal edilir.
+- **Eski yol gözlenen toplamı beklemez:** HL TWAP dizisi 10 dilim / 5 dk olunca, ortalama dilimi ≤ 24 sa'lik bir emirde
+  ana / 🔸 / 🕐 kapısını geçebilecek büyüklükteyse (ilk dilim ön süzgeciyle aynı hesap) `twap_lookup_min_usd` ($50K)
+  beklenmeden sorulur (`/tani` "erken sorgu"). Küçük botlar (ortalama dilim kapıya yetmez) yine sorulmaz.
+- **Aynı adres + coin + yönde ikinci emir:** okunan emrin anahtarı o emrin bitişi + 2 dk'ya kadar susturulur (aynı emrin
+  dilimleri yeniden sorulmasın). 14.10 NEAR: 5 dk'lık emir sürerken aynı adres ikinci 5 dk'lık emri verdi; ikincisi
+  275 sn geç geldi. Artık bilinen anahtarda dilim temposu tek TWAP'ı aşarsa (tek HL TWAP 30 sn'de bir dilim: 65 sn'de
+  en çok 3; ≥ 4 → ikinci emir) susturma kalkar ve emir yeniden sorulur (en sık dakikada bir; `/tani` "aynı adreste yeni
+  emir için yeniden sorgu").
 
 ### Süren emrin dolanı — HL kaydı 0 yazar
 

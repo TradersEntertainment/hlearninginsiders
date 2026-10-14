@@ -55,6 +55,9 @@ QUICK_RELOOK = 30
 QUICK_POLL = 60             # ⚡ HIZLI emir dilim gelse de dakikada bir sorulur (aynı adresin başka TWAP'ı iptali gizlemesin)
 OPEN_POLL = 300             # uzun emir de dilim gelse 5 dk'da bir sorulur: aynı adres + coin + yönün BAŞKA TWAP'ı dilim
                             # atarken iptal gizlenmesin (⛔ notu gecikmesin, /twap iptal edilmiş emri "süren" göstermesin)
+RELOOK_WIN = 65             # bilinen emrin anahtarında bu pencerede…
+RELOOK_SLICES = 4           # …bu kadar dilim (tek HL TWAP 30 sn'de bir: en çok 3) → aynı adres + coin + yönde YENİ emir
+RELOOK_MIN_GAP = 60         # yeniden sorgu en sık bu kadar (14.10 NEAR: üst üste iki 5 dk'lık emir, ikincisi 275 sn geç)
 OPEN_KV = "twapfast_open"   # bildirilen emirlerin kaydı — yeniden başlatmada bitiş/iptal notu kaybolmasın
 END_GRACE = 30              # planlanan bitişten bu kadar sonra emir sorulur (🏁/⛔ notu)
 END_GIVEUP = 600            # HL bitişten bu kadar sonra hâlâ 'activated' diyorsa not yazılmadan kapatılır
@@ -83,6 +86,7 @@ class Fast:
         self.event: asyncio.Event | None = None
         self.lookup_ts: deque = deque()         # son 60 sn'nin sorgu anları (dakika tavanı)
         self.recent: deque = deque(maxlen=20)   # son kararlar (/twap, /tani)
+        self.kslices: dict[tuple, dict] = {}    # bilinen anahtarın dilim temposu (aynı anahtarda ikinci emir sezgisi)
         self.lat: deque = deque(maxlen=50)      # emir başlangıcı → bildirim (sn)
         self.stats: dict = {}
         self.vols: dict = {}                    # coin → (24s hacim, ts): ön süzgeç (döngü tazeler; G/Ç yok)
@@ -115,12 +119,13 @@ class Fast:
         self.stats = {k: 0 for k in ("zero", "slices", "queued", "known_skip", "dropped_old", "capped", "lookups",
                                      "lookup_fail", "no_order", "mm", "alerts", "failed", "cooldown", "errors",
                                      "pre_small", "pre_novol", "pre_low", "pre_spot_thin", "notify_off", "no_ws",
-                                     "no_chat", "inflight_skip", "ends", "end_lookups")}
+                                     "no_chat", "inflight_skip", "ends", "end_lookups", "relook")}
 
     def clear(self) -> None:
         self.open.clear()
         self.pending.clear()
         self.known.clear()
+        self.kslices.clear()
         self.inflight.clear()
         self.lookup_ts.clear()
         self.recent.clear()
@@ -144,10 +149,19 @@ class Fast:
             r["px_last"] = float(px)
             r["last_ts"] = max(r["last_ts"], ts)
         until = self.known.get(key)
-        if until is not None:
-            if ts <= until:
+        luntil = twaploose.KNOWN.get(key)
+        if (until is not None and ts <= until) or (luntil is not None and ts <= luntil):
+            if self._second_order(key, ts):
+                # bilinen emrin yanında aynı adres + coin + yönde YENİ bir HL TWAP dilim atıyor: bastırma kalkar, bu dilim
+                # (her iki katmanda) yeniden değerlendirilir — emri bilinen eskisi değil, yenisi seçilir (pick_order)
+                self.known.pop(key, None)
+                twaploose.KNOWN.pop(key, None)
+                st["relook"] += 1
+                until = None
+            elif until is not None and ts <= until:
                 st["known_skip"] += 1
                 return
+        if until is not None and ts > until:
             self.known.pop(key, None)
         p = self.pending.get(key)
         if p is None:
@@ -214,6 +228,22 @@ class Fast:
         if self.event is not None:
             self.event.set()
 
+    def _second_order(self, key: tuple, ts: int) -> bool:
+        """Bilinen (bastırılan) anahtarda dilim temposu: tek HL TWAP 30 sn'de bir dilim atar (65 sn'de en çok 3); daha
+        sık dilim → aynı anahtarda ikinci bir emir. En sık RELOOK_MIN_GAP'te bir doğru döner. Sıcak yol, G/Ç yok."""
+        ks = self.kslices.get(key)
+        if ks is None:
+            ks = self.kslices[key] = {"last": 0, "times": deque(maxlen=RELOOK_SLICES + 2), "relook": 0}
+        if ts - ks["last"] > COALESCE_SEC:
+            ks["times"].append(ts)
+            ks["last"] = ts
+            n = sum(1 for x in ks["times"] if ts - x <= RELOOK_WIN)
+            if n >= RELOOK_SLICES and ts - ks["relook"] >= RELOOK_MIN_GAP:
+                ks["relook"] = ts
+                ks["times"].clear()
+                return True
+        return False
+
     def _evict(self, ref_ts: int) -> None:
         self.prune(ref_ts)
         if len(self.pending) < PENDING_MAX:
@@ -228,6 +258,9 @@ class Fast:
         for k in [k for k, u in self.known.items() if u < ref_ts]:
             self.known.pop(k, None)
         twaploose.prune(ref_ts)
+        for k in [k for k, v in self.kslices.items()
+                  if k not in self.known and k not in twaploose.KNOWN and ref_ts - v["last"] > RELOOK_WIN]:
+            self.kslices.pop(k, None)
 
     def note(self, p: dict, reason: str, **kw) -> None:
         self.recent.appendleft({"coin": p["coin"], "addr": p["addr"], "side": p["side"], "reason": reason,
@@ -888,6 +921,7 @@ async def diag_line() -> str:
     for k, lab in (("pre_low", "ön süzgeçte küçük"), ("pre_novol", "hacim bilinmiyor"),
                    ("no_order", "emir yok"), ("slow", "dakika hızı düşük"), ("vol_small", "hacme göre küçük"),
                    ("order_small", "eşik altı"), ("short_small", "⚡ hızlı eşik altı"), ("cooldown", "bekleme"),
+                   ("relook", "aynı adreste yeni emir için yeniden sorgu"),
                    ("dropped_old", "sırada eskidi"), ("capped", "dakika tavanı"), ("no_ws", "soket dolu"),
                    ("mm", "mm/vault"), ("notify_off", "TWAP bildirimi kapalı"), ("no_chat", "kanal yok"),
                    ("ends", "bitiş notu")):

@@ -727,7 +727,7 @@ def test_mirror_rules_slow_path():
 def test_wiring_and_wording():
     from app.lab import specs
     cfg = Config()
-    assert cfg.twap_fast_enabled and cfg.twap_fast_min_slice_usd == 1000 and cfg.twap_fast_lookups_min == 30
+    assert cfg.twap_fast_enabled and cfg.twap_fast_min_slice_usd == 250 and cfg.twap_fast_lookups_min == 30   # 14.10: TRX $721 dilim
     assert cfg.twap_fast_short_max_min == 60 and cfg.twap_fast_short_min_usd == 250_000 and cfg.twap_fast_rate_x == 2
     for k in ("twap_fast_enabled", "twap_fast_min_slice_usd", "twap_fast_lookups_min", "twap_fast_short_max_min",
               "twap_fast_short_min_usd", "twap_fast_rate_x"):

@@ -537,7 +537,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "twap_alert_min_slices": {"type": "int", "label": "Sorgu için asgari dilim", "group": "TWAP radarı",
                               "desc": "Bu kadar düzenli dilim görülünce adresin TWAP emri sorgulanır (30 sn'lik HL TWAP'ta 10 dilim = 5 dk)"},
     "twap_lookup_min_usd": {"type": "float", "label": "Sorgu için asgari gözlenen toplam ($)", "group": "TWAP radarı",
-                            "desc": "Gözlenen dilimlerin toplamı bunun altındayken sorgu yapılmaz (küçük botlar için soketi meşgul etmemek)"},
+                            "desc": "Gözlenen dilimlerin toplamı bunun altındayken sorgu yapılmaz (küçük botlar için soketi meşgul etmemek) — HL TWAP dizisinin ortalama dilimi ≤ 24 sa'lik bir emirde kapıyı geçebilecek büyüklükteyse bu beklenmez (14.10: küçük dilimli büyük emir yarım saat geç geliyordu)"},
     "twap_lookup_cooldown": {"type": "int", "label": "Aynı adres için sorgu aralığı (sn)", "group": "TWAP radarı",
                              "desc": "Sorgu sonucu bu süre önbellekte kalır; bildirilmiş tur 10 dk'da bir tazelenir"},
     "twap_alert_cooldown": {"type": "int", "label": "Aynı adres+coin+yön için bekleme (sn)", "group": "TWAP radarı",
@@ -559,7 +559,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "twap_fast_enabled": {"type": "bool", "label": "🔎 İlk dilimde yakalama", "group": "TWAP radarı",
                           "desc": "HL TWAP dilimleri işlem akışında sıfır hash'le gelir: ilk dilim (emirden ~1-2 sn sonra) görülünce adresin emri tek sorguyla okunur (toplam, süre, başlangıç) ve kapıdan geçerse saniyeler içinde bildirilir. Kapatılırsa yalnız eski yol (10 dilim / 5 dk sonra) çalışır"},
     "twap_fast_min_slice_usd": {"type": "float", "label": "İlk dilim: sorgu için en küçük dilim ($)", "group": "TWAP radarı",
-                                "desc": "Dilim ≈ emir / (2 × dakika + 1): $1M / 5 dk ≈ $91K, $1M / 4 sa ≈ $2K, $1M / 24 sa ≈ $350. Bu tutarın altındaki dilim için sorgu yapılmaz (eski yol 5 dk sonra yine bakar). Sorgular dakika tavanıyla sınırlı; büyük ve coinin hacmine göre yoğun dilim önce sorulur"},
+                                "desc": "Dilim ≈ emir / (2 × dakika + 1): $1M / 5 dk ≈ $91K, $1M / 4 sa ≈ $2K, $1M / 24 sa ≈ $350, $564K / 6,5 sa ≈ $720. Bu tutarın altındaki dilim için ilk dilimde sorgu yapılmaz; eski yol 10 dilim / 5 dk sonra, dilim kapıya yetebilecek büyüklükteyse gözlenen toplamı beklemeden sorar. Sorgular dakika tavanıyla sınırlı; büyük ve coinin hacmine göre yoğun dilim önce sorulur"},
     "twap_fast_lookups_min": {"type": "int", "label": "İlk dilim: dakikada en çok sorgu", "group": "TWAP radarı",
                               "desc": "HL WS emir sorgusu (kısa abonelik). Aynı anda en çok 3; bilinen (önceden okunmuş) emrin dilimleri yeniden sorulmaz"},
     "twap_fast_short_max_min": {"type": "int", "label": "⚡ Hızlı TWAP sınırı — emir süresi (dk)", "group": "TWAP radarı",
@@ -933,7 +933,7 @@ class Config:
         self.twap_follow_progress = True
         # 🔎 İlk dilimde yakalama (bkz. app/radar/twapfast.py): sıfır hash'li ilk dilimde tek sorgu
         self.twap_fast_enabled = os.getenv("TWAP_FAST_ENABLED", "1") not in ("0", "false", "no")
-        self.twap_fast_min_slice_usd = float(os.getenv("TWAP_FAST_MIN_SLICE_USD", "1000"))
+        self.twap_fast_min_slice_usd = float(os.getenv("TWAP_FAST_MIN_SLICE_USD", "250"))   # 14.10: 1000 → 250 (TRX $721)
         self.twap_fast_lookups_min = int(os.getenv("TWAP_FAST_LOOKUPS_MIN", "30"))
         self.twap_fast_short_max_min = int(os.getenv("TWAP_FAST_SHORT_MAX_MIN", "60"))   # ⚡ hızlı = ≤ 1 sa (12.10)
         self.twap_fast_short_min_usd = float(os.getenv("TWAP_FAST_SHORT_MIN_USD", "250000"))

@@ -916,6 +916,26 @@ def order_key(key: str, order: dict | None) -> str | None:
 
 # ---------------- değerlendirme turu ----------------
 
+def _slice_could_pass(cfg, run: "Run", ts: int, out: dict | None = None) -> bool:
+    """Gözlenen toplam `twap_lookup_min_usd`'nin ($50K) altındaki HL TWAP dizisi de 10 dilim / 5 dk sonra sorulsun mu:
+    ortalama dilim, ≤ 24 sa'lik bir emirde ana / 🔸 / 🕐 kapılarından birini geçebilecek büyüklükte mi (ilk dilim
+    yolunun ön süzgeciyle aynı hesap; G/Ç yok, hacim son turun önbelleğinden). Kullanıcı 14.10: TRX 6,5 sa $564K emir
+    (~$721 dilim) $50K'yı bekleyip 36 dk geç geldi."""
+    if not run.nat_n or run.n <= 0:
+        return False                                   # HL TWAP alt emri değil (🕐 gizli TWAP kendi tabanıyla)
+    from . import twapfast, twaploose
+    avg = run.total / run.n
+    vol = (VOL_CACHE.get("v") or {}).get(run.coin)
+    ok = twapfast.prefilter(cfg, run.coin, avg, vol, ts) == ""
+    if not ok and twaploose.enabled(cfg):
+        ok = twapfast.prefilter(twaploose.loose_cfg(cfg), run.coin, avg, vol, ts) == ""
+    if not ok and twaploose.BIG.enabled(cfg):
+        ok = twaploose.big_pre(cfg, avg, run.coin, ts)
+    if ok and out is not None:
+        out["early"] = out.get("early", 0) + 1
+    return ok
+
+
 def _vol_pct_24h(det: dict):
     """Emir / ham 24s hacim (%) — Cumartesi tabanından bağımsız (🧪 özellikleri için)."""
     dv = det.get("day_vol_24h") if "day_vol_24h" in det else det.get("day_vol")
@@ -982,7 +1002,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     lookup_min = float(getattr(cfg, "twap_lookup_min_usd", 50_000) or 0)
     cands = [r for r in REG.runs.values()
              if r.alerted_ts or (r.n >= min_slices and r.last_ts - r.first_ts >= LOOKUP_MIN_DUR
-                                 and r.total >= lookup_min)]
+                                 and (r.total >= lookup_min or _slice_could_pass(cfg, r, ts, out)))]
     out["cands"] = len(cands)
     sample = getattr(collector, "twap_sample", None) if collector is not None else None
     if sample:
