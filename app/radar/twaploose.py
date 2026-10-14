@@ -36,6 +36,7 @@ QUICK_SILENT = 45           # dilim bu kadar gelmezse (⚡) erken sorulur
 SILENT_SEC = 90
 RELOOK_SEC = 30             # iki sorgu arası en az
 CACHE_OK = 45               # başka yolun (eski yol / ⚡ yenileme / /twap) bu kadar taze HL cevabı varsa yeniden sorulmaz
+LIFE_LOOKUPS = 3            # ömür turu başına en çok bu kadar HL sorgusu (ilk dilim döngüsünü uzun bekletmesin; kalan 10 sn sonra)
 FAIL_BACKOFF = 300          # yan kanala gönderilemeyen ek alarm bu kadar sonra yeniden denenir (eski yol her tur bakar)
 
 # cfg alanı → yan kanal eşiğinin cfg alanı (Config: TWAP_LOOSE_* env'leri)
@@ -207,22 +208,42 @@ async def _send(cfg, notifier, text: str, dkey: str, coin: str = "", *, primary:
 
 
 async def copy(cfg, notifier, text: str, dkey: str, coin: str = "", primary: str | None = None,
-               okey: str | None = None) -> bool | None:
+               okey: str | None = None, alias: str | None = None) -> bool | None:
     """Ana hedefe (ya da yalnız aynaya) giden TWAP mesajının kopyası. `dkey`: 'a:<emir>' ilk alarm, 'e:<emir>' bitiş,
     'p:…' yarı — emir anahtarıyla, böylece yalnız-yan-kanal alarmı gitmiş emrin kopyası İKİNCİ kez gitmez.
     Bitiş / yarı notu yalnız ilk alarmı YAN KANALDA görülmüş emir için (`okey`; bilinmiyorsa not yok) — kanal sonradan
-    tanımlandıysa ya da ilk alarm buraya gidemediyse "duyurulmamış emrin iptali" yazılmaz."""
+    tanımlandıysa ya da ilk alarm buraya gidemediyse "duyurulmamış emrin iptali" yazılmaz. `alias` (eski yol:
+    'run:<coin:adres:yön>:<ilk dilim>'): ilk alarmda da yazılır; bitişte emir HL geçmişinden düşmüşse (okey yok)
+    duyuru onunla bulunur."""
     if not enabled(cfg) or only_extra(cfg):
         return None
     if not dkey.startswith("a:"):
-        ann = f"a:{okey}" if okey else ""
-        if not ann or not (ann in SENT or await alert_recent("twap_loose", ann, SENT_WINDOW)):
+        if not await announced(okey, alias):
             STATS["orphan_skip"] += 1
             return None
     ok = await _send(cfg, notifier, text, dkey, coin, primary=primary, is_copy=True)
     if ok:
         STATS["copies"] += 1
+    if ok is not False and dkey.startswith("a:") and alias and (ok or f"a:{okey}" in SENT):
+        await _mark_alias(alias)
     return ok
+
+
+async def _mark_alias(alias: str) -> None:
+    try:
+        if alias not in SENT:
+            await alert_log("twap_loose", alias, "")
+            SENT.add(alias)
+    except Exception:                              # noqa: BLE001
+        log.debug("yan kanal takma adı %s", alias, exc_info=True)
+
+
+async def announced(okey: str | None, alias: str | None = None) -> bool:
+    """Emrin ilk alarmı yan kanalda görüldü mü (emir anahtarı ya da eski yolun tur takma adıyla)?"""
+    for k in ((f"a:{okey}" if okey else ""), (alias or "")):
+        if k and (k in SENT or await alert_recent("twap_loose", k, SENT_WINDOW)):
+            return True
+    return False
 
 
 async def main_owns(okey: str) -> bool:
@@ -488,6 +509,8 @@ async def slow_extra(cfg, notifier, client, run, m: dict, order: dict, g: str, d
 
     res = await _extra(cfg, notifier, okey, f"{run.coin}:{run.address}:{run.side}", run.coin, text_fn, head,
                        claimed=claimed)
+    if res in ("sent", "dup"):
+        await _mark_alias(f"run:{run.coin}:{run.address}:{run.side}:{int(run.first_ts)}")
     if res == "sent":
         _register(okey, run.coin, run.address, run.side, order, ts, run.first_ts, run.last_ts, run.n, run.total,
                   run.sz_total, m.get("px_first") or run.px_first, m.get("px_last") or run.px_last)
@@ -510,8 +533,9 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
         return 0
     sent = 0
     changed = False
+    asked = 0
     fn = getattr(collector, "fetch_twap_history", None) if collector is not None else None
-    for okey, r in list(OPEN.items()):
+    for okey, r in sorted(OPEN.items(), key=lambda kv: int(kv[1]["lookup_ts"])):   # en uzun beklenen önce
         if r["ended"]:
             if t - r["ended"] > 600:
                 _drop(okey)
@@ -524,8 +548,6 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
             continue
         if t - int(r["lookup_ts"]) < RELOOK_SEC and not (t >= end_at + END_GRACE > int(r["lookup_ts"])):
             continue
-        if not enabled(cfg):
-            continue
         if not only_extra(cfg) and await main_owns(okey):
             r["ended"], changed = t, True          # ana yol yazar (kopyası buraya gelir)
             continue
@@ -537,12 +559,13 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
             STATS["end_cached"] += 1
             r["lookup_ts"] = int(cached[0])
         else:
-            if fn is None:
+            if fn is None or asked >= LIFE_LOOKUPS:
                 continue
             waiters = getattr(collector, "_twap_waiters", None)
             if isinstance(waiters, dict) and len(waiters) >= twapfast.WS_CEILING:
                 continue                            # soket dolu: ana yolun sorguları önce
             STATS["end_lookups"] += 1
+            asked += 1
             r["lookup_ts"] = t
             try:
                 hist = await fn(r["addr"])
@@ -572,6 +595,9 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
         vol = (twaplive.VOL_CACHE.get("v") or {}).get(r["coin"])
         ctx = {"order": o, "day_vol": vol[0] if vol else None, "klass": twaplive.klass_of(r["coin"]),
                "cancelled": st in ("terminated", "error"), "quick_max": twaplive.quick_max(cfg)}
+        if not enabled(cfg):
+            r["ended"], changed = t, True               # bildirim kapalı (notify_twap): not YOK, geç ⛔ de yok
+            continue
         text = fmt.twap_end(twapfast._end_measure(r), ctx)
         ok = await _send(cfg, notifier, text, f"e:{okey}", r["coin"], is_copy=False)
         if ok is False:
@@ -589,7 +615,7 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
 
 
 def snapshot(t: int) -> dict:
-    return {**STATS, "open": sum(1 for r in OPEN.values() if not r["ended"]), "ts": t}
+    return {**STATS, "open": sum(1 for r in OPEN.values() if not r["ended"]), "recent": list(RECENT)[:8], "ts": t}
 
 
 async def save_stats(t: int) -> None:
@@ -613,12 +639,35 @@ async def diag_line(cfg) -> str:
     if st.get("ts"):
         parts.append(f"✓{st.get('copies', 0)} kopya · ✓{st.get('extra', 0)} ek alarm · {st.get('ends', 0)} bitiş notu"
                      f" · {st.get('open', 0)} açık emir")
-        for k, lab in (("pre_queued", "ön süzgeçte yalnız gevşekle sıraya"), ("pre_share", "sorgu payı doldu"),
-                       ("below", "ilk dilimde gevşek eşik altı"), ("end_lookups", "bitiş sorgusu")):
+        for k, lab in (("pre_queued", "ön süzgeçte yalnız gevşekle sıraya"), ("lookups", "yalnız-gevşek sorgu"),
+                       ("pre_share", "sorgu payı doldu"), ("dropped_old", "sırada eskidi"),
+                       ("below", "ilk dilimde gevşek eşik altı"), ("strict_later", "ana kapılık (eski yola kaldı)"),
+                       ("no_order", "emir yok"), ("end_lookups", "bitiş sorgusu"),
+                       ("orphan_skip", "duyurulmamış emrin notu atlandı")):
             if st.get(k):
                 parts.append(f"{st[k]} {lab}")
+        for k, lab in (("lookup_fail", "sorgu başarısız"), ("errors", "hata")):
+            if st.get(k):
+                parts.append(f"⚠️ {st[k]} {lab}")
         if st.get("failed"):
             parts.append(f"⚠️ {st['failed']} gönderilemedi (grup süper gruba dönüştüyse id değişir: grupta /id yaz,"
                          " TWAP_LOOSE_CHAT_ID'yi güncelle)")
-    return "🔸 twap yan kanalı: " + " · ".join(parts)
+    line = "🔸 twap yan kanalı: " + " · ".join(parts)
+    rec = [recent_line(d) for d in (st.get("recent") or [])[:4]]
+    if rec:
+        line += "\n       yalnız-gevşek son kararlar: " + " · ".join(rec)
+    return line
+
+
+def recent_line(d: dict) -> str:
+    from .twapfast import REASON_TR as FR
+    from ..telegram.format import short, usd
+    from .. import assets
+    txt = f"{assets.label(d.get('coin') or '')} {short(d.get('addr') or '')} {d.get('side')}"
+    txt += f" {usd(d['planned'])} emir" if d.get("planned") else f" dilim {usd(d.get('slice') or 0)}"
+    r = d.get("reason") or "?"
+    txt += f" → {FR.get(r, r)}"
+    if d.get("loose"):
+        txt += f" · 🔸 {REASON_TR.get(d['loose'], FR.get(d['loose'], d['loose']))}"
+    return txt
 

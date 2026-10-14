@@ -46,6 +46,7 @@ def _lcfg(chat=LOOSE, mirror="-200"):
 
 async def _fresh_l(cfg):
     await _fresh(cfg)
+    tl._LIVE_Q.clear()
     lo.reset()
 
 
@@ -541,6 +542,95 @@ def test_collector_feeds_counter_and_two_orders():
         assert k2 not in lo.OPEN and lo.BY_KEY[("PUMP", A, "buy")] == [k1]
     asyncio.run(run())
     print("✅ inceleme) collector sayacı ilk dilim yolu kapalıyken de besler; aynı anahtarda iki emir ayrı sayılır")
+
+
+def test_review2_retry_counters_notify_alias():
+    """2. inceleme: (a) ana hedef tanımsızken yan kanala gidemeyen alarm geri çekilmeden sonra yeniden denenir;
+    (b) yalnız-gevşek adayın sırada eskimesi ana sayacı değiştirmez, ana sıraya geçen aday sıra süresini baştan alır;
+    (c) notify_twap kapalıyken yan kanal ömrü donmaz, geç ⛔ yazılmaz; (d) emir bitişte HL geçmişinden düşse de yan
+    kanalda duyurulmuş emrin 🏁 kopyası gider (tur takma adı)."""
+    async def run():
+        # (a)
+        cfg = _lcfg(mirror="")
+        cfg.crypto_chat_id = ""
+        cfg.twap_fast_enabled = False
+        await _fresh_l(cfg)
+        now = dbm.now()
+        started = now - 400
+        col = Col(lambda: [twap_order(started, minutes=120, plan=3_000_000, ex_frac=0.2)])
+        bot = Bot(fail_chats=(LOOSE,))
+        notifier = Notifier(cfg, bot)
+        _slow_feed(started)
+        out = await tl.evaluate(cfg, notifier, None, col)
+        d = [x for x in out["decisions"] if x["addr"] == A][0]
+        assert d["loose"] == "failed" and tl.REG.runs[("PUMP", A, "buy")].alerted_ts is None
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert [x for x in out["decisions"] if x["addr"] == A][0]["loose"] == "backoff"
+        bot.fail.clear()
+        lo.FAILED.clear()
+        out = await tl.evaluate(cfg, notifier, None, col)
+        assert [x for x in out["decisions"] if x["addr"] == A][0]["loose"] == "sent" and _chats(bot) == [LOOSE]
+        assert tl.REG.runs[("PUMP", A, "buy")].alerted_ts is not None
+        # (b)
+        cfg = _lcfg()
+        await _btc(cfg)
+        now = dbm.now()
+        tf.observe("BTC", A, "buy", 60_000, 1.0, 60_000, now, 1000)
+        p = tf.F.pending[("BTC", A, "buy")]
+        p["queued"] = now - 200
+        await tf.dispatch(cfg, None, None, Col([]), now, set())
+        assert tf.F.stats["dropped_old"] == 0 and lo.STATS["dropped_old"] == 1
+        tf.observe("BTC", A, "buy", 60_000, 1.0, 60_000, now + 10, 1000)         # yeni dilim: yine yalnız-gevşek
+        p = tf.F.pending[("BTC", A, "buy")]
+        assert p["queued"] and p["loose"]
+        p["queued"] = now - 140
+        pre = tf.F.stats["pre_low"]
+        tf.observe("BTC", A, "buy", 60_000, 0.5, 30_000, now + 40, 1000)         # sıradayken gelen küçük dilim
+        assert tf.F.stats["pre_low"] == pre + 1, "ana sayaç dilim başına bir (bugünkü gibi)"
+        tf.observe("BTC", A, "buy", 60_000, 1.5, 90_000, now + 40, 1000)         # aynı dilim $120K → ana aday
+        assert p["loose"] is False and p["queued"] >= now, "sıra süresi baştan"
+        # (c)
+        cfg = _lcfg()
+        await _fresh_l(cfg)
+        now = dbm.now()
+        order = tl.parse_twap_orders([twap_order(now - 100, minutes=5, plan=150_000)], "PUMP", "buy", PX, now)[0]
+        okey = f"PUMP:{A}:buy:{now - 100}"
+        lo._register(okey, "PUMP", A, "buy", order, now - 90, now - 98, now - 60, 2, 20_000, 4e6, PX, PX)
+        cfg.notify_twap = False
+        col = Col(lambda: [twap_order(now - 100, minutes=5, plan=150_000, status="terminated")])
+        bot = Bot()
+        lo.OPEN[okey]["lookup_ts"] = 0
+        assert await lo.lifecycle(cfg, Notifier(cfg, bot), col, now) == 0
+        assert lo.OPEN[okey]["ended"] and bot.sent == [], "kapalıyken not yok, kayıt kapanır"
+        cfg.notify_twap = True
+        assert await lo.lifecycle(cfg, Notifier(cfg, bot), col, now + 3600) == 0 and bot.sent == []
+        # (d)
+        cfg = _lcfg()
+        cfg.twap_fast_enabled = False
+        cfg.twap_alert_finish_note = True
+        await _fresh_l(cfg)
+        now = dbm.now()
+        started = now - 400
+        hist = {"h": [twap_order(started, minutes=120, plan=3_000_000, ex_frac=0.2)]}
+        col = Col(lambda: hist["h"])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        _slow_feed(started)
+        await tl.evaluate(cfg, notifier, None, col)
+        assert _chats(bot) == ["-100", "-200", LOOSE]
+        hist["h"] = []                                                       # emir geçmişten düştü
+        run_ = tl.REG.runs[("PUMP", A, "buy")]
+        run_.last_ts = now - 350                                             # sustu (budanmadan)
+        run_.lookup_ts = now - 700
+        tl._lookup_cache.clear()
+        await tl.evaluate(cfg, notifier, None, col)
+        ends = [c for c, t in bot.sent if "TWAP bitti" in t]
+        assert ends == ["-100", "-200", LOOSE], bot.sent
+        line = await lo.diag_line(cfg)
+        assert "🔸 twap yan kanalı" in line
+    asyncio.run(run())
+    print("✅ 2. inceleme) ana hedef tanımsızken başarısız yan kanal alarmı yeniden denenir; yalnız-gevşek eskime ana"
+          " sayaca yazılmaz; ana sıraya geçen aday taze; notify kapalıyken geç ⛔ yok; düşen emrin 🏁 kopyası gider")
 
 
 if __name__ == "__main__":

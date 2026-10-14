@@ -597,11 +597,13 @@ davranış değişmez (app/radar/twaploose.py).
   bugünkü gibi eski yol ana kanala yazar. Eski yol ek sorgu yapmaz (aynı turun emir cevabını kullanır). Dilim sayacı
   (⛔ notunun fiyatı, sessizlik) collector'dan beslenir — ilk dilim yolu kapalıyken de.
 - **Tekrar / bekleme:** aynı emir bir kez (emir anahtarı, 7 gün); ana kanal bu adres + coin + yönü 6 sa içinde
-  bildirdiyse ek alarm yok; gönderilemeyen ek alarm 5 dk sonra yeniden denenir; ana yolun bekleme / 📣 / 🧪 kapı
-  kayıtlarına dokunulmaz. Fan-out yok; `notify_twap`
+  bildirdiyse ek alarm yok; gönderilemeyen ek alarm 5 dk sonra yeniden denenir (ana hedef tanımsızken de); ana yolun
+  bekleme / 📣 / 🧪 kapı kayıtlarına ve sayaçlarına dokunulmaz. Ömür turu en çok 3 HL sorgusu yapar (ilk dilim
+  döngüsü beklemesin); `notify_twap` kapalıyken biten emir notsuz kapanır (açılınca geç ⛔ yazılmaz). Fan-out yok; `notify_twap`
   kapanırsa yan kanal da susar; sessiz saat ayrı gruplara uygulanmaz.
 - Yan kanal botun kendi sohbeti: `/twap`, `/twapf`, `/xpltwap`, `/takip_N` orada da çalışır. `/tani` "🔸 twap yan
-  kanalı" satırı: eşikler, kopya / ek alarm / bitiş notu sayısı, açık emir, gönderim hatası. `/twap durum` kararlarında
+  kanalı" satırı: eşikler, kopya / ek alarm / bitiş notu sayısı, açık emir, yalnız-gevşek sorgular ve son kararları,
+  gönderim hatası. `/twap durum` kararlarında
   "🔸 yan kanal: gönderildi / zaten gönderildi / bekleme içinde".
 
 ### TWAP emir defteri: `/twaplar` (spot dahil)

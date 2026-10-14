@@ -1009,7 +1009,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                                 await mirror(cfg, notifier, text, f"end:{eo}" if eo else f"end:{ekey}", run.coin, out,
                                              primary=chat if can else None)
                                 await _loose_copy(cfg, notifier, text, f"e:{eo or ekey}", run.coin,
-                                                  chat if can else None, okey=eo)
+                                                  chat if can else None, okey=eo, alias=f"run:{key}:{run.first_ts}")
                         finally:
                             ENDING.discard(claim)
                     await persist(run, m)
@@ -1033,7 +1033,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         await mirror(cfg, notifier, text, f"prog:{pkey}", run.coin, out,
                                      primary=chat if can else None)
                         await _loose_copy(cfg, notifier, text, f"p:{pkey}", run.coin, chat if can else None,
-                                          okey=order_key(key, order))
+                                          okey=order_key(key, order), alias=f"run:{key}:{run.first_ts}")
                     await persist(run, m)
                 continue
             # --- ilk alarm: düzenli dizi → emir sorgusu → kapı ---
@@ -1145,6 +1145,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                                               ents, ts, claimed=True)
                     if lres != "off":
                         decisions[-1]["loose"] = lres
+                    if lres in ("failed", "backoff", "inflight", "error"):
+                        run.alerted_ts = None             # yan kanala gidemedi: sonraki turlarda yeniden (5 dk geri çekilme)
                     await persist(run, m)
                     continue
                 if can and not chat:
@@ -1168,7 +1170,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 if not can:                                   # ana kanal tanımsız (kripto) — yalnız ayna; durum eskisi gibi
                     out["no_chat"] += 1
                     await mirror(cfg, notifier, text, mkey, run.coin, out)
-                    await _loose_copy(cfg, notifier, text, f"a:{okey or mkey}", run.coin, None)
+                    await _loose_copy(cfg, notifier, text, f"a:{okey or mkey}", run.coin, None, okey=okey,
+                                      alias=f"run:{key}:{run.first_ts}")
                     decide(run, "no_chat", det)
                     await persist(run, m)
                     continue
@@ -1178,7 +1181,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                     if okey:
                         await alert_log("twap_o", okey, "")   # 📣 (/twap): bildirilen EMİR (aynı anahtarın başka emri değil)
                 await mirror(cfg, notifier, text, mkey, run.coin, out, primary=chat)
-                await _loose_copy(cfg, notifier, text, f"a:{okey or mkey}", run.coin, chat)
+                await _loose_copy(cfg, notifier, text, f"a:{okey or mkey}", run.coin, chat, okey=okey,
+                                  alias=f"run:{key}:{run.first_ts}")
                 if ok:
                     out["alerted"] += 1
                     decide(run, "alerted", det)
@@ -1216,12 +1220,13 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     return out
 
 
-async def _loose_copy(cfg, notifier, text: str, dkey: str, coin: str, primary, okey: str | None = None) -> None:
+async def _loose_copy(cfg, notifier, text: str, dkey: str, coin: str, primary, okey: str | None = None,
+                      alias: str | None = None) -> None:
     """🔸 yan kanala kopya (twaploose.copy) — asla fırlatmaz, ana yolun sonucunu değiştirmez. Bitiş / yarı notunda
     `okey`: yalnız ilk alarmı yan kanalda görülmüş emir."""
     try:
         from . import twaploose
-        await twaploose.copy(cfg, notifier, text, dkey, coin, primary=primary, okey=okey)
+        await twaploose.copy(cfg, notifier, text, dkey, coin, primary=primary, okey=okey, alias=alias)
     except Exception:                                  # noqa: BLE001
         log.debug("twap yan kanal kopyası %s", dkey, exc_info=True)
 

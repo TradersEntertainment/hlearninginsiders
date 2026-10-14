@@ -152,12 +152,18 @@ class Fast:
         p["szt"] += float(sz)
         p["px"] = float(px)
         p["max"] = max(p["max"], p["usd"])
-        if p["queued"] and p.get("loose") and self.cfg is not None and p["usd"] >= float(min_usd or 0) \
-                and not prefilter(self.cfg, coin, p["usd"], self.vols.get(coin), ts):
-            p["loose"] = False                          # 🔸 dilim büyüdü, ana ön süzgeci geçti → ana aday (öncelik, pay yok)
-            st["queued"] += 1
-            if self.event is not None:
-                self.event.set()
+        if p["queued"] and p.get("loose") and self.cfg is not None and p["usd"] >= float(min_usd or 0):
+            why = prefilter(self.cfg, coin, p["usd"], self.vols.get(coin), ts)
+            if not why and key not in self.inflight:
+                # 🔸 dilim büyüdü, ana ön süzgeci geçti → TAZE ana aday (öncelik, pay yok, sıra süresi baştan). Sorgusu
+                # sürüyorsa dokunulmaz: yalnız-gevşek çözüm ana bastırmaya yazmaz, sonraki dilim ana yoldan sorulur
+                p["loose"], p["queued"], p["tries"], p["not_before"] = False, now(), 0, 0
+                st["queued"] += 1
+                if self.event is not None:
+                    self.event.set()
+            elif why and p.get("pre_n") != p["n"]:
+                p["pre_n"] = p["n"]                     # yalnız-gevşek aday sıradayken de ana sayaç dilim başına bir
+                st[why] = st.get(why, 0) + 1
         if p["queued"] or p["usd"] < float(min_usd or 0):
             return
         loose = False
@@ -715,7 +721,7 @@ async def dispatch(cfg, client, notifier, collector, t: int, tasks: set) -> int:
             continue
         if t - int(p["queued"]) > QUEUE_MAX_AGE:
             p["queued"] = 0
-            F.stats["dropped_old"] += 1
+            _st(p)["dropped_old"] = _st(p).get("dropped_old", 0) + 1   # 🔸 yalnız-gevşek: kendi sayacı
             continue
         if p["not_before"] > t:
             continue
@@ -754,7 +760,7 @@ async def dispatch(cfg, client, notifier, collector, t: int, tasks: set) -> int:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                F.stats["errors"] += 1
+                _st(p)["errors"] = _st(p).get("errors", 0) + 1
                 log.exception("hızlı twap kararı %s", key)
             finally:
                 F.inflight.discard(key)
