@@ -959,6 +959,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
            "order_left": 0, "no_vol": 0, "spot_thin": 0, "vol_small": 0, "no_lookup": 0, "failed": 0, "best": None,
            "decisions": []}
     decisions: list[dict] = out["decisions"]
+    big_q: list[tuple] = []         # 🕐 büyük kanal adayları — turun SONUNDA (ana kararlardan sonra, onlardan bağımsız)
 
     def decide(run: "Run", reason: str, detail: dict | None = None) -> None:
         """Bu turun aday kararı — /tani "son elenenler" ve /twap komutu bunu okur."""
@@ -1143,6 +1144,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             own = bool(order) and native_overlap([order], run)
             if own:
                 _lab_twap(run, order, det, g, ts, lookup_min, min_slices)   # 🧪 kapıdan ÖNCE: geçen + kalan
+                big_q.append((run, m, order, det, day_vol))
             if g not in ("ok", "big"):
                 out[g] = out.get(g, 0) + 1
                 failed_lookup = g == "no_order" and out.get("lookup_fail", 0) > lf_before
@@ -1264,6 +1266,14 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
         except Exception:
             out["errors"] += 1
             log.exception("canlı twap değerlendirme hatası %s", getattr(run, "key", "?"))
+    if big_q:
+        from . import twaploose
+        if twaploose.BIG.enabled(cfg):
+            for run, m, order, det, day_vol in big_q:
+                try:
+                    await twaploose.big_slow(cfg, notifier, client, run, m, order, det, day_vol, ents, ts)
+                except Exception:                      # noqa: BLE001
+                    log.exception("🕐 büyük twap (eski yol) %s:%s", run.coin, run.address[:10])
     try:
         from . import hiddentwap
         await hiddentwap.save_stats()

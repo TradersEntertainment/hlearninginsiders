@@ -957,6 +957,11 @@ class Config:
         self.twap_loose_fast_min_usd = float(os.getenv("TWAP_LOOSE_FAST_MIN_USD", "100000"))
         self.twap_loose_fast_rate_x = float(os.getenv("TWAP_LOOSE_FAST_RATE_X", "1"))
         self.twap_loose_spot_min_day_vol = float(os.getenv("TWAP_LOOSE_SPOT_MIN_DAY_VOL", "500000"))
+        # 🕐 Büyük TWAP kanalı (app/radar/twaploose.py, env-only — kullanıcı 14.10): süresi ≤ TWAP_BIG_MAX_MIN ve planı
+        # ≥ TWAP_BIG_MIN_USD her HL TWAP emri, hacim oranından BAĞIMSIZ, emir başına bir kez. Boş = kapalı.
+        self.twap_big_chat_id = (os.getenv("TWAP_BIG_CHAT_ID", "") or "").strip()
+        self.twap_big_min_usd = float(os.getenv("TWAP_BIG_MIN_USD", "1000000"))
+        self.twap_big_max_min = float(os.getenv("TWAP_BIG_MAX_MIN", "180"))
         self.twap_live_window_min = int(os.getenv("TWAP_LIVE_WINDOW_MIN", "240"))
         self.twap_live_eval_sec = int(os.getenv("TWAP_LIVE_EVAL_SEC", "60"))
         self.notify_pattern = True

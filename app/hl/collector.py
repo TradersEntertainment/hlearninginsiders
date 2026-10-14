@@ -446,7 +446,7 @@ class Collector:
                         twapfast.observe(coin, addr, side, px, sz, notional, ts, fast_min)
                     except Exception:
                         twapfast.F.stats["errors"] += 1
-                if taker and zero and twaploose.BY_KEY:    # 🔸 yan kanalın bildirdiği emir: ⛔ notu sayacı
+                if taker and zero and twaploose.any_open():   # 🔸 / 🕐 yan kanalların bildirdiği emir: ⛔ sayacı
                     try:                                    # (ilk dilim yolu kapalıyken de)
                         twaploose.observe((coin, addr, side), px, sz, notional, ts)
                     except Exception:

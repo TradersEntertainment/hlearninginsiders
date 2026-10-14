@@ -91,6 +91,16 @@ class Fast:
         self._lcfg = None
         self.clear_stats()
 
+    def _extra_wants(self, coin: str, key: tuple, slice_usd: float, ts: int) -> bool:
+        """Ana ön süzgeçten kalan dilim yalnız yan kanallar için sorulsun mu? (sıcak yol, G/Ç yok)"""
+        cfg = self.cfg
+        big_on, lo_on = twaploose.BIG.enabled(cfg), twaploose.enabled(cfg)
+        if not (big_on or lo_on) or not twaploose.wants(key, ts):
+            return False
+        if big_on and twaploose.big_pre(cfg, slice_usd):
+            return True
+        return lo_on and not prefilter(self.loose_cfg(), coin, slice_usd, self.vols.get(coin), ts)
+
     def loose_cfg(self):
         """🔸 yan kanalın gevşek ayar görünümü (canlı vekil — ana ayar değişirse izler; bir kez kurulur)."""
         if self._lcfg is None or self._lcfg._cfg is not self.cfg:
@@ -173,10 +183,10 @@ class Fast:
                 if p.get("pre_n") != p["n"]:
                     p["pre_n"] = p["n"]                 # sayaç dilim başına bir (yan kanal açık olsa da aynı)
                     st[why] = st.get(why, 0) + 1
-                # 🔸 yan kanal: ana ön süzgeçten kalan dilim gevşek eşikle sorulur — ana adaylardan SONRA, tavanın
-                # payıyla; ana yolun F.known / sayaç / 🧪 kayıtlarına dokunmadan (resolve)
-                if not (twaploose.enabled(self.cfg) and twaploose.wants(key, ts)
-                        and not prefilter(self.loose_cfg(), coin, p["usd"], self.vols.get(coin), ts)):
+                # 🔸 / 🕐 yan kanallar: ana ön süzgeçten kalan dilim gevşek eşikle ya da büyük kanalın kuralıyla
+                # (≤ 3 sa, ≥ $1M) sorulur — ana adaylardan SONRA, tavanın payıyla; ana yolun F.known / sayaç / 🧪
+                # kayıtlarına dokunmadan (resolve)
+                if not self._extra_wants(coin, key, p["usd"], ts):
                     return
                 loose = True
                 twaploose.STATS["pre_queued"] += 1
@@ -411,7 +421,12 @@ async def resolve(cfg, client, notifier, collector, key: tuple, p: dict, vols: d
         await asyncio.wait_for(twaplive.ensure_sat(cfg, client, [coin], t), twaplive.SAT_TIMEOUT)
     except Exception:                                  # noqa: BLE001
         log.debug("Cumartesi tabanı", exc_info=True)
-    return await _decide(cfg, client, notifier, key, p, order, vols, t, ents.get(addr) or "")
+    res = await _decide(cfg, client, notifier, key, p, order, vols, t, ents.get(addr) or "")
+    try:                                                # 🕐 büyük kanal: ana kararın ARDINDAN, ondan bağımsız
+        await twaploose.big_fast(cfg, client, notifier, key, p, order, vols, t, ents.get(addr) or "")
+    except Exception:                                  # noqa: BLE001
+        log.exception("🕐 büyük twap (ilk dilim) %s", key)
+    return res
 
 
 async def save_open() -> None:
@@ -730,7 +745,9 @@ async def dispatch(cfg, client, notifier, collector, t: int, tasks: set) -> int:
         return 0
     vols = F.vols or await twaplive.volumes_cached(None)
     # 🔸 yalnız yan kanalın gevşek eşiğiyle sıraya girenler ana adaylardan SONRA ve dakika tavanının bir payıyla
-    ready.sort(key=lambda kp: (bool(kp[1].get("loose")), -priority(kp[1], vols)))
+    # yalnız-yan-kanal katmanı kendi içinde dilim $'ına göre (🕐 kural mutlak tutar: BTC'nin dev dilimi önce)
+    ready.sort(key=lambda kp: (bool(kp[1].get("loose")),
+                               -(float(kp[1].get("max") or 0) if kp[1].get("loose") else priority(kp[1], vols))))
     cap = int(getattr(cfg, "twap_fast_lookups_min", 30) or 0)
     started = 0
     for key, p in ready:
@@ -788,9 +805,9 @@ async def loop(cfg, client, notifier, collector=None) -> None:
     except Exception:                                  # noqa: BLE001
         log.debug("twapfast_open okunamadı", exc_info=True)
     try:
-        n = await twaploose.load_open(now())
+        n = await twaploose.load_all(now())
         if n:
-            log.info("twap yan kanalı: %d emir geri yüklendi (⛔ notu için)", n)
+            log.info("twap yan kanalları: %d emir geri yüklendi (⛔ notu için)", n)
     except Exception:                                  # noqa: BLE001
         log.debug("twaploose_open okunamadı", exc_info=True)
     loose_last = 0
@@ -810,10 +827,10 @@ async def loop(cfg, client, notifier, collector=None) -> None:
             if F.open and t - life_last >= 10:
                 life_last = t
                 await lifecycle(cfg, notifier, collector, t)
-            if twaploose.OPEN and t - loose_last >= 10:
+            if (twaploose.OPEN or twaploose.BIG.open) and t - loose_last >= 10:
                 loose_last = t
                 try:
-                    await twaploose.lifecycle(cfg, notifier, collector, t)
+                    await twaploose.lifecycle_all(cfg, notifier, collector, t)
                 except Exception:                      # noqa: BLE001 — yan kanal ana döngüyü düşürmez
                     log.exception("twap yan kanalı ömür turu")
             if t - last >= 30:
@@ -821,8 +838,10 @@ async def loop(cfg, client, notifier, collector=None) -> None:
                 F.prune(t)
                 await beat("twapfast")
                 await kv_set(STATS_KV, F.snapshot(t))
-                if twaploose.chat_id(cfg):
+                if twaploose.chat_id(cfg) or twaploose.BIG.chat_id(cfg):
                     await twaploose.save_stats(t)
+                if twaploose.BIG.chat_id(cfg):
+                    await twaploose.big_save_stats(t)
         except asyncio.CancelledError:
             raise
         except Exception as e:                         # noqa: BLE001

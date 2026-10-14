@@ -797,6 +797,8 @@ async def _subsystems(cfg, state=None) -> list[str]:
         from .radar import twaploose
         if twaploose.chat_id(cfg):
             out.append("  " + await twaploose.diag_line(cfg))
+        if twaploose.BIG.chat_id(cfg):
+            out.append("  " + await twaploose.big_diag_line(cfg))
     except Exception as e:                             # noqa: BLE001
         out.append(f"  twap yan kanalı okunamadı ({type(e).__name__}: {e})")
     # 🧲 Yapışkan duvar: akış tetiği + seyrek tarama. "0 alarm"ın sebebi (evren boş,
