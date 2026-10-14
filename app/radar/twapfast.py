@@ -97,7 +97,7 @@ class Fast:
         big_on, lo_on = twaploose.BIG.enabled(cfg), twaploose.enabled(cfg)
         if not (big_on or lo_on) or not twaploose.wants(key, ts):
             return False
-        if big_on and twaploose.big_pre(cfg, slice_usd):
+        if big_on and twaploose.big_pre(cfg, slice_usd, coin):
             return True
         return lo_on and not prefilter(self.loose_cfg(), coin, slice_usd, self.vols.get(coin), ts)
 

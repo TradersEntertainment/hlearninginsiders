@@ -5,7 +5,8 @@ max 2-3 saat içinde $1M'dan yüksek tüm TWAP'ları göndereceğimiz".
 
 Pinlenenler:
   • kural: süren emir, 0 < süre ≤ TWAP_BIG_MAX_MIN (180), plan ≥ TWAP_BIG_MIN_USD ($1M); hacim / ana kapı fark etmez
-  • ilk dilim: ana ön süzgeç (BTC: dilim ≥ $111K) elese de dilim ≤ 3 sa'lik ≥ $1M emirden olabiliyorsa sorulur
+  • BTC ve ETH HARİÇ (kullanıcı 14.10: "btc eth hariç"; HIP-3 aynı sembol + spot UBTC/UETH; dilimleri sorulmaz bile)
+  • ilk dilim: ana ön süzgeç (SOL: dilim ≥ $27.8K) elese de dilim ≤ 3 sa'lik ≥ $1M emirden olabiliyorsa sorulur
     (yalnız-yan-kanal katmanı: ana yolun F.known / sayaç / 🧪 kayıtları değişmez); ana kanala giden emir de buraya gelir
   • eski yol: ana kararlardan sonra, aynı emir bir kez; ⛔ iptal notu buraya, bir kez; yeniden başlatmada kayıt geri gelir
   • tanımsızken hiçbir şey değişmez; env-only; botun kendi sohbeti; /tani satırı
@@ -43,14 +44,15 @@ async def _fresh_b(cfg, btc=False):
     if btc:
         from app.hl import universe as uni
         await dbm.kv_set(uni.MAIN_CTX_KV, {"c": {"PUMP": {"m": PX, "oi": 1, "f": 0, "v": 20e6, "p": None},
-                                                 "BTC": {"m": 60_000, "oi": 1, "f": 0, "v": 2e9, "p": None}},
+                                                 "BTC": {"m": 60_000, "oi": 1, "f": 0, "v": 2e9, "p": None},
+                                                 "SOL": {"m": 150, "oi": 1, "f": 0, "v": 2e9, "p": None}},
                                            "ts": dbm.now()})
         tf.F.vols = await tl.volumes(None)
 
 
-def btc_order(started, minutes, plan, status="activated"):
-    o = twap_order(started, minutes=minutes, plan=plan, status=status, coin="BTC")
-    sz = plan / 60_000
+def sol_order(started, minutes, plan, status="activated"):
+    o = twap_order(started, minutes=minutes, plan=plan, status=status, coin="SOL")
+    sz = plan / 150
     o["state"].update(sz=str(sz), executedSz="0.0", executedNtl="0.0")
     return o
 
@@ -85,7 +87,7 @@ def test_gate_and_config():
 
 
 def test_fast_path_big_regardless_of_main():
-    """BTC 2 sa $5M emir (24s hacmin %0,25'i): ana ön süzgeç eler (dilim $20.7K < $111K) → yalnız yan kanal katmanı →
+    """SOL 2 sa $5M emir (24s hacmin %0,25'i): ana ön süzgeç eler (dilim $20.7K < $27.8K) → yalnız yan kanal katmanı →
     🕐 kanala; ana kanal / ayna / F.known / sayaç / 🧪 aynı. Ana kanala giden PUMP emri de 🕐'a gelir."""
     async def run():
         from test_twapfast import _q
@@ -93,22 +95,22 @@ def test_fast_path_big_regardless_of_main():
         await _fresh_b(cfg, btc=True)
         now = dbm.now()
         t0 = now - 60
-        col = Col(lambda: [btc_order(t0, 120, 5_000_000)])
+        col = Col(lambda: [sol_order(t0, 120, 5_000_000)])
         bot = Bot()
         notifier = Notifier(cfg, bot)
-        tf.observe("BTC", A, "buy", 60_000, 20_700 / 60_000, 20_700, t0 + 2, 1000)
-        p = tf.F.pending[("BTC", A, "buy")]
+        tf.observe("SOL", A, "buy", 150, 20_700 / 150, 20_700, t0 + 2, 1000)
+        p = tf.F.pending[("SOL", A, "buy")]
         assert p["queued"] and p["loose"] and tf.F.stats["pre_low"] == 1 and tf.F.stats["queued"] == 0
         before = dict(tf.F.stats)
         await _drain(cfg, notifier, col)
         assert [c for c, _ in bot.sent] == [BIGC], bot.sent
         text = bot.sent[0][1]
-        assert text.startswith("🕐 <b>Büyük TWAP</b> · plan ≥ $1.0M · süre ≤ 3 sa\n⏳ <b>TWAP başladı</b> · <b>BTC</b>"), text
+        assert text.startswith("🕐 <b>Büyük TWAP</b> · plan ≥ $1.0M · süre ≤ 3 sa\n⏳ <b>TWAP başladı</b> · <b>SOL</b>"), text
         assert "plan <b>$5.0M</b>" in text and "/takip_" in text, "uzun emir: takip tuşu"
-        assert ("BTC", A, "buy") not in tf.F.known and not _q("LOG-TWAPF")
+        assert ("SOL", A, "buy") not in tf.F.known and not _q("LOG-TWAPF")
         assert {k: v for k, v in tf.F.stats.items() if v != before.get(k)} == {}
         assert await _kind("twap_big") == 1 and await _kind("twap") == 0 and await _kind("twap_fast") == 0
-        okey = f"BTC:{A}:buy:{t0}"
+        okey = f"SOL:{A}:buy:{t0}"
         assert okey in lo.BIG.open and lo.BIG.stats["alerts"] == 1
         # ana kanala giden emir de 🕐 kanala (ana kararın ardından)
         bot.sent.clear()
@@ -120,7 +122,7 @@ def test_fast_path_big_regardless_of_main():
         assert bot.sent[2][1].startswith("🕐 <b>Büyük TWAP</b>") and "⚡ <b>HIZLI · 10 dk</b>" in bot.sent[2][1]
         assert "🔔 iptal edilirse ⛔ buraya otomatik yazılır" in bot.sent[2][1]
     asyncio.run(run())
-    print("✅ ilk dilim) hacimden bağımsız: BTC $5M 2 sa → yalnız 🕐 (ana yol aynı); ana kanala giden emir de 🕐'a")
+    print("✅ ilk dilim) hacimden bağımsız: SOL $5M 2 sa → yalnız 🕐 (ana yol aynı); ana kanala giden emir de 🕐'a")
 
 
 def test_slow_path_once_cancel_restart():
@@ -166,12 +168,12 @@ def test_slow_path_once_cancel_restart():
 
 def test_disabled_and_with_loose():
     async def run():
-        # tanımsız: bugünkü gibi (BTC dilimi sorulmaz)
+        # tanımsız: bugünkü gibi (SOL dilimi sorulmaz)
         cfg = _cfg()
         await _fresh_b(cfg, btc=True)
         now = dbm.now()
-        tf.observe("BTC", A, "buy", 60_000, 20_700 / 60_000, 20_700, now, 1000)
-        assert not tf.F.pending[("BTC", A, "buy")]["queued"]
+        tf.observe("SOL", A, "buy", 150, 20_700 / 150, 20_700, now, 1000)
+        assert not tf.F.pending[("SOL", A, "buy")]["queued"]
         # 🔸 + 🕐 birlikte. (a) ana kapıyı geçen emir ($1.4M, 24s hacmin %7'si): ana + ayna + 🔸 kopya + 🕐
         cfg = _bcfg(loose="-300")
         await _fresh_b(cfg)
@@ -204,6 +206,36 @@ def test_disabled_and_with_loose():
         assert BIGC in TelegramBot(cfg, None, None, {})._own_chats()
     asyncio.run(run())
     print("✅ tanımsız) bugünkü gibi; 🔸 ile birlikte: her kanala bir kez; 🕐 kanal botun kendi sohbeti")
+
+
+def test_btc_eth_excluded():
+    """Kullanıcı 14.10: "btc eth hariç" — ana dex, HIP-3'teki aynı sembol, spot sarmalı (UBTC/UETH); dilimleri bu kanal
+    için sorulmaz (HL yükü de düşer). TWAP_BIG_EXCLUDE boşsa hepsi gelir."""
+    async def run():
+        from app import assets
+        cfg = _bcfg()
+        await _fresh_b(cfg, btc=True)
+        assets.SPOT_NAMES.update({"@142": "UBTC/USDC", "@151": "UETH/USDC", "@107": "PURR/USDC"})
+        for c in ("BTC", "ETH", "xyz:BTC", "@142", "@151"):
+            assert lo.big_excluded(cfg, c), c
+        for c in ("SOL", "HYPE", "@107", "xyz:TSLA"):
+            assert not lo.big_excluded(cfg, c), c
+        now = dbm.now()
+        o = {"status": "activated", "minutes": 60, "planned_usd": 50e6, "started_ts": now - 60}
+        assert lo.big_gate(cfg, o, now, "BTC") == "excluded" and lo.big_gate(cfg, o, now, "SOL") == "ok"
+        assert not lo.big_pre(cfg, 200_000, "ETH") and lo.big_pre(cfg, 200_000, "SOL")
+        tf.observe("BTC", A, "buy", 60_000, 20_700 / 60_000, 20_700, now, 1000)
+        assert not tf.F.pending[("BTC", A, "buy")]["queued"], "BTC dilimi bu kanal için sorulmaz"
+        cfg.twap_big_exclude = ""
+        assert not lo.big_excluded(cfg, "BTC") and lo.big_gate(cfg, o, now, "BTC") == "ok"
+        assert "hariç" not in await lo.big_diag_line(cfg)
+        cfg.twap_big_exclude = "BTC,ETH"
+        line = await lo.big_diag_line(cfg)
+        assert "hariç: BTC/ETH" in line, line
+        for k in ("@142", "@151", "@107"):
+            assets.SPOT_NAMES.pop(k, None)
+    asyncio.run(run())
+    print("✅ hariç) BTC / ETH (HIP-3 aynı sembol, spot UBTC/UETH) 🕐 kanala gelmez, dilimleri sorulmaz; ayar boşsa gelir")
 
 
 if __name__ == "__main__":

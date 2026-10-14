@@ -631,10 +631,12 @@ max 2-3 saat içinde $1M'dan yüksek TÜM TWAP'ları göndereceğimiz". Env-only
 - **Kural (hacimden bağımsız):** süren HL TWAP emri, `0 < süre ≤ TWAP_BIG_MAX_MIN` (180 dk) ve plan (bugünkü fiyatla)
   `≥ TWAP_BIG_MIN_USD` ($1M) → bu kanala, **emir başına bir kez** — ana ya da 🔸 kanala gitmiş olsa da (her kanal kendi
   kuralıyla); adres beklemesi yok (aynı adresin her yeni emri ayrı). mm/vault etiketli adres ana yoldaki gibi elenir.
+  **BTC ve ETH hariç** (kullanıcı 14.10; `TWAP_BIG_EXCLUDE=BTC,ETH` — HIP-3'teki aynı sembol ve spot UBTC/UETH dahil;
+  bu coinlerin dilimleri bu kanal için sorulmaz bile).
 - **Mesaj:** ana kanalın mesajıyla aynı (emir, dolan, pozisyon, hacme oran, ⚡ HIZLI rozeti) + başta
   "🕐 Büyük TWAP · plan ≥ $1.0M · süre ≤ 3 sa". ⚡ hızlıda iptal ⛔ kendiliğinden buraya, uzunda 👁 `/takip_N` (+ ⛔ yine
   buraya); 🏁 normal bitiş yalnız `twap_alert_finish_note` açıksa.
-- **Yakalama:** 🔎 ilk dilim — ana ön süzgeç dilimi elese de (BTC'de ana kapı hacmin %20'si → dilim ≥ $111K ister)
+- **Yakalama:** 🔎 ilk dilim — ana ön süzgeç dilimi elese de (likit coinde ana kapı hacmin %5'i → büyük dilim ister)
   dilim ≤ 3 sa'lik ≥ $1M bir emirden olabiliyorsa (dilim ≳ $2.2K) yalnız-yan-kanal katmanında sorulur (🔸 ile ortak: ana
   adaylardan sonra, tavanın %60'ı, ana yolun kayıtlarına dokunmadan; bu katman kendi içinde dilim $'ına göre sıralı). Eski
   yol: her turun sonunda, ana kararlardan sonra. Ana kararın ardından çalışır; ana mesajı geciktirmez.

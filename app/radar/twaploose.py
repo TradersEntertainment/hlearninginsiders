@@ -783,7 +783,7 @@ def recent_line(d: dict) -> str:
 
 BIG = Side("big", "twap_big", "twap_big_chat_id", "TWAP_BIG_CHAT_ID", "twapbig_open", "twapbig_stats")
 BIG_REASON = {"ok": "geçer", "long": "süre sınırın üstünde", "small": "plan sınırın altında",
-              "order_done": "emir bitmiş", "no_order": "emir yok", "off": "kapalı"}
+              "order_done": "emir bitmiş", "no_order": "emir yok", "off": "kapalı", "excluded": "hariç coin (BTC/ETH)"}
 
 
 def big_min_usd(cfg) -> float:
@@ -794,18 +794,35 @@ def big_max_min(cfg) -> float:
     return float(getattr(cfg, "twap_big_max_min", 180) or 0)
 
 
-def big_pre(cfg, slice_usd: float) -> bool:
+def big_excluded(cfg, coin: str) -> bool:
+    """Hariç coinler (TWAP_BIG_EXCLUDE, varsayılan BTC,ETH — kullanıcı 14.10 "btc eth hariç"): ana dex, HIP-3 dex'teki
+    aynı sembol ve spot sarmalı (UBTC/USDC, UETH/USDC) dahil."""
+    raw = getattr(cfg, "twap_big_exclude", "BTC,ETH")
+    ex = {x.strip().upper() for x in (raw.split(",") if isinstance(raw, str) else (raw or [])) if x and x.strip()}
+    if not ex or not coin:
+        return False
+    from .. import assets
+    base = assets.label(coin).split("/")[0].upper()
+    if assets.is_spot(coin) and base[:1] == "U" and base[1:] in ex:
+        return True                                     # HL spot sarmalı: UBTC, UETH
+    return base in ex
+
+
+def big_pre(cfg, slice_usd: float, coin: str = "") -> bool:
     """İlk dilim ön süzgeci (G/Ç yok): bu dilim ≤ sınır dk'lık ≥ $1M bir emirden olabilir mi? Dilim ≈ plan / (2m+1)
-    (randomize ±%20 → 0.8 payı) → plan ≤ dilim · (2m+1) / 0.8."""
+    (randomize ±%20 → 0.8 payı) → plan ≤ dilim · (2m+1) / 0.8. Hariç coin (BTC/ETH) için sorgu yok."""
     mx, mn = big_max_min(cfg), big_min_usd(cfg)
-    return mx > 0 and float(slice_usd or 0) * (2 * mx + 1) / 0.8 >= mn
+    return mx > 0 and not big_excluded(cfg, coin) and float(slice_usd or 0) * (2 * mx + 1) / 0.8 >= mn
 
 
-def big_gate(cfg, order: dict | None, now_ts: int) -> str:
-    """'ok' geçer; diğerleri neden: no_order · order_done · long (süre > sınır ya da bilinmiyor) · small · off."""
+def big_gate(cfg, order: dict | None, now_ts: int, coin: str = "") -> str:
+    """'ok' geçer; diğerleri neden: no_order · order_done · long (süre > sınır ya da bilinmiyor) · small · excluded
+    (BTC/ETH) · off."""
     mx = big_max_min(cfg)
     if mx <= 0:
         return "off"
+    if big_excluded(cfg, coin):
+        return "excluded"
     if not order:
         return "no_order"
     if order.get("status") != "activated":
@@ -862,7 +879,7 @@ async def big_fast(cfg, client, notifier, key: tuple, p: dict, order: dict, vols
     if not BIG.enabled(cfg):
         return "off"
     coin, addr, side = key
-    bg = big_gate(cfg, order, t)
+    bg = big_gate(cfg, order, t, coin)
     started = int((order or {}).get("started_ts") or 0)
     if bg != "ok" or not started:
         return bg if bg != "ok" else "no_order"
@@ -908,7 +925,7 @@ async def big_slow(cfg, notifier, client, run, m: dict, order: dict, det: dict, 
     """Eski yol (turun sonunda, ana kararlardan SONRA): düzenli dizi + örtüşen HL emri, kural geçerse 🕐 kanala."""
     if not BIG.enabled(cfg):
         return "off"
-    bg = big_gate(cfg, order, ts)
+    bg = big_gate(cfg, order, ts, run.coin)
     okey = twaplive.order_key(f"{run.coin}:{run.address}:{run.side}", order)
     if bg != "ok" or not okey:
         return bg if bg != "ok" else "no_order"
@@ -953,7 +970,9 @@ async def big_diag_line(cfg) -> str:
     if not BIG.chat_id(cfg):
         return "🕐 büyük twap kanalı: tanımsız (TWAP_BIG_CHAT_ID boş)"
     mx = big_max_min(cfg)
-    parts = [f"plan ≥ {usd(big_min_usd(cfg))} · süre ≤ {mx:g} dk · hacimden bağımsız"]
+    ex = str(getattr(cfg, "twap_big_exclude", "BTC,ETH") or "").replace(" ", "")
+    parts = [f"plan ≥ {usd(big_min_usd(cfg))} · süre ≤ {mx:g} dk · hacimden bağımsız"
+             + (f" · hariç: {ex.replace(',', '/')}" if ex else "")]
     st = await kv_get(BIG.stats_kv) or {}
     if st.get("ts"):
         parts.append(f"✓{st.get('alerts', 0)} alarm · {st.get('ends', 0)} bitiş notu · {st.get('open', 0)} açık emir")
