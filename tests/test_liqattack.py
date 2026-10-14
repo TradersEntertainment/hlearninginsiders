@@ -92,7 +92,10 @@ def test_window_gate():
         st = await dbm.kv_get("liqattack_stats")
         assert st and st["skipped"], "atlanma sebebi kv'ye yazılmalı"
         print("✅ pencere) hafta sonu değilse sıfır istek, sebep kaydediliyor")
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    finally:
+        _restore()   # monkeypatch sızmasın: runner testleri alfabetik koşuyor
 
 
 async def _seed_weekend_db(cfg, ntl_long=2_500_000):
@@ -163,7 +166,10 @@ def test_scan_alert():
         assert pg["cands"][0]["hot"] == 1
         print("✅ tarama) ön eleme uzak coini eledi; başarısız gönderim marker"
               " yazmadı; başarılı gönderim cooldown'a girdi; sayfa hedefleri buluyor")
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    finally:
+        _restore()   # monkeypatch sızmasın: runner testleri alfabetik koşuyor
 
 
 # ------------------------------------------------ 5) geçmiş tespiti (saf)
@@ -296,7 +302,10 @@ def test_manual_and_error():
         assert pg["stats"].get("error") == "RuntimeError: ağ yok"
         print("✅ elle) 🔄 tarama döngüyü beklemiyor, 60 sn'de bir; tur hatası"
               " sayfada görünüyor")
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    finally:
+        _restore()   # monkeypatch sızmasın: runner testleri alfabetik koşuyor
 
 
 _REAL_WW = hs.weekend_window

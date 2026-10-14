@@ -12,6 +12,7 @@ gösteriyordu ama tek bir bildirim gitmedi.
 Bu paket ikisinin de geri gelmemesini pinler.
 """
 import asyncio
+import functools
 import os
 import sys
 import tempfile
@@ -20,6 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import db as dbm
 from app.config import Config
 from app.radar import offhours as oh
+
+_REAL_HS = {n: getattr(oh.hourstats, n) for n in ("us_closed", "weekend_window")}
 
 
 class Bot:
@@ -293,6 +296,24 @@ def test_retention():
     print(f"✅ saklama) alerts_log {ALERTS_RETENTION_D} gün > 30 günlük"
           " dedupe penceresi")
 
+
+
+def _restoring(fn):
+    """force_weekend() hourstats'ı yamalar; test bitince gerçeğini geri koy (runner testleri tek süreçte
+    alfabetik koşuyor — sızan 'hep hafta sonu' sonraki dosyaların saat kapılarını bozuyordu)."""
+    @functools.wraps(fn)
+    def w(*a, **k):
+        try:
+            return fn(*a, **k)
+        finally:
+            for n, v in _REAL_HS.items():
+                setattr(oh.hourstats, n, v)
+    return w
+
+
+for _n, _f in list(globals().items()):
+    if _n.startswith("test_") and callable(_f):
+        globals()[_n] = _restoring(_f)
 
 test_no_poison()
 test_once()

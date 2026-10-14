@@ -5,17 +5,30 @@
 
 tests/test_*.py içindeki test_* fonksiyonlarını sırayla çağırır; assert hatası
 ya da istisna = FAIL. pytest kuruluysa `python -m pytest tests` de aynı dosyaları
-koşar (dosyalar pytest uyumludur)."""
+koşar (dosyalar pytest uyumludur).
+
+Testlerin tempfile.mkdtemp() klasörleri tek bir koşu klasörüne düşer ve koşu bitince silinir
+(eskiden her koşu /tmp'ye onlarca test DB'si bırakıyordu → disk doldu)."""
+import atexit
 import importlib.util
 import os
+import shutil
 import sys
+import tempfile
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 
+def _scoped_tmp():
+    d = tempfile.mkdtemp(prefix="hlr-tests-")
+    tempfile.tempdir = d
+    atexit.register(shutil.rmtree, d, True)
+
+
 def main(argv):
+    _scoped_tmp()
     flt = argv[1:]
     files = sorted(f for f in os.listdir(HERE)
                    if f.startswith("test_") and f.endswith(".py")
