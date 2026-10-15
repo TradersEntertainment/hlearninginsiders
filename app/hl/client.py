@@ -226,6 +226,11 @@ class HLClient:
             p["dex"] = dex
         return await self.info(p, priority=priority, stats=stats)
 
+    async def spot_clearinghouse(self, user: str, priority: str | None = None, stats: dict | None = None):
+        """Spot bakiyeleri (ağırlık 2): {"balances": [{"coin": "USDC", "token": 0, "total": "…", "hold": "…",
+        "entryNtl": "…"}, …]}. TWAP düşük bakiye satırı kullanır (twaplive.position_ctx)."""
+        return await self.info({"type": "spotClearinghouseState", "user": user}, priority=priority, stats=stats)
+
     async def batch_clearinghouse(self, users: list[str], dex: str = "", priority: str | None = None,
                                   stats: dict | None = None):
         """TOPLU defter: `batchClearinghouseStates` — sağlayıcı belgelerinde

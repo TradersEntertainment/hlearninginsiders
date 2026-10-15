@@ -3348,6 +3348,28 @@ def _who_pos(addr: str, pos, spot: bool, entity: str = "", reduce_only: bool = F
     return " · ".join(parts)
 
 
+def low_bal_line(lb: dict | None) -> str:
+    """⚠️ Düşük bakiye satırı (kullanıcı 15.10: milyonluk TWAP'ı 200-300K'lık cüzdan atınca iptal gelebiliyor → cüzdan
+    < $500K ise ilk satırlarda uyar). Bağlam twaplive.low_bal_ctx'ten; yalnız ölçüm: bakiye ve planın ona oranı."""
+    if not lb:
+        return ""
+    v = float(lb.get("usd") or 0)
+    head = f"⚠️ <b>Düşük bakiye</b> (&lt; {usd(lb.get('limit'))}): "
+    if lb.get("kind") == "spot_buy":
+        body = f"cüzdanda <b>{usd(v)}</b> {esc(lb.get('token') or '')}"
+    elif lb.get("kind") == "spot_sell":
+        body = f"cüzdanda <b>{usd(v)}</b> değerinde {esc(lb.get('token') or '')}"
+    else:
+        body = f"cüzdanda <b>{usd(v)}</b>"
+        if float(lb.get("stable") or 0) >= 1:
+            body += f" (perp {usd(lb.get('perp'))} + spot {usd(lb.get('stable'))})"
+    plan = float(lb.get("plan") or 0)
+    if plan > 0 and v > 0:
+        x = plan / v
+        body += f" · plan bunun <b>{x:.1f} katı</b>" if x >= 1 else f" · plan bunun %{x * 100:.0f}'i"
+    return head + body
+
+
 TWAP_AUTO_NOTE = {"cancel": "🔔 iptal edilirse ⛔ buraya otomatik yazılır",
                   "both": "🔔 iptal ⛔ / bitiş 🏁 buraya otomatik yazılır"}
 
@@ -3551,6 +3573,8 @@ def twap_alert(m: dict, ctx: dict) -> str:
              f"{_twap_side(m.get('side'))}" + ("" if quick or not mins else f" · <b>{dur_txt(mins * 60)}</b>")
              + (f" · plan <b>{usd(plan)}</b>" if plan else ""),
              badge + (f" · dakikada ~<b>{usd(plan / mins)}</b>" if plan and mins else "")]
+    if ctx.get("low_bal"):
+        lines.insert(1, low_bal_line(ctx["low_bal"]))     # ⚠️ ilk satırların arasında (kullanıcı 15.10)
     tl = []
     if o.get("started_ts"):
         tl.append(f"🕐 {tr_time(int(o['started_ts']))}'te başladı")
@@ -3601,6 +3625,8 @@ def twap_fast(o: dict, ctx: dict) -> str:
         rate.append(f"emir {'geçen Cumartesi hacminin' if ctx.get('sat') else '24s hacmin'}"
                     f" %{float(ctx['vol_pct']):.1f}'i")
     lines = [head]
+    if ctx.get("low_bal"):
+        lines.append(low_bal_line(ctx["low_bal"]))         # ⚠️ ilk satırların arasında (kullanıcı 15.10)
     if rate:
         lines.append("⏱ " + " · ".join(rate))
     t0 = int(o.get("started_ts") or 0)

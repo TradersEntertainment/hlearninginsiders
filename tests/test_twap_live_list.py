@@ -144,8 +144,10 @@ def test_after_restart_db_and_ask():
         await _fresh()
         cfg = _cfg()
         feed("INJ", B, "sell")
-        await tl.evaluate(cfg, Notifier(cfg, Bot()), None,
-                          Col({B: [order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000)]}))
+        # Emir BİR kez üretilir: iki ayrı order() çağrısı arasında saniye dönerse başlangıç anı (emir anahtarı) 1 sn
+        # kayar ve 📣 eşleşmez (tam koşuda ara sıra düşüyordu, 15.10)
+        inj_o = order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000)
+        await tl.evaluate(cfg, Notifier(cfg, Bot()), None, Col({B: [inj_o]}))
         async with dbm.db() as c:
             n = (await (await c.execute("SELECT COUNT(*) n FROM twap_runs WHERE order_status='activated'"))
                  .fetchone())["n"]
@@ -160,7 +162,7 @@ def test_after_restart_db_and_ask():
         feed("PUMP", A, "buy", n=2, ntl=40_000, t_end=dbm.now() - 3)   # emri bilinmeyen, görülen $80K
         feed("WIF", C, "buy", n=2, ntl=1_000, t_end=dbm.now() - 3)     # emri bilinmeyen, küçük
         feed("SOL", D, "buy", n=2, ntl=9_000, native=False)             # HL alt emri değil → sorulmaz
-        inj_hist = [order("INJ", B, side="A", minutes=300, start_ago=1200, ntl=5_000_000)]
+        inj_hist = [inj_o]
         col = Col({A: [order("PUMP", A, ntl=7_000_000, start_ago=400, minutes=600)],
                    B: inj_hist, C: [order("WIF", C, ntl=300_000, start_ago=100, minutes=60)]})
         rows, info = await tl.live_twaps_full(col)

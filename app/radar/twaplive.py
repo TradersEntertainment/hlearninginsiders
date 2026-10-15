@@ -687,15 +687,57 @@ async def entities(addrs: list[str]) -> dict[str, str]:
         return {r["address"]: r["entity"] for r in await cur.fetchall()}
 
 
-async def position_ctx(client, coin: str, addr: str) -> dict | None:
-    """Adresin bu coindeki pozisyonu: canlı (1 istek) — düşerse süpürme kaydı."""
+async def position_ctx(client, coin: str, addr: str, wallet: list[str] | None = None) -> dict | None:
+    """Adresin bu coindeki pozisyonu: canlı (1 istek) — düşerse süpürme kaydı.
+
+    `wallet` (⚠️ düşük bakiye satırı açıksa, wallet_dexes(cfg)): cüzdanın TOPLAM bakiyesi için, pozisyon isteğiyle AYNI
+    ANDA diğer perp dex'lerin clearinghouseState'i + tek spotClearinghouseState → dönüşte 'wallet': {"perp": tüm
+    dex'lerin accountValue toplamı | None, "spot": {TOKEN: serbest adet} | None}. Bir parça düşer / WALLET_TIMEOUT'ta
+    gelmezse o alan None (satır yazılmaz — eksik okumayla "düşük" denmez). Pozisyon satırı bakiyeyi beklemez."""
     if client is not None:
         try:
-            from .tracker import live_position
-            live = await live_position(client, addr, coin)
-            if live:
-                return {"side": live["side"], "notional": live["notional"], "src": "canlı", "ts": now()}
-            return {"none": True, "src": "canlı"}
+            from .tracker import parse_position
+            from .report import coin_dex
+            dex = coin_dex(coin)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + WALLET_TIMEOUT
+            extra: dict = {}
+            if wallet:
+                if hasattr(client, "spot_clearinghouse"):
+                    extra["spot"] = asyncio.ensure_future(client.spot_clearinghouse(addr))
+                for d in dict.fromkeys(wallet):
+                    if d != dex:
+                        extra[f"dex:{d}"] = asyncio.ensure_future(client.clearinghouse(addr, d))
+            try:
+                state = await client.clearinghouse(addr, dex)
+            except BaseException:
+                for t in extra.values():
+                    t.cancel()
+                raise
+            live = parse_position(state, coin)
+            out = ({"side": live["side"], "notional": live["notional"], "src": "canlı", "ts": now()} if live
+                   else {"none": True, "src": "canlı"})
+            if wallet:
+                res: dict = {}
+                if extra:
+                    done, pending = await asyncio.wait(list(extra.values()),
+                                                       timeout=max(0.0, deadline - loop.time()))
+                    for t in pending:
+                        t.cancel()
+                    for k, t in extra.items():
+                        if t in done and not t.cancelled() and t.exception() is None:
+                            res[k] = t.result()
+                        elif t in done and not t.cancelled():
+                            log.debug("twap bakiye sorgusu %s %s: %s", addr[:10], k, t.exception())
+                perp = parse_account_value(state)
+                for d in dict.fromkeys(wallet):
+                    if d == dex or perp is None:
+                        continue
+                    v = parse_account_value(res.get(f"dex:{d}"))
+                    perp = None if v is None else perp + v
+                spot = parse_spot_balances(res["spot"]) if "spot" in res else None
+                out["wallet"] = {"perp": perp, "spot": spot}
+            return out
         except Exception as e:
             log.debug("twap pozisyon sorgusu %s: %s", addr[:10], e)
     async with db() as conn:
@@ -804,6 +846,140 @@ def chat_for(cfg, coin: str) -> tuple[str, bool]:
         chat = (getattr(cfg, "crypto_chat_id", "") or "").strip()
         return chat, bool(chat)
     return "", True
+
+
+# ⚠️ Düşük bakiye (kullanıcı 15.10: "milyonluk twaplarda iptal gelebiliyor eğer cüzdanda 200-300k varsa … twapı atanın
+# cüzdanı düşük bütçeliyse uyarı versin, ilk satırların oralarda; düşükten kastım 500k altındaysa"). Ölçüm, tahmin değil:
+# mesaj yalnız bakiyeyi ve planın bakiyeye oranını yazar. Sayaçlar /tani'de (bu açılıştan beri).
+STABLES = ("USDC", "USDH", "USDT0", "USDE")
+LOW_BAL: dict = {"checked": 0, "warned": 0, "closing": 0, "unknown": 0, "last": None}
+WALLET_TIMEOUT = 2.0        # bakiye parçaları (diğer dex'ler + spot) en çok bu kadar beklenir; gelmezse satır yok
+
+
+def low_balance(cfg) -> float:
+    """⚠️ Düşük bakiye eşiği ($): TWAP'ı atan cüzdan bunun altındaysa mesajın 2. satırı. 0 = kapalı."""
+    return max(0.0, float(getattr(cfg, "twap_low_balance_usd", 500_000) or 0))
+
+
+def wallet_dexes(cfg) -> list[str]:
+    """Bakiye toplamı için sorulacak perp dex'leri: ana dex + izlenen HIP-3 dex'leri; satır kapalıysa [] (ek istek yok)."""
+    if low_balance(cfg) <= 0:
+        return []
+    return ["", *[d for d in assets.watched_dexes(cfg) if d]]
+
+
+def parse_account_value(state) -> float | None:
+    """clearinghouseState → bu dex'in perp hesap bakiyesi (marginSummary.accountValue); okunamazsa None (0 değil:
+    "bilmiyoruz" ile "hesap boş" ayrı)."""
+    ms = (state or {}).get("marginSummary") if isinstance(state, dict) else None
+    try:
+        return float(ms["accountValue"]) if isinstance(ms, dict) and ms.get("accountValue") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_spot_balances(resp) -> dict[str, float] | None:
+    """spotClearinghouseState → {TOKEN: SERBEST adet = total − hold}; şekil tutmazsa None.
+
+    hold düşülür (canlı ölçüm 15.10): birleşik hesapta (userAbstraction=unifiedAccount) perp teminatı spot USDC'nin
+    'hold'unda durur VE perp accountValue'da da görünür — toplam yazılırsa aynı para iki kez sayılır (örnek: perp
+    $4.6K + spot $26.4K, gerçek ≈ $26.4K). Normal hesapta hold = açık spot emirlerine ayrılan. Portföy marjinde hold
+    eksi olabilir (borç) → 0 sayılır (toplam yazılır)."""
+    bals = (resp or {}).get("balances") if isinstance(resp, dict) else None
+    if not isinstance(bals, list):
+        return None
+    out: dict[str, float] = {}
+    for b in bals:
+        try:
+            tok = str(b.get("coin") or "").upper()
+            amt = float(b.get("total") or 0) - max(0.0, float(b.get("hold") or 0))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if tok:
+            out[tok] = out.get(tok, 0.0) + amt
+    return out
+
+
+def wallet_budget(coin: str, side: str, order: dict | None, pos: dict | None, px) -> dict | None:
+    """TWAP'ı atan cüzdanın bu emir için bakiyesi ($) — ölçüm. None = bilinmiyor ya da anlamsız.
+
+    • perp (ana dex / HIP-3): cüzdanın TÜM perp dex'lerindeki hesap bakiyesi + spot'taki SERBEST dolar stabilleri
+      (USDC/USDH/USDT0/USDE; hold düşülmüş — birleşik hesapta çift sayım olmasın). Bir parça okunamadıysa None.
+    • reduce-only ya da emrin büyük kısmı ters yöndeki pozisyonu kapatıyorsa (ters pozisyon ≥ planın yarısı) → None
+      ('closing'): kapatan emir yeni teminat istemez.
+    • spot alış: çiftin karşı tokeni (USDC…) bakiyesi; spot satış: satılan tokenin adedi × fiyat."""
+    w = (pos or {}).get("wallet")
+    if not isinstance(w, dict):
+        return None
+    o = order or {}
+    plan = float(o.get("planned_usd") or 0)
+    if assets.is_spot(coin):
+        spot = w.get("spot")
+        name = assets.label(coin)
+        if spot is None or "/" not in name:
+            return None
+        base, quote = (x.strip().upper() for x in name.split("/", 1))
+        if side == "buy":
+            if quote not in STABLES:
+                return None
+            return {"kind": "spot_buy", "usd": max(0.0, float(spot.get(quote, 0.0))), "token": quote, "plan": plan}
+        try:
+            p = float(px or 0)
+        except (TypeError, ValueError):
+            p = 0.0
+        if p <= 0:
+            return None
+        return {"kind": "spot_sell", "usd": max(0.0, float(spot.get(base, 0.0))) * p, "token": base, "plan": plan}
+    perp, spot = w.get("perp"), w.get("spot")
+    if perp is None or spot is None:
+        return None                                 # eksik okuma: "düşük" denmez
+    if o.get("reduce_only"):
+        return {"kind": "closing"}
+    if pos and not pos.get("none") and plan > 0:
+        opp = (side == "buy" and pos.get("side") == "short") or (side != "buy" and pos.get("side") == "long")
+        if opp and float(pos.get("notional") or 0) >= plan / 2:
+            return {"kind": "closing"}
+    stable = sum(max(0.0, float(spot.get(t, 0.0))) for t in STABLES)
+    return {"kind": "perp", "usd": float(perp) + stable, "perp": float(perp), "stable": stable, "plan": plan}
+
+
+def low_bal_ctx(cfg, coin: str, side: str, order: dict | None, pos: dict | None, px) -> dict | None:
+    """Mesajın ⚠️ satırı için bağlam: bakiye eşiğin altındaysa wallet_budget + eşik, değilse None. Sayaçları yazar."""
+    lim = low_balance(cfg)
+    if lim <= 0:
+        return None
+    LOW_BAL["checked"] += 1
+    b = wallet_budget(coin, side, order, pos, px)
+    if b is None:
+        LOW_BAL["unknown"] += 1
+        return None
+    if b["kind"] == "closing":
+        LOW_BAL["closing"] += 1
+        return None
+    if b["usd"] >= lim:
+        return None
+    LOW_BAL["warned"] += 1
+    LOW_BAL["last"] = {"coin": coin, "usd": b["usd"], "plan": b.get("plan"), "ts": now()}
+    return {**b, "limit": lim}
+
+
+def low_bal_diag(cfg) -> str:
+    """/tani satırı: eşik ve bu açılıştan beri sayaçlar."""
+    lim = low_balance(cfg)
+    if lim <= 0:
+        return "⚠️ düşük bakiye satırı: kapalı (TWAP_LOW_BALANCE_USD=0)"
+    s = LOW_BAL
+    line = (f"⚠️ düşük bakiye satırı: eşik ${lim:,.0f} · bu açılıştan beri {s['checked']} TWAP mesajında bakıldı,"
+            f" {s['warned']} uyarı")
+    if s["closing"]:
+        line += f" · {s['closing']} kapatan emir (yazılmaz)"
+    if s["unknown"]:
+        line += f" · {s['unknown']} bakiye bilinmiyor / eksik okundu (yazılmaz)"
+    last = s.get("last")
+    if last:
+        line += (f" · son: {assets.label(last['coin'])} bakiye ${float(last['usd']):,.0f}"
+                 f" / plan ${float(last.get('plan') or 0):,.0f}, {max(0, now() - int(last['ts'])) // 60} dk önce")
+    return line
 
 
 def quick_max(cfg) -> float:
@@ -1262,7 +1438,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                     continue
                 if can and not chat:
                     await alert_log("twap", key, "")          # hisse yolu: sessiz saat özeti için işaret ÖNCE
-                pos = await position_ctx(client, run.coin, run.address)
+                pos = await position_ctx(client, run.coin, run.address, wallet=wallet_dexes(cfg))
                 # Takip teklifi (/takip_N): kullanıcı basarsa BU EMİR izlenir ve iptal
                 # edilince haber gider. Teklif yazılamazsa mesaj eskisi gibi gider —
                 # düğme süs değil ama mesajı bloke de etmez.
@@ -1276,7 +1452,8 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                        "day_vol": det["day_vol"] if det.get("sat") else day_vol,
                        "vol_pct": det["vol_pct"], "sat": det.get("sat"),
                        "pos": pos, "gate": g, "klass": klass_of(run.coin), "entity": ents.get(run.address) or "",
-                       "offer": offer, "quick_max": quick_max(cfg), "auto_end": auto_end(cfg, order)}
+                       "offer": offer, "quick_max": quick_max(cfg), "auto_end": auto_end(cfg, order),
+                       "low_bal": low_bal_ctx(cfg, run.coin, run.side, order, pos, m.get("px_last"))}
                 text = fmt.twap_alert(m, ctx)
                 mkey = f"alert:{key}:{run.first_ts}"
                 if not can:                                   # ana kanal tanımsız (kripto) — yalnız ayna; durum eskisi gibi

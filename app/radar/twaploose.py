@@ -631,7 +631,7 @@ async def fast_extra(cfg, client, notifier, key: tuple, p: dict, order: dict, g:
                                              short_reason if short_reason not in ("short", "") else ""))
 
     async def text_fn():
-        pos = await twapfast._pos(client, coin, addr)
+        pos = await twapfast._pos(client, coin, addr, wallet=twaplive.wallet_dexes(cfg))
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):
             try:
@@ -644,7 +644,8 @@ async def fast_extra(cfg, client, notifier, key: tuple, p: dict, order: dict, g:
                "vol_pct": ldet.get("vol_pct"), "per_min": ldet.get("per_min"), "rate_x": ldet.get("rate_x"),
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
-               "auto_end": twaplive.auto_end(cfg, order), "why": ldet.get("reason")}
+               "auto_end": twaplive.auto_end(cfg, order), "why": ldet.get("reason"),
+               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, order, pos, p.get("px"))}
         return fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)
 
     res = await _extra(cfg, notifier, okey, f"{coin}:{addr}:{side}", coin, text_fn, head)
@@ -676,7 +677,7 @@ async def slow_extra(cfg, notifier, client, run, m: dict, order: dict, g: str, d
     head = fmt.twap_loose_head([], no_chat=True) if g == "no_chat" else fmt.twap_loose_head(why_parts(cfg, g, det))
 
     async def text_fn():
-        pos = await twaplive.position_ctx(client, run.coin, run.address)
+        pos = await twaplive.position_ctx(client, run.coin, run.address, wallet=twaplive.wallet_dexes(cfg))
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):
             try:
@@ -687,7 +688,8 @@ async def slow_extra(cfg, notifier, client, run, m: dict, order: dict, g: str, d
                "day_vol": ldet["day_vol"] if ldet.get("sat") else day_vol, "vol_prec": 1,
                "vol_pct": ldet["vol_pct"], "sat": ldet.get("sat"), "pos": pos, "gate": lg,
                "klass": twaplive.klass_of(run.coin), "entity": ents.get(run.address) or "", "offer": offer,
-               "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order)}
+               "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order),
+               "low_bal": twaplive.low_bal_ctx(cfg, run.coin, run.side, order, pos, m.get("px_last"))}
         return fmt.twap_alert(m, ctx)
 
     res = await _extra(cfg, notifier, okey, f"{run.coin}:{run.address}:{run.side}", run.coin, text_fn, head,
@@ -965,7 +967,7 @@ async def big_fast(cfg, client, notifier, key: tuple, p: dict, order: dict, vols
     _, det = twapfast.decide_gate(cfg, coin, order, day_vol, vol_ts, t)      # yalnız ölçü (hacme oran, dakika hızı)
 
     async def text_fn():
-        pos = await twapfast._pos(client, coin, addr)
+        pos = await twapfast._pos(client, coin, addr, wallet=twaplive.wallet_dexes(cfg))
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):
             try:
@@ -978,7 +980,8 @@ async def big_fast(cfg, client, notifier, key: tuple, p: dict, order: dict, vols
                "vol_pct": det.get("vol_pct"), "per_min": det.get("per_min"), "rate_x": det.get("rate_x"),
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
-               "auto_end": twaplive.auto_end(cfg, order)}
+               "auto_end": twaplive.auto_end(cfg, order),
+               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, order, pos, p.get("px"))}
         return fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)
 
     res = await _big_send(cfg, notifier, okey, coin, text_fn, bg)
@@ -1007,7 +1010,7 @@ async def big_slow(cfg, notifier, client, run, m: dict, order: dict, det: dict, 
     from ..telegram import format as fmt
 
     async def text_fn():
-        pos = await twaplive.position_ctx(client, run.coin, run.address)
+        pos = await twaplive.position_ctx(client, run.coin, run.address, wallet=twaplive.wallet_dexes(cfg))
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):
             try:
@@ -1018,7 +1021,8 @@ async def big_slow(cfg, notifier, client, run, m: dict, order: dict, det: dict, 
                "day_vol": det.get("day_vol") if det.get("sat") else day_vol, "vol_prec": 1,
                "vol_pct": det.get("vol_pct"), "sat": det.get("sat"), "pos": pos, "gate": "ok",
                "klass": twaplive.klass_of(run.coin), "entity": ents.get(run.address) or "", "offer": offer,
-               "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order)}
+               "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order),
+               "low_bal": twaplive.low_bal_ctx(cfg, run.coin, run.side, order, pos, m.get("px_last"))}
         return fmt.twap_alert(m, ctx)
 
     res = await _big_send(cfg, notifier, okey, run.coin, text_fn, bg)

@@ -938,6 +938,9 @@ class Config:
         self.twap_fast_short_max_min = int(os.getenv("TWAP_FAST_SHORT_MAX_MIN", "60"))   # ⚡ hızlı = ≤ 1 sa (12.10)
         self.twap_fast_short_min_usd = float(os.getenv("TWAP_FAST_SHORT_MIN_USD", "250000"))
         self.twap_fast_rate_x = float(os.getenv("TWAP_FAST_RATE_X", "2"))
+        # ⚠️ Düşük bakiye (kullanıcı 15.10: "cüzdanda 200-300k varsa milyonluk twapta iptal gelebiliyor … düşükten kastım
+        # 500k altı"): TWAP'ı atan cüzdan bunun altındaysa TWAP mesajının 2. satırı uyarı. ENV-ONLY; 0 = kapalı.
+        self.twap_low_balance_usd = float(os.getenv("TWAP_LOW_BALANCE_USD", "500000"))
         # TWAP ayna grubu: her TWAP mesajının (ilk, hızlı, yarı, bitiş) kopyası. Diğer
         # chat id'leri gibi ENV-ONLY (EDITABLE_FIELDS'a girmez); boş = kapalı.
         self.twap_mirror_chat_id = (os.getenv("TWAP_MIRROR_CHAT_ID", "") or "").strip()

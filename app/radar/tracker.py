@@ -33,7 +33,12 @@ CLOSED_EPS = 0.02
 
 async def live_position(client: HLClient, address: str, coin: str) -> dict | None:
     """Adresin bu coindeki canlı pozisyonu; yoksa None."""
-    state = await client.clearinghouse(address, coin_dex(coin))
+    return parse_position(await client.clearinghouse(address, coin_dex(coin)), coin)
+
+
+def parse_position(state, coin: str) -> dict | None:
+    """clearinghouseState yanıtından bu coinin pozisyonu (live_position'ın ayrıştırıcısı; TWAP pozisyon satırı aynı
+    yanıttan hesap bakiyesini de okur — twaplive.position_ctx)."""
     target_sym = symbol_of(coin)
     for ap in (state or {}).get("assetPositions") or []:
         p = ap.get("position") or {}

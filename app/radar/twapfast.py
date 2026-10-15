@@ -588,9 +588,9 @@ def _lab_fast(p: dict, order: dict, det: dict, gate: str, ts: int) -> bool:
 
 # ---------------- sorgu + karar ----------------
 
-async def _pos(client, coin: str, addr: str):
+async def _pos(client, coin: str, addr: str, wallet: list[str] | None = None):
     try:
-        return await asyncio.wait_for(twaplive.position_ctx(client, coin, addr), POS_TIMEOUT)
+        return await asyncio.wait_for(twaplive.position_ctx(client, coin, addr, wallet=wallet), POS_TIMEOUT)
     except Exception:                                  # noqa: BLE001 — zaman aşımı: satır "bilinmiyor"
         return None
 
@@ -805,7 +805,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
             F.stats["cooldown"] += 1
             F.note(p, "cooldown", **info)
             return "cooldown"
-        pos = await _pos(client, coin, addr)
+        pos = await _pos(client, coin, addr, wallet=twaplive.wallet_dexes(cfg))
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):   # ⚡: kanala otomatik
             try:                                        # takip, emri başlangıç anıyla eşler (twapfollow)
@@ -819,6 +819,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
                "auto_end": twaplive.auto_end(cfg, order),
+               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, order, pos, p.get("px")),
                "why": det.get("reason")}
         text = fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)   # HL süren emirde dolanı 0 yazar
         ok = False
