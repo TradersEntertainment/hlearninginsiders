@@ -3348,26 +3348,34 @@ def _who_pos(addr: str, pos, spot: bool, entity: str = "", reduce_only: bool = F
     return " · ".join(parts)
 
 
+def _usd_floor(n: float) -> str:
+    """usd() gibi ama aşağı yuvarlar: eşiğin altındaki bakiye eşiğe yuvarlanıp "(< $500K): $500K" diye çelişmesin."""
+    a = max(0.0, float(n or 0))
+    if a >= 1_000_000:
+        return f"${int(a / 100_000) / 10:.1f}M"
+    if a >= 1_000:
+        return f"${int(a // 1_000)}K"
+    return f"${int(a)}"
+
+
 def low_bal_line(lb: dict | None) -> str:
     """⚠️ Düşük bakiye satırı (kullanıcı 15.10: milyonluk TWAP'ı 200-300K'lık cüzdan atınca iptal gelebiliyor → cüzdan
-    < $500K ise ilk satırlarda uyar). Bağlam twaplive.low_bal_ctx'ten; yalnız ölçüm: bakiye ve planın ona oranı."""
+    < $500K ise ilk satırlarda uyar). Bağlam twaplive.low_bal_ctx'ten (HL'nin cüzdan değeri); yalnız ölçüm: bakiye ve
+    planın ona oranı. Bakiye aşağı yuvarlanır (eşikle çelişmesin); "%0" yazılmaz."""
     if not lb:
         return ""
-    v = float(lb.get("usd") or 0)
-    head = f"⚠️ <b>Düşük bakiye</b> (&lt; {usd(lb.get('limit'))}): "
-    if lb.get("kind") == "spot_buy":
-        body = f"cüzdanda <b>{usd(v)}</b> {esc(lb.get('token') or '')}"
-    elif lb.get("kind") == "spot_sell":
-        body = f"cüzdanda <b>{usd(v)}</b> değerinde {esc(lb.get('token') or '')}"
-    else:
-        body = f"cüzdanda <b>{usd(v)}</b>"
-        if float(lb.get("stable") or 0) >= 1:
-            body += f" (perp {usd(lb.get('perp'))} + spot {usd(lb.get('stable'))})"
+    v = max(0.0, float(lb.get("usd") or 0))
+    line = f"⚠️ <b>Düşük bakiye</b> (&lt; {usd(lb.get('limit'))}): cüzdanda <b>{_usd_floor(v)}</b>"
     plan = float(lb.get("plan") or 0)
-    if plan > 0 and v > 0:
+    if plan > 0 and v >= 1:
         x = plan / v
-        body += f" · plan bunun <b>{x:.1f} katı</b>" if x >= 1 else f" · plan bunun %{x * 100:.0f}'i"
-    return head + body
+        if x >= 1:
+            line += f" · plan bunun <b>{x:.1f} katı</b>"
+        elif x * 100 >= 1:
+            line += f" · plan bunun %{x * 100:.0f}'i"
+        else:
+            line += " · plan bunun %1'inden az"
+    return line
 
 
 TWAP_AUTO_NOTE = {"cancel": "🔔 iptal edilirse ⛔ buraya otomatik yazılır",

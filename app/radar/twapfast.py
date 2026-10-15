@@ -588,9 +588,9 @@ def _lab_fast(p: dict, order: dict, det: dict, gate: str, ts: int) -> bool:
 
 # ---------------- sorgu + karar ----------------
 
-async def _pos(client, coin: str, addr: str, wallet: list[str] | None = None):
-    try:
-        return await asyncio.wait_for(twaplive.position_ctx(client, coin, addr, wallet=wallet), POS_TIMEOUT)
+async def _pos(client, coin: str, addr: str, wallet: bool = False):
+    try:                                               # süre bütçesi içeride: bakiye pozisyon satırını düşüremez
+        return await twaplive.position_ctx(client, coin, addr, wallet=wallet, timeout=POS_TIMEOUT)
     except Exception:                                  # noqa: BLE001 — zaman aşımı: satır "bilinmiyor"
         return None
 
@@ -805,7 +805,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
             F.stats["cooldown"] += 1
             F.note(p, "cooldown", **info)
             return "cooldown"
-        pos = await _pos(client, coin, addr, wallet=twaplive.wallet_dexes(cfg))
+        pos = await _pos(client, coin, addr, wallet=twaplive.wallet_on(cfg))
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):   # ⚡: kanala otomatik
             try:                                        # takip, emri başlangıç anıyla eşler (twapfollow)
@@ -813,15 +813,16 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
                     address=addr, coin=coin, side=side, total=float(order.get("planned_usd") or 0), first_ts=started))
             except Exception:                          # noqa: BLE001
                 log.debug("hızlı twap takip teklifi yazılamadı (%s)", coin, exc_info=True)
+        wo = twaplive.with_seen(order, coin, addr, side, t)                            # HL süren emirde dolanı 0 yazar
         ctx = {"coin": coin, "address": addr, "side": side, "gate": g,
                "day_vol": det.get("day_vol") if det.get("sat") else day_vol, "sat": det.get("sat"),
                "vol_pct": det.get("vol_pct"), "per_min": det.get("per_min"), "rate_x": det.get("rate_x"),
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
                "auto_end": twaplive.auto_end(cfg, order),
-               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, order, pos, p.get("px")),
+               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, wo, pos),
                "why": det.get("reason")}
-        text = fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)   # HL süren emirde dolanı 0 yazar
+        text = fmt.twap_fast(wo, ctx)
         ok = False
         if can:
             ok = await notifier.send("twap", text, priority="high", key=f"twap_fast:{fkey}", chat_id=chat, coin=coin)
@@ -844,6 +845,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
             return "failed"
         await twaploose.copy(cfg, notifier, text, f"a:{fkey}", coin, primary=chat if can else None)   # 🔸 kopya
         await alert_log("twap_fast", fkey, text)        # talep bırakılmadan: eski yol bu emri tekrar yazmaz
+        twaplive.low_bal_mark(ctx.get("low_bal"), coin)
         if cool:
             await alert_log(FAST_CD, ckey, "")
     finally:

@@ -447,19 +447,23 @@ bildirilmez.
   gördüğümüz dilimler, adresin pozisyonu (canlı sorgu), fiyat ilk→son, taker %.
 - **⚠️ Düşük bakiye (kullanıcı 15.10: "milyonluk twaplarda iptal gelebiliyor eğer cüzdanda 200-300k varsa … twapı
   atanın cüzdanı düşük bütçeliyse uyarı versin, ilk satırların oralarda; düşükten kastım 500k altındaysa"):** TWAP'ı
-  atan cüzdanın bakiyesi `TWAP_LOW_BALANCE_USD`'nin (varsayılan $500K; 0 = kapalı, ek istek de yok) altındaysa mesajın
-  **2. satırı** `⚠️ Düşük bakiye (< $500K): cüzdanda $447K (perp $106K + spot $341K) · plan bunun 2.7 katı` olur.
-  Ölçüm, tahmin değil: bakiye ve planın ona oranı. **Cüzdan** = tüm perp dex'lerindeki hesap bakiyesi (ana dex +
-  izlenen HIP-3 dex'leri, `accountValue` toplamı) + spot'taki **serbest** dolar stabilleri (USDC/USDH/USDT0/USDE,
-  `total − hold`). Hold düşülür, çünkü birleşik hesapta (HL `userAbstraction=unifiedAccount`) perp teminatı spot
-  USDC'nin hold'unda durur ve perp bakiyesinde de görünür: canlı örnekte perp $4.6K + spot $26.4K, gerçek ≈ $26.4K.
-  Spot'taki stabil olmayan tokenler (HYPE vb.) sayılmaz. **Spot TWAP:** alışta serbest karşı token (USDC…), satışta
-  satılan tokenin serbest adedi × fiyat. **Kapatan emir uyarılmaz:** reduce-only ya da ters yöndeki pozisyon planın en
-  az yarısıysa (yeni teminat istemez). İstekler: TWAP'ın dex'i pozisyon satırı için zaten soruluyor; diğer dex'ler ve
-  tek `spotClearinghouseState` aynı anda gider (ağırlık 2'şer), en çok 2 sn beklenir. **Herhangi bir parça okunamaz ya
-  da geç kalırsa satır yazılmaz** (eksik okumayla "düşük" denmez); pozisyon satırı bakiyeyi beklemez. Ana kanal, ⚡ ilk
-  dilim, ayna, 🔸 yan ve 🕐 büyük kanal mesajlarının hepsinde var. 🕵️ gizli TWAP'ta yok (HL emri yok, iptal de yok).
-  Sayaçlar `/tani`'de ("⚠️ düşük bakiye satırı": bakılan, uyarı, kapatan, bilinmiyor/eksik, son uyarı).
+  atan cüzdanın değeri `TWAP_LOW_BALANCE_USD`'nin (varsayılan $500K; 0 = kapalı, ek istek de yok) altındaysa mesajın
+  **2. satırı** `⚠️ Düşük bakiye (< $500K): cüzdanda $244K · plan bunun 4.9 katı` olur. Ölçüm, tahmin değil: bakiye ve
+  planın ona oranı (bakiye aşağı yuvarlanır, eşikle çelişmez). **Cüzdan = HL'nin kendi hesabı:** `portfolio`
+  isteğinin "day" serisinin son noktası (canlıda yaşı ~0 sn) — arayüzdeki toplam değer: tüm perp dex'leri (izlenmeyen
+  HIP-3 dex'leri dahil), spot tokenler (HYPE, UBTC…), birleşik hesap ve portföy marjin. İnceleme (15.10, canlı veriyle):
+  perp ve spot parçalarını kendimiz toplamak birleşik hesapta çift sayıyor, portföy marjinde borçlu USDC yüzünden $8.5M'lık
+  cüzdana "$0" diyor, izlenmeyen dex'leri ve spot tokenleri kaçırıyordu. **Kapatan emir uyarılmaz:** reduce-only ya da
+  ters yöndeki pozisyon emrin **kalanının** en az yarısıysa (yeni teminat istemez; ilk uyarı emrin ortasında gelse de
+  kalanla kıyaslanır; radar emri baştan görmediyse ve emrin %15'i geçtiyse ters pozisyonda kalan bilinmez → satır yok).
+  İstek: pozisyon satırının sorgusuyla aynı anda tek `portfolio` (düşük şerit, tekrar denemesiz — pozisyon isteğinin
+  sırasını kapmaz); pozisyon yanıtından sonra en çok 0,5 sn beklenir, gelmezse satır yazılmaz (eksik okumayla "düşük"
+  denmez; pozisyon satırı bakiyeyi beklemez). Ana kanal, ⚡ ilk dilim, ayna, 🔸 yan ve 🕐 büyük kanal mesajlarının
+  hepsinde var; 🕵️ gizli TWAP'ta yok (HL emri yok, iptal de yok). `/tani`'de "⚠️ düşük bakiye satırı": gönderilen
+  uyarılı mesaj sayısı, son uyarı, hazırlıkta bakılan / cüzdanı okunamayan / kapatan emir.
+  **Kör nokta, açıkça:** satır cüzdanın büyüklüğünü ölçer, TWAP için kullanılabilir teminatı değil — normal hesapta
+  spot'taki HYPE perp teminatı sayılmaz ama cüzdan değerinde görünür; tersine, perp'teki para spot alış TWAP'ında
+  kullanılamaz. HL'nin iptal sebebini göremeyiz; ⛔ iptal notu ayrı gelir.
 - **Sonrası: yalnız iptal (kullanıcı 12.10: "iptal etmedikçe bildirim atma" — 🏁 bitti notu yeni TWAP
   sanılıyordu):** kanala ilk uyarıdan sonra yalnız emir **iptal** edilince (HL 'terminated', hypurrscan'de
   'error') ⛔ gider: gerçek dolan tutar, plan, süre, fiyat, hacme oran. Normal bitiş (🏁) ve yarılandı (⏳)

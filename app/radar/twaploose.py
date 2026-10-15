@@ -631,7 +631,8 @@ async def fast_extra(cfg, client, notifier, key: tuple, p: dict, order: dict, g:
                                              short_reason if short_reason not in ("short", "") else ""))
 
     async def text_fn():
-        pos = await twapfast._pos(client, coin, addr, wallet=twaplive.wallet_dexes(cfg))
+        pos = await twapfast._pos(client, coin, addr, wallet=twaplive.wallet_on(cfg))
+        wo = twaplive.with_seen(order, coin, addr, side, t)                      # HL süren emirde dolanı 0 yazar
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):
             try:
@@ -645,11 +646,14 @@ async def fast_extra(cfg, client, notifier, key: tuple, p: dict, order: dict, g:
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
                "auto_end": twaplive.auto_end(cfg, order), "why": ldet.get("reason"),
-               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, order, pos, p.get("px"))}
-        return fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)
+               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, wo, pos)}
+        box["lb"] = ctx["low_bal"]
+        return fmt.twap_fast(wo, ctx)
 
+    box: dict = {}
     res = await _extra(cfg, notifier, okey, f"{coin}:{addr}:{side}", coin, text_fn, head)
     if res == "sent":
+        twaplive.low_bal_mark(box.get("lb"), coin)
         _register(okey, coin, addr, side, order, t, int(p.get("t0") or t), int(p.get("ts") or t),
                   int(p.get("n") or 1), float(p.get("tot") or p.get("max") or 0), float(p.get("szt") or 0),
                   float(p.get("px0") or p.get("px") or 0), float(p.get("px") or 0))
@@ -677,23 +681,28 @@ async def slow_extra(cfg, notifier, client, run, m: dict, order: dict, g: str, d
     head = fmt.twap_loose_head([], no_chat=True) if g == "no_chat" else fmt.twap_loose_head(why_parts(cfg, g, det))
 
     async def text_fn():
-        pos = await twaplive.position_ctx(client, run.coin, run.address, wallet=twaplive.wallet_dexes(cfg))
+        pos = await twaplive.position_ctx(client, run.coin, run.address, wallet=twaplive.wallet_on(cfg))
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):
             try:
                 offer = await twaplive._twap_offer(run)
             except Exception:                      # noqa: BLE001
                 log.debug("yan kanal takip teklifi (%s)", run.coin, exc_info=True)
-        ctx = {"order": twaplive.with_seen(order, run.coin, run.address, run.side, ts),
+        ctx_order = twaplive.with_seen(order, run.coin, run.address, run.side, ts)
+        ctx = {"order": ctx_order,
                "day_vol": ldet["day_vol"] if ldet.get("sat") else day_vol, "vol_prec": 1,
                "vol_pct": ldet["vol_pct"], "sat": ldet.get("sat"), "pos": pos, "gate": lg,
                "klass": twaplive.klass_of(run.coin), "entity": ents.get(run.address) or "", "offer": offer,
                "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order),
-               "low_bal": twaplive.low_bal_ctx(cfg, run.coin, run.side, order, pos, m.get("px_last"))}
+               "low_bal": twaplive.low_bal_ctx(cfg, run.coin, run.side, ctx_order, pos)}
+        box["lb"] = ctx["low_bal"]
         return fmt.twap_alert(m, ctx)
 
+    box: dict = {}
     res = await _extra(cfg, notifier, okey, f"{run.coin}:{run.address}:{run.side}", run.coin, text_fn, head,
                        claimed=claimed)
+    if res == "sent":
+        twaplive.low_bal_mark(box.get("lb"), run.coin)
     if res in ("sent", "dup"):
         await _mark_alias(f"run:{run.coin}:{run.address}:{run.side}:{int(run.first_ts)}")
     if res == "sent":
@@ -967,7 +976,8 @@ async def big_fast(cfg, client, notifier, key: tuple, p: dict, order: dict, vols
     _, det = twapfast.decide_gate(cfg, coin, order, day_vol, vol_ts, t)      # yalnız ölçü (hacme oran, dakika hızı)
 
     async def text_fn():
-        pos = await twapfast._pos(client, coin, addr, wallet=twaplive.wallet_dexes(cfg))
+        pos = await twapfast._pos(client, coin, addr, wallet=twaplive.wallet_on(cfg))
+        wo = twaplive.with_seen(order, coin, addr, side, t)                      # HL süren emirde dolanı 0 yazar
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):
             try:
@@ -981,11 +991,14 @@ async def big_fast(cfg, client, notifier, key: tuple, p: dict, order: dict, vols
                "slice_usd": p.get("max"), "slice_px": p.get("px"), "pos": pos, "klass": twaplive.klass_of(coin),
                "entity": entity, "offer": offer, "now": now(), "quick_max": twaplive.quick_max(cfg),
                "auto_end": twaplive.auto_end(cfg, order),
-               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, order, pos, p.get("px"))}
-        return fmt.twap_fast(twaplive.with_seen(order, coin, addr, side, t), ctx)
+               "low_bal": twaplive.low_bal_ctx(cfg, coin, side, wo, pos)}
+        box["lb"] = ctx["low_bal"]
+        return fmt.twap_fast(wo, ctx)
 
+    box: dict = {}
     res = await _big_send(cfg, notifier, okey, coin, text_fn, bg)
     if res == "sent":
+        twaplive.low_bal_mark(box.get("lb"), coin)
         BIG.register(okey, coin, addr, side, order, t, int(p.get("t0") or t), int(p.get("ts") or t),
                      int(p.get("n") or 1), float(p.get("tot") or p.get("max") or 0), float(p.get("szt") or 0),
                      float(p.get("px0") or p.get("px") or 0), float(p.get("px") or 0))
@@ -1010,23 +1023,27 @@ async def big_slow(cfg, notifier, client, run, m: dict, order: dict, det: dict, 
     from ..telegram import format as fmt
 
     async def text_fn():
-        pos = await twaplive.position_ctx(client, run.coin, run.address, wallet=twaplive.wallet_dexes(cfg))
+        pos = await twaplive.position_ctx(client, run.coin, run.address, wallet=twaplive.wallet_on(cfg))
         offer = None
         if getattr(cfg, "twap_follow_enabled", True) and not twaplive.auto_end(cfg, order):
             try:
                 offer = await twaplive._twap_offer(run)
             except Exception:                      # noqa: BLE001
                 log.debug("🕐 takip teklifi (%s)", run.coin, exc_info=True)
-        ctx = {"order": twaplive.with_seen(order, run.coin, run.address, run.side, ts),
+        ctx_order = twaplive.with_seen(order, run.coin, run.address, run.side, ts)
+        ctx = {"order": ctx_order,
                "day_vol": det.get("day_vol") if det.get("sat") else day_vol, "vol_prec": 1,
                "vol_pct": det.get("vol_pct"), "sat": det.get("sat"), "pos": pos, "gate": "ok",
                "klass": twaplive.klass_of(run.coin), "entity": ents.get(run.address) or "", "offer": offer,
                "quick_max": twaplive.quick_max(cfg), "auto_end": twaplive.auto_end(cfg, order),
-               "low_bal": twaplive.low_bal_ctx(cfg, run.coin, run.side, order, pos, m.get("px_last"))}
+               "low_bal": twaplive.low_bal_ctx(cfg, run.coin, run.side, ctx_order, pos)}
+        box["lb"] = ctx["low_bal"]
         return fmt.twap_alert(m, ctx)
 
+    box: dict = {}
     res = await _big_send(cfg, notifier, okey, run.coin, text_fn, bg)
     if res == "sent":
+        twaplive.low_bal_mark(box.get("lb"), run.coin)
         BIG.register(okey, run.coin, run.address, run.side, order, ts, run.first_ts, run.last_ts, run.n, run.total,
                      run.sz_total, m.get("px_first") or run.px_first, m.get("px_last") or run.px_last)
         await BIG.save_open()

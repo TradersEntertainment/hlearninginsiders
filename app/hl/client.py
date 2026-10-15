@@ -226,10 +226,12 @@ class HLClient:
             p["dex"] = dex
         return await self.info(p, priority=priority, stats=stats)
 
-    async def spot_clearinghouse(self, user: str, priority: str | None = None, stats: dict | None = None):
-        """Spot bakiyeleri (ağırlık 2): {"balances": [{"coin": "USDC", "token": 0, "total": "…", "hold": "…",
-        "entryNtl": "…"}, …]}. TWAP düşük bakiye satırı kullanır (twaplive.position_ctx)."""
-        return await self.info({"type": "spotClearinghouseState", "user": user}, priority=priority, stats=stats)
+    async def portfolio(self, user: str, priority: str | None = None, retries: int = 4, stats: dict | None = None):
+        """HL'nin cüzdan değeri geçmişi (arayüzdeki "Portfolio"): [["day", {"accountValueHistory": [[ms, "$"], …],
+        …}], ["week", …], …, ["perpDay", …], …]. "day" serisinin son noktası ŞİMDİKİ toplam değerdir (canlı ölçüm
+        15.10: yaşı ~0 sn) — tüm perp dex'leri + spot tokenler, birleşik hesap ve portföy marjin dahil, HL'nin kendi
+        hesabıyla. TWAP düşük bakiye satırı kullanır (twaplive.position_ctx)."""
+        return await self.info({"type": "portfolio", "user": user}, retries=retries, priority=priority, stats=stats)
 
     async def batch_clearinghouse(self, users: list[str], dex: str = "", priority: str | None = None,
                                   stats: dict | None = None):
