@@ -235,7 +235,8 @@ class HLClient:
 
     async def vault_equities(self, user: str, priority: str | None = None, retries: int = 4):
         """Adresin kasa (vault) payları: [{"vaultAddress", "equity" ($), "lockedUntilTimestamp"}, …]. `portfolio`
-        toplamı bunları da sayar (canlı 15.10) — kilitli (HLP 4 gün, kullanıcı kasası 1 gün), TWAP'a teminat olamaz."""
+        toplamı bunları da sayar (canlı 15.10). Kasadaki para teminat değil (önce çekilmeli; HLP'de yatırmadan 4 gün,
+        kullanıcı kasasında 1 gün sonra çekilebilir — çoğunun kilidi açık), TWAP'ı karşılamaz."""
         return await self.info({"type": "userVaultEquities", "user": user}, retries=retries, priority=priority)
 
     async def delegator_summary(self, user: str, priority: str | None = None, retries: int = 4):

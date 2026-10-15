@@ -692,31 +692,42 @@ async def position_ctx(client, coin: str, addr: str, wallet: bool = False,
     """Adresin bu coindeki pozisyonu: canlı (1 istek) — düşerse / `timeout`'ta gelmezse süpürme kaydı.
 
     `wallet` (⚠️ düşük bakiye satırı açıksa): dönüşte 'wallet': {"total": HL cüzdan değeri | None, "locked": kasa +
-    stake $ | None} — adres önbelleği (WALLET_TTL) tazeyse istek yok; değilse pozisyon isteği SIRAYA GİRDİKTEN SONRA
-    normal şeritte tek parti (fetch_wallet). Pozisyon yanıtından sonra en çok ⚡ yolunda (timeout verilmiş)
-    WALLET_GRACE, yavaş yollarda WALLET_GRACE_SLOW beklenir; yetişmeyen parti arka planda biter ve önbelleği doldurur
-    (sonraki uyarı kullanır). İnceleme 15.10: düşük şerit 429'dan sonra 60 sn ve arka plan işi %70'i doldururken
-    hiç çıkamıyor, satır sessizce kayboluyordu."""
+    stake $ | None}. Adres önbelleği tazeyse istek yok; değilse cüzdan partisi (normal şerit, tekrar denemesiz): kota
+    rahatsa (boş ≥ WALLET_PARALLEL_FREE) pozisyon isteğiyle AYNI ANDA (yarış yok, ⚡ yetişir), sıkışıksa pozisyon
+    yanıtı GELDİKTEN SONRA (3. inceleme 15.10: kota doluyken parti pozisyon isteğinin önüne geçiyor, ⚡ pozisyon satırı
+    kayboluyordu), doluysa (boş < WALLET_MIN_FREE) hiç (satır yok — o anda zaten yetişmezdi). Sonra en çok ⚡ yolunda (timeout verilmiş) WALLET_GRACE, yavaş
+    yollarda WALLET_GRACE_SLOW; yetişmeyen parti arka planda biter ve önbelleği doldurur. 2. inceleme: düşük şerit
+    429'dan sonra 60 sn ve arka plan işi %70'i doldururken hiç çıkamıyordu."""
     if client is not None:
         try:
             from .tracker import parse_position
             from .report import coin_dex
             loop = asyncio.get_running_loop()
             t0 = loop.time()
-            main = asyncio.ensure_future(client.clearinghouse(addr, coin_dex(coin)))   # önce: bütçe sırası onun
-            wtask = wallet_task(client, addr) if wallet else None
+            main = asyncio.ensure_future(client.clearinghouse(addr, coin_dex(coin)))
+            wtask, free = None, None
+            if wallet and wallet_cached(addr) is None:
+                free = _budget_free(client)
+                if free is None or free >= WALLET_PARALLEL_FREE:   # kota rahat: aynı anda (sıra yarışı yok)
+                    wtask = wallet_task(client, addr)
             state = await (asyncio.wait_for(main, timeout) if timeout else main)
             live = parse_position(state, coin)
             out = ({"side": live["side"], "notional": live["notional"], "src": "canlı", "ts": now()} if live
                    else {"none": True, "src": "canlı"})
             if wallet:
                 w = wallet_cached(addr)
-                if w is None and wtask is not None:
+                if w is None and (wtask is not None or not _budget_tight(client)):
+                    wtask = wtask or wallet_task(client, addr)  # kota sıkışıkken: pozisyon yanıtından SONRA
                     grace = WALLET_GRACE if timeout else WALLET_GRACE_SLOW
                     if timeout:
                         grace = min(grace, max(0.0, t0 + timeout - loop.time()))
-                    await asyncio.wait([wtask], timeout=grace)   # zaman aşımı iptal ETMEZ: arka planda biter
-                    w = wallet_cached(addr)
+                    if wtask is not None:
+                        await asyncio.wait([wtask], timeout=grace)   # zaman aşımı iptal ETMEZ: arka planda biter
+                        if wtask.done() and not wtask.cancelled() and wtask.exception() is None:
+                            w = wtask.result()          # yarım sonuç da bu uyarı için kullanılır (önbellek kısa tutar)
+                    w = w or wallet_cached(addr)
+                elif w is None:
+                    LOW_BAL["tight"] += 1
                 out["wallet"] = w or {"total": None, "locked": None}
             return out
         except Exception as e:
@@ -834,12 +845,19 @@ def chat_for(cfg, coin: str) -> tuple[str, bool]:
 # mesaj HL'nin kendi cüzdan değerini ve planın ona oranını yazar. İnceleme (15.10, canlı veriyle yeniden üretildi):
 # perp/spot parçalarını kendimiz toplamak birleşik hesapta çift sayıyor, portföy marjinde (borçlu USDC) $8.5M'lık
 # cüzdana "$0" diyor, izlenmeyen HIP-3 dex'lerini ve spot tokenleri kaçırıyordu → tek kaynak HL `portfolio`. 2. tur:
-# HL toplamı kasa (HLP…) ve stake HYPE'ı da sayıyor → kilitli kısım düşülür; düşük şerit satırı kaybettiriyordu →
-# normal şerit (pozisyon isteğinden sonra) + adres önbelleği.
-LOW_BAL: dict = {"checked": 0, "unknown": 0, "closing": 0, "warned": 0, "last": None}
+# HL toplamı kasa (HLP…) ve stake HYPE'ı da sayıyor → düşülür (teminat değil); düşük şerit satırı kaybettiriyordu →
+# normal şerit + adres önbelleği. 3. tur: parti pozisyon YANITINDAN sonra (kotaya yarışmasın), kota doluysa hiç; önbellek
+# 2 dk (yarım sonuç 30 sn); sayaç emir başına tekil; "kilitli" denmez (HLP kilitlerinin çoğu açık).
+LOW_BAL: dict = {"checked": 0, "unknown": 0, "closing": 0, "tight": 0, "warned": 0, "last": None}
+LOW_BAL_KEYS: dict[str, int] = {}   # uyarısı sayılmış emirler (aynı emir ana + ayna + 🕐 + yeniden deneme → tek sayım)
 WALLET_GRACE = 0.5          # ⚡ yolu: pozisyon yanıtından sonra bakiye için en çok bu kadar (sn); gelmezse satır yok
 WALLET_GRACE_SLOW = 2.0     # yavaş yollar (eski yol, 🔸/🕐 eski yol): gecikme bütçeleri yok
-WALLET_TTL = 600            # adres başına cüzdan önbelleği (TWAP atanlar tekrar eder; ⚡ + 🕐 aynı emri ardışık yazar)
+WALLET_TTL = 120            # adres önbelleği: ⚡ + 🕐 + eski yol aynı emri ardışık yazar (3. inceleme: 10 dk, yatırılan
+#                             parayı görmeyip yeni emirde eski "düşük" değeri yazabiliyordu)
+WALLET_TTL_PARTIAL = 30     # kasa/stake okunamamış yarım sonuç: kısa — bir 429 adresi dakikalarca satırsız bırakmasın
+WALLET_MIN_FREE = 8         # kotada bundan az boş istek varsa parti başlamaz (pozisyon / diğer işler önce)
+WALLET_PARALLEL_FREE = 20   # bundan çok boş istek varsa parti pozisyon isteğiyle AYNI ANDA (yarış yok, ⚡ yetişir);
+#                             arada (8–19) pozisyon yanıtından sonra
 PORTFOLIO_MAX_AGE = 1800    # "day" serisinin son noktası bundan eskiyse bakiye bilinmiyor sayılır
 CLOSING_UNSURE = 0.15       # radar emri baştan görmediyse ve emrin bu kadarı geçtiyse kalan bilinmez (ters pozisyonda)
 WALLET_CACHE: dict[str, tuple[int, dict]] = {}
@@ -881,8 +899,9 @@ def parse_staked_hype(resp) -> float | None:
 
 
 async def fetch_wallet(client, addr: str) -> dict:
-    """Tek parti, normal şerit, tekrar denemesiz: portfolio + kasa + stake + HYPE fiyatı → {"total", "locked"}.
-    locked = kasa $ + stake HYPE × fiyat; bir parçası okunamazsa None (low_bal_ctx buna göre karar verir)."""
+    """Tek parti, normal şerit, tekrar denemesiz, aynı anda: portfolio + kasa + stake + HYPE fiyatı (allMids, 2) →
+    {"total", "locked"}. locked = kasa $ + stake HYPE × fiyat; bir parçası okunamazsa None (low_bal_ctx karar verir).
+    Fiyat stake olmasa da istenir: ardışık sorgu ⚡ yolunda 0,5 sn'ye yetişmiyordu (canlı 15.10)."""
     async def opt(name, *a):
         fn = getattr(client, name, None)
         return await fn(*a, priority="normal", retries=0) if fn else None
@@ -892,15 +911,32 @@ async def fetch_wallet(client, addr: str) -> dict:
     ok = lambda x: None if isinstance(x, BaseException) else x            # noqa: E731
     total = parse_portfolio_value(ok(pf))
     vault, staked = parse_vault_equity(ok(ve)), parse_staked_hype(ok(ds))
-    px = _num((ok(mids) or {}).get("HYPE")) if isinstance(ok(mids), dict) else None
+    px = _num(ok(mids).get("HYPE")) if isinstance(ok(mids), dict) else None
     stake_usd = 0.0 if staked == 0 else (staked * px if staked is not None and px else None)
     locked = vault + stake_usd if vault is not None and stake_usd is not None else None
     return {"total": total, "locked": locked}
 
 
+def _budget_free(client) -> int | None:
+    """HL kotasında şu an boş istek sayısı; bilinmiyorsa (sahte istemci) None."""
+    try:
+        return int(client.usage()["free"])
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
+def _budget_tight(client) -> bool:
+    """HL kotası dolu mu (boş istek < WALLET_MIN_FREE) — o zaman cüzdan partisi hiç başlamaz."""
+    free = _budget_free(client)
+    return free is not None and free < WALLET_MIN_FREE
+
+
 def wallet_cached(addr: str) -> dict | None:
     hit = WALLET_CACHE.get(addr)
-    return hit[1] if hit and now() - hit[0] < WALLET_TTL else None
+    if not hit:
+        return None
+    ttl = WALLET_TTL if hit[1].get("locked") is not None else WALLET_TTL_PARTIAL
+    return hit[1] if now() - hit[0] < ttl else None
 
 
 def wallet_task(client, addr: str):
@@ -978,7 +1014,7 @@ def _left_usd(o: dict) -> tuple[float, bool]:
 
 def wallet_budget(coin: str, side: str, order: dict | None, pos: dict | None,
                   now_ts: int | None = None) -> dict | None:
-    """TWAP'ı atan cüzdanın değeri — ölçüm (HL `portfolio` toplamı + kilitli kısım). None = bilinmiyor.
+    """TWAP'ı atan cüzdanın değeri — ölçüm (HL `portfolio` toplamı + kasa/stake kısmı). None = bilinmiyor.
 
     • Kapatan emir uyarılmaz ('closing'): reduce-only ya da ters yöndeki perp pozisyonu emrin KALANININ en az yarısı
       (yeni teminat istemez). Kalan, emir süren bir emirde ilk uyarı gecikse de (restart, kapı sonradan açıldı) planla
@@ -1021,7 +1057,7 @@ def low_bal_ctx(cfg, coin: str, side: str, order: dict | None, pos: dict | None)
         LOW_BAL["closing"] += 1
         return None
     total, locked = b["total"], b["locked"]
-    if locked is None:                              # kilitli kısım okunamadı: kullanılabilir ≤ toplam
+    if locked is None:                              # kasa/stake okunamadı: kullanılabilir ≤ toplam
         if total >= lim:
             LOW_BAL["unknown"] += 1                 # toplam eşiği geçiyor ama kasa/stake bilinmiyor → karar yok
             return None
@@ -1033,10 +1069,18 @@ def low_bal_ctx(cfg, coin: str, side: str, order: dict | None, pos: dict | None)
     return {**b, "usd": usd, "limit": lim}
 
 
-def low_bal_mark(lb: dict | None, coin: str) -> None:
-    """⚠️ satırlı mesaj GERÇEKTEN gönderildi: sayaç + son uyarı (/tani)."""
+def low_bal_mark(lb: dict | None, coin: str, key: str = "") -> None:
+    """⚠️ satırlı mesaj GERÇEKTEN gönderildi: sayaç + son uyarı (/tani). `key` = emir anahtarı (coin:adres:yön:başlangıç):
+    aynı emir ana kanal + ayna + 🕐 + yeniden deneme turunda bir kez sayılır (3. inceleme 15.10)."""
     if not lb:
         return
+    if key:
+        if key in LOW_BAL_KEYS:
+            return
+        LOW_BAL_KEYS[key] = now()
+        if len(LOW_BAL_KEYS) > 2000:
+            for k, _ in sorted(LOW_BAL_KEYS.items(), key=lambda kv: kv[1])[:500]:
+                LOW_BAL_KEYS.pop(k, None)
     LOW_BAL["warned"] += 1
     LOW_BAL["last"] = {"coin": coin, "usd": lb.get("usd"), "plan": lb.get("plan"), "ts": now()}
 
@@ -1047,7 +1091,7 @@ def low_bal_diag(cfg) -> str:
     if lim <= 0:
         return "⚠️ düşük bakiye satırı: kapalı (TWAP_LOW_BALANCE_USD=0)"
     s = LOW_BAL
-    line = f"⚠️ düşük bakiye satırı: eşik ${lim:,.0f} · bu açılıştan beri {s['warned']} uyarılı mesaj gönderildi"
+    line = f"⚠️ düşük bakiye satırı: eşik ${lim:,.0f} · bu açılıştan beri {s['warned']} emirde uyarı gönderildi"
     last = s.get("last")
     if last:
         line += (f" (son: {assets.label(last['coin'])} cüzdan ${float(last['usd'] or 0):,.0f}"
@@ -1057,6 +1101,8 @@ def low_bal_diag(cfg) -> str:
         line += f", {s['unknown']} cüzdan okunamadı (yazılmaz)"
     if s["closing"]:
         line += f", {s['closing']} kapatan emir (yazılmaz)"
+    if s["tight"]:
+        line += f", {s['tight']} kez HL kotası doluydu (sorulmadı)"
     return line
 
 
@@ -1538,7 +1584,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 if not can:                                   # ana kanal tanımsız (kripto) — yalnız ayna; durum eskisi gibi
                     out["no_chat"] += 1
                     if await mirror(cfg, notifier, text, mkey, run.coin, out):
-                        low_bal_mark(ctx.get("low_bal"), run.coin)
+                        low_bal_mark(ctx.get("low_bal"), run.coin, okey or mkey)
                     await _loose_copy(cfg, notifier, text, f"a:{okey or mkey}", run.coin, None, okey=okey,
                                       alias=f"run:{key}:{run.first_ts}")
                     decide(run, "no_chat", det)
@@ -1551,7 +1597,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                         await alert_log("twap_o", okey, "")   # 📣 (/twap): bildirilen EMİR (aynı anahtarın başka emri değil)
                 mok = await mirror(cfg, notifier, text, mkey, run.coin, out, primary=chat)
                 if ok or mok:                                 # ⚠️ bir hedefe gerçekten ulaştı (sessiz saat ertelemesi değil)
-                    low_bal_mark(ctx.get("low_bal"), run.coin)
+                    low_bal_mark(ctx.get("low_bal"), run.coin, okey or mkey)
                 await _loose_copy(cfg, notifier, text, f"a:{okey or mkey}", run.coin, chat, okey=okey,
                                   alias=f"run:{key}:{run.first_ts}")
                 if ok:

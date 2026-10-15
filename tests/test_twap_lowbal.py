@@ -6,17 +6,20 @@ yüzden twapı atanın cüzdan düşük bütçeliyse uyarı versin ilk satırlar
 Pinlenenler:
   • eşik TWAP_LOW_BALANCE_USD (vars. $500K, env-only; 0 = kapalı → satır yok, ek istek yok)
   • cüzdan = HL'nin kendi değeri (`portfolio` "day" son noktası: tüm dex'ler, spot tokenler, birleşik hesap, portföy
-    marjin) − KİLİTLİ kısım (kasa payları + stake HYPE × fiyat; satırda ayrıca yazılır). İnceleme 15.10 (canlı veri):
-    parçaları kendimiz toplamak çift sayıyor / portföy marjinde $8.5M'a "$0" diyordu; HL toplamı HLP ve stake'i de sayıyor
-  • kilitli kısım okunamazsa: toplam < eşik → yine uyarı (kullanılabilir ≤ toplam); toplam ≥ eşik → satır yok
-  • tek parti (portfolio + kasa + stake + fiyat) NORMAL şeritte, pozisyon isteği sıraya girdikten sonra, tekrar
-    denemesiz; adres önbelleği WALLET_TTL; aynı anda iki yol → tek parti; ⚡ yolunda en çok WALLET_GRACE, yavaş
-    yollarda WALLET_GRACE_SLOW; yetişmeyen parti arka planda biter, önbelleği doldurur; 429 sonrası da çalışır
-    (düşük şerit 60 sn susuyor, satır kayboluyordu — inceleme 15.10); pozisyon satırı bakiyeyi beklemez
+    marjin) − kasa payları − stake HYPE × fiyat (teminat değil; satırda "(+$X kasa/stake'te)", "kilitli" denmez —
+    HLP kilitlerinin çoğu açık). İnceleme 15.10 (canlı veri, 3 tur): parçaları kendimiz toplamak çift sayıyor /
+    portföy marjinde $8.5M'a "$0" diyordu; HL toplamı HLP ve stake'i de sayıyor
+  • kasa/stake okunamazsa: toplam < eşik → yine uyarı (kullanılabilir ≤ toplam); toplam ≥ eşik → satır yok
+  • parti (portfolio + kasa + stake + fiyat) normal şerit, tekrar denemesiz: kota rahatsa pozisyonla aynı anda,
+    sıkışıksa pozisyon YANITINDAN SONRA, doluysa hiç (pozisyon satırı kaybolmasın); adres önbelleği 2 dk, yarım sonuç
+    30 sn; aynı anda iki yol →
+    tek parti; ⚡ yolunda en çok WALLET_GRACE, yavaş yollarda WALLET_GRACE_SLOW; yetişmeyen parti arka planda biter;
+    429 sonrası da çalışır (düşük şerit 60 sn susuyor, satır kayboluyordu)
   • kapatan emir uyarılmaz: reduce-only ya da ters pozisyon ≥ KALANIN yarısı; radar emri baştan görmediyse ve emrin
     %15'i geçtiyse ters pozisyonda kalan bilinmez → satır yok
   • satır mesajın 2. satırı (ilk dilim ve eski yol biçimleri); bakiye aşağı yuvarlanır (eşikle çelişmez); "%0" yok
-  • sayaç: uyarı yalnız GÖNDERİLİNCE (low_bal_mark); altı çağrı yeri; /tani; README (kör nokta); .env.example
+  • sayaç: uyarı yalnız GÖNDERİLİNCE ve emir başına bir kez (low_bal_mark anahtarı); altı çağrı yeri; /tani; README
+    (kör nokta); .env.example
 """
 import asyncio
 import os
@@ -139,7 +142,7 @@ def test_threshold_and_counters():
     tl.low_bal_mark(lb, "HYPE")                                                              # yalnız gönderilince
     assert s["warned"] == 1 and s["last"]["usd"] == 244_000 and s["last"]["plan"] == 1_200_000
     d = tl.low_bal_diag(_cfg())
-    assert "eşik $500,000 · bu açılıştan beri 1 uyarılı mesaj gönderildi" in d, d
+    assert "eşik $500,000 · bu açılıştan beri 1 emirde uyarı gönderildi" in d, d
     assert "(son: HYPE cüzdan $244,000 / plan $1,200,000" in d and "hazırlıkta 9 bakış" in d, d
     assert "2 cüzdan okunamadı (yazılmaz)" in d and "1 kapatan emir (yazılmaz)" in d, d
     assert "kapalı" in tl.low_bal_diag(_cfg(0)) and tl.low_balance(_cfg(-5)) == 0 and not tl.wallet_on(_cfg(0))
@@ -171,8 +174,9 @@ def test_message_line():
     assert fl[2].startswith("⏱ ") and not tw.hits("\n".join(fl))
     # kilitli kısım ayrıca yazılır
     lk = fmt.low_bal_line(tl.low_bal_ctx(_cfg(), "HYPE", "buy", o, _w(total=550_000.0, locked=350_000.0)))
-    assert lk == ("⚠️ <b>Düşük bakiye</b> (&lt; $500K): cüzdanda <b>$200K</b> (+$350K kasa/stake'te kilitli)"
+    assert lk == ("⚠️ <b>Düşük bakiye</b> (&lt; $500K): cüzdanda <b>$200K</b> (+$350K kasa/stake'te)"
                   " · plan bunun <b>6.0 katı</b>"), lk
+    assert "kilitli" not in lk                          # HLP kilitlerinin çoğu açık (3. inceleme)
     assert not tw.hits(lk)
     # yuvarlama eşiğe çıkmaz (inceleme 15.10); "%0" yok; $0 / $1 altı oran yazılmaz
     edge = fmt.low_bal_line({"usd": 499_600, "plan": 1.2e6, "limit": 500_000})
@@ -230,6 +234,7 @@ class _Cli:
 def _fresh_cache():
     tl.WALLET_CACHE.clear()
     tl.WALLET_INFLIGHT.clear()
+    tl.LOW_BAL_KEYS.clear()
 
 
 def test_position_ctx_wallet():
@@ -309,10 +314,93 @@ def test_position_ctx_wallet():
           " yavaş yol 2 sn; geç sonuç önbelleğe; düşen parça → yok")
 
 
+def test_cache_ttl_tight_budget_and_dedupe():
+    """3. inceleme 15.10: önbellek 10 dk yeni emirde eski değeri yazıyordu → 2 dk; yarım sonuç (kasa düştü) 10 dk
+    satırsız bırakıyordu → 30 sn; kota doluyken parti pozisyon isteğinin önüne geçiyordu → kota doluysa sorulmaz;
+    aynı emir ana + ayna + yeniden deneme → bir sayım."""
+    async def run():
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "lowbal2.db"))
+        st = {"marginSummary": {"accountValue": "1"}, "assetPositions": []}
+        _fresh_cache()
+        c = _Cli(st, _pf(250_000.0))
+        await tl.position_ctx(c, "HYPE", A, wallet=True)
+        ts, w = tl.WALLET_CACHE[A]
+        tl.WALLET_CACHE[A] = (ts - tl.WALLET_TTL - 1, w)               # 2 dk geçti → yeniden sorulur
+        c2 = _Cli(st, _pf(2_250_000.0))
+        pos = await tl.position_ctx(c2, "HYPE", A, wallet=True)
+        assert pos["wallet"]["total"] == 2_250_000.0 and ("pf", "") in c2.calls
+        assert tl.low_bal_ctx(_cfg(), "HYPE", "buy", _order(), pos) is None   # yatırılan para görüldü
+        # yarım sonuç (kasa düştü): bu uyarı kullanır; önbellekte 30 sn, sonra yeniden sorulur ve satır gelir
+        _fresh_cache()
+        pos = await tl.position_ctx(_Cli(st, _pf(700_000.0), vault_fail=True), "HYPE", A, wallet=True)
+        assert pos["wallet"] == {"total": 700_000.0, "locked": None}
+        assert tl.low_bal_ctx(_cfg(), "HYPE", "buy", _order(), pos) is None   # toplam ≥ eşik, kasa bilinmiyor
+        assert tl.wallet_cached(A) is not None
+        ts, w = tl.WALLET_CACHE[A]
+        tl.WALLET_CACHE[A] = (ts - tl.WALLET_TTL_PARTIAL - 1, w)
+        assert tl.wallet_cached(A) is None
+        c3 = _Cli(st, _pf(700_000.0), vaults=[400_000.0])
+        pos = await tl.position_ctx(c3, "HYPE", A, wallet=True)
+        lb = tl.low_bal_ctx(_cfg(), "HYPE", "buy", _order(), pos)
+        assert lb and lb["usd"] == 300_000.0 and ("ve", "") in c3.calls
+        # kota dolu → parti başlamaz, pozisyon beklemez, sayaç
+        _fresh_cache()
+        tl.LOW_BAL["tight"] = 0
+
+        class Tight(_Cli):
+            def usage(self):
+                return {"free": 3}
+        t = Tight(st, _pf(1.0))
+        pos = await tl.position_ctx(t, "HYPE", A, wallet=True, timeout=2.5)
+        assert pos["wallet"] == {"total": None, "locked": None} and t.calls == [("ch", "")], t.calls
+        assert tl.LOW_BAL["tight"] == 1 and "1 kez HL kotası doluydu" in tl.low_bal_diag(_cfg())
+        # sıra: parti pozisyon yanıtından SONRA
+        _fresh_cache()
+        order = []
+
+        class Ord(_Cli):
+            async def clearinghouse(self, user, dex="", priority=None, stats=None):
+                order.append("ch-start")
+                await asyncio.sleep(0.05)
+                order.append("ch-end")
+                return st
+
+            async def portfolio(self, user, priority=None, retries=4, stats=None):
+                order.append("pf-start")
+                return _pf(1.0)
+        class Mid(Ord):
+            def usage(self):
+                return {"free": 12}                      # sıkışık: pozisyon yanıtından sonra
+        await tl.position_ctx(Mid(st, None), "HYPE", A, wallet=True)
+        assert order[:3] == ["ch-start", "ch-end", "pf-start"], order
+        _fresh_cache()
+        order.clear()
+
+        class Roomy(Ord):
+            def usage(self):
+                return {"free": 300}                     # rahat: aynı anda
+        await tl.position_ctx(Roomy(st, None), "HYPE", A, wallet=True)
+        assert order[:2] == ["ch-start", "pf-start"], order
+        _fresh_cache()
+    asyncio.run(run())
+    # sayaç emir anahtarıyla tekil
+    for k in ("warned",):
+        tl.LOW_BAL[k] = 0
+    tl.LOW_BAL_KEYS.clear()
+    lb = {"usd": 1.0, "plan": 2.0}
+    tl.low_bal_mark(lb, "HYPE", "HYPE:0xa:buy:1")
+    tl.low_bal_mark(lb, "HYPE", "HYPE:0xa:buy:1")                 # ayna + yeniden deneme / 🕐 aynı emir
+    tl.low_bal_mark(lb, "HYPE", "HYPE:0xa:buy:2")
+    assert tl.LOW_BAL["warned"] == 2
+    tl.LOW_BAL_KEYS.clear()
+    print("✅ önbellek / kota / sıra / sayaç) 2 dk; yarım 30 sn; kota doluysa sorulmaz, sıkışıksa pozisyondan sonra,"
+          " rahatsa aynı anda; emir başına bir sayım")
+
+
 def test_real_client_after_429_and_busy_low_lane():
     """İnceleme 15.10: düşük şeritte 429 sonrası 60 sn / arka plan %70'i doldururken bakiye hiç okunmuyordu. Gerçek
     HLClient + sahte oturum: 429'dan 30 sn sonra ve düşük şerit kuyruğu doluyken satırın verisi yine gelir; pozisyon
-    isteği ilk gider."""
+    isteği ilk gider; kota doluyken parti hiç başlamaz."""
     import time
     from app.hl.client import HLClient
 
@@ -357,9 +445,18 @@ def test_real_client_after_429_and_busy_low_lane():
         assert pos["wallet"] == {"total": 244_000.0, "locked": 0.0}, pos
         assert sess.posts[0] == "clearinghouseState", sess.posts
         assert set(sess.posts[1:]) == {"portfolio", "userVaultEquities", "delegatorSummary", "allMids"}, sess.posts
+        # kota doluyken: parti hiç başlamaz → pozisyon isteği tek başına (3. inceleme: ⚡ pozisyon satırı kayboluyordu)
+        _fresh_cache()
+        sess2 = Sess()
+        cli2 = HLClient(sess2, "https://x/", "https://lb", min_interval=0, max_rpm=100)
+        for _ in range(95):
+            await cli2._acquire_budget("normal", 2)
+        pos = await tl.position_ctx(cli2, "HYPE", A, wallet=True, timeout=2.5)
+        assert pos["wallet"] == {"total": None, "locked": None} and sess2.posts == ["clearinghouseState"], sess2.posts
         _fresh_cache()
     asyncio.run(run())
-    print("✅ gerçek istemci) 429'dan 30 sn sonra ve düşük şerit kuyruğu doluyken cüzdan okunur; pozisyon isteği önce")
+    print("✅ gerçek istemci) 429'dan 30 sn sonra ve düşük şerit kuyruğu doluyken cüzdan okunur; pozisyon isteği önce;"
+          " kota doluyken yalnız pozisyon")
 
 
 def test_wiring():
@@ -376,6 +473,8 @@ def test_wiring():
     assert live.count("if ok or mok:") == 1 and fast.count("if ok or mok:") == 1
     assert fast.count("twaplive.low_bal_ctx(cfg, coin, side, wo, pos)") == 1 and fast.count("low_bal_mark(") == 1
     assert lo.count("twaplive.low_bal_ctx(") == 4 and lo.count("twaplive.low_bal_mark(") == 4
+    assert lo.count(", okey)") >= 4 and "low_bal_mark(ctx.get(\"low_bal\"), coin, fkey)" in fast
+    assert live.count("low_bal_mark(ctx.get(\"low_bal\"), run.coin, okey or mkey)") == 2
     assert lo.count("wallet=twaplive.wallet_on(cfg)") == 4 and "wallet=twaplive.wallet_on(cfg)" in fast
     assert "wallet=wallet_on(cfg)" in live and "timeout=POS_TIMEOUT" in fast
     cli = src("app/hl/client.py")
@@ -384,7 +483,8 @@ def test_wiring():
     assert "TWAP_LOW_BALANCE_USD=500000" in src(".env.example")
     readme = src("README.md")
     assert "TWAP_LOW_BALANCE_USD" in readme and "⚠️ Düşük bakiye" in readme and "Kapatan emir uyarılmaz" in readme
-    assert "Cüzdan = HL'nin kendi hesabı" in readme and "kasa/stake'te kilitli" in readme and "Kör nokta, açıkça:" in readme
+    assert "Cüzdan = HL'nin kendi hesabı" in readme and "(+$350K kasa/stake'te)" in readme and "Kör nokta, açıkça:" in readme
+    assert "kasa/stake'te kilitli" not in readme
     print("✅ bağlantı) env-only eşik; altı çağrı yeri + gönderim işaretleri; /tani; README; .env.example")
 
 

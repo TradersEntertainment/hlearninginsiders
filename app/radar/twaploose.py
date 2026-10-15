@@ -653,7 +653,7 @@ async def fast_extra(cfg, client, notifier, key: tuple, p: dict, order: dict, g:
     box: dict = {}
     res = await _extra(cfg, notifier, okey, f"{coin}:{addr}:{side}", coin, text_fn, head)
     if res == "sent":
-        twaplive.low_bal_mark(box.get("lb"), coin)
+        twaplive.low_bal_mark(box.get("lb"), coin, okey)
         _register(okey, coin, addr, side, order, t, int(p.get("t0") or t), int(p.get("ts") or t),
                   int(p.get("n") or 1), float(p.get("tot") or p.get("max") or 0), float(p.get("szt") or 0),
                   float(p.get("px0") or p.get("px") or 0), float(p.get("px") or 0))
@@ -702,7 +702,7 @@ async def slow_extra(cfg, notifier, client, run, m: dict, order: dict, g: str, d
     res = await _extra(cfg, notifier, okey, f"{run.coin}:{run.address}:{run.side}", run.coin, text_fn, head,
                        claimed=claimed)
     if res == "sent":
-        twaplive.low_bal_mark(box.get("lb"), run.coin)
+        twaplive.low_bal_mark(box.get("lb"), run.coin, okey)
     if res in ("sent", "dup"):
         await _mark_alias(f"run:{run.coin}:{run.address}:{run.side}:{int(run.first_ts)}")
     if res == "sent":
@@ -998,7 +998,7 @@ async def big_fast(cfg, client, notifier, key: tuple, p: dict, order: dict, vols
     box: dict = {}
     res = await _big_send(cfg, notifier, okey, coin, text_fn, bg)
     if res == "sent":
-        twaplive.low_bal_mark(box.get("lb"), coin)
+        twaplive.low_bal_mark(box.get("lb"), coin, okey)
         BIG.register(okey, coin, addr, side, order, t, int(p.get("t0") or t), int(p.get("ts") or t),
                      int(p.get("n") or 1), float(p.get("tot") or p.get("max") or 0), float(p.get("szt") or 0),
                      float(p.get("px0") or p.get("px") or 0), float(p.get("px") or 0))
@@ -1043,7 +1043,7 @@ async def big_slow(cfg, notifier, client, run, m: dict, order: dict, det: dict, 
     box: dict = {}
     res = await _big_send(cfg, notifier, okey, run.coin, text_fn, bg)
     if res == "sent":
-        twaplive.low_bal_mark(box.get("lb"), run.coin)
+        twaplive.low_bal_mark(box.get("lb"), run.coin, okey)
         BIG.register(okey, run.coin, run.address, run.side, order, ts, run.first_ts, run.last_ts, run.n, run.total,
                      run.sz_total, m.get("px_first") or run.px_first, m.get("px_last") or run.px_last)
         await BIG.save_open()

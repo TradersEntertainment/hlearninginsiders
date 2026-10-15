@@ -846,7 +846,7 @@ async def _decide(cfg, client, notifier, key: tuple, p: dict, order: dict, vols:
         await twaploose.copy(cfg, notifier, text, f"a:{fkey}", coin, primary=chat if can else None)   # 🔸 kopya
         await alert_log("twap_fast", fkey, text)        # talep bırakılmadan: eski yol bu emri tekrar yazmaz
         if ok or mok:                                   # sessiz saatte özete ertelenen sayılmaz
-            twaplive.low_bal_mark(ctx.get("low_bal"), coin)
+            twaplive.low_bal_mark(ctx.get("low_bal"), coin, fkey)
         if cool:
             await alert_log(FAST_CD, ckey, "")
     finally:
