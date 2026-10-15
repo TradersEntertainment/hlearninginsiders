@@ -233,6 +233,16 @@ class HLClient:
         hesabıyla. TWAP düşük bakiye satırı kullanır (twaplive.position_ctx)."""
         return await self.info({"type": "portfolio", "user": user}, retries=retries, priority=priority, stats=stats)
 
+    async def vault_equities(self, user: str, priority: str | None = None, retries: int = 4):
+        """Adresin kasa (vault) payları: [{"vaultAddress", "equity" ($), "lockedUntilTimestamp"}, …]. `portfolio`
+        toplamı bunları da sayar (canlı 15.10) — kilitli (HLP 4 gün, kullanıcı kasası 1 gün), TWAP'a teminat olamaz."""
+        return await self.info({"type": "userVaultEquities", "user": user}, retries=retries, priority=priority)
+
+    async def delegator_summary(self, user: str, priority: str | None = None, retries: int = 4):
+        """Stake: {"delegated", "undelegated", "totalPendingWithdrawal" (HYPE adedi), …}. `portfolio` toplamı stake
+        edilmiş HYPE'ı da sayar (canlı 15.10) — 7 günlük çözme kuyruğu, TWAP'a teminat olamaz."""
+        return await self.info({"type": "delegatorSummary", "user": user}, retries=retries, priority=priority)
+
     async def batch_clearinghouse(self, users: list[str], dex: str = "", priority: str | None = None,
                                   stats: dict | None = None):
         """TOPLU defter: `batchClearinghouseStates` — sağlayıcı belgelerinde
@@ -323,12 +333,12 @@ class HLClient:
             p["dex"] = dex
         return await self.info(p)
 
-    async def all_mids(self, dex: str = ""):
+    async def all_mids(self, dex: str = "", priority: str | None = None, retries: int = 4):
         """Tüm coinlerin anlık orta fiyatı {coin: px} (ağırlık 2) — taze fiyat."""
         p: dict = {"type": "allMids"}
         if dex:
             p["dex"] = dex
-        return await self.info(p)
+        return await self.info(p, retries=retries, priority=priority)
 
     async def vault_details(self, address: str):
         """Adres bir vault ise detay döner, değilse null."""

@@ -447,23 +447,30 @@ bildirilmez.
   gördüğümüz dilimler, adresin pozisyonu (canlı sorgu), fiyat ilk→son, taker %.
 - **⚠️ Düşük bakiye (kullanıcı 15.10: "milyonluk twaplarda iptal gelebiliyor eğer cüzdanda 200-300k varsa … twapı
   atanın cüzdanı düşük bütçeliyse uyarı versin, ilk satırların oralarda; düşükten kastım 500k altındaysa"):** TWAP'ı
-  atan cüzdanın değeri `TWAP_LOW_BALANCE_USD`'nin (varsayılan $500K; 0 = kapalı, ek istek de yok) altındaysa mesajın
-  **2. satırı** `⚠️ Düşük bakiye (< $500K): cüzdanda $244K · plan bunun 4.9 katı` olur. Ölçüm, tahmin değil: bakiye ve
-  planın ona oranı (bakiye aşağı yuvarlanır, eşikle çelişmez). **Cüzdan = HL'nin kendi hesabı:** `portfolio`
-  isteğinin "day" serisinin son noktası (canlıda yaşı ~0 sn) — arayüzdeki toplam değer: tüm perp dex'leri (izlenmeyen
-  HIP-3 dex'leri dahil), spot tokenler (HYPE, UBTC…), birleşik hesap ve portföy marjin. İnceleme (15.10, canlı veriyle):
-  perp ve spot parçalarını kendimiz toplamak birleşik hesapta çift sayıyor, portföy marjinde borçlu USDC yüzünden $8.5M'lık
+  atan cüzdanın kullanılabilir değeri `TWAP_LOW_BALANCE_USD`'nin (varsayılan $500K; 0 = kapalı, ek istek de yok)
+  altındaysa mesajın **2. satırı** `⚠️ Düşük bakiye (< $500K): cüzdanda $200K (+$350K kasa/stake'te kilitli) · plan
+  bunun 6.0 katı` olur. Ölçüm, tahmin değil: bakiye ve planın ona oranı (bakiye aşağı yuvarlanır, eşikle çelişmez).
+  **Cüzdan = HL'nin kendi hesabı** (`portfolio` "day" serisinin son noktası, canlıda yaşı ~0 sn: tüm perp dex'leri,
+  spot tokenler, birleşik hesap, portföy marjin) **− kilitli kısım**: kasa payları (`userVaultEquities`; HLP 4 gün,
+  kullanıcı kasası 1 gün kilitli) + stake HYPE (`delegatorSummary` × fiyat; 7 gün çözme). HL toplamı bunları da
+  sayıyor — $200K serbest + $350K HLP'li cüzdan $550K görünüp uyarı almıyordu. Kilitli kısım okunamazsa: toplam eşiğin
+  altındaysa yine uyarılır (kullanılabilir ≤ toplam), üstündeyse satır yazılmaz. İnceleme (15.10, canlı veriyle):
+  perp/spot parçalarını kendimiz toplamak birleşik hesapta çift sayıyor, portföy marjinde borçlu USDC yüzünden $8.5M'lık
   cüzdana "$0" diyor, izlenmeyen dex'leri ve spot tokenleri kaçırıyordu. **Kapatan emir uyarılmaz:** reduce-only ya da
   ters yöndeki pozisyon emrin **kalanının** en az yarısıysa (yeni teminat istemez; ilk uyarı emrin ortasında gelse de
   kalanla kıyaslanır; radar emri baştan görmediyse ve emrin %15'i geçtiyse ters pozisyonda kalan bilinmez → satır yok).
-  İstek: pozisyon satırının sorgusuyla aynı anda tek `portfolio` (düşük şerit, tekrar denemesiz — pozisyon isteğinin
-  sırasını kapmaz); pozisyon yanıtından sonra en çok 0,5 sn beklenir, gelmezse satır yazılmaz (eksik okumayla "düşük"
-  denmez; pozisyon satırı bakiyeyi beklemez). Ana kanal, ⚡ ilk dilim, ayna, 🔸 yan ve 🕐 büyük kanal mesajlarının
-  hepsinde var; 🕵️ gizli TWAP'ta yok (HL emri yok, iptal de yok). `/tani`'de "⚠️ düşük bakiye satırı": gönderilen
-  uyarılı mesaj sayısı, son uyarı, hazırlıkta bakılan / cüzdanı okunamayan / kapatan emir.
-  **Kör nokta, açıkça:** satır cüzdanın büyüklüğünü ölçer, TWAP için kullanılabilir teminatı değil — normal hesapta
-  spot'taki HYPE perp teminatı sayılmaz ama cüzdan değerinde görünür; tersine, perp'teki para spot alış TWAP'ında
-  kullanılamaz. HL'nin iptal sebebini göremeyiz; ⛔ iptal notu ayrı gelir.
+  **İstekler:** adres başına 10 dk önbellek (TWAP atanlar tekrar eder; ⚡ ve 🕐 aynı emri ardışık yazar → tek parti).
+  Önbellekte yoksa pozisyon isteği sıraya girdikten **sonra** tek parti (portfolio + kasa + stake + `allMids`, normal
+  şerit, tekrar denemesiz — düşük şerit 429'dan sonra 60 sn ve arka plan işi kotayı doldururken hiç çıkamıyordu, satır
+  sessizce kayboluyordu). Pozisyon yanıtından sonra ⚡ ilk dilim yolunda en çok 0,5 sn, diğer yollarda 2 sn beklenir;
+  yetişmeyen parti arka planda biter ve önbelleği doldurur (sonraki uyarı kullanır). Pozisyon satırı bakiyeyi beklemez.
+  Ana kanal, ⚡ ilk dilim, ayna, 🔸 yan ve 🕐 büyük kanal mesajlarının hepsinde var; 🕵️ gizli TWAP'ta yok (HL emri yok,
+  iptal de yok). `/tani`'de "⚠️ düşük bakiye satırı": gerçekten gönderilen uyarılı mesaj (sessiz saatte sabah özetine
+  ertelenen sayılmaz), son uyarı, hazırlıkta bakılan / cüzdanı okunamayan / kapatan emir.
+  **Kör nokta, açıkça:** satır cüzdanın büyüklüğünü ölçer, TWAP'ın dex'indeki kullanılabilir teminatı değil — normal
+  hesapta her HIP-3 dex'in teminatı ayrıdır ve spot'taki HYPE perp teminatı sayılmaz ama cüzdan değerinde görünür;
+  spot tokenler HL'nin işaret fiyatıyla sayılır (likit olmayan token şişirebilir). HL'nin iptal sebebini göremeyiz;
+  ⛔ iptal notu ayrı gelir.
 - **Sonrası: yalnız iptal (kullanıcı 12.10: "iptal etmedikçe bildirim atma" — 🏁 bitti notu yeni TWAP
   sanılıyordu):** kanala ilk uyarıdan sonra yalnız emir **iptal** edilince (HL 'terminated', hypurrscan'de
   'error') ⛔ gider: gerçek dolan tutar, plan, süre, fiyat, hacme oran. Normal bitiş (🏁) ve yarılandı (⏳)

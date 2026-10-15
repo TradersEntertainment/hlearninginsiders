@@ -3360,16 +3360,20 @@ def _usd_floor(n: float) -> str:
 
 def low_bal_line(lb: dict | None) -> str:
     """⚠️ Düşük bakiye satırı (kullanıcı 15.10: milyonluk TWAP'ı 200-300K'lık cüzdan atınca iptal gelebiliyor → cüzdan
-    < $500K ise ilk satırlarda uyar). Bağlam twaplive.low_bal_ctx'ten (HL'nin cüzdan değeri); yalnız ölçüm: bakiye ve
-    planın ona oranı. Bakiye aşağı yuvarlanır (eşikle çelişmesin); "%0" yazılmaz."""
+    < $500K ise ilk satırlarda uyar). Bağlam twaplive.low_bal_ctx'ten: HL cüzdan değeri − kasa/stake (kilitli kısım
+    ayrıca yazılır); yalnız ölçüm: bakiye ve planın ona oranı. Bakiye aşağı yuvarlanır (eşikle çelişmesin); "%0" yok."""
     if not lb:
         return ""
     v = max(0.0, float(lb.get("usd") or 0))
     line = f"⚠️ <b>Düşük bakiye</b> (&lt; {usd(lb.get('limit'))}): cüzdanda <b>{_usd_floor(v)}</b>"
+    if float(lb.get("locked") or 0) >= 1:          # HL toplamındaki kasa (HLP…) + stake HYPE: teminat olamaz
+        line += f" (+{_usd_floor(lb['locked'])} kasa/stake'te kilitli)"
     plan = float(lb.get("plan") or 0)
     if plan > 0 and v >= 1:
         x = plan / v
-        if x >= 1:
+        if x >= 100:                                # neredeyse boş cüzdan: "22614.2 katı" okunmuyor
+            line += " · plan bunun <b>100 katından fazla</b>"
+        elif x >= 1:
             line += f" · plan bunun <b>{x:.1f} katı</b>"
         elif x * 100 >= 1:
             line += f" · plan bunun %{x * 100:.0f}'i"
