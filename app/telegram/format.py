@@ -3693,6 +3693,14 @@ def twap_progress(m: dict, ctx: dict) -> str:
     return line
 
 
+def _pct_txt(p: float) -> str:
+    """Yüzde: "%0" yazılmaz (kural, 2fdcb75) — %1 altı ondalıkla, %0.1 altı "%0.1'den az" yerine "<%0.1"."""
+    p = float(p or 0)
+    if p >= 1:
+        return f"%{p:.0f}"
+    return f"%{p:.1f}" if p >= 0.1 else "&lt;%0.1"
+
+
 def twap_end(m: dict, ctx: dict) -> str:
     """Bitiş (🏁) / iptal (⛔): gerçek dolan tutar, plan, süre, fiyat, hacme oran."""
     sym = esc(assets.label(m.get("coin") or ""))
@@ -3703,7 +3711,7 @@ def twap_end(m: dict, ctx: dict) -> str:
     if o.get("planned_usd"):
         done = float(o.get("executed_usd") or 0)
         fp = o.get("filled_pct")
-        line = f"doldu <b>{usd(done)}</b> / plan {usd(o.get('planned_usd'))}" + (f" (%{fp:.0f})" if fp is not None else "")
+        line = f"doldu <b>{usd(done)}</b> / plan {usd(o.get('planned_usd'))}" + (f" ({_pct_txt(fp)})" if fp is not None else "")
         if o.get("started_ts"):
             line += f" · {dur_txt(now() - int(o['started_ts']))}"
         lines.append(line)
@@ -3714,7 +3722,7 @@ def twap_end(m: dict, ctx: dict) -> str:
                      f" · {dur_txt(m.get('dur'))} · {int(m.get('n') or 0)} dilim")
     pr = f"fiyat {px(m.get('px_first'))} → {px(m.get('px_last'))} (<b>{float(m.get('px_chg_pct') or 0):+.1f}%</b>)"
     if ctx.get("day_vol") and total_for_vol:
-        pr += f" · 24s hacmin <b>%{total_for_vol / float(ctx['day_vol']) * 100:.0f}</b>'i"
+        pr += f" · 24s hacmin <b>{_pct_txt(total_for_vol / float(ctx['day_vol']) * 100)}</b>'i"
     if m.get("taker_pct") is not None:
         pr += f" · %{m['taker_pct']:.0f} taker"
     lines.append(pr)

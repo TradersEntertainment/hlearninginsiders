@@ -1352,6 +1352,18 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             # --- bildirilmiş tur: yeniden sorgu → ilerleme / bitiş ---
             if run.alerted_ts and not run.ended_ts:
                 cur = run.order or {}
+                fresh = _newest_hist(run.address)
+                if fresh and int(fresh[0]) > int(run.lookup_ts or 0) and cur.get("started_ts") \
+                        and hist_says_ended(fresh[1], run.coin, run.side, cur["started_ts"]):
+                    # başka yolun daha taze HL geçmişi (ör. aynı adresin yeni emrinin ilk dilim sorgusu): bildirilen
+                    # emrin iptali beklemeden görülsün — yeni emrin dilimleri eski emri "sürüyor" gösteriyordu (16.10 GOLD)
+                    got = next((o for o in parse_twap_orders(fresh[1], run.coin, run.side, run.px_last, ts)
+                                if abs(int(o.get("started_ts") or 0) - int(cur["started_ts"])) <= 2), None)
+                    run.lookup_ts = int(fresh[0])
+                    if got is not None and got.get("status") != cur.get("status"):
+                        run.order = got
+                        cur = got
+                        await persist(run, m)
                 if collector is not None and cur.get("status") == "activated" and is_quick(cfg, cur) \
                         and ts - int(run.lookup_ts or 0) >= QUICK_REFRESH:
                     await _quick_refresh(collector, run, ts, out)
@@ -1925,6 +1937,19 @@ def live_q_put(addr: str, ts: int, hist) -> None:
     if len(_LIVE_Q) > 500:
         for k in sorted(_LIVE_Q, key=lambda k: _LIVE_Q[k][0])[:250]:
             _LIVE_Q.pop(k, None)
+
+
+def hist_says_ended(hist, coin: str, side: str, started) -> bool:
+    """Önbellekteki HL geçmişinde BU emir (başlangıç ±2 sn) bitmiş / iptal mi. Bildirilen emrin ömür döngüsü yalnız bu
+    durumda başka yolun taze geçmişini kullanır (16.10 GOLD: yeni emrin ilk dilim sorgusu eski emrin iptalini
+    görmüştü, ⛔ yine 5 dk'lık yoklamayı bekledi); diğer durumlarda kendi sorgu düzeni aynen."""
+    try:
+        st = int(started or 0)
+        return bool(st) and any(abs(int(o.get("started_ts") or 0) - st) <= 2
+                                and o.get("status") in ("finished", "terminated", "error")
+                                for o in parse_twap_orders(hist, coin, side, 0, now()))
+    except Exception:                                   # noqa: BLE001
+        return False
 
 
 def _newest_hist(addr: str):

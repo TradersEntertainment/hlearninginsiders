@@ -280,6 +280,41 @@ def test_cancel_note_and_wait_while_activated():
     print("✅ hızlı twap) iptal: ⚡ HIZLI'da dilim 45 sn gecikince sorulur; activated iken bekler; terminated → ⛔")
 
 
+def test_cancel_seen_by_new_order_lookup_used_at_once():
+    """Kullanıcı 16.10 (GOLD): $2.6M emir 28 sn'de iptal, 35 sn sonra aynı adres yeni emir. Yeni emrin dilimleri eskisini
+    "sürüyor" gösterdi; ⛔ 5 dk'lık yoklamayı bekledi (🕐 20:40, ana/ayna/🔸 20:43). Yeni emrin ilk dilim sorgusu iptali
+    zaten görmüştü → o taze geçmiş kullanılır, ⛔ hemen (ek sorgu yok). Taze geçmiş emri SÜRÜYOR gösterirse eski düzen."""
+    async def run():
+        cfg = _cfg()
+        await _fresh(cfg)
+        now = dbm.now()
+        a0 = now - 40
+        col = Col(lambda: [twap_order(a0, minutes=150, plan=2_600_000)])
+        bot = Bot()
+        notifier = Notifier(cfg, bot)
+        tf.observe("PUMP", A, "buy", PX, 12_000_000, 60_000, a0 + 2, 1000)
+        await _drain(cfg, notifier, col)
+        assert len(bot.sent) == 2
+        rec = tf.F.open[("PUMP", A, "buy")]
+        rec["last_ts"] = rec["lookup_ts"] = now - 5                # yeni emrin dilimleri sürüyor: sessizlik yok
+        # taze geçmiş emri sürüyor gösteriyor → kullanılmaz, sorgu da yok (yoklama zamanı gelmedi)
+        tl.live_q_put(A, now - 1, [twap_order(a0, minutes=150, plan=2_600_000)])
+        calls = len(col.calls)
+        assert await tf.lifecycle(cfg, notifier, col, now) == 0 and not rec["ended"] and len(col.calls) == calls
+        # yeni emrin ilk dilim sorgusu: eski emir iptal + yeni emir sürüyor
+        hist = [twap_order(a0, minutes=150, plan=2_600_000), twap_order(a0, minutes=150, plan=2_600_000,
+                                                                        status="terminated"),
+                twap_order(now - 3, minutes=150, plan=1_100_000)]
+        hist[1]["time"] = (a0 + 28) * 1000
+        tl.live_q_put(A, now, hist)
+        assert await tf.lifecycle(cfg, notifier, col, now) == 1 and len(col.calls) == calls, "önbellekten, hemen"
+        ends = [t for _, t in bot.sent if "TWAP iptal edildi" in t]
+        assert len(ends) == 2 and "$2.6M" in ends[0], ends
+        assert "%0)" not in ends[0] and "%0</b>" not in ends[0], ends[0]          # "%0" yazılmaz
+    asyncio.run(run())
+    print("✅ hızlı twap) aynı adresin yeni emrinin sorgusu eski emrin iptalini gördüyse ⛔ hemen (5 dk beklemez)")
+
+
 def test_quick_cancel_slow_path_refresh():
     """Eski yolun bildirdiği ⚡ HIZLI emir: dakikada bir durum sorgusu (önbelleğe YAZMADAN) → iptal → ⛔ kanal + ayna.
     Uzun emirde 10 dk'lık eski düzen sürer."""

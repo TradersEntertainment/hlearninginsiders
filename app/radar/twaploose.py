@@ -253,11 +253,14 @@ class Side:
                 continue
             end_at = int(r["end_at"])
             quick = twaplive.is_quick(cfg, r.get("order"))
-            due = (t >= end_at + END_GRACE or t - int(r["last_ts"]) > (QUICK_SILENT if quick else SILENT_SEC)
+            cached0 = twaplive._newest_hist(r["addr"])
+            fresh = bool(cached0 and int(cached0[0]) > int(r["lookup_ts"])   # başka yolun taze geçmişi bu emrin
+                         and twaplive.hist_says_ended(cached0[1], r["coin"], r["side"], r["started"]))   # bittiğini diyor
+            due = (fresh or t >= end_at + END_GRACE or t - int(r["last_ts"]) > (QUICK_SILENT if quick else SILENT_SEC)
                    or t - int(r["lookup_ts"]) >= (QUICK_POLL if quick else OPEN_POLL))
             if not due:
                 continue
-            if t - int(r["lookup_ts"]) < RELOOK_SEC and not (t >= end_at + END_GRACE > int(r["lookup_ts"])):
+            if not fresh and t - int(r["lookup_ts"]) < RELOOK_SEC and not (t >= end_at + END_GRACE > int(r["lookup_ts"])):
                 continue
             if owns is not None and await owns(okey):
                 r["ended"], changed = t, True          # notu başka yol yazar (kopyası buraya gelir)

@@ -936,27 +936,39 @@ async def lifecycle(cfg, notifier, collector, t: int) -> int:
             continue
         end_at = int(r["end_at"])
         quick = twaplive.is_quick(cfg, r.get("order"))
-        due = (t >= end_at + END_GRACE or t - int(r["last_ts"]) > (QUICK_SILENT if quick else SILENT_SEC)
+        # Başka bir yolun bu adres için daha taze HL geçmişi varsa (ör. aynı adresin YENİ emrinin ilk dilim sorgusu)
+        # beklemeden ona bakılır. Kullanıcı 16.10 (GOLD): $2.6M emir 28 sn'de iptal, 35 sn sonra aynı adres $1.1M yeni
+        # emir; yeni emrin dilimleri eskisini "sürüyor" gösterdi, ⛔ 5 dk'lık yoklamayı bekledi (🕐 20:40, diğerleri
+        # 20:43). Yeni emrin ilk dilim sorgusu iptali 20:38:49'da zaten görmüştü.
+        cached = twaplive._newest_hist(r["addr"])
+        fresh = bool(cached and int(cached[0]) > int(r["lookup_ts"])
+                     and twaplive.hist_says_ended(cached[1], r["coin"], r["side"], r["started"]))
+        due = (fresh or t >= end_at + END_GRACE or t - int(r["last_ts"]) > (QUICK_SILENT if quick else SILENT_SEC)
                or t - int(r["lookup_ts"]) >= (QUICK_POLL if quick else OPEN_POLL))
         if not due:
             continue
-        if t - int(r["lookup_ts"]) < (QUICK_RELOOK if quick else RELOOK_SEC) \
-                and not (t >= end_at + END_GRACE > int(r["lookup_ts"])):
-            continue
-        if fn is None:
-            continue
-        waiters = getattr(collector, "_twap_waiters", None)
-        if isinstance(waiters, dict) and len(waiters) >= WS_CEILING:
-            continue
-        F.stats["end_lookups"] += 1
-        r["lookup_ts"] = t
-        try:
-            hist = await fn(r["addr"])
-        except Exception:                              # noqa: BLE001
-            hist = None
-        if hist is None:
-            continue                                    # sorgu başarısız: sonraki tur
-        twaplive.live_q_put(r["addr"], t, hist)         # /twap: eski yolun / kaydın aynı emir kopyası da iptali görsün
+        if fresh:
+            F.stats["end_cached"] = F.stats.get("end_cached", 0) + 1
+            r["lookup_ts"] = int(cached[0])
+            hist = cached[1]
+        else:
+            if t - int(r["lookup_ts"]) < (QUICK_RELOOK if quick else RELOOK_SEC) \
+                    and not (t >= end_at + END_GRACE > int(r["lookup_ts"])):
+                continue
+            if fn is None:
+                continue
+            waiters = getattr(collector, "_twap_waiters", None)
+            if isinstance(waiters, dict) and len(waiters) >= WS_CEILING:
+                continue
+            F.stats["end_lookups"] += 1
+            r["lookup_ts"] = t
+            try:
+                hist = await fn(r["addr"])
+            except Exception:                              # noqa: BLE001
+                hist = None
+            if hist is None:
+                continue                                    # sorgu başarısız: sonraki tur
+            twaplive.live_q_put(r["addr"], t, hist)         # /twap: eski yolun / kaydın aynı emir kopyası da iptali görsün
         orders = twaplive.parse_twap_orders(hist, r["coin"], r["side"], r["px_last"], t)
         live = _live(orders)
         o = _match(orders, key, r)

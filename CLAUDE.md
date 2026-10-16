@@ -88,6 +88,10 @@ Saatler TSİ (UTC+3). Hafta sonu = TSİ Cumartesi 00:00 → Pazartesi 00:00 (`ho
      (b) ⚡ emirde (süre ≤ 60 dk) plan ≥ $250K, dakika hızı ≥ coinin ortalama dakika hacminin 2 katı ve planın ≥ %30'u kalmış
      (twapfast.py:17-21; `TWAP_FAST_SHORT_MIN_USD`, `TWAP_FAST_RATE_X`). TSİ Cumartesi'leri kripto olmayan coinlerde taban geçen
      Cumartesi'nin hacmi, eşik %10.
+   - ⚠️ Düşük bakiye (kullanıcı 15.10): TWAP'ı atanın cüzdanı (HL `portfolio` − kasa − stake) `TWAP_LOW_BALANCE_USD`
+     ($500K) altındaysa mesajın 2. satırı; kapatan emirde yok (README "⚠️ Düşük bakiye").
+   - Bildirilen emrin iptali, başka yolun taze HL geçmişi gösterdiyse hemen yazılır (16.10 GOLD: yeni emir eskisini
+     "sürüyor" gösterdi, ⛔ 5 dk gecikti).
    - 🔸 yan kanal: her gevşek eşik ana eşikten küçük ya da eşit.
    - 🕐 büyük kanal: ≥ $1M ve ≤ 3 sa; BTC/ETH için ≥ $20M; hafta sonu kripto olmayan HIP-3 coinlerde ≥ $200K ve < 24 sa.
 7. **PROPR listesi yalnız büyür** ve değişiklik için mesaj atılmaz ("sinyaller fazla olsun eksik olmasın", `c6b7ec5`).
