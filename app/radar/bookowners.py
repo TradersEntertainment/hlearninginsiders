@@ -29,7 +29,7 @@ Sayfa görünce arka planda kurulur (kick), CACHE_SEC önbellek; adres başına 
     "emri yok" denmez (`partial`). Önbellek ham yanıtı değil yalnız emirlerin kısa kaydını tutar.
   • 2. inceleme (18.10, canlı): `openOrders` tetikli emri (Stop / TP Market) BAYRAKSIZ verir. Tamamlamadan gelen ve
     görünen kademeye düşen / büyük emir `orderStatus` (ağırlık 2) ile doğrulanır: açık ve tetiksiz değilse sahip
-    sayılmaz; doğrulanamayan da sayılmaz (`unverified`), o adreste "emri yok" da denmez.
+    sayılmaz; doğrulanamayan (HL eski emre "unknownOid" der) da sayılmaz (`unverified`), o adreste "emri yok" denmez.
   • Açık emirler hiç sorulamadıysa (HL hız sınırı / hepsi okunamadı) kademe "sahip bilinmiyor" der, "bulunamadı"
     değil; ertelenen sonuç kısa önbellekte (DEFER_CACHE) kalır.
   • Bilinen/bulunamayan kısım ADETLE (kova fiyatı × Σadet): gruplu satış kovasında hayalet "bulunamayan" çıkmaz.
@@ -199,23 +199,25 @@ async def _ask(client, typ: str, addr: str, dex: str):
 
 
 async def _book_order(client, addr: str, oid) -> bool | None:
-    """orderStatus: emir defterde bekleyen tetiksiz limit emir mi (True/False); okunamazsa None. Önbellekli."""
+    """orderStatus: emir defterde bekleyen tetiksiz limit emir mi (True/False); bilinemezse None. Önbellekli.
+    3. inceleme (18.10, canlı): HL orderStatus yalnız YAKIN geçmişi bilir — saatlerdir defterde bekleyen emre de
+    "unknownOid" der (HLP: 590 dk'lık TRX emri hâlâ openOrders'ta). unknownOid "emir yok" DEĞİL → None
+    (doğrulanamadı; önbelleğe yazılmaz). Yalnız status=order cevabı karar verir."""
     hit = OID_OK.get((addr, oid))
     if hit and now() - hit[0] < ADDR_TTL:
         return hit[1]
-    STATS["verified"] += 1
     try:
         res = await asyncio.wait_for(client.info({"type": "orderStatus", "user": addr, "oid": oid}, retries=1,
                                                  priority="low"), ADDR_TIMEOUT)
     except Exception as e:                              # noqa: BLE001
         log.debug("emir durumu %s/%s: %s", addr[:10], oid, e)
         return None
-    if not isinstance(res, dict):
-        return None
+    if not isinstance(res, dict) or res.get("status") != "order":
+        return None                                     # unknownOid: HL bu emri artık hatırlamıyor — bilinmiyor
+    STATS["verified"] += 1
     od = res.get("order") or {}
     o = od.get("order") or {}
-    ok = bool(res.get("status") == "order" and od.get("status") == "open" and not o.get("isTrigger")
-              and not o.get("isPositionTpsl"))
+    ok = bool(od.get("status") == "open" and not o.get("isTrigger") and not o.get("isPositionTpsl"))
     OID_OK[(addr, oid)] = (now(), ok)
     return ok
 

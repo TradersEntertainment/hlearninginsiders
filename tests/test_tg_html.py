@@ -105,51 +105,78 @@ def test_defter_message_html():
     print("✅ /defter) mesaj Telegram HTML'ine uygun")
 
 
-# Kaçışsız "<" içerebilen, Telegram'a HTML olarak GİTMEYEN metinler (dosya → metin parçaları). Yeni bir mesaj metni
-# "<" yazacaksa "&lt;" yazmalı; buraya eklemek yalnız site / /tani (send_pre) / SQL / regex gibi yollar için.
+# Kaçışsız "<" içerebilen, Telegram'a HTML olarak GİTMEYEN metinler: dosya → BAĞLAMLI parçalar (f-string'ler "{}"
+# yer tutucusuyla tek metin). Kısa operatör dizgeleri ("<", "<=", "<12") yalnız birebir eşleşir. Yeni bir mesaj metni
+# "<" yazacaksa "&lt;" yazmalı; buraya ekleme yalnız site / /tani (send_pre) / esc() ile giden / regex / SQL için.
 ALLOWED = {
-    "app/ai/schema.py": ("<=",),
-    "app/diag.py": ("<12",),                                  # biçim belirteci
-    "app/lab/gate.py": (" < ",),                              # karar gerekçesi: site (Jinja kaçışlar)
-    "app/lab/specs.py": ("<=", "<", "denetim kümesi < 2 gün", "küme genişliği < 2 ×"),
+    "app/ai/schema.py": ("<=", '">=" veya "<="'),                       # AI istemi
+    "app/diag.py": ("<12", "(elle: /pro_ver <"),                         # biçim belirteci; /tani send_pre kaçışlar
+    "app/lab/gate.py": ("yetersiz küme ({} < {})", "sola çarpık örnek (g1 {} < {})"),     # site (Jinja kaçışlar)
+    "app/lab/specs.py": ("<", "<=", "denetim kümesi < 2 gün", "küme genişliği < 2 ×"),     # işleç adları; site
     "app/notify.py": ("<[^>]+>",),
-    "app/radar/hourstats.py": (" · az örnek (<",),            # site ipucu (Jinja)
-    "app/radar/scorer.py": ("taze cüzdan (<7g)",),            # format.py esc() ile yazar (test_new_big_fresh_wallet_reason)
-    "app/radar/seans.py": (" < ",),                           # site
-    "app/radar/sim.py": (" < %",),                            # sim_trades.skip_reason: site
-    "app/radar/twaplive.py": (" — emir < ", " < "),           # diag_address: satır esc(kap) ile gider
-    "app/radar/twaploose.py": (" · süre < ",),                # big_diag_line → /tani (send_pre kaçışlar)
-    "app/radar/wake.py": ("<!--",),
+    "app/radar/hourstats.py": (" · az örnek (<{}) — güven düşük",),      # site ipucu
+    "app/radar/scorer.py": ("taze cüzdan (<7g)",),                       # format.py esc() ile (test aşağıda)
+    "app/radar/seans.py": ("yetersiz (n={} < {})",),                     # site
+    "app/radar/sim.py": ("hedef çok yakın (%{} < %{})", '<svg class="simcurve"', "<line x1=", "<text x=", "<polyline ",
+                         "<circle cx="),                                  # skip_reason ve SVG: site
+    "app/radar/twaplive.py": (" — emir < {}", " — kalan {} < {}", " — spot çiftinin 24s hacmi {} < {}"),  # esc(kap)
+    "app/radar/twaploose.py": ("📅 hafta sonu kripto olmayan: plan ≥ {} · süre < {} dk",),  # /tani send_pre
+    "app/radar/wake.py": ("<!--.*?-->",),
     "app/telegram/bot.py": ("<[^>]+>",),
     "app/telegram/fanout.py": ("<[^>]+>",),
     "app/telegram/format.py": ("</?[A-Za-z][^<>]*>",),
+    "app/web/routes.py": ('<svg xmlns="http://www.w3.org/2000/svg"',),  # favicon
 }
 
 
+def _texts(tree):
+    """(satır, metin): docstring'ler hariç sabit dizgeler + f-string'ler bütün olarak ("{}" yer tutucusuyla —
+    ifadenin içindeki kod "<"i metin sayılmaz)."""
+    skip = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)) and node.body:
+            b = node.body[0]
+            if isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant):
+                skip.add(id(b.value))
+        if isinstance(node, ast.JoinedStr):
+            skip.update(id(v) for v in node.values)
+    for node in ast.walk(tree):
+        if id(node) in skip:
+            continue
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            yield node.lineno, node.value
+        elif isinstance(node, ast.JoinedStr):
+            yield node.lineno, "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in node.values)
+
+
+def _allowed(rel: str, s: str) -> bool:
+    return any(s == a or (len(a) > 3 and a in s) for a in ALLOWED.get(rel, ()))
+
+
 def test_no_new_raw_lt_in_strings():
-    bad = re.compile(r"<(?![/A-Za-z!])")
+    tags = "|".join(sorted(TG_TAGS, key=len, reverse=True))
+    bad = re.compile(rf"<(?!/|!|(?:{tags})[\s>])")         # Telegram etiketi olmayan her "<" (sahte "<adres>" de)
     sql = re.compile(r"\b(SELECT|DELETE|UPDATE|WHERE|AND|OR)\b")
     found = []
     for p in sorted(pathlib.Path(ROOT, "app").rglob("*.py")):
         rel = p.relative_to(ROOT).as_posix()
-        tree = ast.parse(p.read_text(encoding="utf-8"))
-        docs = set()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)) and node.body:
-                b = node.body[0]
-                if isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant):
-                    docs.add(id(b.value))
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)) or id(node) in docs:
-                continue
-            s = node.value
-            if not bad.search(s) or sql.search(s):
-                continue
-            if any(a in s for a in ALLOWED.get(rel, ())):
-                continue
-            found.append(f"{rel}:{node.lineno}: {s[:80]!r}")
+        for ln, s in _texts(ast.parse(p.read_text(encoding="utf-8"))):
+            if bad.search(s) and not sql.search(s) and not _allowed(rel, s):
+                found.append(f"{rel}:{ln}: {s[:80]!r}")
     assert not found, "kaçışsız '<' (Telegram HTML'de mesajı düz metne düşürür; '&lt;' yaz):\n" + "\n".join(found)
-    print("✅ kaynak) metin sabitlerinde yeni kaçışsız '<' yok (izinliler: site, /tani, SQL, regex)")
+    # tarama kendini de sınar: sahte etiket, aynı dosyada izinsiz yeni metin, f-string yakalanır
+    probe = ast.parse('x = "Kullanım: /takip <adres>"\ny = f"⏳ <b>TWAP</b> · kalan < {a}"\nz = f"{a if b < c else d}"')
+    hits = [s for _ln, s in _texts(probe) if bad.search(s) and not _allowed("app/radar/twaplive.py", s)]
+    assert hits == ["Kullanım: /takip <adres>", "⏳ <b>TWAP</b> · kalan < {}"], hits
+    print("✅ kaynak) metin sabitlerinde ve f-string'lerde yeni kaçışsız '<' yok (sahte etiket dahil; izinler bağlamlı)")
+
+
+def test_status_text_escapes_hl_error_page():
+    """3. inceleme (18.10): HL 502/504'te nginx / CloudFront HTML sayfası döner; hata metni /status'a kaçışsız giriyordu."""
+    txt = fmt.status_text({"süpürücü": "RuntimeError: HL info HTTP 502: <html>\r\n<head><title>502 Bad Gateway</t",
+                           "akış": None, "coin": 12})
+    assert not tg_html_errors(txt) and "&lt;html&gt;" in txt and "akış: None" in txt, tg_html_errors(txt)
+    print("✅ /status) HL'nin HTML hata sayfası kaçışlı — mesaj düz metne düşmez")
 
 
 if __name__ == "__main__":

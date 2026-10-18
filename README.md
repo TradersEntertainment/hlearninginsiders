@@ -1590,7 +1590,8 @@ sorarak olmalı". Her coin sayfasının (`/t/PUMP`, hisse ve kripto) en üstünd
   yok" diye ayrı yazılır (sahip sanılmasın). `frontendOpenOrders` bazı hesaplarda (HLP alt hesapları) tam 100'de keser:
   100 gelirse sınırsız `openOrders` ile tamamlanır, o da okunamazsa kesik listede "emri yok" denmez. `openOrders`
   tetikli emri (Stop / TP) bayraksız verdiği için tamamlamadan gelip görünen kademeye düşen ya da büyük olan emir
-  `orderStatus` ile doğrulanır; doğrulanamayan sahip sayılmaz. Açık emirler hiç sorulamadıysa (HL hız sınırı / hepsi
+  `orderStatus` ile doğrulanır; doğrulanamayan sahip sayılmaz (HL `orderStatus` yalnız yakın geçmişi bilir, saatlerdir
+  bekleyen emre "unknownOid" der: bu "emir yok" sayılmaz, "doğrulanamadı" sayılır). Açık emirler hiç sorulamadıysa (HL hız sınırı / hepsi
   okunamadı) kademe "sahip bilinmiyor" der, "bulunamadı" değil. Sayfa açılınca arka planda kurulur (30 sn önbellek; hazır değilse sayfa 10 sn'de yenilenir). Sahip sorguları
   süre sınırlıdır (bitmeyen aday "okunamadı" sayılır, okunmuş defter atılmaz); düşük şerit 429 sonrası duraklıyken
   adaylar sorulmaz ("ertelendi"). Hisse sayfalarında duvar radarının kayıtları da bu panelde.

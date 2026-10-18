@@ -2429,9 +2429,11 @@ def digest(pending: list[dict], events: list[dict], top: list[dict]) -> str:
 
 
 def status_text(state: dict) -> str:
+    """Değerler düz metin (HL hata metni HTML sayfası olabilir: 502 nginx / CloudFront → kaçışsız "<" mesajı düz
+    metne düşürürdü; 3. inceleme 18.10)."""
     lines = ["🤖 <b>Durum</b>"]
     for k, v in state.items():
-        lines.append(f"  {k}: {v}")
+        lines.append(f"  {esc(str(k))}: {esc(str(v))}")
     return "\n".join(lines)
 
 

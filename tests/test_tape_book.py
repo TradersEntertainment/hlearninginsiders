@@ -189,6 +189,10 @@ def test_window_and_coverage():
         Live.down_log = [(t - 600, t - 597)]
         c = tape.cover(tape.summary("Z", t))
         assert c["warn"] == "bot 10 dk önce yeniden başladı, öncesi bantta yok", c
+        # 3. inceleme: açılış → abonelik boşluğu uzun sürdüyse (5 dk) gizlenmez
+        Live.down_log = [(t - 598, t - 300)]
+        c = tape.cover(tape.summary("Z", t))
+        assert "canlı akış ayrıca 4 dk kopuktu" in c["warn"], c
         # 2. inceleme: açılıştan önceki işlem (abonelikte yollanan son 30) sayılmaz
         tape.REG.clear()
         tape.HWM.clear()
@@ -402,9 +406,11 @@ def test_book_owners_review_fixes():
         cli = _Cli({W: front, B: []}, full={W: full})
         r = await bo.build(cli, "PUMP")
         raw0 = next(lv for lv in r["raw"]["bid"] if lv["px"] == 0.0041)
-        # tamamlamadan gelen 555 HL'de bilinmiyor (unknownOid: doldu/iptal) → sahip değil; kesin cevap, "doğrulanamadı" değil
-        assert r["partial"] == 0 and r["unverified"] == 0 and raw0["owners"] == [], (r["partial"], r["unverified"], raw0)
-        assert W in [a for a, _ in raw0["makers_gone"]] and ("status", 555) in cli.calls
+        # 3. inceleme (canlı): HL orderStatus eski ama hâlâ bekleyen emre de "unknownOid" der → kesin "yok" DEĞİL:
+        # doğrulanamadı (sayılmaz) ve W için "şu an emri yok" denmez; önbelleğe de yazılmaz
+        assert r["partial"] == 0 and r["unverified"] == 1 and raw0["owners"] == [], (r["partial"], r["unverified"], raw0)
+        assert W in [a for a, _ in raw0["makers"]] and W not in [a for a, _ in raw0["makers_gone"]]
+        assert ("status", 555) in cli.calls and (W, 555) not in bo.OID_OK
         assert all(len(x) == 7 for x in bo.ADDR_ORDERS[(W, "")][1]), "önbellekte ham yanıt değil kısa kayıt"
         # (5b) tamamlamadan gelen emir orderStatus ile doğrulanır: açık limit ✅; tetikli (Stop, bayraksız gelir) sayılmaz
         _reset_bo()
@@ -414,6 +420,14 @@ def test_book_owners_review_fixes():
         raw0 = next(lv for lv in r["raw"]["bid"] if lv["px"] == 0.0041)
         assert raw0["owners"] == [(W, 200_000.0)] and r["unverified"] == 0, (raw0["owners"], r["unverified"])
         assert ("status", 555) in cli.calls and ("status", 556) in cli.calls and 556 not in [o["oid"] for o in r["orders"]]
+        # kesin "kapandı" cevabı (status=order, canceled) sahip saymaz ve o adreste emri yok der
+        _reset_bo()
+        v0 = bo.STATS["verified"]
+        cli = _Cli({W: front, B: []}, full={W: full}, ostat={555: (False, False)})
+        r = await bo.build(cli, "PUMP")
+        raw0 = next(lv for lv in r["raw"]["bid"] if lv["px"] == 0.0041)
+        assert raw0["owners"] == [] and r["unverified"] == 0 and W in [a for a, _ in raw0["makers_gone"]], raw0
+        assert bo.STATS["verified"] - v0 == 1, "sayaç yalnız kesin cevabı sayar"
         # orderStatus okunamazsa: sayılmaz, "doğrulanamadı" yazılır, o adreste "şu an emri yok" denmez
         _reset_bo()
         cli = _Cli({W: front, B: []}, full={W: full}, ostat_fail=True)

@@ -36,7 +36,7 @@ ADDR_CAP = 4000              # kova başına adres (BTC gibi coinlerde dakikada 
 MAKER_CAP = 3000             # kova başına (yön, fiyat, adres) pasif dolum kaydı
 COIN_CAP = 600               # en çok bu kadar coin (kollektör ~160 dinler)
 SILENT_SEC = 60              # bağlı ama bu kadar mesaj yok (ping 45 sn'de bir) → akış kopuk sayılır
-STARTUP_GRACE = 120          # açılış → ilk abonelik boşluğu "sonradan kopukluk" sayılmaz
+STARTUP_GRACE = 120          # açılıştan bu kadar içinde kapanan boşluk (açılış → ilk abonelik) kopukluk sayılmaz
 
 STARTED = int(time.time())
 STATS: dict = {"trades": 0, "errors": 0, "coins": 0, "dups": 0, "late": 0, "pre": 0}
@@ -228,7 +228,8 @@ def summary(coin: str, now_ts: int | None = None, window: int = WINDOW, top: int
     restart = STARTED > start
     since_start = max(0, t - STARTED)
     # açılıştan sonraki kopukluk (açılış → ilk abonelik boşluğu hariç)
-    later = sum(min(b, t) - max(a, STARTED) for a, b in gaps if b > STARTED and a > STARTED + STARTUP_GRACE)
+    # (yalnız açılıştan kısa sürede kapanan açılış → abonelik boşluğu sayılmaz; uzun sürdüyse tümü sayılır)
+    later = sum(min(b, t) - max(a, STARTED) for a, b in gaps if b > STARTED + STARTUP_GRACE)
     return {
         "coin": coin, "n": sum(b.n for b in q), "buy": buy, "sell": sell, "net": buy - sell,
         "twap": sum(b.twap for b in q), "n_addr": len(addrs),
