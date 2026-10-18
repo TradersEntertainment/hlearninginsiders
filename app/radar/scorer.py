@@ -119,7 +119,7 @@ async def _detect_entity(cfg: Config, client: HLClient, address: str,
     async with db() as conn:
         cur = await conn.execute(
             "SELECT COUNT(*) c, SUM(CASE WHEN side='buy' THEN 1 ELSE 0 END) b"
-            " FROM fills WHERE address=? AND ts>=?", (address, since))
+            " FROM fills WHERE address=? AND ts>=? AND tid NOT LIKE 'rest%'", (address, since))   # kalan satırı sayılmaz
         r = await cur.fetchone()
     c, b = (r["c"] or 0), (r["b"] or 0)
     if c >= cfg.mm_max_fills_24h and 0 < b < c:
@@ -142,7 +142,7 @@ async def _coin_focus(coin: str, address: str) -> bool:
     since = now() - 30 * 86400
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT coin, COUNT(*) c FROM fills WHERE address=? AND ts>=? GROUP BY coin",
+            "SELECT coin, COUNT(*) c FROM fills WHERE address=? AND ts>=? AND tid NOT LIKE 'rest%' GROUP BY coin",
             (address, since))
         rows = await cur.fetchall()
     total = sum(r["c"] for r in rows)
@@ -159,7 +159,7 @@ async def _twap_fills(coin: str, address: str, side: str) -> int:
     biri düzeltilip diğeri unutulur, insider skoru /twap sekmesinden sessizce
     farklı davranırdı. Buradan dönen değer eskisi gibi FİLL SAYISI.
     """
-    from .twap import detect
+    from .twap import detect, merge_slices
     want = "buy" if side == "long" else "sell"
     since = now() - 48 * 3600
     async with db() as conn:
@@ -167,7 +167,7 @@ async def _twap_fills(coin: str, address: str, side: str) -> int:
             "SELECT ts, sz, notional FROM fills WHERE coin=? AND address=? AND"
             " side=? AND ts>=? ORDER BY ts", (coin, address, want, since))
         rows = [dict(r) for r in await cur.fetchall()]
-    d = detect(rows)
+    d = detect(merge_slices(rows))                  # aynı saniyedeki satırlar tek dilim
     return d["n"] if d else 0
 
 
@@ -185,7 +185,7 @@ async def _taker_ratio(coin: str, address: str, side: str) -> float | None:
     async with db() as conn:
         cur = await conn.execute(
             "SELECT COUNT(*) n, SUM(CASE WHEN taker=1 THEN 1 ELSE 0 END) tk FROM fills"
-            " WHERE coin=? AND address=? AND side=? AND ts>=? AND taker IS NOT NULL",
+            " WHERE coin=? AND address=? AND side=? AND ts>=? AND taker IS NOT NULL AND tid NOT LIKE 'rest%'",
             (coin, address, want, since))
         r = await cur.fetchone()
     n = (r["n"] or 0) if r else 0

@@ -974,7 +974,7 @@ async def compute_specialists(cfg: Config) -> list[dict]:
         cur = await conn.execute("SELECT coin, symbol FROM tickers")
         sym_map = {r["coin"]: r["symbol"] for r in await cur.fetchall()}
         cur = await conn.execute(
-            "SELECT address, coin, COUNT(*) c, SUM(notional) v FROM fills"
+            "SELECT address, coin, SUM(tid NOT LIKE 'rest%') c, SUM(notional) v FROM fills"   # kalan satırı sayılmaz
             " WHERE ts >= ? GROUP BY address, coin",
             (ts_now - cfg.fills_lookback_days * 86400,))
         fillagg = [dict(r) for r in await cur.fetchall()]

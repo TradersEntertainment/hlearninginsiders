@@ -1336,6 +1336,8 @@ def _parse_window(request: Request, now_ts: int | None = None) -> tuple[int, int
             else:
                 dd, mm = (d.replace("/", ".").split(".") + [""])[:2]
                 day = day.replace(day=int(dd), month=int(mm) if mm else day.month)
+                if day.timestamp() > ref + 86400:       # yıl yazılmaz: ocakta "28.12" geçen yılın aralığıdır
+                    day = day.replace(year=day.year - 1)
         elif len(parts) != 1:
             raise ValueError(v)
         hh, mi = (parts[-1].replace(".", ":").split(":") + ["0"])[:2]
@@ -1360,8 +1362,13 @@ def _parse_window(request: Request, now_ts: int | None = None) -> tuple[int, int
             bad.append(v)
             return None, False
         if after is not None and not dated:
-            while t < after:
-                t += 86400
+            r = t
+            while r < after:
+                r += 86400
+            # gece yarısını aşan kısa pencere (23:50 → 00:10) ileri sarılır; ters yazılmış saatler (18:35 → 18:25)
+            # sarılmaz, aşağıdaki min/max sıralar (inceleme 18.10: ileri sarmak 6 sa'lik alakasız pencere veriyordu)
+            if r - after <= NEOLDU_MAX_SEC:
+                t = r
         elif not dated and t > ref + 60:
             t -= 86400                                   # ileri bir saat: dünü kastetmiştir
         return t, True
@@ -1378,7 +1385,9 @@ def _parse_window(request: Request, now_ts: int | None = None) -> tuple[int, int
         t0 = t1 - 900
     else:
         t0, t1, note = end - 900, end, "son 15 dakika (varsayılan)"
-    if t1 > end:
+    if t0 >= end:
+        note = note or "pencere gelecekte — işlem olamaz"
+    elif t1 > end:
         t1 = max(end, t0 + 60)
         note = note or "bitiş şimdiye çekildi"
     if t1 - t0 > NEOLDU_MAX_SEC:
@@ -1500,14 +1509,21 @@ async def forensics_page(request: Request):
         t = await resolve_coin(sym)
         coin = t["coin"] if t else (assets.spot_coin_of(sym) or sym)
         rep = await forensics.report(coin, t0, t1, cfg)
-        rep["found"] = bool(t) or assets.is_spot(coin) and coin in assets.SPOT_NAMES
-        base = rep["symbol"].upper()
+        rep["found"] = bool(t) or (forensics.is_spot_coin(coin) and coin in assets.SPOT_NAMES)
+        # spot biçimli ad ('@N' / 'X/Y') ama ad önbelleğinde yok: HL'de olabilir, biz yalnız ilk N çifti biliyoruz
+        rep["spot_shape"] = not rep["found"] and ("/" in sym or sym.startswith("@"))
+        rep["spot_known"] = len(assets.SPOT_NAMES)
+        base = rep["symbol"].split("/")[0].upper()
         spot_alts = [(c, lb) for c, lb in sorted(assets.SPOT_NAMES.items(), key=lambda kv: kv[1])
                      if str(lb).split("/")[0].upper() == base and c != coin][:6]
+    # Varsayılan pencere ("son 15 dk") formda BOŞ kalır: dakikaya yuvarlanmış saatle yeniden gönderilince pencere
+    # bandın önüne taşıp işlem kaydına düşüyordu (inceleme 18.10). Spot çifti linkleri de saatsiz gider.
+    deflt = not (request.query_params.get("t0") or request.query_params.get("t1"))
     return _render(request, "neoldu.html", {
-        "rep": rep, "sym": sym, "t0": t0, "t1": t1, "note": note, "spot_alts": spot_alts,
-        "t0_s": datetime.fromtimestamp(t0, TR).strftime("%d.%m %H:%M"),
-        "t1_s": datetime.fromtimestamp(t1, TR).strftime("%d.%m %H:%M"),
+        "rep": rep, "sym": sym, "t0": t0, "t1": t1, "note": note, "spot_alts": spot_alts, "deflt": deflt,
+        "t0_s": "" if deflt else datetime.fromtimestamp(t0, TR).strftime("%d.%m %H:%M"),
+        "t1_s": "" if deflt else datetime.fromtimestamp(t1, TR).strftime("%d.%m %H:%M"),
+        "now_ts": int(time.time()),
         "probe_max": getattr(cfg, "forensics_probe_max", 15),
         "crypto_floor": getattr(cfg, "crypto_fill_min_notional", 0),
         # Rekor arşivi kademesi — tek kaynağı bigpos.threshold, burada

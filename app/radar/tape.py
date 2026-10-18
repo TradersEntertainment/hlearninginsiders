@@ -37,6 +37,7 @@ MAKER_CAP = 3000             # kova başına (yön, fiyat, adres) pasif dolum ka
 COIN_CAP = 600               # en çok bu kadar coin (kollektör ~160 dinler)
 SILENT_SEC = 60              # bağlı ama bu kadar mesaj yok (ping 45 sn'de bir) → akış kopuk sayılır
 STARTUP_GRACE = 120          # açılıştan bu kadar içinde kapanan boşluk (açılış → ilk abonelik) kopukluk sayılmaz
+CLAMP_SEC = 90               # "ne oldu" penceresinin başı bandın bu kadar önündeyse bandın başına çekilir (kapsam yazılır)
 
 STARTED = int(time.time())
 STATS: dict = {"trades": 0, "errors": 0, "coins": 0, "dups": 0, "late": 0, "pre": 0}
@@ -102,12 +103,17 @@ def window(coin: str, t0: int, t1: int, now_ts: int | None = None) -> dict | Non
     t = int(now_ts if now_ts is not None else time.time())
     t0, t1 = int(min(t0, t1)), int(max(t0, t1))
     lo = -(-t0 // BUCKET)                               # pencerenin içinde başlayan ilk kova
-    keep_lo = -(-(t - WINDOW) // BUCKET)                 # bandın hâlâ tuttuğu ilk TAM kova
+    keep_lo = -(-(t - WINDOW) // BUCKET)                 # politika: bandın tuttuğu ilk TAM kova
+    reg = REG.get(coin)
+    if reg and reg[0].minute < keep_lo:
+        keep_lo = reg[0].minute                          # budama baştan yapılır: en eski kova duruyorsa ondan sonrası tam
+    if lo < keep_lo and (keep_lo - lo) * BUCKET <= CLAMP_SEC:
+        lo = keep_lo                                     # formun dakikaya yuvarlanmış "son 15 dk"sı (inceleme 18.10)
     live = t1 >= t - 5                                   # "şimdiye kadar" (istek ile rapor arası birkaç sn)
-    hi = t if live else (t1 // BUCKET) * BUCKET         # son TAM kovanın sonu
+    hi = min(t, t1) if live else (t1 // BUCKET) * BUCKET   # canlıda t1'den SONRA başlayan kova sayılmaz
     if lo < keep_lo or lo * BUCKET < STARTED or hi <= lo * BUCKET:
         return None
-    q = [b for b in REG.get(coin) or ()
+    q = [b for b in reg or ()
          if b.minute >= lo and (b.minute * BUCKET + BUCKET <= hi or (live and b.minute * BUCKET < hi))]
     addrs: dict[str, list] = {}
     for b in q:
@@ -116,10 +122,23 @@ def window(coin: str, t0: int, t1: int, now_ts: int | None = None) -> dict | Non
             for i in range(5):
                 x[i] += r[i]
     gaps, down_now = _gaps(lo * BUCKET, hi)
+    # Coin pencerenin İÇİNDE dinlenmeye başladıysa (hacim listesine yeni girdi / geri döndü) öncesi bantta yok
+    sub = 0
+    try:
+        from ..hl import collector as col
+        sub = int(float((getattr(col.LIVE, "valid_since", None) or {}).get(coin) or 0))
+    except Exception:                                   # noqa: BLE001
+        sub = 0
+    sub_gap = max(0, min(sub, hi) - lo * BUCKET) if sub > lo * BUCKET + 5 else 0
+    gap_sec = sum(b - a for a, b in gaps)
+    covered = max(0, hi - lo * BUCKET - gap_sec - sub_gap)
     return {"rows": [{"address": a, "buy": r[0], "sell": r[1], "n": r[4], "tk": r[2], "known": r[0] + r[1],
                       "twap": r[3]} for a, r in addrs.items()],
-            "lo": lo * BUCKET, "hi": hi, "gaps": gaps, "gap_sec": sum(b - a for a, b in gaps),
-            "live_down": down_now and live, "buy": sum(b.buy for b in q), "sell": sum(b.sell for b in q),
+            "lo": lo * BUCKET, "hi": hi, "gaps": gaps, "gap_sec": gap_sec,
+            "sub_since": sub if sub_gap else 0, "sub_gap": sub_gap,
+            "live_down": down_now and live, "full": not gaps and not sub_gap and not (down_now and live),
+            "unknown": (down_now and live) or covered <= 0,
+            "buy": sum(b.buy for b in q), "sell": sum(b.sell for b in q),
             "n": sum(b.n for b in q), "twap_usd": sum(b.twap for b in q), "other": sum(b.other_addr for b in q)}
 
 

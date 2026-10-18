@@ -32,13 +32,16 @@
   <h2>{{ rep.label }} <span class="st">·
     {{ rep.t0|dt }} → {{ rep.t1|dt }} ({{ rep.minutes }} dk) · {{ rep.market }}</span></h2>
 
-  {% if not rep.found %}
-  <p class="alert warn">⚠️ <b>{{ sym }}</b> bulunamadı (hisse evreninde de, ana dex kripto listesinde de, spot
-    çiftlerinde de yok) — ham ad <code>{{ rep.coin }}</code> olarak denendi. Yazım hatası olabilir.</p>
+  {% if not rep.found and rep.spot_shape %}
+  <p class="alert warn">⚠️ <b>{{ sym }}</b> izlediğimiz ilk {{ rep.spot_known }} spot çiftinin arasında yok —
+    HL'de olabilir ama bu çifti dinlemiyoruz. Ham ad <code>{{ rep.coin }}</code> olarak denendi.</p>
+  {% elif not rep.found %}
+  <p class="alert warn">⚠️ <b>{{ sym }}</b> bulunamadı (hisse evreninde de, ana dex kripto listesinde de, bildiğimiz
+    spot çiftlerinde de yok) — ham ad <code>{{ rep.coin }}</code> olarak denendi. Yazım hatası olabilir.</p>
   {% endif %}
   {% if spot_alts %}
-  <p class="sub dim">🔀 {{ rep.symbol }} spot çiftleri ayrı sorulur:
-    {% for c, lb in spot_alts %}<a href="/neoldu?sym={{ lb|urlencode }}&t0={{ rep.t0 }}&t1={{ rep.t1 }}{{ ('&key=' + k[5:]) if k else '' }}">{{ lb }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  <p class="sub dim">🔀 {{ rep.symbol.split('/')[0] }} spot çiftleri ayrı sorulur:
+    {% for c, lb in spot_alts %}<a href="/neoldu?sym={{ lb|urlencode }}{% if not deflt %}&t0={{ rep.t0 }}&t1={{ rep.t1 }}{% endif %}{{ ('&key=' + k[5:]) if k else '' }}">{{ lb }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
   {% endif %}
 
   {# ── veri kaynağı: tabloya ne girdi, ne girmedi ─────────────────────────── #}
@@ -47,23 +50,34 @@
     çiftler dinleniyor; liste 10 dk'da bir yenilenir). Boş tablo "işlem olmadı" demek DEĞİL.</p>
   {% endif %}
   {% if rep.source == 'tape' %}
-  <p class="kunye">📼 <b>Kaynak: canlı bant — bu penceredeki BÜTÜN işlemler</b> (taban yok, TWAP dilimleri dahil)
-    · kapsam {{ rep.tape_lo|hms }} → {{ rep.tape_hi|hms }} <span class="hint">(30 sn çözünürlük)</span></p>
+  <p class="kunye">📼 <b>Kaynak: canlı bant{% if rep.tape_full %} — bu penceredeki BÜTÜN işlemler{% endif %}</b>
+    (taban yok, TWAP dilimleri dahil) · kapsam {{ rep.tape_lo|hms }} → {{ rep.tape_hi|hms }}
+    <span class="hint">(30 sn çözünürlük{% if rep.tape_lo > rep.t0 + 30 %}; pencerenin ilk {{ rep.tape_lo - rep.t0 }} sn'si bandın dışında{% endif %})</span></p>
+  {% if rep.sub_since %}
+  <p class="alert warn">📡 Bu coin {{ rep.sub_since|hms }}'den beri dinleniyor (hacim listesine pencerenin içinde
+    girdi) — öncesindeki işlemler bantta yok.</p>
+  {% endif %}
   {% else %}
   <p class="kunye">🗄 <b>Kaynak: işlem kaydı</b> —
     {% if rep.floor is none %}bu sınıfta işlem kaydı KAPALI.
     {% else %}yalnız <b>{{ rep.floor|usd }}</b> üstü işlemler ve tek mesajda toplamı bu tabanı geçen parçalar
       yazılıyor; küçük işlemler ve TWAP dilimlerinin çoğu bu tabloda yok.{% endif %}
-    <span class="hint">Son 15 dk içindeki pencereler canlı banttan eksiksiz gelir.</span></p>
+    {% if rep.tape_why == 'restart' %}<span class="hint">Son 15 dk canlı banttan gelirdi, ama bot pencerenin
+      içinde ({{ rep.boot|hms }}) yeniden başladı — bant o andan beri.</span>
+    {%- elif rep.tape_why == 'unknown' %}<span class="hint">Dinleme durumu bilinmiyor; bant kullanılmadı.</span>
+    {%- elif rep.tape_why == 'short' %}<span class="hint">Pencere bandın çözünürlüğünden (30 sn) kısa.</span>
+    {%- elif not rep.tape_why %}<span class="hint">Son 15 dk içindeki pencereler (dinlenen coinde, bot o süre açıksa)
+      canlı banttan eksiksiz gelir.</span>{% endif %}</p>
   {% endif %}
   {% if rep.live_down %}
   <p class="alert warn">🔌 Canlı akış şu an kopuk — bu aralık bilinmiyor.</p>
   {% elif rep.gaps %}
   <p class="alert warn">🔌 Canlı akış bu pencerede {% for g in rep.gaps %}{{ g[0]|hms }}–{{ g[1]|hms }}{% if not loop.last %}, {% endif %}{% endfor %}
-    arası kopuktu (toplam {{ rep.gap_sec }} sn) — o süredeki işlemler eksik.</p>
+    arası kopuktu ({{ 'en az' if rep.restart_in else 'toplam' }} {{ rep.gap_sec }} sn) — o süredeki işlemler eksik.</p>
   {% endif %}
   {% if rep.restart_in %}
-  <p class="sub warn">♻️ Bot {{ rep.boot|dt }}'de yeniden başladı: o anki birkaç saniye/dakikalık geçişte işlem eksik olabilir.</p>
+  <p class="sub warn">♻️ Bot {{ rep.boot|dt }}'de yeniden başladı: önceki süreç kapandıktan bu açılışa kadar
+    geçen sürenin işlemleri bilinmiyor (süresi ölçülmüyor).</p>
   {% elif rep.before_boot and rep.source == 'fills' %}
   <p class="sub dim">ℹ️ Pencere botun son açılışından ({{ rep.boot|dt }}) önce; o dönemin akış kopuklukları bilinmiyor.</p>
   {% endif %}
@@ -88,14 +102,14 @@
       okumasıdır.</span>{% endif %}</p>
   {% endif %}
 
+  {# Satır yoksa $0 ölçülmüş değil: taban altı / dinlenmeyen / kayıt dışı / akış kopuk olabilir → "—" #}
+  {% set noval = not rep.n_addr and (rep.source != 'tape' or rep.tape_unknown or not rep.tape_full) %}
   <div class="kpi">
     {% if rep.source == 'tape' %}
-    <div><div class="l">İşlem</div><div class="v">{{ rep.n_trades }}</div><div class="s">{{ rep.n_addr }} adres</div></div>
+    <div><div class="l">İşlem</div><div class="v">{{ '—' if noval else rep.n_trades }}</div><div class="s">{{ rep.n_addr }} adres</div></div>
     {% else %}
     <div><div class="l">Kayıt</div><div class="v">{{ rep.n_fills }}</div><div class="s">{{ rep.n_addr }} adres · her işlem iki tarafıyla</div></div>
     {% endif %}
-    {# İşlem kaydında satır yoksa $0 ölçülmüş değil: taban altı / dinlenmeyen / kayıt dışı olabilir → "—" #}
-    {% set noval = not rep.n_addr and rep.source != 'tape' %}
     <div><div class="l">Piyasadan alım</div><div class="v long">{{ '—' if noval else rep.buy|usd }}</div><div class="s">alıcının fiyatı süpürdüğü işlemler</div></div>
     <div><div class="l">Piyasadan satım</div><div class="v short">{{ '—' if noval else rep.sell|usd }}</div><div class="s">satıcının süpürdüğü{% if not noval %} · net
       <b class="{{ 'long' if rep.net > 0 else ('short' if rep.net < 0 else 'dim') }}">{{ '+' if rep.net > 0 else ('-' if rep.net < 0 else '') }}{{ (rep.net|abs)|usd }}</b>{% endif %}</div></div>
@@ -185,7 +199,9 @@
   </table>
   </div></div>
   {% else %}
-  {% if rep.source == 'tape' %}
+  {% if rep.source == 'tape' and (rep.tape_unknown or not rep.tape_full) %}
+  {{ m.empty(["Bu pencerenin işlemleri bilinmiyor.", "Canlı akış kopuktu ya da coin pencerenin içinde dinlenmeye başladı — boş tablo işlem olmadı demek değil."]) }}
+  {% elif rep.source == 'tape' %}
   {{ m.empty(["Bu pencerede işlem görülmedi.", "Kaynak canlı bant: dinlediğimiz coinin bütün işlemleri burada olurdu."]) }}
   {% elif rep.listening == false %}
   {{ m.empty(["Bu pencerede işlem kaydı yok.", "Bu coini şu an dinlemiyoruz — boşluk, işlem olmadı demek değil."]) }}

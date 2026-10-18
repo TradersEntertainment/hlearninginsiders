@@ -68,6 +68,7 @@ class Collector:
         self.client = client
         self.connected = False
         self.subscribed: set[str] = set()
+        self.valid_since: dict[str, float] = {}  # coin → bu kesintisiz dinleme ne zaman başladı (bant kapsaması)
         self.valid_coins: set[str] = set()  # canlı akışta kabul edilen coin'ler
         self.crypto_coins: set[str] = set()  # yalnız sonda tetikleyicisi (ana dex)
         self.spot_coins: set[str] = set()    # spot çiftleri (@107…): yalnız TWAP dilimleri
@@ -234,6 +235,8 @@ class Collector:
             self.flow.clear()                 # eski bağlantının penceresi eksik olabilir
             self._ws = ws
             self.subscribed = set()
+            t_sub = time.time()
+            self.valid_since = {c: self.valid_since.get(c, t_sub) if c in self.valid_coins else t_sub for c in coins}
             self.valid_coins = set(coins)
             for coin in coins:
                 await ws.send_json({"method": "subscribe",
@@ -365,6 +368,8 @@ class Collector:
         while True:
             await asyncio.sleep(600)
             current = await self._current_coins()
+            t_sub = time.time()
+            self.valid_since = {c: self.valid_since.get(c, t_sub) if c in self.valid_coins else t_sub for c in current}
             self.valid_coins = set(current)
             for coin in current:
                 if coin not in self.subscribed:
@@ -503,6 +508,9 @@ class Collector:
         # Partide tabanı geçen parça VARSA da taban altı kalan yazılır ("ne oldu" denetimi 18.10: 1×$6K +
         # 20×$2K partisinde $40K kayboluyordu; canlıda tek BTC adresinde $156K). Yeniden yollanan / açılış öncesi
         # işlem toplama girmez: farklı gruplanıp farklı tid'li ikinci satır olurdu (çift sayım).
+        # KALAN satırının öneki 'rest' (inceleme 18.10): aynı saniyede ikinci satır, satır SAYAN ölçüleri (mm etiketi,
+        # taker oranı, uzmanlar) şişiriyordu — onlar 'rest' satırını saymaz; düzenlilik ölçümü (twap.merge_slices)
+        # aynı saniyeyi tek dilim sayar. Tamamı taban altı süpürme eskisi gibi 'agg'.
         for (coin, addr, side), a in agg.items():
             r = a["rest"]
             if not r or not r["sz"] or a["fresh"] < self.fill_floor(coin):
@@ -510,7 +518,7 @@ class Collector:
             taker = None
             if r["known"] > 0:
                 taker = 1 if r["tk"] >= r["known"] / 2 else 0
-            rows.append((coin, f"agg{min(r['tids'])}", addr, side,
+            rows.append((coin, f"{'rest' if a['wrote'] else 'agg'}{min(r['tids'])}", addr, side,
                          r["pxsz"] / r["sz"], r["sz"], r["ntl"], r["ts"], taker))
 
         # Kripto akışı da artık satır üretebiliyor (bkz. fill_floor): "ne oldu"

@@ -1968,11 +1968,17 @@ kayda giriyordu; TWAP dilimlerinin neredeyse hiçbiri. Düzeltilenler:
 - **Son 15 dk eksiksiz.** Pencere son 15 dk içindeyse (ve bot o süre açıksa)
   kaynak 📼 canlı banttır (`tape.window`): dinlenen coinin **bütün** işlemleri,
   adresiyle, tabansız, 30 sn çözünürlükte. Daha eskisi işlem kaydından gelir;
-  sayfa hangisi olduğunu ve tabanı yazar.
+  sayfa hangisi olduğunu ve tabanı yazar. Varsayılan pencerede form boş kalır
+  (dakikaya yuvarlanmış saatle yeniden gönderilince bandın önüne taşıyordu; 90 sn
+  tolerans). Akış kopuksa ya da coin pencerenin içinde dinlenmeye başladıysa
+  (hacim listesine yeni girdi) "bütün işlemler" denmez; ölçüm yoksa "$0 / işlem
+  görülmedi" değil **bilinmiyor** (sayfa ve alarm özeti).
 - **Parti kuralı.** Tek mesajda bir parça tabanı geçince aynı adresin taban
   altı parçaları hiç yazılmıyordu (1×$6K + 20×$2K → $6K). Artık kalan, sentetik
-  bir toplam satırı olarak yazılır. Yeniden bağlanınca HL'nin yeniden yolladığı
-  işlemler ikinci bir toplam satırı yazmaz (çift sayım; `tape.seen`).
+  bir `rest…` satırı olarak yazılır. Yeniden bağlanınca HL'nin yeniden yolladığı
+  işlemler ikinci bir toplam satırı yazmaz (çift sayım; `tape.seen`). Satır SAYAN
+  ölçüler (mm etiketi, taker oranı, uzmanlar) `rest` satırını saymaz; TWAP
+  düzenlilik ölçümü aynı saniyedeki satırları tek dilim sayar (`twap.merge_slices`).
 - **Coin çözümü** coin sayfasıyla aynı (`resolve_coin`): kPEPE gibi küçük
   harfli coinler, STX (ana dex Stacks; para:STX ayrı), `HYPE/USDC` gibi spot
   çiftleri. Bulunamayan ad söylenir; HYPE yazınca spot çiftleri linklenir.
@@ -1984,12 +1990,17 @@ kayda giriyordu; TWAP dilimlerinin neredeyse hiçbiri. Düzeltilenler:
   kaydedilmeyen coin (ana dex'te yalnız PROPR) ve sonraki örneğin henüz
   gelmediği ayrı gerekçelerle yazılır.
 - **Dinlenmeyen coin** ("şu an dinlemiyoruz"), **canlı akış kopukluğu** ve
-  **yeniden başlama** notu; **saklama dışı** pencere "silindi" der ("kayıt
-  başlamadı" değil); para coinleri "kripto dex", spotun tabanı kendi ayarı.
+  **yeniden başlama** notu (deploy boşluğunun süresi ölçülmez, "en az" yazılır);
+  **saklama dışı** pencere "silindi" der ("kayıt başlamadı" değil; OI için de 45
+  gün); para coinleri "kripto dex", `PURR/USDC` gibi '@'siz çift de spot, spotun
+  tabanı kendi ayarı; kayıt kapalı sınıfın alarm satırı "işlem kaydı kapalı".
+- **Saat:** ters yazılan saatler sıralanır (10:00 → 09:00 = 09:00–10:00); ocakta
+  "28.12" geçen yılın tarihi; gelecekteki pencere söylenir.
 
 Kör nokta, açıkça: 15 dakikadan eski pencerede taban altı işlemler yine yok
 (taban kararı ayrı); bot yeniden başlamadan önceki akış kopuklukları bilinmiyor;
-"dinlemiyoruz" notu şimdiki listeye bakar, geçmişteki listeye değil.
+"dinlemiyoruz" notu şimdiki listeye bakar, geçmişteki listeye değil; izlediğimiz
+ilk N spot çifti dışındaki çiftleri adla tanımayız.
 
 ## Cüzdan Bakiyesi Kolonu
 

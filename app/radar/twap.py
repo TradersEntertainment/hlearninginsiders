@@ -160,6 +160,24 @@ def fill_view(r: dict, ts: int | None = None) -> dict:
     return r
 
 
+def merge_slices(rows: list[dict]) -> list[dict]:
+    """Aynı saniyedeki satırlar TEK dilimdir (zaman sıralı satırlar → birleşik). Bir emir tek blokta birden çok
+    karşı tarafla dolar: tabanı geçen parça + 'rest' kalan satırı (ya da iki büyük parça) aynı ts'i taşır; ayrı
+    sayılınca 0 sn'lik aralık ve küçük boy düzenliliği bozuyor, gerçek TWAP'lar kayboluyordu (inceleme 18.10: canlı
+    dilimlerle 9 dizinin 3'ü). taker: parçalardan biri agresörse 1."""
+    out: list[dict] = []
+    for r in rows:
+        if out and out[-1]["ts"] == r["ts"]:
+            m = out[-1]
+            m["sz"] = float(m.get("sz") or 0) + float(r.get("sz") or 0)
+            m["notional"] = float(m.get("notional") or 0) + float(r.get("notional") or 0)
+            if r.get("taker") is not None:
+                m["taker"] = max(int(m.get("taker") or 0), int(r["taker"]))
+        else:
+            out.append(dict(r))
+    return out
+
+
 async def _candidates(cfg) -> dict:
     """(coin, address, side) → fill dizisi. Pencere içindeki her şey."""
     hours = max(1, int(getattr(cfg, "twap_window_h", 12)))
@@ -198,14 +216,15 @@ async def scan(cfg) -> dict:
         if g["entity"] in ("mm", "vault"):
             out["skipped_mm"] += 1
             continue
-        d = detect(g["rows"])
+        rows = merge_slices(g["rows"])
+        d = detect(rows)
         if not d:
             continue
         out["detected"] += 1
         if d["total"] < min_usd:
             continue
         out["big"] += 1
-        known = [r for r in g["rows"] if r.get("taker") is not None]
+        known = [r for r in rows if r.get("taker") is not None]
         tk = (sum(1 for r in known if r["taker"]) / len(known) * 100
               if known else None)
         keep.append((coin, addr, side, d["first_ts"], d["last_ts"], d["n"],

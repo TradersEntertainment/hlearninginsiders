@@ -1353,6 +1353,8 @@ _EMPTY_TEXT = {
     "not_listening": "👥 Adres kırılımı yok — bu coini canlı DİNLEMİYORUZ",
     "below_floor": "👥 {floor} üstü tek işlem yok — hacim küçük parçalardan gelmiş",
     "no_trades": "👥 Bu pencerede işlem görülmedi (canlı bant)",
+    "stream_gap": "👥 Adres kırılımı yok — canlı akış bu pencerede kopuktu, işlemler bilinmiyor",
+    "recording_off": "👥 Adres kırılımı yok — bu sınıfta işlem kaydı kapalı",
     "unknown": "👥 Adres kırılımı yok (dinleme durumu bilinmiyor)",
 }
 
@@ -1400,6 +1402,8 @@ def what_happened(b: dict | None) -> list[str]:
                 f" / satım <b>{usd(b.get('sell'))}</b>")
         net = b.get("net") or 0
         line += f" · net {'+' if net >= 0 else '−'}{usd(abs(net))}"
+        if b.get("partial"):
+            line += " · ⚠️ akış pencerenin bir kısmında yoktu — eksik olabilir"
         if tk is not None:
             line += f" · taker %{tk:.0f}"
         out.append(line)

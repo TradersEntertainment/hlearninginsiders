@@ -142,8 +142,11 @@ async def _metrics_around(coin: str, t0: int, t1: int,
     if not f or not l:
         if not f:
             out["last"] = None
+            from .sweeper import METRICS_RETENTION_D
             out["why"] = ("bu coinin OI'si kaydedilmiyor" if not out.get("first_any") else
-                          "pencere OI kaydının başlangıcından önce")
+                          (f"OI örnekleri {METRICS_RETENTION_D} gün saklanıyor — bu pencereninki silindi"
+                           if int(t0) < now() - METRICS_RETENTION_D * 86400 else
+                           "pencere OI kaydının başlangıcından önce"))
         else:
             out["why"] = "pencereden sonraki OI örneği henüz gelmedi (5 dk'da bir ölçülüyor)"
         return out
@@ -207,11 +210,17 @@ def finish_groups(groups: list[dict]) -> list[dict]:
     return groups
 
 
+def is_spot_coin(coin: str) -> bool:
+    """Spot çifti mi: '@N' ya da adı '@' taşımayan çift (HL'nin ilk çifti 'PURR/USDC' — inceleme 18.10)."""
+    from .. import assets
+    return assets.is_spot(coin) or "/" in (coin or "") or coin in assets.SPOT_NAMES
+
+
 def market_of(coin: str) -> str:
     """'spot' | 'kripto' (ana dex) | 'kripto dex' (para:…) | 'hisse perp' | 'HIP-3 perp' (endeks/emtia).
     Eskiden `":" not in coin` → para:ANSEM "hisse perp" etiketi alıyordu."""
     from .. import assets
-    if assets.is_spot(coin):
+    if is_spot_coin(coin):
         return "spot"
     if ":" not in coin:
         return "kripto"
@@ -457,6 +466,11 @@ async def report(coin: str, t0: int, t1: int, cfg=None) -> dict:
     if tw is not None and not listen and coin not in tape.REG:
         tw = None                                       # dinlendiği bilinmiyor ve bantta yok: "0 işlem" denemez
     rows: list[dict] = []
+    tape_why = ""                                   # pencere son 15 dk'daysa ama bant kullanılmadıysa nedeni
+    if tw is None and t0 >= ts_now - tape.WINDOW - tape.CLAMP_SEC:
+        tape_why = ("not_listening" if listen is False else
+                    "restart" if t0 < tape.STARTED else
+                    "unknown" if listen is None else "short")
     if tw is not None:
         src = "tape"
         grouped = finish_groups([{**r, "first_ts": None, "last_ts": None} for r in tw["rows"]])
@@ -497,7 +511,11 @@ async def report(coin: str, t0: int, t1: int, cfg=None) -> dict:
         # bu kadar saniyenin okuması demektir.
         "widened": bool(met.get("widened")), "span": met.get("span"),
         "source": src, "tape_lo": tw["lo"] if tw else None, "tape_hi": tw["hi"] if tw else None,
-        "live_down": bool(tw and tw.get("live_down")),
+        "live_down": bool(tw and tw.get("live_down")), "tape_why": tape_why,
+        # bant eksiksiz mi (kopukluk / pencere içinde dinlenmeye başlama yok) — değilse "BÜTÜN işlemler" denmez;
+        # hiç kapsamadıysa (akış kopuk) ölçüm yok: $0 / "işlem görülmedi" yazılmaz
+        "tape_full": bool(tw and tw.get("full")), "tape_unknown": bool(tw and tw.get("unknown")),
+        "sub_since": (tw or {}).get("sub_since") or 0,
         "floor": floor_of(cfg, coin), "listening": listen,
         "gaps": gaps["gaps"], "gap_sec": gaps["gap_sec"], "boot": gaps["boot"],
         "restart_in": gaps["restart_in"], "before_boot": gaps["before_boot"],
@@ -591,12 +609,19 @@ async def listening(coin: str) -> bool | None:
     dinleniyor (`ws_universe`, 600 sn'de bir yenilenir) — cevap ŞU ANIN cevabı.
     """
     from ..db import kv_get
+    try:                                            # önce kollektörün ŞU ANKİ abonelikleri (HIP-3'te dex üyeliği
+        from ..hl import collector as col           # yetmez: henüz abone olunmamış ticker "dinleniyor" sayılıyordu)
+        vc = getattr(col.LIVE, "valid_coins", None)
+        if vc:
+            return coin in vc
+    except Exception:                               # noqa: BLE001
+        pass
     if ":" in coin:
         from .. import assets
         from ..config import get_config
         return coin.split(":")[0] in assets.watched_dexes(get_config())
     u = await kv_get("ws_universe") or {}
-    coins = u.get("spot" if coin.startswith("@") else "crypto")
+    coins = u.get("spot" if is_spot_coin(coin) else "crypto")
     if not isinstance(coins, list):
         return None
     return coin in coins
@@ -658,11 +683,16 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
 
     listen = await listening(coin)
     empty = ""
-    if not rows:
-        empty = ("no_trades" if listen and rep.get("source") == "tape" else
-                 "below_floor" if listen else
-                 ("unknown" if listen is None else "not_listening"))
     floor = rep.get("floor") if "floor" in rep else floor_of(cfg, coin)
+    tape_src = rep.get("source") == "tape"
+    if not rows:
+        # Bant kopukken / pencere içinde dinlenmeye başlanmışken "işlem görülmedi" ölçüm değildir (inceleme 18.10:
+        # hacim rekoru mesajının altında "işlem görülmedi" yazıyordu); kayıt kapalı sınıfta "taban üstü yok" da değil.
+        empty = ("stream_gap" if tape_src and (rep.get("tape_unknown") or not rep.get("tape_full", True)) else
+                 "no_trades" if listen and tape_src else
+                 "not_listening" if listen is False else
+                 "unknown" if listen is None else
+                 "recording_off" if floor is None else "below_floor")
     return {
         "coin": coin, "symbol": rep["symbol"], "t0": t0, "t1": t1,
         "minutes": rep["minutes"],
@@ -673,6 +703,8 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
         # bir maker tarafı var, pencere toplamında hep ~%50 çıkıyordu (adres satırındaki taker % anlamlı, o duruyor).
         "n_addr": int(rep.get("n_addr") or len(rows)), "buy": rep["buy"], "sell": rep["sell"],
         "net": rep["buy"] - rep["sell"], "source": rep.get("source") or "fills",
+        "gap_sec": int(rep.get("gap_sec") or 0),
+        "partial": bool((tape_src and not rep.get("tape_full", True)) or (not tape_src and rep.get("gap_sec"))),
         "taker_pct": None,
         "top": head, "listening": listen, "floor": floor,
         "probed": n_probed, "probe_err": probe_err, "empty_reason": empty,
