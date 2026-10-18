@@ -285,7 +285,7 @@ def test_weekend_stock_rule():
             assert lo.big_gate(cfg, o(250_000, 600), now, "SOL") == "long"
             assert lo.big_gate(cfg, o(250_000, 120), now, "xyz:TOTAL2") == "small", "kriptoya bağlı HIP-3 hariç"
             assert lo.big_gate(cfg, o(300_000, 120), now, "xyz:BTC") == "small", "HIP-3 BTC: $20M tabanı"
-            assert lo.big_head(cfg, T, "weekend") == "🕐 📅 hafta sonu (ABD kapalı), kripto olmayan · plan ≥ $200K · süre < 24 sa"
+            assert lo.big_head(cfg, T, "weekend") == "🕐 📅 hafta sonu (ABD kapalı), kripto olmayan · plan ≥ $200K · süre &lt; 24 sa"
             assert lo.big_pre(cfg, 60, T, now) and not lo.big_pre(cfg, 60, T, None) and not lo.big_pre(cfg, 60, "SOL", now)
             # ilk dilim: 10 sa $300K emir, dilim ~$250 (< ana $1K tabanı) → yalnız 🕐 için sorulur
             t0 = now - 60

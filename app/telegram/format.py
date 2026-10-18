@@ -166,7 +166,7 @@ def _reasons_block(rows: list[dict], limit: int = 3) -> str:
         except json.JSONDecodeError:
             reasons = []
         if reasons:
-            lines.append(f"  └ {short(p['address'])}: {', '.join(reasons)}")
+            lines.append(f"  └ {short(p['address'])}: {esc(', '.join(reasons))}")
         if len(lines) >= limit:
             break
     return "\n".join(lines)
@@ -211,7 +211,7 @@ def new_big_position_alert(coin: str, p: dict, event: dict | None) -> str:
     except json.JSONDecodeError:
         reasons = []
     if reasons:
-        lines.append("  └ " + ", ".join(reasons))
+        lines.append("  └ " + esc(", ".join(reasons)))
     if event:
         hint = {"amc": "AMC", "bmo": "BMO"}.get(event.get("hour_hint") or "", "?")
         lines.append(f"📅 Dikkat: {event['date_et']} ({hint}) earnings var!")

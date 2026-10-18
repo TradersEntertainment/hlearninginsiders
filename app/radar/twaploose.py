@@ -923,7 +923,8 @@ def big_head(cfg, coin: str = "", rule: str = "ok") -> str:
     from ..telegram.format import usd
     if rule == "weekend":
         wmn, wmx = big_weekend_limits(cfg)
-        return (f"🕐 📅 hafta sonu (ABD kapalı), kripto olmayan · plan ≥ {usd(wmn)} · süre < "
+        # HTML mesaj notu: kaçışsız "<" Telegram'da 400 → bot düz metne düşer, link ve kalın kaybolur (kullanıcı 18.10)
+        return (f"🕐 📅 hafta sonu (ABD kapalı), kripto olmayan · plan ≥ {usd(wmn)} · süre &lt; "
                 + (f"{wmx / 60:g} sa" if wmx >= 60 and wmx % 60 == 0 else f"{wmx:g} dk"))
     mx = big_max_min(cfg)
     dur = f"{mx / 60:g} sa" if mx >= 60 and mx % 60 == 0 else f"{mx:g} dk"
