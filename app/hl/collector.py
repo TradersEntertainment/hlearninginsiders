@@ -82,6 +82,9 @@ class Collector:
         # down_since > 0 = şu an akış yok — süreç açılışından ilk aboneliğe kadar da.
         self.down_since: float = time.time()
         self.down_log: deque = deque(maxlen=64)
+        # Son WS mesajının anı (pong dahil). Yarı-açık bağlantı 90 sn'lik zaman aşımına kadar "bağlı" görünür:
+        # kopukluk son mesajdan başlar (📼 bant ve 🔔 açılış kapsamı o aralığı eksik sayar; inceleme 18.10).
+        self.last_msg_at: float = 0.0
         global LIVE
         LIVE = self
         self.crypto_dex_coins: set[str] = set()  # kripto dex coinleri (para:…) — fill tabanı ayrı
@@ -227,7 +230,7 @@ class Collector:
                 timeout=aiohttp.ClientWSTimeout(ws_close=10,
                                                 ws_receive=WS_RECEIVE_TIMEOUT)) as ws:
             self.connected = True
-            self.connected_since = time.time()
+            self.connected_since = self.last_msg_at = time.time()
             self.flow.clear()                 # eski bağlantının penceresi eksik olabilir
             self._ws = ws
             self.subscribed = set()
@@ -246,14 +249,15 @@ class Collector:
             resub_task = asyncio.create_task(self._resubscriber(ws))
             try:
                 async for msg in ws:
+                    self.last_msg_at = time.time()
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         await self._handle(msg.data)
                     elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                         break
             finally:
                 self.connected = False
-                if not self.down_since:
-                    self.down_since = time.time()
+                if not self.down_since:                 # son mesajdan beri akış yok (yarı-açıkta 90 sn öncesi)
+                    self.down_since = min(time.time(), self.last_msg_at or time.time())
                 self._ws = None
                 for fut in self._twap_waiters.values():
                     if not fut.done():

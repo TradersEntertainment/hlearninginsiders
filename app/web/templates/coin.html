@@ -163,7 +163,7 @@
           <td class="l">
             {%- for a, u in lv.owners %}✅ {{ m.addr(a, k, 6) }} {{ u|usd }}{% if not loop.last %} · {% endif %}{% endfor %}
             {%- if lv.owners %}{% if lv.unknown_usd >= 1000 %} · <span class="dim">bulunamayan {{ lv.unknown_usd|usd }}</span>{% endif %}
-            {%- else %}<span class="dim">sahip bulunamadı</span>{% endif %}
+            {%- else %}<span class="dim">{{ 'sahip bilinmiyor (açık emirler sorulamadı)' if book.owners_unknown else 'sahip bulunamadı' }}</span>{% endif %}
             {%- if lv.makers %}<br><span class="dim" title="Son 15 dk'da bu fiyatta bekleyen emri dolan adresler (dolan kısım). Kalan emrin sahibi oldukları ayrıca ölçülmedi, ✅ değilse.">dolan:</span>
               {% for a, u in lv.makers %}{{ m.addr(a, k, 6) }} {{ u|usd }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}
             {%- if lv.makers_gone %}<br><span class="dim" title="Son 15 dk'da burada emri doldu; açık emirleri okundu, bu kademede şu an emri yok — sahip değil">dolan, şu an emri yok:</span>
@@ -190,6 +190,7 @@
   <p class="kunye">🧾 Defter {{ book.age }} sn önce okundu · {{ book.cands }} aday adresin açık emirleri soruldu{% if book.failed %} ({{ book.failed }} okunamadı){% endif %}
     {%- if book.orders_ts %}, en eskisi {{ book.age + [0, book.ts - book.orders_ts]|max }} sn önce{% endif %}
     {%- if book.partial %} · {{ book.partial }} adayın emir listesi eksik (HL 100'de kesti, tamamı okunamadı — o adreslerde "emri yok" denemez){% endif %}
+    {%- if book.unverified %} · {{ book.unverified }} emir doğrulanamadı (sayılmadı){% endif %}
     {%- if book.err %} · ⚠️ {{ book.err|join(', ') }}{% endif %} · gruplu kademe birden çok emrin toplamıdır (HL arayüzündeki satır gibi).</p>
   {% elif book and book.err %}
   {{ m.empty(["Defter okunamadı (" ~ book.err|join(', ') ~ ") — sayfa birazdan yeniden dener."]) }}

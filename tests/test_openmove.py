@@ -520,7 +520,9 @@ def test_collector_hook():
             colmod.LIVE = real
         src = open(os.path.join(ROOT, "app/hl/collector.py"), encoding="utf-8").read()
         assert "self.down_log.append((self.down_since, time.time()))" in src
-        assert "if not self.down_since:\n                    self.down_since = time.time()" in src
+        # kopukluk son WS mesajından başlar (yarı-açık bağlantı 90 sn "bağlı" görünür; 📼 bant 2. inceleme 18.10)
+        assert ("if not self.down_since:                 # son mesajdan beri akış yok (yarı-açıkta 90 sn öncesi)\n"
+                "                    self.down_since = min(time.time(), self.last_msg_at or time.time())") in src
         print("✅ collector) işlem mesajı kancayı tid ile çağırır, tekrar teslim sayılmaz; kanca patlasa da"
               " akış sürer; kopukluk günlüğü")
     asyncio.run(run())

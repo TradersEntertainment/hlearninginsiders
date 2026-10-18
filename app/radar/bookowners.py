@@ -24,9 +24,14 @@ Sayfa görünce arka planda kurulur (kick), CACHE_SEC önbellek; adres başına 
     "hazırlanıyor" döngüsünde kalmaz.
   • Tazelik: emir önbelleği 60 sn; mesaj/sayfa kullanılan emir verisinin yaşını yazar; sahip tutarı kademeyi aşamaz.
   • Adaylar önce EN KALIN KADEMELERDE pasif dolumu görülenler; boş yerler kalan dolumcularla dolar.
-  • HL `frontendOpenOrders` bazı hesaplarda (HLP kasası: 3735 emirden 100'ü) 100'de keser; ≥ 100 gelirse sınırsız
-    `openOrders` ile tamamlanır (acctwatch.FRONT_CAP ile aynı yol). O da okunamazsa liste "kesik" sayılır, "emri
-    yok" denmez (`partial`). Önbellek ham yanıtı değil yalnız kitapta bekleyen emirlerin kısa kaydını tutar.
+  • HL `frontendOpenOrders` bazı hesaplarda (HLP alt hesapları: 3735 emirden 100'ü) TAM 100'de keser; 100 gelirse
+    sınırsız `openOrders` ile tamamlanır (acctwatch.FRONT_CAP ile aynı yol). O da okunamazsa liste "kesik" sayılır,
+    "emri yok" denmez (`partial`). Önbellek ham yanıtı değil yalnız emirlerin kısa kaydını tutar.
+  • 2. inceleme (18.10, canlı): `openOrders` tetikli emri (Stop / TP Market) BAYRAKSIZ verir. Tamamlamadan gelen ve
+    görünen kademeye düşen / büyük emir `orderStatus` (ağırlık 2) ile doğrulanır: açık ve tetiksiz değilse sahip
+    sayılmaz; doğrulanamayan da sayılmaz (`unverified`), o adreste "emri yok" da denmez.
+  • Açık emirler hiç sorulamadıysa (HL hız sınırı / hepsi okunamadı) kademe "sahip bilinmiyor" der, "bulunamadı"
+    değil; ertelenen sonuç kısa önbellekte (DEFER_CACHE) kalır.
   • Bilinen/bulunamayan kısım ADETLE (kova fiyatı × Σadet): gruplu satış kovasında hayalet "bulunamayan" çıkmaz.
   • "Dolan" adresin açık emirleri okunup o kademede emri yoksa ayrı yazılır ("dolan, şu an emri yok") — sahip sanılmaz.
   • Kapsam: l2Book her yönde 20 kademe verir; sonuç kapsadığı aralığı (fiyata %) taşır, dışı görünmez.
@@ -51,7 +56,10 @@ CAND_MAX = 10                # kurulum başına en çok sorulan aday
 ADDR_TTL = 60                # adresin açık emirleri bu kadar önbellekte (yaşı mesajda yazar)
 ADDR_TIMEOUT = 5.0           # tek adres sorgusu en çok
 BOOK_TIMEOUT = 4.0           # l2Book (tek deneme) en çok
-OWNERS_BUDGET = 8.0          # kurulumun başından sahip sorgularının bitmesi gereken an (sn) — /defter 10 sn bekler
+OWNERS_BUDGET = 7.0          # kurulumun başından sahip sorgularının bitmesi gereken an (sn) — /defter 10 sn bekler
+VERIFY_BUDGET = 8.5          # … tamamlamadan gelen emirlerin orderStatus doğrulaması bitmesi gereken an (sn)
+VERIFY_MAX = 8               # kurulum başına en çok doğrulanan emir
+DEFER_CACHE = 10             # HL hız sınırı yüzünden sahip sorulmayan sonuç bu kadar taze sayılır
 BUILD_TIMEOUT = 12.0         # kurulumun tamamı en çok (yedek emniyet)
 OPEN_ORDERS_CAP = 100        # HL frontendOpenOrders bazı hesaplarda bu sayıda keser → openOrders ile tamamla
 BIG_ORDER_MIN = 25_000       # "bilinen büyük emirler" listesi tabanı ($)
@@ -60,7 +68,9 @@ MAKER_MIN = 5_000            # adaylığa giren pasif dolum ($, son 15 dk)
 RESULTS: dict[str, tuple[int, dict]] = {}
 INFLIGHT: dict[str, asyncio.Future] = {}
 ADDR_ORDERS: dict[tuple[str, str], tuple[int, list, bool]] = {}   # (adres, dex) → (an, kısa emirler, kesik mi)
-STATS: dict = {"builds": 0, "asked": 0, "failed": 0, "errors": 0, "timeouts": 0, "deferred": 0, "partial": 0}
+OID_OK: dict[tuple[str, int], tuple[int, bool]] = {}               # (adres, oid) → (an, defterde bekleyen limit mi)
+STATS: dict = {"builds": 0, "asked": 0, "full": 0, "verified": 0, "failed": 0, "errors": 0, "timeouts": 0,
+               "deferred": 0, "partial": 0, "unverified": 0}
 
 
 def _levels(book) -> tuple[list[dict], list[dict]]:
@@ -87,9 +97,9 @@ def group_unit(px: float, sig: int = GROUP_SIG) -> float:
     return 10 ** (math.floor(math.log10(px)) - (sig - 1))
 
 
-def _compact(orders) -> list[tuple]:
-    """Açık emir yanıtı → kitapta bekleyen limit emirlerin kısa kaydı (coin, yön, px, adet, oid, reduce-only).
-    Tetikli / TP-SL emir (defterde değil) atlanır."""
+def _compact(orders, ext: bool = False) -> list[tuple]:
+    """Açık emir yanıtı → limit emirlerin kısa kaydı (coin, yön, px, adet, oid, reduce-only, ext). Tetikli / TP-SL
+    emir (defterde değil) atlanır. ext=True: `openOrders` tamamlaması — tetik bayrağı yok, doğrulanmadan sayılmaz."""
     out = []
     for o in orders or []:
         try:
@@ -101,13 +111,13 @@ def _compact(orders) -> list[tuple]:
             continue
         if px > 0 and sz > 0:
             out.append((str(o.get("coin") or ""), "bid" if o.get("side") == "B" else "ask", px, sz, o.get("oid"),
-                        bool(o.get("reduceOnly"))))
+                        bool(o.get("reduceOnly")), ext))
     return out
 
 
 def _for_coin(compact: list[tuple], coin: str) -> list[dict]:
-    return [{"side": sd, "px": px, "sz": sz, "usd": px * sz, "oid": oid, "ro": ro}
-            for c, sd, px, sz, oid, ro in compact if c == coin]
+    return [{"side": sd, "px": px, "sz": sz, "usd": px * sz, "oid": oid, "ro": ro, "ext": ext}
+            for c, sd, px, sz, oid, ro, ext in compact if c == coin]
 
 
 def parse_orders(orders, coin: str) -> list[dict]:
@@ -173,6 +183,8 @@ async def _candidates(coin: str, summ: dict, ranges: list[tuple[str, float, floa
 def _prune(t: int) -> None:
     for k in [k for k, v in ADDR_ORDERS.items() if t - v[0] >= ADDR_TTL]:
         ADDR_ORDERS.pop(k, None)
+    for k in [k for k, v in OID_OK.items() if t - v[0] >= ADDR_TTL]:
+        OID_OK.pop(k, None)
     if len(ADDR_ORDERS) > 3000:
         for k, _ in sorted(ADDR_ORDERS.items(), key=lambda kv: kv[1][0])[:500]:
             ADDR_ORDERS.pop(k, None)
@@ -182,8 +194,30 @@ async def _ask(client, typ: str, addr: str, dex: str):
     p = {"type": typ, "user": addr}
     if dex:
         p["dex"] = dex
-    STATS["asked"] += 1
+    STATS["asked" if typ == "frontendOpenOrders" else "full"] += 1
     return await asyncio.wait_for(client.info(p, retries=1, priority="low"), ADDR_TIMEOUT)
+
+
+async def _book_order(client, addr: str, oid) -> bool | None:
+    """orderStatus: emir defterde bekleyen tetiksiz limit emir mi (True/False); okunamazsa None. Önbellekli."""
+    hit = OID_OK.get((addr, oid))
+    if hit and now() - hit[0] < ADDR_TTL:
+        return hit[1]
+    STATS["verified"] += 1
+    try:
+        res = await asyncio.wait_for(client.info({"type": "orderStatus", "user": addr, "oid": oid}, retries=1,
+                                                 priority="low"), ADDR_TIMEOUT)
+    except Exception as e:                              # noqa: BLE001
+        log.debug("emir durumu %s/%s: %s", addr[:10], oid, e)
+        return None
+    if not isinstance(res, dict):
+        return None
+    od = res.get("order") or {}
+    o = od.get("order") or {}
+    ok = bool(res.get("status") == "order" and od.get("status") == "open" and not o.get("isTrigger")
+              and not o.get("isPositionTpsl"))
+    OID_OK[(addr, oid)] = (now(), ok)
+    return ok
 
 
 async def _orders_of(client, addr: str, dex: str) -> tuple[int, list, bool] | None:
@@ -202,7 +236,7 @@ async def _orders_of(client, addr: str, dex: str) -> tuple[int, list, bool] | No
         STATS["failed"] += 1
         return None
     compact, cut = _compact(res), False
-    if len(res) >= OPEN_ORDERS_CAP:
+    if len(res) == OPEN_ORDERS_CAP:                     # HL tam 100'de keser; 100'den çok gelen liste tamdır
         try:
             full = await _ask(client, "openOrders", addr, dex)
         except Exception as e:                          # noqa: BLE001
@@ -211,9 +245,10 @@ async def _orders_of(client, addr: str, dex: str) -> tuple[int, list, bool] | No
         if isinstance(full, list):
             seen = {o[4] for o in compact}
             trig = {o.get("oid") for o in res if isinstance(o, dict) and (o.get("isTrigger") or o.get("isPositionTpsl"))}
-            compact += [o for o in _compact(full) if o[4] not in seen and o[4] not in trig]
+            compact += [o for o in _compact(full, ext=True) if o[4] not in seen and o[4] not in trig]
         else:
             cut = True
+            STATS["partial"] += 1
     t = now()
     _prune(t)
     ADDR_ORDERS[(addr, dex)] = (t, compact, cut)
@@ -256,8 +291,8 @@ async def _book(client, coin: str, sig: int | None):
 
 def _empty(coin: str, err: list[str]) -> dict:
     return {"coin": coin, "ts": now(), "err": err, "raw": {"bid": [], "ask": []}, "grouped": {"bid": [], "ask": []},
-            "orders": [], "cands": 0, "asked": 0, "failed": 0, "partial": 0, "mid": None, "unit": 0.0, "unit_txt": "",
-            "depth": {}, "orders_ts": None}
+            "orders": [], "cands": 0, "asked": 0, "failed": 0, "partial": 0, "unverified": 0, "mid": None, "unit": 0.0,
+            "unit_txt": "", "depth": {}, "orders_ts": None, "deferred": False, "owners_unknown": False}
 
 
 async def build(client, coin: str) -> dict:
@@ -271,7 +306,7 @@ async def build(client, coin: str) -> dict:
     rb, ra = _levels(raw) if not isinstance(raw, BaseException) else ([], [])
     gb, ga = _levels(grp) if not isinstance(grp, BaseException) else ([], [])
     if not (rb or ra):
-        out["err"].append("defter okunamadı")
+        out["err"].append("tam fiyat defteri okunamadı" if (gb or ga) else "defter okunamadı")
     elif not (gb or ga):
         out["err"].append("gruplu defter okunamadı")
     mid = (rb[0]["px"] + ra[0]["px"]) / 2 if rb and ra else None
@@ -295,7 +330,8 @@ async def build(client, coin: str) -> dict:
     paused = float(getattr(client, "low_paused", lambda: 0.0)() or 0)
     if paused > 0:
         STATS["deferred"] += 1
-        out["err"].append(f"açık emirler sorulmadı (HL hız sınırı, {paused:.0f} sn sonra yeniden)")
+        out["deferred"] = True
+        out["err"].append("açık emirler sorulmadı (HL hız sınırı, birazdan yeniden)")
         cands = []
     else:
         cands = await _candidates(coin, summ, ranges)
@@ -313,7 +349,6 @@ async def build(client, coin: str) -> dict:
         stamps.append(ts)
         if partial:
             out["partial"] += 1
-            STATS["partial"] += 1
         else:
             read_ok.add(a)                              # tam liste: bu kademede emri yoksa gerçekten yok
         for o in _for_coin(lst, coin):
@@ -328,6 +363,35 @@ async def build(client, coin: str) -> dict:
             out["failed"] += len(pend)
             STATS["timeouts"] += len(pend)
             await asyncio.gather(*pend, return_exceptions=True)
+    # openOrders tamamlamasından gelen emir (tetik bayrağı yok): görünen kademeye düşen ya da büyük olan orderStatus ile
+    # doğrulanır; doğrulanamayan sahip sayılmaz ve o adreste "şu an emri yok" denmez.
+    ext = [o for o in orders if o.get("ext")]
+    if ext:
+        need = [o for o in ext if o["usd"] >= BIG_ORDER_MIN
+                or any(sd == o["side"] and lo <= o["px"] <= hi for sd, lo, hi in ranges)]
+        need.sort(key=lambda o: -o["usd"])
+        chk, rest = need[:VERIFY_MAX], need[VERIFY_MAX:]
+        verdict: dict[int, bool | None] = {}
+
+        async def ver(o):
+            async with sem:
+                verdict[id(o)] = await _book_order(client, o["addr"], o["oid"])
+        if chk:
+            vt = [asyncio.ensure_future(ver(o)) for o in chk]
+            left = max(0.3, VERIFY_BUDGET - (asyncio.get_running_loop().time() - t0))
+            _done, pend = await asyncio.wait(vt, timeout=left)
+            for tk in pend:
+                tk.cancel()
+            if pend:
+                await asyncio.gather(*pend, return_exceptions=True)
+        bad = [o for o in chk if verdict.get(id(o)) is None] + rest
+        out["unverified"] = len(bad)
+        STATS["unverified"] += len(bad)
+        for o in bad:
+            read_ok.discard(o["addr"])
+        keep = {id(o) for o in chk if verdict.get(id(o))}
+        orders = [o for o in orders if not o.get("ext") or id(o) in keep]
+    out["owners_unknown"] = bool(out.get("deferred") or (cands and out["failed"] >= len(cands)))
     out["orders_ts"] = min(stamps) if stamps else None
     for side in ("bid", "ask"):
         _attach(out["raw"][side], side, orders, summ, False, 0.0, read_ok)
@@ -364,7 +428,7 @@ def kick(client, coin: str) -> bool:
     if client is None or not coin:
         return False
     hit = RESULTS.get(coin)
-    if hit and now() - hit[0] < CACHE_SEC:
+    if hit and now() - hit[0] < (DEFER_CACHE if hit[1].get("deferred") else CACHE_SEC):
         return False
     if coin in INFLIGHT and not INFLIGHT[coin].done():
         return True
@@ -396,5 +460,7 @@ def diag_line() -> str:
             + (f" · ⚠️ {s['failed']} okunamadı" if s["failed"] else "")
             + (f" · {s['timeouts']} süre aştı" if s["timeouts"] else "")
             + (f" · {s['deferred']} kez HL hız sınırı yüzünden ertelendi" if s["deferred"] else "")
+            + (f" · {s['full']} tam liste (openOrders) · {s['verified']} emir doğrulandı" if s["full"] else "")
+            + (f" · {s['unverified']} emir doğrulanamadı" if s["unverified"] else "")
             + (f" · {s['partial']} liste kesik kaldı (tamamlanamadı)" if s["partial"] else "")
             + (f" · ⚠️ {s['errors']} hata" if s["errors"] else "") + f" · önbellekte {len(RESULTS)} coin")

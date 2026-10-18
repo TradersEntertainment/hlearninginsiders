@@ -19,6 +19,9 @@ Kararlar:
   • HL abonelikte (yeniden bağlanınca da) coinin son 30 işlemini yeniden yollar (inceleme 18.10, canlı ölçüldü):
     coin başına yüksek-su işareti + aynı saniyede tid (openmove._dup ile aynı) → hiçbir işlem iki kez sayılmaz.
   • Pencere: yalnız TAMAMI son 15 dk'da kalan kovalar sayılır (yarım dakika 30 sn kova) → kapsam 14,5–15 dk, asla fazla.
+  • 2. inceleme (18.10): açılıştan ÖNCEKİ işlem sayılmaz (abonelikte yollanan son 30 işlem "bot N dk önce başladı,
+    öncesi yok" etiketiyle çelişiyordu); restart etiketi açılış anından, sonraki kopukluk ayrıca yazılır; bağlı görünen
+    ama SILENT_SEC'tir mesaj almayan akış (yarı-açık, 45 sn'lik ping'e pong gelmiyor) şu an kopuk sayılır.
 """
 from __future__ import annotations
 
@@ -32,9 +35,11 @@ TOP_PER_BUCKET = 40          # kova başına en büyük işlem
 ADDR_CAP = 4000              # kova başına adres (BTC gibi coinlerde dakikada binlerce adres olabilir)
 MAKER_CAP = 3000             # kova başına (yön, fiyat, adres) pasif dolum kaydı
 COIN_CAP = 600               # en çok bu kadar coin (kollektör ~160 dinler)
+SILENT_SEC = 60              # bağlı ama bu kadar mesaj yok (ping 45 sn'de bir) → akış kopuk sayılır
+STARTUP_GRACE = 120          # açılış → ilk abonelik boşluğu "sonradan kopukluk" sayılmaz
 
 STARTED = int(time.time())
-STATS: dict = {"trades": 0, "errors": 0, "coins": 0, "dups": 0, "late": 0}
+STATS: dict = {"trades": 0, "errors": 0, "coins": 0, "dups": 0, "late": 0, "pre": 0}
 
 
 class _Bucket:
@@ -122,6 +127,9 @@ def observe(coin: str, aggr: str, buyer: str, seller: str, px: float, sz: float,
     usd = float(px) * float(sz)
     if usd <= 0 or not coin:
         return
+    if int(ts) < STARTED:                            # abonelikte yollanan açılış öncesi işlem: "öncesi yok" doğru kalsın
+        STATS["pre"] += 1
+        return
     if _dup(coin, int(ts), str(tid or "")):
         STATS["dups"] += 1
         return
@@ -172,6 +180,9 @@ def _gaps(lo: int, hi: int) -> tuple[list[list[int]], bool]:
         for a, b in list(getattr(live, "down_log", None) or ()):
             raw.append((int(a), int(b)))
         down = float(getattr(live, "down_since", 0) or 0)
+        last = float(getattr(live, "last_msg_at", 0) or 0)
+        if not down and getattr(live, "connected", False) and last and hi - last > SILENT_SEC:
+            down = last                                 # yarı-açık: bağlı görünüyor ama mesaj yok
         if down:
             down_now = True
             raw.append((int(down), max(hi, int(down))))
@@ -215,6 +226,9 @@ def summary(coin: str, now_ts: int | None = None, window: int = WINDOW, top: int
     gaps, down_now = _gaps(start, t)
     gap_sec = sum(b - a for a, b in gaps)
     restart = STARTED > start
+    since_start = max(0, t - STARTED)
+    # açılıştan sonraki kopukluk (açılış → ilk abonelik boşluğu hariç)
+    later = sum(min(b, t) - max(a, STARTED) for a, b in gaps if b > STARTED and a > STARTED + STARTUP_GRACE)
     return {
         "coin": coin, "n": sum(b.n for b in q), "buy": buy, "sell": sell, "net": buy - sell,
         "twap": sum(b.twap for b in q), "n_addr": len(addrs),
@@ -225,7 +239,8 @@ def summary(coin: str, now_ts: int | None = None, window: int = WINDOW, top: int
         "makers": makers,                       # (yön, px, adres) → $ — bookowners
         "other": sum(b.other_addr for b in q),
         "window": window, "span": span, "gaps": gaps, "gap_sec": gap_sec,
-        "covered_sec": max(0, span - gap_sec), "restart": restart,
+        "covered_sec": max(0, span - gap_sec), "restart": restart, "since_start": since_start,
+        "later_gap": later if restart else gap_sec,
         "live_down": down_now, "full": not gaps,
         "first_ts": q[0].minute * BUCKET if q else None,
     }
@@ -240,15 +255,19 @@ def cover(summ: dict | None) -> dict:
     if s.get("live_down"):
         return {"label": f"son {win // 60} dk", "warn": "canlı akış şu an kopuk — bu aralık bilinmiyor",
                 "unknown": True}
+    gap_txt = lambda g: f"{g} sn" if g < 120 else f"{g // 60} dk"   # noqa: E731
     if s.get("restart"):
-        mins = max(1, int(s.get("covered_sec") or 0) // 60)
-        return {"label": f"son {mins} dk", "warn": f"bot {mins} dk önce yeniden başladı, öncesi bantta yok",
-                "unknown": False}
+        since = int(s.get("since_start") if s.get("since_start") is not None else (s.get("covered_sec") or 0))
+        ago = f"{since // 60} dk" if since >= 60 else f"{since} sn"
+        warn = f"bot {ago} önce yeniden başladı, öncesi bantta yok"
+        later = int(s.get("later_gap") or 0)
+        if later > 0:
+            warn += f"; canlı akış ayrıca {gap_txt(later)} kopuktu, o süre eksik olabilir"
+        return {"label": f"son {max(1, since // 60)} dk", "warn": warn, "unknown": False}   # uyarıyla aynı ölçü
     gap = int(s.get("gap_sec") or 0)
     if gap > 0:
-        g = f"{gap} sn" if gap < 120 else f"{gap // 60} dk"
-        return {"label": f"son {win // 60} dk", "warn": f"canlı akış bu aralıkta {g} kopuktu, o süre eksik olabilir",
-                "unknown": False}
+        return {"label": f"son {win // 60} dk",
+                "warn": f"canlı akış bu aralıkta {gap_txt(gap)} kopuktu, o süre eksik olabilir", "unknown": False}
     return {"label": f"son {max(1, -(-span // 60))} dk", "warn": "", "unknown": False}
 
 
@@ -268,4 +287,5 @@ def diag_line() -> str:
             f" · {mem:,} kayıt bellekte"
             + (f" · {STATS['dups']:,} yeniden yollanan işlem atıldı" if STATS["dups"] else "")
             + (f" · {STATS['late']:,} geç işlem sayılmadı" if STATS["late"] else "")
+            + (f" · {STATS['pre']:,} açılış öncesi işlem sayılmadı" if STATS["pre"] else "")
             + (f" · ⚠️ {STATS['errors']} hata" if STATS["errors"] else ""))

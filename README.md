@@ -1572,8 +1572,9 @@ sorarak olmalı". Her coin sayfasının (`/t/PUMP`, hisse ve kripto) en üstünd
   gösterir. Bellek sınırlı: işlemler tek tek değil 30 sn'lik kovalarda tutulur (kova başına adres / en büyük işlem /
   pasif dolum tavanı; tavanı aşan "diğer"e sayılır, toplamlar doğru); yalnız tamamı pencerede kalan kova sayılır
   (kapsam 14,5–15 dk, asla fazla). HL yeniden bağlanınca coinin son 30 işlemini yeniden yollar: işlem kimliğiyle
-  süzülür, hiçbiri iki kez sayılmaz. Kapsama ölçülür: restart bandı sıfırlar ("bot N dk önce yeniden başladı"), canlı
-  akışın kopuk kaldığı süre yazılır ("o süre eksik olabilir"), akış şu an kopuksa "işlem görülmedi" değil
+  süzülür, hiçbiri iki kez sayılmaz. Kapsama ölçülür: restart bandı sıfırlar ("bot N dk önce yeniden başladı";
+  açılıştan önceki işlemler sayılmaz), canlı akışın kopuk kaldığı süre yazılır ("o süre eksik olabilir"; kopukluk son
+  mesajdan başlar), akış şu an kopuksa ya da bağlı görünüp 60 sn'dir mesaj almıyorsa "işlem görülmedi" değil
   **bilinmiyor** yazılır. Coin canlı akışta dinlenmiyorsa (kripto: hacimce ilk `CRYPTO_WATCH_TOP`, spot:
   `SPOT_WATCH_TOP`) bunu söyler.
 - **🧱 En kalın emirler ve sahipleri** (`app/radar/bookowners.py`): iki görünüm — **HL arayüzü gibi gruplu**
@@ -1586,8 +1587,11 @@ sorarak olmalı". Her coin sayfasının (`/t/PUMP`, hisse ve kripto) en üstünd
   `frontendOpenOrders`'ı (ağırlık 20, düşük şerit, adres başına 60 sn önbellek; mesaj ve sayfa emir verisinin yaşını
   yazar) sorulur, kademeye denk gelen emir ✅ ile yazılır. Kademenin bulunamayan kısmı adetle hesaplanıp ayrıca yazılır;
   ≥ $25K bulunan emirler ayrı listede. "Dolan" adresin açık emirleri okunup o kademede emri yoksa "dolan, şu an emri
-  yok" diye ayrı yazılır (sahip sanılmasın). `frontendOpenOrders` bazı hesaplarda (HLP kasası) 100'de keser: 100
-  gelirse sınırsız `openOrders` ile tamamlanır, o da okunamazsa kesik listede "emri yok" denmez. Sayfa açılınca arka planda kurulur (30 sn önbellek; hazır değilse sayfa 10 sn'de yenilenir). Sahip sorguları
+  yok" diye ayrı yazılır (sahip sanılmasın). `frontendOpenOrders` bazı hesaplarda (HLP alt hesapları) tam 100'de keser:
+  100 gelirse sınırsız `openOrders` ile tamamlanır, o da okunamazsa kesik listede "emri yok" denmez. `openOrders`
+  tetikli emri (Stop / TP) bayraksız verdiği için tamamlamadan gelip görünen kademeye düşen ya da büyük olan emir
+  `orderStatus` ile doğrulanır; doğrulanamayan sahip sayılmaz. Açık emirler hiç sorulamadıysa (HL hız sınırı / hepsi
+  okunamadı) kademe "sahip bilinmiyor" der, "bulunamadı" değil. Sayfa açılınca arka planda kurulur (30 sn önbellek; hazır değilse sayfa 10 sn'de yenilenir). Sahip sorguları
   süre sınırlıdır (bitmeyen aday "okunamadı" sayılır, okunmuş defter atılmaz); düşük şerit 429 sonrası duraklıyken
   adaylar sorulmaz ("ertelendi"). Hisse sayfalarında duvar radarının kayıtları da bu panelde.
 - **📋 TWAP emirleri**: bu coinin süren ve geçmiş TWAP'ları (eskiden sayfanın altındaydı).

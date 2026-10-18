@@ -25,6 +25,14 @@ Pinlenenler:
     bulunamayan kısım adetle; sahip tutarı kademeyi aşmaz; "dolan, şu an emri yok" ayrı; süresi geçen önbellek atılır
   • mesaj: gruplu okunamazsa ilk satır tam fiyattan; "%-0.00" / "+$0" / "7.35e-05" yazılmaz; kapsam ve emir yaşı dipnotta
   • /defter UBTC (yalnız spotta olan token) → USDC çifti
+
+2. inceleme (18.10, yeniden üretildi) — Pinlenenler:
+  • açılıştan önceki işlem (abonelikte yollanan son 30) sayılmaz; restart etiketi açılış anından, sonraki kopukluk ayrıca
+  • bağlı görünen ama SILENT_SEC'tir mesaj almayan akış şu an kopuk (bilinmiyor); kollektör kopukluğu son mesajdan başlatır
+  • openOrders tamamlaması tetikli emri bayraksız verir: görünen/büyük emir orderStatus ile doğrulanır, doğrulanamayan
+    sayılmaz; tamamlama yalnız tam 100'de; hız sınırında / hepsi okunamayınca "sahip bilinmiyor"; ertelenen sonuç
+    kısa önbellekte; tam fiyat düşüp gruplu gelince "tam fiyat defteri okunamadı"; /tani sayaçları şişmez
+  • mesaj: küçük kapsam "%0.0" yazmaz; defter yoksa "okundu" denmez; kırpma boş başlık bırakmaz, ≤ BOOK_MSG_MAX
 """
 import asyncio
 import os
@@ -165,6 +173,31 @@ def test_window_and_coverage():
         assert s["live_down"] and tape.cover(s)["unknown"] and "şu an kopuk" in tape.cover(s)["warn"]
         msg = fmt.book_owners("Z", None, {**s, "n": 0}, listened=True)
         assert "⏱ son 15 dk bilinmiyor: canlı akış şu an kopuk" in msg and "işlem görülmedi" not in msg, msg
+        # 2. inceleme: yarı-açık bağlantı — bağlı görünüyor ama SILENT_SEC'tir mesaj yok → şu an kopuk
+        Live.down_since, Live.down_log = 0.0, []
+        Live.connected, Live.last_msg_at = True, float(t - tape.SILENT_SEC - 5)
+        s = tape.summary("Z", t)
+        assert s["live_down"] and s["gaps"][-1][0] == t - tape.SILENT_SEC - 5, s["gaps"]
+        Live.last_msg_at = float(t - 10)
+        assert not tape.summary("Z", t)["live_down"]
+        # 2. inceleme: restart + sonradan kopukluk → etiket açılıştan, kopukluk ayrıca yazılır
+        tape.STARTED = t - 600
+        Live.down_log = [(t - 600, t - 597), (t - 300, t - 60)]            # açılış → abonelik; 4 dk kopukluk
+        c = tape.cover(tape.summary("Z", t))
+        assert c["label"] == "son 10 dk" and "bot 10 dk önce yeniden başladı" in c["warn"], c
+        assert "canlı akış ayrıca 4 dk kopuktu" in c["warn"], c
+        Live.down_log = [(t - 600, t - 597)]
+        c = tape.cover(tape.summary("Z", t))
+        assert c["warn"] == "bot 10 dk önce yeniden başladı, öncesi bantta yok", c
+        # 2. inceleme: açılıştan önceki işlem (abonelikte yollanan son 30) sayılmaz
+        tape.REG.clear()
+        tape.HWM.clear()
+        pre0 = tape.STATS["pre"]
+        for i in range(30):
+            tape.observe("Z", "B", B, S, 1.0, 10, t - 900 + i * 10, tid=f"p{i}")   # t-900 … t-610: açılıştan önce
+        tape.observe("Z", "B", B, S, 1.0, 10, t - 30, tid="new")
+        s = tape.summary("Z", t)
+        assert s["n"] == 1 and tape.STATS["pre"] - pre0 == 30 and "açılış öncesi işlem sayılmadı" in tape.diag_line()
     print("✅ pencere/kapsam) asla 15 dk'dan uzun değil; geç işlem yanlış kovaya yazılmaz; restart, kopukluk ve"
           " şu an kopuk (bilinmiyor) yazılır")
 
@@ -175,15 +208,20 @@ def _book(levels_bid, levels_ask):
 
 
 class _Cli:
-    def __init__(self, orders=None, fail=(), slow=(), paused=0.0, grouped_fails=False, full=None):
+    def __init__(self, orders=None, fail=(), slow=(), paused=0.0, grouped_fails=False, full=None, ostat=None,
+                 raw_fails=False, ostat_fail=False):
         self.orders, self.fail, self.slow, self.calls = orders or {}, set(fail), set(slow), []
         self.paused, self.grouped_fails, self.full = paused, grouped_fails, full or {}
+        self.ostat, self.raw_fails = ostat or {}, raw_fails      # oid → (açık mı, tetikli mi)
+        self.ostat_fail = ostat_fail
 
     def low_paused(self):
         return self.paused
 
     async def l2_book(self, coin, n_sig_figs=None, retries=4):
         assert retries == 1, "kullanıcı bekleyen yol: 429 tekrarları süreyi aşmasın"
+        if not n_sig_figs and self.raw_fails:
+            raise RuntimeError("429")
         if n_sig_figs:
             if self.grouped_fails:
                 raise RuntimeError("429")
@@ -192,7 +230,17 @@ class _Cli:
                      [(0.004119, 15_000, 2), (0.004131, 87_000, 14)])
 
     async def info(self, p, retries=4, priority=None, stats=None):
-        assert p["type"] in ("frontendOpenOrders", "openOrders") and priority == "low" and retries == 1, p
+        assert p["type"] in ("frontendOpenOrders", "openOrders", "orderStatus") and priority == "low" and retries == 1, p
+        if p["type"] == "orderStatus":
+            self.calls.append(("status", p["oid"]))
+            if self.ostat_fail:
+                raise RuntimeError("429")
+            if p["oid"] not in self.ostat:
+                return {"status": "unknownOid"}
+            op, trig = self.ostat[p["oid"]]
+            return {"status": "order", "order": {"order": {"oid": p["oid"], "isTrigger": trig,
+                                                           "orderType": "Stop Market" if trig else "Limit"},
+                                                 "status": "open" if op else "canceled"}}
         if p["type"] == "openOrders":                       # sınırsız liste (frontendOpenOrders 100'de kesince)
             self.calls.append(("full", p["user"]))
             if p["user"] not in self.full:
@@ -209,6 +257,7 @@ class _Cli:
 def _reset_bo():
     bo.RESULTS.clear()
     bo.ADDR_ORDERS.clear()
+    bo.OID_OK.clear()
     bo.INFLIGHT.clear()
 
 
@@ -297,7 +346,14 @@ def test_book_owners_review_fixes():
         # (2) düşük şerit duraklı: aday sorulmaz, nedeni yazılır, defter yine var
         cli = _Cli(paused=42.0)
         r = await bo.build(cli, "PUMP")
-        assert not cli.calls and r["cands"] == 0 and r["raw"]["bid"] and "HL hız sınırı, 42 sn" in r["err"][0], r["err"]
+        assert not cli.calls and r["cands"] == 0 and r["raw"]["bid"] and r["err"] == [
+            "açık emirler sorulmadı (HL hız sınırı, birazdan yeniden)"] and r["owners_unknown"] and r["deferred"], r
+        l2 = fmt.book_owners("PUMP", {**r, "age": 1}, tape.summary("PUMP"), listened=True).split("\n")[1]
+        assert "sahip bilinmiyor (açık emirler sorulamadı)" in l2 and "bulunamadı" not in l2, l2
+        bo.RESULTS["PUMP"] = (dbm.now() - bo.DEFER_CACHE - 1, r)   # ertelenen sonuç kısa önbellekte: yeniden kurulur
+        assert bo.kick(_Cli(), "PUMP")
+        await asyncio.sleep(0.05)
+        _reset_bo()
         # (3) kurulum düşerse hata sonucu yazılır → sayfa "hazırlanıyor" döngüsünde kalmaz
         _reset_bo()
         old_b = bo.build
@@ -346,8 +402,37 @@ def test_book_owners_review_fixes():
         cli = _Cli({W: front, B: []}, full={W: full})
         r = await bo.build(cli, "PUMP")
         raw0 = next(lv for lv in r["raw"]["bid"] if lv["px"] == 0.0041)
-        assert r["partial"] == 0 and raw0["owners"] == [(W, 200_000.0)], (r["partial"], raw0["owners"])
-        assert all(len(x) == 6 for x in bo.ADDR_ORDERS[(W, "")][1]), "önbellekte ham yanıt değil kısa kayıt"
+        # tamamlamadan gelen 555 HL'de bilinmiyor (unknownOid: doldu/iptal) → sahip değil; kesin cevap, "doğrulanamadı" değil
+        assert r["partial"] == 0 and r["unverified"] == 0 and raw0["owners"] == [], (r["partial"], r["unverified"], raw0)
+        assert W in [a for a, _ in raw0["makers_gone"]] and ("status", 555) in cli.calls
+        assert all(len(x) == 7 for x in bo.ADDR_ORDERS[(W, "")][1]), "önbellekte ham yanıt değil kısa kayıt"
+        # (5b) tamamlamadan gelen emir orderStatus ile doğrulanır: açık limit ✅; tetikli (Stop, bayraksız gelir) sayılmaz
+        _reset_bo()
+        full2 = full + [{"coin": "PUMP", "side": "B", "limitPx": "0.0041", "sz": str(900_000 / 0.0041), "oid": 556}]
+        cli = _Cli({W: front, B: []}, full={W: full2}, ostat={555: (True, False), 556: (True, True)})
+        r = await bo.build(cli, "PUMP")
+        raw0 = next(lv for lv in r["raw"]["bid"] if lv["px"] == 0.0041)
+        assert raw0["owners"] == [(W, 200_000.0)] and r["unverified"] == 0, (raw0["owners"], r["unverified"])
+        assert ("status", 555) in cli.calls and ("status", 556) in cli.calls and 556 not in [o["oid"] for o in r["orders"]]
+        # orderStatus okunamazsa: sayılmaz, "doğrulanamadı" yazılır, o adreste "şu an emri yok" denmez
+        _reset_bo()
+        cli = _Cli({W: front, B: []}, full={W: full}, ostat_fail=True)
+        r = await bo.build(cli, "PUMP")
+        raw0 = next(lv for lv in r["raw"]["bid"] if lv["px"] == 0.0041)
+        assert r["unverified"] == 1 and raw0["owners"] == [] and W in [a for a, _ in raw0["makers"]], (r["unverified"], raw0)
+        assert "1 emir doğrulanamadı (sayılmadı)" in fmt.book_owners("PUMP", {**r, "age": 1}, tape.summary("PUMP"))
+        # (5c) 100'den çok gelen liste tamdır: openOrders sorulmaz
+        _reset_bo()
+        cli = _Cli({W: many + many[:50]})
+        r = await bo.build(cli, "PUMP")
+        assert ("full", W) not in cli.calls and r["partial"] == 0, cli.calls
+        # (5d) /tani sayaçları: önbellekten okunan kesik liste yeniden sayılmaz; openOrders "adres" sayılmaz
+        _reset_bo()
+        st0 = dict(bo.STATS)
+        cli = _Cli({W: many}, fail=[])
+        await bo.build(cli, "PUMP")
+        await bo.build(cli, "PUMP")
+        assert bo.STATS["partial"] - st0["partial"] == 1 and bo.STATS["full"] - st0["full"] == 1, bo.STATS
         # (6) gruplu satış kovası: emir fiyatı kova fiyatından düşük → bulunamayan adetle (hayalet yok)
         lv = {"px": 0.00417, "sz": 1000.0, "usd": 4.17, "n": 1}
         bo._attach([lv], "ask", [{"side": "ask", "px": 0.004161, "sz": 1000.0, "usd": 4.161, "addr": S}],
@@ -362,6 +447,15 @@ def test_book_owners_review_fixes():
         bo.ADDR_ORDERS[("0xold", "")] = (t - 61, [])
         await bo._orders_of(_Cli(), S, "")
         assert ("0xold", "") not in bo.ADDR_ORDERS and (S, "") in bo.ADDR_ORDERS
+        # (8b) tam fiyat düştü, gruplu geldi: "defter okunamadı" denmez
+        _reset_bo()
+        r = await bo.build(_Cli(raw_fails=True), "PUMP")
+        assert r["err"] == ["tam fiyat defteri okunamadı"] and r["grouped"]["bid"], r["err"]
+        # (8c) hepsi okunamadı → sahip bilinmiyor
+        _reset_bo()
+        tape.observe("PUMP", "A", B, M, 0.0041, 1_000_000, t - 5, tid="x1")
+        r = await bo.build(_Cli(fail=[B, M, W, S]), "PUMP")
+        assert r["cands"] and r["failed"] == r["cands"] and r["owners_unknown"], r
         # (8) gruplu okunamadı: hata yazılır, mesajın ilk satırı tam fiyattan
         _reset_bo()
         r = await bo.build(_Cli(grouped_fails=True), "PUMP")
@@ -412,6 +506,13 @@ def test_defter_message():
     assert fmt._sgn_usd(0.3) == "$0" and fmt._sgn_usd(-0.3) == "$0" and fmt._sgn_usd(-4000) == "-$4K"
     assert fmt.px5(0.0000735) == "0.0000735" and fmt.px5(0.004117) == "0.004117" and fmt.px5(97123.4) == "97,123"
     assert fmt.px5(0.00012345) == "0.00012345" and "e-" not in fmt.px5(1.2e-7)
+    # 2. inceleme: dar kapsam (BTC tam fiyat ±%0,03) "%0.0" yazmaz; defter yoksa "okundu" denmez
+    assert fmt._reach_txt({"depth": {"reach": {"raw": (-0.0253, 0.024), "grouped": (None, None)}}}) == \
+        "fiyatın %0.03 altı – %0.02 üstü"
+    assert "%0.01'den az" in fmt._reach_txt({"depth": {"reach": {"grouped": (-0.004, 2.0)}}})
+    nob = fmt.book_owners("PUMP", {"err": ["defter okunamadı"], "grouped": {"bid": [], "ask": []}, "raw": {},
+                                   "cands": 0, "age": 3}, {"n": 0, "window": 900, "span": 900}, listened=True)
+    assert "3 sn önce denendi" in nob and "okundu" not in nob, nob
     # uzun ayrıntı (BTC gibi, 4973 karakter görüldü 18.10): mesaj tek parça kalır, ilk 4 satır kırpılmaz
     addrs = [f"0x{i:040x}" for i in range(1, 40)]
     lv = lambda p: {"px": p, "sz": 1.0, "usd": 9e6, "n": 300, "owners": [(a, 1e5) for a in addrs[:3]],   # noqa: E731
@@ -426,6 +527,16 @@ def test_defter_message():
              "trades": [{"usd": 1e5, "side": "buy", "twap": False, "taker": a} for a in addrs[22:26]]}
     tl = fmt.book_owners("BTC", huge, big_s, listened=True, name="BTC")
     assert len(tl) <= fmt.BOOK_MSG_MAX and "satırı sığmadı: sitede tamamı" in tl and tl.endswith("</i>"), len(tl)
+    # kırpma altı boş bölüm başlığı bırakmaz (2. inceleme: 64 birleşimin 7'sinde kalıyordu)
+    for nb in range(1, 5):
+        for ng in range(0, 4):
+            hb = {**huge, "orders": [], "raw": {"bid": [], "ask": []},
+                  "grouped": {"bid": [{**lv(81_000.0 - i * 100), "makers_gone": [(a, 1e3) for a in addrs[6:6 + ng]]}
+                                      for i in range(nb)], "ask": [lv(81_200.0)]}}
+            m = fmt.book_owners("BTC", hb, {**big_s, "trades": []}, listened=True).split("\n")
+            body = [x for x in m if x and not x.startswith("<i>")]
+            assert not body[-1].startswith(("<b>🟢 Alış kademeleri", "<b>🔴 Satış kademeleri")), (nb, ng, body[-1])
+            assert len("\n".join(m)) <= fmt.BOOK_MSG_MAX
     assert tl.split("\n")[3].startswith("👥 en çok alan") and tl.count("<b>") == tl.count("</b>")
     assert len(fmt.book_owners("BTC", huge, big_s, listened=True)) <= 4000
     print("✅ /defter) ilk 4 satır: en kalın kademe · sahipler · son 15 dk (kapsamıyla) · en çok alan/satan; ölçülü;"
@@ -474,6 +585,7 @@ def test_wiring():
     src = lambda p: open(os.path.join(ROOT, p), encoding="utf-8").read()   # noqa: E731
     col = src("app/hl/collector.py")
     assert "tape.observe(coin, aggr, buyer, seller, px, sz, ts, zero, tid)" in col
+    assert "self.last_msg_at = time.time()" in col and "min(time.time(), self.last_msg_at or time.time())" in col
     bot = src("app/telegram/bot.py")
     assert bot.count("await self._cmd_defter(cmd, args, chat_id)") == 2 and 'c in ("defter", "kim")' in bot
     assert 'c.endswith("defter")' in bot
