@@ -351,7 +351,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.debug("propr listesi yüklenemedi", exc_info=True)
 
-    # Spot çiftlerinin okunur adları (@107 → PURR/USDC): spot evreni yenilenene
+    # Spot çiftlerinin okunur adları (@107 → HYPE/USDC): spot evreni yenilenene
     # kadar kv'deki son liste geçerli — mesajlar ham '@272' yazmasın
     try:
         n_sp = await _assets.load_spot_names()

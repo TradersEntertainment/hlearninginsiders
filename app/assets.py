@@ -131,7 +131,7 @@ def is_spot(coin_or_symbol: str) -> bool:
 
 
 def label(coin: str) -> str:
-    """GÖSTERİM adı — kimlik DEĞİL. Spot '@107' → 'PURR/USDC', HIP-3
+    """GÖSTERİM adı — kimlik DEĞİL. Spot '@107' → 'HYPE/USDC', HIP-3
     'para:UANSEM' → 'UANSEM', ana dex 'INJ' → 'INJ'. Ad henüz gelmediyse ham
     kimlik döner (eski davranış; mesaj yine gider). Büyük harfe ÇEVİRMEZ:
     HL'den gelen adlar zaten doğru biçimde."""
@@ -142,7 +142,7 @@ def label(coin: str) -> str:
 
 
 def spot_coin_of(name: str) -> str:
-    """Ters arama: 'PURR/USDC' → '@107'. Bulunamazsa boş — çağıran ham girdiyle
+    """Ters arama: 'HYPE/USDC' → '@107'. Bulunamazsa boş — çağıran ham girdiyle
     devam eder ('/twap PURR/USDC' yazan kullanıcı için)."""
     s = (name or "").strip().upper()
     if not s:

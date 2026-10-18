@@ -113,7 +113,7 @@ def _stale_acct(ts) -> bool:
 
 
 templates.env.globals["stale_acct"] = _stale_acct
-# Spot çiftinin okunur adı ('@107' → 'PURR/USDC'): tek kaynak assets.SPOT_NAMES,
+# Spot çiftinin okunur adı ('@107' → 'HYPE/USDC'): tek kaynak assets.SPOT_NAMES,
 # şablonlar da oradan okusun — ham borsa kimliği kullanıcıya hiçbir şey demiyor.
 templates.env.globals["coin_label"] = assets.label
 templates.env.globals["is_spot"] = assets.is_spot

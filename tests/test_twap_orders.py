@@ -161,6 +161,44 @@ def test_collector_spot_universe():
     asyncio.run(run())
 
 
+def test_spot_universe_maps_volume_by_pair_name():
+    """Kullanıcı 18.10: 0x4d47… HYPE spot TWAP'ı gelmedi (UZEC ve NEAR geldi). Sebep: spotMetaAndAssetCtxs'te çift
+    listesinde silinmiş çiftlerin boşlukları var (@71 yok), bağlam listesinde yok; hacim SIRAYLA eşlendiği için @71'den
+    sonra hepsi kayıktı → HYPE/USDC (@107) hacmi 0 okunup dinleme listesine girmiyordu, UZEC $14M yerine $55K.
+    Gerçek şekil: bağlamda `coin` alanı var → ada göre eşlenir. Eski (kayık) önbellek sürüm farkıyla geçersiz."""
+    async def run():
+        from app.hl.universe import SPOT_KV, top_spot_coins
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "sp2.db"))
+        # eski sürümün kayık önbelleği (v yok): yeniden kurulmalı
+        await dbm.kv_set(SPOT_KV, {"coins": ["@73"], "names": {"@73": "X/USDC"}, "vols": {"@73": 1.0},
+                                   "want": 50, "ts": dbm.now()})
+
+        class Cli:
+            async def spot_meta_and_ctxs(self):
+                toks = [{"name": n, "index": i} for i, n in enumerate(("PURR", "USDC", "HYPE", "UZEC", "JUNK"))]
+                toks.append({"name": "ONEAR", "index": 9})            # token listesinde de boşluk (5–8 yok)
+                uni = [{"name": "PURR/USDC", "tokens": [0, 1], "index": 0},
+                       {"name": "@70", "tokens": [4, 1], "index": 70},
+                       # @71 silinmiş: çift listesinde YOK, bağlamda var
+                       {"name": "@107", "tokens": [2, 1], "index": 107},
+                       {"name": "@272", "tokens": [3, 1], "index": 272},
+                       {"name": "@496", "tokens": [9, 1], "index": 496}]
+                ctxs = [{"coin": "PURR/USDC", "dayNtlVlm": "500000"}, {"coin": "@70", "dayNtlVlm": "10"},
+                        {"coin": "@71", "dayNtlVlm": "0"}, {"coin": "@107", "dayNtlVlm": "36284839"},
+                        {"coin": "@272", "dayNtlVlm": "14408935"}, {"coin": "@496", "dayNtlVlm": "1700000"}]
+                return [{"tokens": toks, "universe": uni}, ctxs]
+        coins, names, vols = await top_spot_coins(Cli(), 4)
+        assert coins == ["@107", "@272", "@496", "PURR/USDC"], coins
+        assert names["@496"] == "ONEAR/USDC", "token adı numarasıyla (konumla değil)"
+        assert names["@107"] == "HYPE/USDC" and names["@272"] == "UZEC/USDC", names
+        assert vols["@107"] == 36_284_839.0 and vols["@272"] == 14_408_935.0, vols
+        assert (await dbm.kv_get(SPOT_KV))["v"] >= 2
+        from app.radar import twaplive
+        assert (await twaplive.volumes())["@272"][0] == 14_408_935.0, "TWAP kapısı doğru spot hacmini görür"
+    asyncio.run(run())
+    print("✅ spot evreni) hacim çift ADIYLA, token adı NUMARASIYLA eşlenir (boşluklar kaydırmaz); eski önbellek yenilenir")
+
+
 def test_coin_page_panel():
     """Kullanıcı: "her hissenin ve kriptonun sayfasına girdiğimde geçmiş tüm
     twapları ve canlı tüm twapları görebileyim." Panel iki kaynağı birleştirir:

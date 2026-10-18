@@ -361,7 +361,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
     "crypto_liq_show_usd": {"type": "float", "label": "Asgari pozisyon — SAYFA ($)", "group": "Kripto liq",
                             "desc": "/sembol cevabında ve grafikte TEK TEK yazılan pozisyonun alt sınırı (kullanıcı kuralı $200K). Bildirim eşiğinden düşük tutulur: kanalda gürültü olan pozisyon, sorulduğunda bağlamdır. Bildirim eşiğinin üstüne çıkamaz"},
     "spot_enabled": {"type": "bool", "label": "Spot piyasaları dinle", "group": "Spot",
-                     "desc": "HL spot çiftlerini (@107 = PURR/USDC…) WS'te dinler. Spot'ta pozisyon, likidasyon ve funding YOKTUR: bu coinler yalnız TWAP dilimleri ve 'ne oldu' kaydı için dinlenir, ana kanala alarm üretmezler"},
+                     "desc": "HL spot çiftlerini (@107 = HYPE/USDC…) WS'te dinler. Spot'ta pozisyon, likidasyon ve funding YOKTUR: bu coinler yalnız TWAP dilimleri ve 'ne oldu' kaydı için dinlenir, ana kanala alarm üretmezler"},
     "spot_watch_top": {"type": "int", "label": "Spot: dinlenen çift sayısı", "group": "Spot",
                        "desc": "24 saatlik hacimce ilk N spot çifti. Her çift bir WS aboneliği; yükseltmek trafiği ve fills kayıt hacmini artırır"},
     "spot_fill_min_notional": {"type": "float", "label": "Spot: asgari işlem ($)", "group": "Spot",

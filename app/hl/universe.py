@@ -107,6 +107,7 @@ async def refresh_universe(client: HLClient, equity_dexes: list[str],
 
 
 SPOT_KV = "spot_top_coins"
+SPOT_KV_V = 2              # 18.10: hacim ve token adı SIRAYLA eşleniyordu (kayık) → eski önbellek geçersiz
 SPOT_TTL = 3600            # spot hacim sıralaması da saatte bir
 CRYPTO_KV = "crypto_top_coins"
 CRYPTO_TTL = 3600          # ana dex hacim sıralaması saatte bir tazelensin
@@ -281,7 +282,7 @@ async def top_spot_coins(client: HLClient, top_n: int,
                          ttl: int = SPOT_TTL) -> tuple[list[str], dict, dict]:
     """Spot piyasalarının hacimce ilk N'i: (borsa adları, ad haritası, 24s hacim).
 
-    HL'de spot çiftinin borsa adı `@107` gibidir; okunur adı (`PURR/USDC`)
+    HL'de spot çiftinin borsa adı `@107` gibidir; okunur adı (`HYPE/USDC`)
     `meta.tokens` üzerinden kurulur. WS aboneliği ve `fills.coin` borsa adını
     kullanır — tek kimlik odur; okunur ad yalnız gösterim içindir.
 
@@ -296,7 +297,8 @@ async def top_spot_coins(client: HLClient, top_n: int,
     coins = [c for c in (cached.get("coins") or []) if isinstance(c, str)]
     names = dict(cached.get("names") or {})
     vols = {k: float(v) for k, v in (cached.get("vols") or {}).items()}
-    if coins and now() - int(cached.get("ts") or 0) < ttl and int(cached.get("want") or 0) >= top_n:
+    if coins and now() - int(cached.get("ts") or 0) < ttl and int(cached.get("want") or 0) >= top_n \
+            and int(cached.get("v") or 0) == SPOT_KV_V:
         return coins[:top_n], names, vols
     try:
         data = await client.spot_meta_and_ctxs()
@@ -304,14 +306,28 @@ async def top_spot_coins(client: HLClient, top_n: int,
     except Exception as e:
         log.warning("spot evreni alınamadı: %s", e)
         return coins[:top_n], names, vols
-    toks = [(t or {}).get("name") or "?" for t in (meta or {}).get("tokens") or []]
+    # Token adı da NUMARASIYLA (t["index"]) eşlenir: token listesinde de boşluk var (canlı 18.10: 508 tokenin 50'sinde
+    # konum ≠ numara) → 31 çiftin adı yanlıştı (@496 ONEAR/USDC yerine "USDC"). Numara yoksa (eski şekil) konum.
+    tlist = (meta or {}).get("tokens") or []
+    toks = {(int(t["index"]) if isinstance(t, dict) and t.get("index") is not None else i): (t or {}).get("name") or "?"
+            for i, t in enumerate(tlist)}
     ranked: list[tuple[float, str, str]] = []
-    for pair, ctx in zip((meta or {}).get("universe") or [], ctxs or []):
+    universe = (meta or {}).get("universe") or []
+    # Hacim ÇİFTİN ADIYLA eşlenir (ctx["coin"]). Sırayla eşleme (zip) kayıyordu: HL'nin çift listesinde silinmiş
+    # çiftlerin boşlukları var (@71 yok), bağlam listesinde yok (canlı 18.10: 333 çift / 1118 bağlam, @71'den sonra
+    # hepsi kayık) → dinlenen 40 spot çiftin 34'ü yanlıştı: HYPE/USDC, UBTC/USDC, UETH/USDC hiç dinlenmiyordu
+    # (kullanıcı 18.10: 0x4d47… HYPE spot TWAP'ı gelmedi), UZEC'in hacmi $14M yerine $55K okunuyordu.
+    by_coin = {str(c["coin"]): c for c in (ctxs or []) if isinstance(c, dict) and c.get("coin")}
+    pairs = ([(p, by_coin.get(str((p or {}).get("name") or ""))) for p in universe] if by_coin
+             else list(zip(universe, ctxs or [])))     # eski şekil (coin alanı yok): sıralı
+    for pair, ctx in pairs:
+        if ctx is None:
+            continue
         name = (pair or {}).get("name") or ""
         if not name or (pair or {}).get("isDelisted"):
             continue
         idx = (pair or {}).get("tokens") or []
-        label = "/".join(toks[i] for i in idx if 0 <= i < len(toks)) if idx else name
+        label = "/".join(toks[i] for i in idx if i in toks) if idx else name
         try:
             vol = float((ctx or {}).get("dayNtlVlm") or 0)
         except (TypeError, ValueError):
@@ -326,7 +342,7 @@ async def top_spot_coins(client: HLClient, top_n: int,
     names = {n: lb for _, n, lb in top}
     vols = {n: v for v, n, _ in top}
     await kv_set(SPOT_KV, {"coins": out, "names": names, "vols": vols,
-                           "want": want, "ts": now()})
+                           "want": want, "ts": now(), "v": SPOT_KV_V})
     from .. import assets
     assets.set_spot_names(names)      # senkron gösterim önbelleği (label())
     log.info("spot dinleme listesi: %d çift (%s)", min(top_n, len(out)),
@@ -335,7 +351,7 @@ async def top_spot_coins(client: HLClient, top_n: int,
 
 
 async def spot_names() -> dict:
-    """Borsa adı → okunur ad ('@107' → 'PURR/USDC'); istek atmaz."""
+    """Borsa adı → okunur ad ('@107' → 'HYPE/USDC'); istek atmaz."""
     return dict(((await kv_get(SPOT_KV)) or {}).get("names") or {})
 
 
