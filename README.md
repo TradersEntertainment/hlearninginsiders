@@ -623,6 +623,18 @@ rakamıyla. 👁 takibin yarılanma notu da bu ölçüyle çalışır (eskiden h
 kuralı (`twap_alert_min_left_usd`) HL kaydıyla karar verir — süren emirde kalan = plan, yani bu kural fiilen hiç
 elemiyor (bugünkü davranış korunur).
 
+**Sitede de (kullanıcı 18.10, coin sayfası ekran görüntüsü: bitmiş emirler "Doldu %0 · Kalan $2.99M · 🏁 bitti"):**
+Telegram'daki kural web tablolarına (coin sayfası 📋 TWAP, `/twaplar`, `/twap`) taşındı — tek yer `twap.fill_view`.
+Doldu: HL bitiş/iptal kaydı varsa HL'nin rakamı (yüzde ya da "dolmadı"), süren canlı satırda radarın gördüğü HL
+dilimleri ("≈ %N" / "≥ $X"), HL'nin emir anındaki 0'ı ise **"bilinmiyor"** — asla "%0". Kalan yalnız ölçülebiliyorsa
+(iptalde dolmayan, "≈" satırda plan − dolan). Durum da ölçüme göre: 🏁 bitti yalnız HL 'finished' derse; ⛔ iptal;
+süresi geçmiş ama HL bitişi alınmamış emir "⌛ süresi doldu"; açık görünüp susan "⏸ dilim gelmiyor"; HL emri
+sorgulanamamış dizi "⏹ dizi durdu". **Kök neden ve onarım:** tur bellekten düşünce (her restart / 4 sa pencere)
+kayıt emir anındaki 0'da takılı kalıyordu; `twaplive.close_stale` iki dakikada bir süresi geçmiş 'activated'
+satırlardan en büyük altısının HL bitiş kaydını kollektörün WS'inden (REST ağırlığı yok) çekip günceller; bulamazsa
+15 dk sonra yeniden dener. `/tani`'de "⌛ süresi geçmiş TWAP kaydı kapatma" satırı. Coin sayfasının "📡 oluşuyor"
+satırları artık en az 3 dilimli ya da HL emri olan turlar (tek işlem dizi değil).
+
 ### TWAP ayna grubu (`TWAP_MIRROR_CHAT_ID`)
 
 TWAP mesajları bugünkü yerlerine (kripto → `CRYPTO_CHAT_ID`, hisse → ana sohbet) gitmeye devam eder;

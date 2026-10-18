@@ -119,6 +119,7 @@ ALLOWED = {
     "app/radar/seans.py": ("yetersiz (n={} < {})",),                     # site
     "app/radar/sim.py": ("hedef çok yakın (%{} < %{})", '<svg class="simcurve"', "<line x1=", "<text x=", "<polyline ",
                          "<circle cx="),                                  # skip_reason ve SVG: site
+    "app/radar/twap.py": ("<%0.1",),                                     # fill_view: site (Jinja kaçışlar)
     "app/radar/twaplive.py": (" — emir < {}", " — kalan {} < {}", " — spot çiftinin 24s hacmi {} < {}"),  # esc(kap)
     "app/radar/twaploose.py": ("📅 hafta sonu kripto olmayan: plan ≥ {} · süre < {} dk",),  # /tani send_pre
     "app/radar/wake.py": ("<!--.*?-->",),

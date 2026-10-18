@@ -66,6 +66,71 @@ def is_active(run: dict, ref_ts: int | None = None) -> bool:
     return (ref - int(run["last_ts"])) <= gap * ACTIVE_GAPS
 
 
+def _pct(p: float) -> str:
+    """Site yüzdesi (düz metin; Jinja kaçışlar): "%0" yazılmaz — %1 altı ondalıkla, %0.1 altı "<%0.1"."""
+    p = float(p or 0)
+    return f"%{p:.0f}" if p >= 1 else (f"%{p:.1f}" if p >= 0.1 else "<%0.1")
+
+
+def fill_view(r: dict, ts: int | None = None) -> dict:
+    """Web TWAP tablolarının Doldu / Kalan / Durum hücreleri — yalnız ÖLÇÜLEN (kullanıcı 18.10 ekran görüntüsü: bitmiş
+    emirlerde "Doldu %0 · Kalan $2.99M · 🏁 bitti"; kural: "%0" yazılmaz, ölçülemeyen dolan yazılmaz, 2fdcb75).
+
+    Kök neden (canlı doğrulandı): HL her durum için ayrı kayıt tutar; emir verildiği anki 'activated' kaydında dolan
+    HEP 0'dır, gerçek dolan yalnız 'finished' / 'terminated' kaydında yazar. 0 bir ölçüm değildir:
+      • HL bitiş/iptal kaydı → dolan HL'den (yüzde, ya da "dolmadı"); iptalde kalan = dolmayan; HL kaydı süren emirde
+        dolanı yazmışsa (> 0) o da ölçümdür (Telegram fill_amount ile aynı)
+      • süren emir, radar dilimleri görüyorsa (canlı satır: fill_seen) → "≈ %N" (emrin başından beri) ya da "≥ $X"
+      • 'activated' ama HL bitişi henüz alınmadı → "bilinmiyor" (twaplive.close_stale sonradan HL'den çeker)
+    Durum da ölçüme göre: 🏁 bitti yalnız HL 'finished' derse; süresi geçmiş 'activated' → ⌛, dilim gelmiyor → ⏸."""
+    from ..telegram.format import usd
+    ts = int(ts or now())
+    st = (r.get("order_status") or "").lower()
+    pu = float(r.get("planned_usd") or 0)
+    eu = float(r.get("executed_usd") or 0)
+    fill, tip, left = "—", "", "—"
+    if pu > 0 and st in ("finished", "terminated", "error"):
+        fill = _pct(eu / pu * 100) if eu > 0 else "dolmadı"
+        tip = f"HL bitiş kaydı: {usd(eu)} doldu" if eu > 0 else "HL bitiş kaydı: dolan yok"
+        rem = float(r.get("remaining_usd") or 0)
+        if st != "finished" and rem >= 1:
+            left = usd(rem)
+    elif pu > 0 and eu > 0:                             # HL kaydı dolanı yazmışsa (süren emirde de) ölçümdür
+        fill, tip = _pct(eu / pu * 100), f"HL kaydı: {usd(eu)} doldu"
+        rem = float(r.get("remaining_usd") or 0)
+        left = usd(rem) if rem >= 1 else "—"
+    elif pu > 0 and r.get("fill_hl0"):
+        seen = r.get("fill_seen")
+        if seen is None:
+            fill, tip = "bilinmiyor", "HL süren emirde dolanı 0 yazar; radarın gördüğü dilim yok"
+        elif r.get("fill_full"):
+            psz, ssz = float(r.get("planned_sz") or 0), float(r.get("fill_seen_sz") or 0)
+            p = (ssz / psz * 100) if (psz and ssz) else (float(seen) / pu * 100)
+            fill, tip = "≈ " + _pct(p), f"radarın gördüğü HL dilimleri: {usd(seen)} (emrin başından beri)"
+            left = "≈ " + usd(max(0.0, pu - float(seen)))
+        else:
+            fill, tip = "≥ " + usd(seen), "radar emrin başını görmedi — alt sınır"
+    elif pu > 0:
+        fill, tip = "bilinmiyor", "HL'nin emir anındaki kaydı dolanı 0 yazar; bitiş kaydı henüz alınmadı"
+    end_ts = (int(r["order_ts"]) + int(float(r["order_min"]) * 60)) if r.get("order_ts") and r.get("order_min") else None
+    if r.get("forming"):
+        state, txt, stip = "forming", "📡 oluşuyor", "Dizi şu anda oluşuyor — henüz emir sorgusu yapılmadı, kayda geçmedi"
+    elif r.get("running"):
+        state, txt, stip = "running", "▶ sürüyor", "Son dilim yakın zamanda geldi ve emir kapanmadı"
+    elif st in ("terminated", "error"):
+        state, txt, stip = "cancelled", "⛔ iptal", "HL kaydı: iptal / hata ile bitti"
+    elif st == "finished":
+        state, txt, stip = "finished", "🏁 bitti", "HL kaydı: tamamlandı"
+    elif pu > 0 and end_ts and end_ts < ts:
+        state, txt, stip = "expired", "⌛ süresi doldu", "Emrin süresi geçti; HL bitiş kaydı henüz alınmadı"
+    elif pu > 0:
+        state, txt, stip = "silent", "⏸ dilim gelmiyor", "HL emri açık görünüyor ama son dilimden beri sessiz"
+    else:
+        state, txt, stip = "stopped", "⏹ dizi durdu", "HL emri sorgulanamadı; dilimler durdu (bitti mi iptal mi bilinmiyor)"
+    r.update(fill_txt=fill, fill_tip=tip, left_txt=left, state=state, state_txt=txt, state_tip=stip)
+    return r
+
+
 async def _candidates(cfg) -> dict:
     """(coin, address, side) → fill dizisi. Pencere içindeki her şey."""
     hours = max(1, int(getattr(cfg, "twap_window_h", 12)))
@@ -176,6 +241,9 @@ async def recent(limit: int = 80, hours: int = 48) -> list[dict]:
                 and (r.get("order_status") or "activated") == "activated":
             left = int(r["order_ts"]) + int(float(r["order_min"]) * 60) - ts
         r["left_sec"] = max(0, left) if left is not None else None
+        r["order_pct_txt"] = _pct(r["order_pct"]) if r["order_pct"] is not None else None
+        v = fill_view({**r, "running": r["active"]}, ts)   # kopya: recent() satırına "running" eklenmesin
+        r.update({k: v[k] for k in ("fill_txt", "fill_tip", "left_txt", "state", "state_txt", "state_tip")})
     rows.sort(key=lambda r: (not r["active"], -(r["total"] or 0)))
     return rows
 
@@ -258,6 +326,7 @@ async def all_orders(hours: int = 168, status: str = "hepsi", market: str = "hep
         if pu and r.get("order_ts") and r.get("order_min") and r["running"]:
             left = int(r["order_ts"]) + int(float(r["order_min"]) * 60) - ts
         r["left_sec"] = max(0, left) if left is not None else None
+        fill_view(r, ts)
         if status == "suren" and not r["running"]:
             continue
         if status == "bitmis" and r["running"]:

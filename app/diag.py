@@ -795,6 +795,11 @@ async def _subsystems(cfg, state=None) -> list[str]:
     except Exception as e:                             # noqa: BLE001
         out.append(f"  bant / defter sahipleri okunamadı ({type(e).__name__}: {e})")
     try:
+        from .radar.twaplive import close_diag
+        out.append("  " + close_diag())
+    except Exception as e:                             # noqa: BLE001
+        out.append(f"  TWAP kayıt kapatma okunamadı ({type(e).__name__}: {e})")
+    try:
         from .radar import hiddentwap
         out.append("  " + await hiddentwap.diag_line(cfg))
     except Exception as e:                             # noqa: BLE001

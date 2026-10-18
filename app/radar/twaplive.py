@@ -60,6 +60,7 @@ VOL_MAX_AGE = 3600          # hacim ölçümü bundan eskiyse kapı geçmez (tah
 LOOKUP_MIN_DUR = 300        # sorgudan önce dizi en az 5 dk sürmüş olmalı
 LOOKUP_MAX_PER_EVAL = 20    # bir turda en çok bu kadar WS sorgusu
 REFRESH_SEC = 600           # bildirilmiş tur: emir 10 dk'da bir yeniden sorgulanır
+LIVE_ROW_MIN = 3            # coin sayfası "📡 oluşuyor": HL emri yoksa en az bu kadar dilimli tur (tek işlem dizi değil)
 QUICK_REFRESH = 60          # ⚡ HIZLI (≤ 1 sa) bildirilmiş emir: dakikada bir — iptal ⛔ kanala hızla yazılsın
 HALF_PCT = 50               # ilerleme notu: emrin yarısı dolunca
 NATIVE_GAP = (25, 35)       # ortanca aralık bu banttaysa "HL TWAP düzenine uyuyor"
@@ -781,6 +782,66 @@ async def persist(run: Run, m: dict | None, src: str = "live", order: dict | Non
              o.get("planned_usd"), o.get("planned_sz"), o.get("executed_usd"), o.get("remaining_usd"),
              o.get("started_ts"), o.get("minutes"), o.get("status"), int(o.get("q_ts") or 0) or run.lookup_ts,
              None))
+
+
+CLOSE_EVERY = 120           # süresi geçmiş 'activated' satırlar en çok bu sıklıkla taranır (sn)
+CLOSE_MAX = 6               # tur başına en çok bu kadar satır (adres başına tek WS sorgusu)
+CLOSE_RETRY = 900           # aynı satır en erken bu kadar sonra yeniden sorulur (sn)
+CLOSE: dict = {"last": 0, "asked": 0, "fixed": 0, "miss": 0}
+
+
+async def close_stale(collector, ts: int) -> int:
+    """Kayıtta 'activated' kalmış ama süresi geçmiş emirlerin HL bitiş kaydını sonradan çek (kullanıcı 18.10: coin
+    sayfasında bitmiş emirler "Doldu %0 · Kalan = plan" görünüyordu). HL dolanı yalnız 'finished' / 'terminated'
+    kaydında yazar; tur bellekten düşünce (restart / pencere budaması) satır emir anındaki 0'da takılı kalıyordu.
+    Kaynak kollektörün WS'i (userTwapHistory, REST ağırlığı yok). Bulunan kayıt: durum, dolan, kalan güncellenir;
+    bulunamazsa lookup_ts yazılır (CLOSE_RETRY sonra yeniden). Dönüş: güncellenen satır sayısı."""
+    if collector is None or ts - CLOSE["last"] < CLOSE_EVERY or not getattr(collector, "connected", False):
+        return 0
+    CLOSE["last"] = ts
+    async with db() as conn:
+        cur = await conn.execute(
+            "SELECT coin, address, side, first_ts, order_ts, planned_usd, planned_sz FROM twap_runs"
+            " WHERE order_status = 'activated' AND order_ts > 0 AND order_min > 0"
+            " AND order_ts + order_min * 60 < ? AND COALESCE(lookup_ts, 0) < ?"
+            " ORDER BY planned_usd DESC LIMIT ?", (ts - 60, ts - CLOSE_RETRY, CLOSE_MAX))
+        rows = [dict(r) for r in await cur.fetchall()]
+    fixed = 0
+    by_addr: dict[str, list] = {}
+    for r in rows:
+        by_addr.setdefault(r["address"], []).append(r)
+    for addr, rs in by_addr.items():
+        CLOSE["asked"] += 1
+        hist = await collector.fetch_twap_history(addr)
+        async with db() as conn:
+            for r in rs:
+                pk = (r["coin"], r["address"], r["side"], r["first_ts"])
+                hit = None
+                if hist is not None:
+                    hit = next((o for o in parse_twap_orders(hist, r["coin"], r["side"], 0, ts)
+                                if abs(int(o.get("started_ts") or 0) - int(r["order_ts"])) <= 2), None)
+                if hit is None or hit["status"] == "activated":
+                    CLOSE["miss"] += 1
+                    await conn.execute("UPDATE twap_runs SET lookup_ts=? WHERE coin=? AND address=? AND side=?"
+                                       " AND first_ts=?", (ts, *pk))
+                    continue
+                psz = float(r.get("planned_sz") or 0)
+                px = (float(r.get("planned_usd") or 0) / psz) if psz else 0.0   # planın fiyatı (kalan $ için)
+                await conn.execute(
+                    "UPDATE twap_runs SET order_status=?, executed_usd=?, remaining_usd=?, lookup_ts=?"
+                    " WHERE coin=? AND address=? AND side=? AND first_ts=?",
+                    (hit["status"], float(hit.get("executed_usd") or 0),
+                     float(hit.get("remaining_sz") or 0) * px, ts, *pk))
+                fixed += 1
+            await conn.commit()
+    CLOSE["fixed"] += fixed
+    return fixed
+
+
+def close_diag() -> str:
+    c = CLOSE
+    return (f"⌛ süresi geçmiş TWAP kaydı kapatma: {c['asked']} adres soruldu · {c['fixed']} satır HL bitiş kaydıyla"
+            f" güncellendi · {c['miss']} bulunamadı")
 
 
 async def _rehydrate(window_sec: int) -> int:
@@ -1658,6 +1719,10 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
         await hiddentwap.save_stats()
     except Exception:
         log.debug("gizli twap istatistiği", exc_info=True)
+    try:
+        out["closed"] = await close_stale(collector, ts)   # ⌛ süresi geçmiş 'activated' kayıtlar: HL bitişi
+    except Exception:
+        log.debug("süresi geçmiş TWAP kapatma", exc_info=True)
     decisions.sort(key=lambda d: -(d.get("planned") or d.get("total") or 0))
     del decisions[DECISIONS_MAX:]
     if decisions:
@@ -1778,10 +1843,19 @@ def live_runs(coin: str) -> list[dict]:
     (coin, address, side) üzerinden tekleştirir.
 
     DİKKAT: `twap_live_enabled` kapalıysa ya da yeniden başlatmadan hemen sonra
-    bu liste BOŞTUR — sayfa bunu künyede söyler, "TWAP yok" diye yalan söylemez."""
+    bu liste BOŞTUR — sayfa bunu künyede söyler, "TWAP yok" diye yalan söylemez.
+
+    18.10 (sayfa haritası): REG işlem gören HER adres için tur açar — tek-iki işlemlik tur dizi değildir; en az
+    LIVE_ROW_MIN dilim ya da HL emri olan tur listelenir (PUMP'ta yüzlerce satır sayfayı 1 MB yapıyordu). Dolan:
+    HL 'activated' kaydı 0 yazar → radarın gördüğü HL dilimleri (with_seen, Telegram'la aynı ölçü)."""
+    from .twap import fill_view
     out = []
+    ts = now()
     for r in _runs_for(lambda x: x.coin == coin):
         o = r.order if (r.order and native_overlap([r.order], r)) else {}   # dizi öncesi bitmiş emir onun değil
+        if not o and r.n < LIVE_ROW_MIN:
+            continue
+        w = with_seen(o, r.coin, r.address, r.side, ts) or {}
         out.append({
             "coin": r.coin, "address": r.address, "side": r.side,
             "first_ts": r.first_ts, "last_ts": r.last_ts,
@@ -1801,7 +1875,11 @@ def live_runs(coin: str) -> list[dict]:
             "watchlist": 0, "entity": None,
             "running": not r.ended_ts, "cancelled": False,
             "forming": True,          # henüz kaydedilmedi — tabloda "📡 oluşuyor"
+            "order_ts": o.get("started_ts"), "order_min": o.get("minutes"), "planned_sz": o.get("planned_sz"),
+            "fill_hl0": w.get("fill_hl0"), "fill_seen": w.get("fill_seen"), "fill_full": w.get("fill_full"),
+            "fill_seen_sz": w.get("fill_seen_sz"),
         })
+        fill_view(out[-1], ts)
     return out
 
 
