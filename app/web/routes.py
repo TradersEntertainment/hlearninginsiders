@@ -100,7 +100,13 @@ def _px5(p):
     return f"{p:,.0f}" if p >= 10_000 else f"{p:.5g}"
 
 
-templates.env.filters.update(usd=_usd, px=_px, px5=_px5, age=_age, dt=_dt, posage=_posage)
+def _sgnusd(v):
+    """+$8K / -$4K (`usd` eksiyi "$-4K" yazar)."""
+    v = float(v or 0)
+    return ("+" if v > 0 else "-" if v < 0 else "") + _usd(abs(v))
+
+
+templates.env.filters.update(usd=_usd, px=_px, px5=_px5, age=_age, dt=_dt, posage=_posage, sgnusd=_sgnusd)
 
 
 def _stale_acct(ts) -> bool:
@@ -805,6 +811,17 @@ async def coin_page(request: Request, symbol: str):
         log.exception("twap paneli %s", coin)
         panel_err["twap"] = "TWAP emirleri okunamadı"
 
+    # 🔝 Sayfanın üstü (kullanıcı 18.10: "son 15dk alımlar satımlar hepsi, orderbookta en kalın emirlerin sahipleri,
+    # gelmiş geçmiş büyük twap emirleri en üstte olsun"): 📼 15 dk bant (kollektör belleği, istek yok) + 🧱 defter
+    # sahipleri (arka planda kurulur, 30 sn önbellek — sayfa beklemez; hazır değilse sayfa 10 sn'de yenilenir).
+    from ..radar import bookowners as _bo
+    from ..radar import tape as _tape
+    tape_sum = _safe(panel_err, "tape", _tape.summary, coin)
+    book = _bo.cached(coin)
+    book_pending = _bo.kick(getattr(request.app.state, "client", None), coin) and book is None
+    col = getattr(request.app.state, "collector", None)
+    listened = (coin in col.valid_coins) if col is not None and getattr(col, "valid_coins", None) else None
+
     # Kapsama: havuz / HL OI (dürüstlük satırı). Süs — hesaplanamazsa sayfa düşmez.
     try:
         from ..radar import coverage as _coverage
@@ -814,6 +831,7 @@ async def coin_page(request: Request, symbol: str):
         cov = None
 
     return _render(request, "coin.html", {
+        "tape": tape_sum, "book": book, "book_pending": book_pending, "listened": listened,
         "coverage": cov,
         "hmeta": hmeta, "hchart": hchart, "panel_err": panel_err,
         "hstats_pending": hstats_pending, "now_verdict": now_verdict,

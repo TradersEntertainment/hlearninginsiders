@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
 {% block title %}{% if rows and (rows[0].score or 0) >= 50 %}🚨{% elif ticker %}🐋{% endif %}{{ symbol }}{% if summ and summ.mark %} {{ summ.mark|px }}{% endif %}{% if event and not event.passed %} · 📅{% endif %} · HL Radar{% endblock %}
-{% block bodyattrs %} data-refresh="{{ 10 if scanning else 45 }}"{% endblock %}
+{% block bodyattrs %} data-refresh="{{ 10 if (scanning or book_pending) else 45 }}"{% endblock %}
 {% block head %}<script src="/static/lightweight-charts.js" defer></script>{% endblock %}
 {% block content %}
 {% if not ticker %}
@@ -82,12 +82,111 @@
   </div>
 </div>
 
+{# 🔝 Kullanıcı 18.10: "son 15dk alımlar satımlar hepsi, orderbookta en kalın emirlerin sahipleri, gelmiş geçmiş
+   büyük twap emirleri en üstte olsun" #}
 <div class="panel">
-  <h2>🧱 Defterde duvar var mı? <span class="st">· deftere konmuş dev bekleyen emirler · son 15 dk</span></h2>
-  {% if kind == 'crypto' %}
-  {{ m.empty(["Ana dex defterleri taranmıyor — duvar radarı yalnız HIP-3 hisse defterlerinde çalışır.",
-              "Kripto için ayrı bir defter tarayıcısı yok; bu panel burada dursun ki 'bozuk mu?' sorusu doğmasın."]) }}
-  {% elif bwalls %}
+  <h2>⏱ Son 15 dakika <span class="st">· bu coindeki bütün alım-satımlar, adresiyle · canlı akıştan, istek atmadan</span></h2>
+  {% if panel_err.tape %}<p class="alert bad">⚠️ bant okunamadı: {{ panel_err.tape }}</p>{% endif %}
+  {% if tape and tape.n %}
+  <div class="kpi">
+    <div><div class="l">Piyasadan alış</div><div class="v long">{{ tape.buy|usd }}</div><div class="s">alıcı süpürdü (agresör)</div></div>
+    <div><div class="l">Piyasadan satış</div><div class="v short">{{ tape.sell|usd }}</div><div class="s">satıcı süpürdü (agresör)</div></div>
+    <div><div class="l">Net</div><div class="v {{ 'long' if tape.net > 0 else ('short' if tape.net < 0 else 'dim') }}">{{ tape.net|sgnusd }}</div><div class="s">alış − satış</div></div>
+    <div><div class="l">İşlem / adres</div><div class="v">{{ tape.n }} / {{ tape.n_addr }}</div><div class="s">{% if tape.twap %}🔹 TWAP dilimi {{ tape.twap|usd }}{% else %}TWAP dilimi yok{% endif %}</div></div>
+  </div>
+  <div class="grid2">
+    {% for title, rows_, cls in [("En çok net alan", tape.buyers, "long"), ("En çok net satan", tape.sellers, "short")] %}
+    <div>
+      <h3>{{ title }}</h3>
+      {% if rows_ %}
+      <div class="tscroll"><div class="tscroll-x"><table>
+        <tr><th class="l">Adres</th><th>Alış</th><th>Satış</th><th>Net</th><th title="Bu adresin piyasadan (agresör) yaptığı kısım">Piyasadan</th></tr>
+        {% for f in rows_ %}
+        <tr><td class="l">{{ m.addr(f.addr, k, 6) }}{% if f.twap %} <span title="TWAP dilimleri: {{ f.twap|usd }}">🔹</span>{% endif %}</td>
+          <td class="long">{{ f.buy|usd }}</td><td class="short">{{ f.sell|usd }}</td>
+          <td class="{{ cls }}"><b>{{ f.net|sgnusd }}</b></td>
+          <td class="dim">{% set tp = (f.taker / (f.buy + f.sell) * 100) if f.buy + f.sell else 0 %}{% if tp >= 0.5 %}%{{ '%.0f'|format(tp) }}{% else %}pasif{% endif %}</td></tr>
+        {% endfor %}
+      </table></div></div>
+      {% else %}<p class="dim">yok</p>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <h3>En büyük işlemler</h3>
+  <div class="tscroll"><div class="tscroll-x"><table>
+    <tr><th class="l">Zaman</th><th>Yön</th><th>Tutar</th><th>Fiyat</th><th class="l" title="Piyasadan alan/satan (agresör)">Piyasadan</th><th class="l" title="Karşı taraf: defterdeki bekleyen emri dolan">Pasif (defterdeki emri dolan)</th></tr>
+    {% for tr in tape.trades %}
+    <tr><td class="l dim">{{ tr.ts|dt }}</td>
+      <td class="{{ 'long' if tr.side == 'buy' else 'short' }}">{{ 'ALIŞ' if tr.side == 'buy' else ('SATIŞ' if tr.side == 'sell' else '?') }}</td>
+      <td><b>{{ tr.usd|usd }}</b>{% if tr.twap %} <span title="HL TWAP alt emri (sıfır hash)">🔹 TWAP</span>{% endif %}</td>
+      <td>{{ tr.px|px5 }}</td>
+      <td class="l">{% if tr.taker %}{{ m.addr(tr.taker, k, 6) }}{% else %}—{% endif %}</td>
+      <td class="l">{% if tr.maker %}{{ m.addr(tr.maker, k, 6) }}{% else %}—{% endif %}</td></tr>
+    {% endfor %}
+  </table></div></div>
+  <p class="kunye">🧾 Son {{ (tape.window // 60) }} dk · {{ tape.n }} işlemin hepsi sayıldı (en büyük {{ tape.trades|length }} listede)
+    {%- if tape.covered_sec < tape.window %} · ⚠️ bot {{ (tape.covered_sec // 60) }} dk önce yeniden başladı, öncesi bantta yok{% endif %}
+    {%- if tape.other %} · {{ tape.other|usd }} adres tavanını aştı (toplamlarda var, adres listesinde yok){% endif %}
+    · HL'de işlemin yönü piyasadan alan/satan tarafa göre yazılır; 🔹 = HL TWAP alt emri.</p>
+  {% elif listened is false %}
+  {{ m.empty([symbol ~ " canlı akışta dinlenmiyor — son 15 dk'nın işlemleri bu yüzden yok.",
+              "Kripto için dinlenen coinler hacme göre ilk N (Ayarlar → CRYPTO_WATCH_TOP); spot için SPOT_WATCH_TOP."]) }}
+  {% else %}
+  {{ m.empty(["Son 15 dk'da bu coinde işlem görülmedi" ~ (" (bot " ~ ((tape.covered_sec or 0) // 60) ~ " dk önce yeniden başladı)" if tape and tape.covered_sec < tape.window else "") ~ "."]) }}
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>🧱 En kalın emirler ve sahipleri <span class="st">· defterdeki en büyük bekleyen emirler · kimin olduğu bulunabildiği kadar</span></h2>
+  <p class="sub">Defter anonimdir: HL emrin sahibini açıkça vermez. Sahip iki yoldan <b>ölçülür</b>, tahmin yok:
+    <b>pasif dolum</b> (son 15 dk'da o fiyatta bekleyen emri dolan adres) ve <b>doğrulanmış açık emir</b> (aday adreslerin
+    açık emirleri HL'ye sorulur: o coinde pasif dolumu olanlar, pozisyonu olanlar, son 15 dk'nın büyük alıcı/satıcıları).
+    Aday olmayan sahip bulunamaz; kademenin bulunamayan kısmı ayrıca yazılır.</p>
+  {% if book %}
+  {% for view, vtitle in [("grouped", "HL arayüzü gibi gruplu · " ~ (book.unit_txt or book.unit) ~ " adım"), ("raw", "Tam fiyat · ilk 20 kademe")] %}
+  <h3>{{ vtitle }}</h3>
+  <div class="grid2">
+    {% for side, stitle, cls in [("bid", "Alış (fiyatın altı)", "long"), ("ask", "Satış (fiyatın üstü)", "short")] %}
+    <div>
+      <div class="tscroll"><div class="tscroll-x"><table>
+        <tr><th class="l">{{ stitle }}</th><th>Tutar</th><th title="Bu kademedeki emir sayısı (HL'nin verdiği)">Emir</th><th class="l">Sahip</th></tr>
+        {% for lv in book[view][side] %}
+        <tr><td class="l {{ cls }}">{{ lv.px|px5 }}{% if book.mid %} <span class="dim">(%{{ '%+.2f'|format((lv.px - book.mid) / book.mid * 100) }})</span>{% endif %}</td>
+          <td><b>{{ lv.usd|usd }}</b></td>
+          <td class="dim">{{ lv.n }}{% if lv.n == 1 %} <span title="Tek emir">●</span>{% endif %}</td>
+          <td class="l">
+            {%- for a, u in lv.owners %}✅ {{ m.addr(a, k, 6) }} {{ u|usd }}{% if not loop.last %} · {% endif %}{% endfor %}
+            {%- if lv.owners and lv.unknown_usd >= 1000 %} · <span class="dim">bulunamayan {{ lv.unknown_usd|usd }}</span>{% endif %}
+            {%- if lv.makers %}{% if lv.owners %}<br>{% endif %}<span class="dim" title="Son 15 dk'da bu fiyatta bekleyen emri dolan adresler — emir sahipleri">dolan:</span>
+              {% for a, u in lv.makers %}{{ m.addr(a, k, 6) }} {{ u|usd }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}
+            {%- if not lv.owners and not lv.makers %}<span class="dim">bulunamadı</span>{% endif %}</td></tr>
+        {% endfor %}
+      </table></div></div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  {% if book.orders %}
+  <h3>Bulunan büyük emirler <span class="st">· adaylardan doğrulanan, ≥ $25K</span></h3>
+  <div class="tscroll"><div class="tscroll-x"><table>
+    <tr><th class="l">Sahip</th><th>Yön</th><th>Fiyat</th><th>Tutar</th><th>Fiyata</th></tr>
+    {% for o in book.orders %}
+    <tr><td class="l">{{ m.addr(o.addr, k, 6) }}</td>
+      <td class="{{ 'long' if o.side == 'bid' else 'short' }}">{{ 'ALIŞ' if o.side == 'bid' else 'SATIŞ' }}{% if o.ro %} <span class="dim">reduce-only</span>{% endif %}</td>
+      <td>{{ o.px|px5 }}</td><td><b>{{ o.usd|usd }}</b></td>
+      <td class="dim">{% if o.dist_pct is defined and o.dist_pct is not none %}%{{ '%+.2f'|format(o.dist_pct) }}{% else %}—{% endif %}</td></tr>
+    {% endfor %}
+  </table></div></div>
+  {% endif %}
+  <p class="kunye">🧾 {{ book.age }} sn önce ölçüldü · {{ book.cands }} aday adresin açık emirleri soruldu{% if book.failed %} ({{ book.failed }} okunamadı){% endif %}
+    {%- if book.err %} · ⚠️ {{ book.err|join(', ') }}{% endif %} · gruplu kademe birden çok emrin toplamıdır (HL arayüzündeki satır gibi).</p>
+  {% elif book_pending %}
+  {{ m.empty(["Defter ve sahipler hazırlanıyor — sayfa 10 sn içinde kendiliğinden yenilenir."]) }}
+  {% else %}
+  {{ m.empty(["Defter okunamadı — birazdan yeniden dene."]) }}
+  {% endif %}
+  {% if kind != 'crypto' and bwalls %}
+  <h3>🧱 Duvar radarı (hisse)</h3>
   <div class="walls">🧱 <b>Emir defteri duvarı:</b>
     {% for w in bwalls %}
     <span class="wall ihit {{ 'shortliq-t' if w.side == 'ask' else 'longliq-t' }}" data-side="{{ 'short' if w.side == 'ask' else 'long' }}"
@@ -98,9 +197,66 @@
       · {{ w.first_ts|age }} önce belirdi</span>{% if not loop.last %} · {% endif %}
     {% endfor %}
   </div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>📋 TWAP emirleri <span class="st">· bu coindeki geçmiş ve canlı TWAP'lar · emir boyutuna göre, sürenler üstte</span></h2>
+  <p class="sub">Düzenli aralıklarla, benzer boyutta gelen fill dizisi = <b>TWAP</b>. Dizi yakalanınca
+  adresin <b>HL emir geçmişi</b> sorulur ve emrin <b>planlanan toplamı</b>, <b>dolanı</b>, <b>kalanı</b>
+  buraya yazılır; sorgulanamadıysa satır ölçülen dilim toplamıyla gelir ve <span class="dim">ölçülen</span>
+  diye işaretlenir — <b>tahmin yok</b>.</p>
+  {% if panel_err.twap %}<p class="alert bad">⚠️ {{ panel_err.twap }}</p>{% endif %}
+  {% if twaps %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Adres</th><th>Yön</th>
+        <th title="HL TWAP emrinin planlanan toplamı. Emir sorgulanamadıysa ölçülen dilim toplamı">Emir boyutu</th>
+        <th title="Emrin dolan kısmı">Doldu</th>
+        <th title="Emrin dolmamış kısmı">Kalan</th>
+        <th title="Bizim ölçtüğümüz: dilimlerin $ toplamı">Görülen</th>
+        <th title="Kaç dilime bölünmüş">Dilim</th>
+        <th title="Dilimler arası ortalama süre">Aralık</th>
+        <th title="Ölçüm anındaki 24 saatlik hacim">24s hacim</th>
+        <th title="HL perp teminatı — net worth değil">HL bakiye</th>
+        <th title="Son dilim ne zaman görüldü">Son dilim</th>
+        <th title="📡 canlı sayaç · 🗄 fills arşivi">Kaynak</th>
+        <th>Durum</th></tr>
+    {% for r in twaps %}
+    <tr>
+      <td class="l">{{ m.addr(r.address, k, 6) }}
+        {%- if r.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}
+        {%- if r.entity %}<span class="dim" title="Etiketli hesap"> {{ r.entity }}</span>{% endif %}</td>
+      <td class="{{ 'long' if r.side == 'buy' else 'short' }}">{{ 'ALIM' if r.side == 'buy' else 'SATIM' }}</td>
+      <td data-v="{{ r.size_usd|int }}"><b>{{ r.size_usd|usd }}</b>
+        {%- if not r.planned_known %} <span class="dim" title="HL emri sorgulanamadı — bu, ölçülen dilim toplamıdır">ölçülen</span>{% endif %}</td>
+      <td class="dim">{% if r.filled_pct is not none %}%{{ '%.0f'|format(r.filled_pct) }}{% else %}—{% endif %}</td>
+      <td class="dim">{% if r.planned_known %}{{ (r.remaining_usd or 0)|usd }}{% else %}—{% endif %}</td>
+      <td class="dim">{{ r.total|usd }}</td>
+      <td class="dim">{{ r.n_slices }}</td>
+      <td class="dim">{{ (r.avg_gap or 0)|int }}sn</td>
+      <td class="dim">{% if r.day_volume %}{{ r.day_volume|usd }}{% else %}—{% endif %}</td>
+      <td>{{ m.equity_cell(r.account_value, r.account_ts) }}</td>
+      <td class="dim">{{ r.last_ts|age }}</td>
+      <td class="dim">{{ '📡' if r.src == 'live' else '🗄' }}</td>
+      <td>{% if r.forming %}<span class="long" title="Dizi şu anda oluşuyor — henüz emir sorgusu yapılmadı, kayda geçmedi">📡 oluşuyor</span>
+        {%- elif r.running %}<span class="long" title="Son dilim yakın zamanda geldi ve emir kapanmadı">▶ sürüyor</span>
+        {%- elif r.cancelled %}<span class="dim" title="HL emri iptal/hata ile bitti">⛔ iptal</span>
+        {%- else %}<span class="dim">🏁 bitti</span>{% endif %}
+        {%- if r.alerted_ts %} <span title="Telegram'a düştü">✅</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">🧾 {{ twaps|length }} emir · kayıtlar <b>{{ twap_keep_d }} gün</b> saklanır, öncesi budanır —
+  "tüm geçmiş" bu demek · emir geçmişi yalnız dilim toplamı {{ twap_lookup_min|usd }} üstüne çıkan adresler için
+  sorgulanır, altındaki emirler burada <b>görünmez ve görünmediklerini bilemeyiz</b> ·
+  tümü için <a href="/twaplar{{ k }}">📋 twap emirleri</a>.</p>
   {% else %}
-  {{ m.empty(["Bu coinde şu an eşik üstü bekleyen emir yok.",
-              "Defter düzenli taranır; dev bir emir konduğunda burada belirir, defterden kalkınca ana sayfadaki duvar listesinden düşer."]) }}
+  {{ m.empty(['Bu coinde kayıtlı TWAP emri yok.',
+              'Dizi yakalanması için düzenli aralıklı, benzer boyutta en az birkaç dilim gerekir; dilim toplamı '
+              ~ twap_lookup_min|usd ~ ' altında kalan emirler sorgulanmaz.',
+              'Kayıtlar ' ~ twap_keep_d ~ ' gün saklanır; öncesi budanır.']) }}
   {% endif %}
 </div>
 
@@ -486,66 +642,6 @@
     süpürmeye ait, teminat değişince kayar · %{{ max_liq|int }}'den uzak olanlar listede değil (haritada sayılır).</p>
   {% else %}{{ m.empty(["Likidasyon fiyatı bilinen pozisyon yok.",
     "Süpürme bu coine uğradıkça pozisyonlar liq fiyatıyla gelir; şimdiye %" ~ max_liq|int ~ "'den uzak olanlar bu listeye girmez."]) }}{% endif %}
-</div>
-
-<div class="panel">
-  <h2>📋 TWAP emirleri <span class="st">· bu coindeki geçmiş ve canlı TWAP'lar · emir boyutuna göre, sürenler üstte</span></h2>
-  <p class="sub">Düzenli aralıklarla, benzer boyutta gelen fill dizisi = <b>TWAP</b>. Dizi yakalanınca
-  adresin <b>HL emir geçmişi</b> sorulur ve emrin <b>planlanan toplamı</b>, <b>dolanı</b>, <b>kalanı</b>
-  buraya yazılır; sorgulanamadıysa satır ölçülen dilim toplamıyla gelir ve <span class="dim">ölçülen</span>
-  diye işaretlenir — <b>tahmin yok</b>.</p>
-  {% if panel_err.twap %}<p class="alert bad">⚠️ {{ panel_err.twap }}</p>{% endif %}
-  {% if twaps %}
-  <div class="tscroll"><div class="tscroll-x">
-  <table>
-    <tr><th class="l">Adres</th><th>Yön</th>
-        <th title="HL TWAP emrinin planlanan toplamı. Emir sorgulanamadıysa ölçülen dilim toplamı">Emir boyutu</th>
-        <th title="Emrin dolan kısmı">Doldu</th>
-        <th title="Emrin dolmamış kısmı">Kalan</th>
-        <th title="Bizim ölçtüğümüz: dilimlerin $ toplamı">Görülen</th>
-        <th title="Kaç dilime bölünmüş">Dilim</th>
-        <th title="Dilimler arası ortalama süre">Aralık</th>
-        <th title="Ölçüm anındaki 24 saatlik hacim">24s hacim</th>
-        <th title="HL perp teminatı — net worth değil">HL bakiye</th>
-        <th title="Son dilim ne zaman görüldü">Son dilim</th>
-        <th title="📡 canlı sayaç · 🗄 fills arşivi">Kaynak</th>
-        <th>Durum</th></tr>
-    {% for r in twaps %}
-    <tr>
-      <td class="l">{{ m.addr(r.address, k, 6) }}
-        {%- if r.watchlist %}<span title="Watchlist'te — sicilli adres">⭐</span>{% endif %}
-        {%- if r.entity %}<span class="dim" title="Etiketli hesap"> {{ r.entity }}</span>{% endif %}</td>
-      <td class="{{ 'long' if r.side == 'buy' else 'short' }}">{{ 'ALIM' if r.side == 'buy' else 'SATIM' }}</td>
-      <td data-v="{{ r.size_usd|int }}"><b>{{ r.size_usd|usd }}</b>
-        {%- if not r.planned_known %} <span class="dim" title="HL emri sorgulanamadı — bu, ölçülen dilim toplamıdır">ölçülen</span>{% endif %}</td>
-      <td class="dim">{% if r.filled_pct is not none %}%{{ '%.0f'|format(r.filled_pct) }}{% else %}—{% endif %}</td>
-      <td class="dim">{% if r.planned_known %}{{ (r.remaining_usd or 0)|usd }}{% else %}—{% endif %}</td>
-      <td class="dim">{{ r.total|usd }}</td>
-      <td class="dim">{{ r.n_slices }}</td>
-      <td class="dim">{{ (r.avg_gap or 0)|int }}sn</td>
-      <td class="dim">{% if r.day_volume %}{{ r.day_volume|usd }}{% else %}—{% endif %}</td>
-      <td>{{ m.equity_cell(r.account_value, r.account_ts) }}</td>
-      <td class="dim">{{ r.last_ts|age }}</td>
-      <td class="dim">{{ '📡' if r.src == 'live' else '🗄' }}</td>
-      <td>{% if r.forming %}<span class="long" title="Dizi şu anda oluşuyor — henüz emir sorgusu yapılmadı, kayda geçmedi">📡 oluşuyor</span>
-        {%- elif r.running %}<span class="long" title="Son dilim yakın zamanda geldi ve emir kapanmadı">▶ sürüyor</span>
-        {%- elif r.cancelled %}<span class="dim" title="HL emri iptal/hata ile bitti">⛔ iptal</span>
-        {%- else %}<span class="dim">🏁 bitti</span>{% endif %}
-        {%- if r.alerted_ts %} <span title="Telegram'a düştü">✅</span>{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  </div></div>
-  <p class="kunye">🧾 {{ twaps|length }} emir · kayıtlar <b>{{ twap_keep_d }} gün</b> saklanır, öncesi budanır —
-  "tüm geçmiş" bu demek · emir geçmişi yalnız dilim toplamı {{ twap_lookup_min|usd }} üstüne çıkan adresler için
-  sorgulanır, altındaki emirler burada <b>görünmez ve görünmediklerini bilemeyiz</b> ·
-  tümü için <a href="/twaplar{{ k }}">📋 twap emirleri</a>.</p>
-  {% else %}
-  {{ m.empty(['Bu coinde kayıtlı TWAP emri yok.',
-              'Dizi yakalanması için düzenli aralıklı, benzer boyutta en az birkaç dilim gerekir; dilim toplamı '
-              ~ twap_lookup_min|usd ~ ' altında kalan emirler sorgulanmaz.',
-              'Kayıtlar ' ~ twap_keep_d ~ ' gün saklanır; öncesi budanır.']) }}
-  {% endif %}
 </div>
 
 <div class="panel">

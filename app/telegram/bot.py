@@ -577,6 +577,8 @@ class TelegramBot:
             pass                                  # ⏱ /5dk, /15dk, /5dk 15:30
         elif await self._admin(cmd, args, chat_id):
             pass                                  # /kullanicilar, /odemeler, /pro_ver, /duyuru, /iade
+        elif await self._cmd_defter(cmd, args, chat_id):
+            pass                                  # 🧱 /defter PUMP · /pumpdefter → en kalın emirler + sahipleri
         elif not args and await self._cmd_coin_twap(cmd, chat_id):
             pass                                  # /xpltwap, /tsla_twap → o coinde süren HL TWAP'ları
         elif not args and await self._cmd_coin_liq(cmd, chat_id):
@@ -827,6 +829,8 @@ class TelegramBot:
         """Takip komutları (kanaldan da çalışır; haber komutun geldiği sohbete gider)."""
         if await self._cmd_movewin(cmd, args, chat_id):
             return True                    # ⏱ /5dk — coin-liq aramasına düşmesin
+        if await self._cmd_defter(cmd, args, chat_id):
+            return True                    # 🧱 /defter PUMP · /pumpdefter
         if cmd.startswith("takip_"):
             await self._cmd_track_start(cmd, chat_id)
         elif cmd in ("komutlar", "komut", "commands", "help"):
@@ -906,6 +910,35 @@ class TelegramBot:
         return bool(uid and oid and uid == oid)
 
     # ---------- komutlar ----------
+
+    async def _cmd_defter(self, cmd: str, args: list[str], chat_id: str) -> bool:
+        """🧱 /defter PUMP · /pumpdefter → en kalın emirler ve sahipleri + son 15 dk'nın özeti (kullanıcı 18.10: "bu kim
+        nasıl bulabilirim … hem sitede hem telegramda sorarak olmalı"). Komut değilse False (coin aramasına düşer)."""
+        c = (cmd or "").lower()
+        if c in ("defter", "kim"):
+            tick = (args[0] if args else "").strip()
+            if not tick:
+                await self.send("🧱 Kullanım: <code>/defter PUMP</code> (ya da /pumpdefter) — en kalın emirler ve"
+                                " sahipleri, son 15 dk'nın alım-satımı.", chat_id)
+                return True
+        elif len(c) > 6 and c.endswith("defter") and not args:
+            tick = c[:-6].rstrip("_")
+        else:
+            return False
+        from .. import assets
+        from ..hl.universe import resolve_coin
+        from ..radar import bookowners, tape
+        t = await resolve_coin(tick)
+        coin = (t or {}).get("coin") or assets.spot_coin_of(tick)
+        if not coin:
+            await self.send(f"❓ <b>{fmt.esc(tick.upper())}</b> diye bir coin bulamadım (ör. /defter PUMP).", chat_id)
+            return True
+        book = await bookowners.get(getattr(self, "client", None), coin, wait=10)
+        coll = getattr(self, "collector", None)
+        valid = getattr(coll, "valid_coins", None) if coll is not None else None
+        await self.send(fmt.book_owners(coin, book, tape.summary(coin), listened=(coin in valid) if valid else None,
+                                        name=(t or {}).get("symbol")), chat_id)
+        return True
 
     async def _cmd_coin_twap(self, cmd: str, chat_id: str) -> bool:
         """/xpltwap (/xpl_twap) → o coinde süren HL TWAP'ları (kullanıcı 13.10). Komut 'twap' ile bitmiyorsa False

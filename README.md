@@ -1553,12 +1553,46 @@ tickers ile JOIN'li; kripto kimliği yalnız `resolve_coin`'in dönüşünde ya�
 Sayfa hisse sayfasının aynısıdır, farkları dürüstçe yazılı: pozisyonlar
 süpürmeden (her boyut, **insider skoru yok** — skor bilanço/taze cüzdan gibi
 hisse sinyallerine ait), tarama/rapor butonları yerine **🔄 defterleri tazele**
-(en büyük 15 adresin defteri şimdi çekilir, coin başına 60 sn'de bir), defter
-duvarı paneli "ana dex taranmıyor" der, bilanço/TradingView yok, saat grafiği
+(en büyük 15 adresin defteri şimdi çekilir, coin başına 60 sn'de bir), bilanço/TradingView yok, saat grafiği
 7/24 notuyla. Fiyat en taze kaynaktan: `asset_metrics` (PROPR coinleri) ya da
 ana dex özeti kv'si; ikisi de yoksa son mumun kapanışı (sayfa söyler). Ana
 sayfadaki 🪙 **Ana dex kripto** paneli hacimce ilk 40'ı listeler; balina ve
 devler sayfalarındaki kripto coinler artık bağlantılıdır.
+
+## 🔝 Coin sayfasının üstü: son 15 dk · en kalın emirler ve sahipleri · TWAP'lar (+ `/defter PUMP`)
+
+Kullanıcı (18.10): "sitemde pump yazıp girdiğimde son 15dk alımlar satımlar hepsi, orderbookta en kalın emirlerin
+sahipleri, gelmiş geçmiş büyük twap emirleri en üstte olsun" · "bu kim nasıl bulabilirim … hem sitede hem telegramda
+sorarak olmalı". Her coin sayfasının (`/t/PUMP`, hisse ve kripto) en üstünde üç panel:
+
+- **⏱ Son 15 dakika** (`app/radar/tape.py`): kollektörün zaten aldığı canlı işlem akışından (WS `trades`, alıcı ve
+  satıcı adresiyle) — **ek HL isteği yok**. Piyasadan alış / satış / net, işlem ve adres sayısı, 🔹 TWAP alt emri
+  dolumları; en çok **net alan** ve **net satan** adresler (alış, satış, net, piyasadan payı); en büyük işlemler
+  (piyasadan alan/satan ve karşı tarafta **defterdeki emri dolan** adres). Bütün işlemler sayılır, liste en büyükleri
+  gösterir. Bellek sınırlı: işlemler tek tek değil dakikalık kovalarda tutulur (kova başına adres / en büyük işlem /
+  pasif dolum tavanı; tavanı aşan "diğer"e sayılır, toplamlar doğru). Restart bandı sıfırlar — sayfa kapsamayı yazar.
+  Coin canlı akışta dinlenmiyorsa (kripto: hacimce ilk `CRYPTO_WATCH_TOP`, spot: `SPOT_WATCH_TOP`) bunu söyler.
+- **🧱 En kalın emirler ve sahipleri** (`app/radar/bookowners.py`): iki görünüm — **HL arayüzü gibi gruplu**
+  (3 anlamlı basamak; PUMP'ta 0.00001 adım) ve **tam fiyat** (HL'nin verdiği ilk 20 kademe). Ölçüm (18.10): arayüzde
+  PUMP "0.004100 · $9.29M" satırı tek emir DEĞİLDİ — 0.004100–0.004109 aralığındaki 160 emrin toplamıydı (tam fiyatta
+  0.004100'de $7.78M, 20 emir). HL gruplaması alış kovasını aşağı, satış kovasını yukarı yuvarlar (canlıda birebir
+  doğrulandı). **Defter anonimdir**; sahip iki yoldan ölçülür, tahmin yok: (1) **pasif dolum** — son 15 dk'da o
+  fiyatta bekleyen emri dolan adres (bant), (2) **doğrulanmış açık emir** — adayların (o coinde pasif dolumu olanlar,
+  pozisyonu olanlar, son 15 dk'nın büyük alıcı/satıcıları; en çok 10) `frontendOpenOrders`'ı (ağırlık 20, düşük şerit,
+  adres başına 2 dk önbellek) sorulur, kademeye denk gelen emir ✅ ile yazılır. Kademenin bulunamayan kısmı ayrıca
+  yazılır; ≥ $25K bulunan emirler ayrı listede. Sayfa açılınca arka planda kurulur (30 sn önbellek; hazır değilse sayfa
+  10 sn'de yenilenir). Hisse sayfalarında duvar radarının kayıtları da bu panelde.
+- **📋 TWAP emirleri**: bu coinin süren ve geçmiş TWAP'ları (eskiden sayfanın altındaydı).
+
+**Telegram: `/defter PUMP`** (eş: `/kim PUMP`, `/pumpdefter`) — sahip DM'inde ve botun kendi kanal / gruplarında.
+İlk 4 satır: en kalın alış / satış kademesi (gruplu, emir sayısıyla) · sahipleri · son 15 dk alış / satış / net ·
+en çok alan / satan adres; ayrıntı altta (kademeler, tam fiyat, bulunan büyük emirler, en büyük işlemler). Komut
+kurulumu en çok 10 sn bekler.
+
+**Kör nokta, açıkça:** aday olmayan bir adresin bekleyen emri bulunamaz (HL'nin açık API'si sahibi vermez). Düğümün
+işlem akışı (`explorerTxs`) adres taşır ama ölçümde blokların ~%0,1'ini yayınlıyordu (30 sn'de 449K işlemden 404'ü) —
+güvenilir değil, kullanılmadı. Emir hiç dolmamışsa ve sahibi aday değilse "bulunamadı" yazılır. Tam kapsam için adresli
+defter (L4) satan ücretli bir veri sağlayıcı gerekir. `/tani`'de "📼 15 dk bant" ve "🧱 defter sahipleri" satırları.
 
 ## Tasarım dili — "sessiz, okunur, dürüst"
 

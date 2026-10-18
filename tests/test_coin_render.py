@@ -94,7 +94,10 @@ def test_crypto_kind_renders():
                         long_total=0, short_total=7e5, n_long=0, n_short=1, tz="ok", scanned_ts=1))
     assert "ana dex kripto" in html and "Defterleri tazele" in html and "Defterler tazelendi" in html
     assert "<th>Skor</th>" not in html and "Şüphe nedenleri" not in html and "Yeniden tara" not in html
-    assert "Ana dex defterleri taranmıyor" in html and "son ölçüm" in html
+    assert "Ana dex defterleri taranmıyor" not in html and "son ölçüm" in html   # 18.10: kripto defteri de okunuyor
+    assert "En kalın emirler ve sahipleri" in html and "Son 15 dakika" in html
+    assert html.index("Son 15 dakika") < html.index("En kalın emirler") < html.index("<h2>📋 TWAP emirleri") \
+        < html.index("Hangi saatte"), "üç panel en üstte (kullanıcı 18.10)"
     assert "kripto 7/24" in html and "Likidasyon haritası" in html and "pxlegend" in html
     html2 = render(**ctx(V2, kind="crypto", mark_src="candle", ticker={"coin": "PUMP", "kind": "crypto"},
                          symbol="PUMP", coin="PUMP", rows=[], liq_rows=[], entry=None, liq=None))
@@ -127,3 +130,40 @@ if __name__ == "__main__":
     for f in (test_renders_every_hstats_shape, test_panel_error_branches_render, test_no_positions_no_mark,
               test_crypto_kind_renders, test_coverage_tile_renders, test_not_found_renders):
         f(); print("✓", f.__name__)
+
+
+def test_top_panels_with_data():
+    """Kullanıcı 18.10: coin sayfasının üstünde son 15 dk'nın alım-satımları (adresiyle), en kalın emirler ve
+    sahipleri, TWAP'lar. Bant ve defter verisi doluyken çizim; boşken / dinlenmiyorken nedenli boş."""
+    import time as _t
+    from app.radar import tape as tp
+    tp.REG.clear()
+    t = int(_t.time())
+    B, S = "0x" + "b" * 40, "0x" + "c" * 40
+    tp.observe("PUMP", "B", B, S, 0.0042, 2_000_000, t - 30)            # $8.4K alış, satıcı ask'ta pasif
+    tp.observe("PUMP", "A", S, B, 0.0041, 3_000_000, t - 20, twap=True)  # $12.3K satış (TWAP), alıcı bid'de pasif
+    summ = tp.summary("PUMP", t)
+    book = {"coin": "PUMP", "mid": 0.004118, "unit": 1e-05, "age": 12, "cands": 4, "failed": 0, "err": [],
+            "raw": {"bid": [{"px": 0.0041, "usd": 7.78e6, "n": 20, "owners": [(B, 1.2e6)], "unknown_usd": 6.58e6,
+                             "makers": [(B, 12_300.0)]}], "ask": []},
+            "grouped": {"bid": [{"px": 0.0041, "usd": 9.8e6, "n": 197, "owners": [], "unknown_usd": 9.8e6,
+                                 "makers": []}], "ask": []},
+            "orders": [{"addr": B, "side": "bid", "px": 0.0041, "usd": 1.2e6, "ro": False, "dist_pct": -0.44}]}
+    html = render(**ctx(V2, kind="crypto", mark_src="ctx", ticker={"coin": "PUMP", "kind": "crypto"},
+                        symbol="PUMP", coin="PUMP", rows=CROW, liq_rows=CROW, entry=None, liq=None,
+                        summ={"mark": 0.0041, "oi_ntl": 1e6, "funding": 0.0001, "day_volume": 5e6,
+                              "oi_change_pct": None, "px_change_pct": 3.1},
+                        tape=summ, book=book, book_pending=False, listened=True))
+    assert "Piyasadan alış" in html and "$8K" in html and "🔹 TWAP" in html and "En çok net alan" in html
+    assert "HL arayüzü gibi gruplu" in html and "Tam fiyat · ilk 20 kademe" in html and "$9.80M" in html
+    assert "0.00001 adım" in html or "1e-05 adım" in html
+    assert "bulunamayan $6.58M" in html and "✅" in html and "Bulunan büyük emirler" in html and "dolan:" in html
+    assert "12 sn önce ölçüldü" in html and "4 aday adresin" in html
+    # dinlenmiyor / hazırlanıyor
+    html2 = render(**ctx(V2, kind="crypto", mark_src="ctx", ticker={"coin": "PUMP", "kind": "crypto"},
+                         symbol="PUMP", coin="PUMP", rows=[], liq_rows=[], entry=None, liq=None,
+                         tape={"n": 0, "covered_sec": 900, "window": 900}, book=None, book_pending=True,
+                         listened=False))
+    assert "canlı akışta dinlenmiyor" in html2 and "hazırlanıyor" in html2 and 'data-refresh="10"' in html2
+    tp.REG.clear()
+    print("✅ üst paneller) 15 dk bant + en kalın emirler/sahipler + TWAP en üstte; dinlenmiyor / hazırlanıyor")

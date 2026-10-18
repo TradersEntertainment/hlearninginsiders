@@ -14,7 +14,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
-from ..radar import openmove, stickywall, twapfast, twaplive, twaploose
+from ..radar import openmove, stickywall, tape, twapfast, twaplive, twaploose
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -427,6 +427,11 @@ class Collector:
                 except Exception:
                     stickywall.REG.errors += 1
             zero = twapfast.is_twap_hash(t.get("hash"))    # HL TWAP alt emri: sahibi taker
+            # 📼 15 dk bant (coin sayfası / /defter): her işlem, taban yok. Sıcak yol: senkron, I/O yok.
+            try:
+                tape.observe(coin, aggr, buyer, seller, px, sz, ts, zero)
+            except Exception:
+                tape.STATS["errors"] += 1
             for addr, side in ((buyer, "buy"), (seller, "sell")):
                 if not addr:
                     continue
