@@ -169,8 +169,9 @@ async def save_spot_names(names) -> None:
 async def load_spot_names() -> int:
     """Açılış: spot evreni yenilenene kadar kv'deki son ad listesi geçerli."""
     from .db import kv_get
+    from .hl.universe import SPOT_KV_V
     rec = await kv_get(SPOT_NAMES_KV) or {}
-    set_spot_names(rec.get("names") or {})
+    set_spot_names((rec.get("names") or {}) if int(rec.get("v") or 0) == SPOT_KV_V else {})   # eski kayık kayıt: yok
     return len(SPOT_NAMES)
 
 

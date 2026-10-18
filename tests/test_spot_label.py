@@ -72,7 +72,7 @@ def test_cache_is_loaded_and_filled():
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "sl.db"))
         assets.set_spot_names({})
         await dbm.kv_set(assets.SPOT_NAMES_KV, {"coins": ["@107"], "names": {"@107": "PURR/USDC"},
-                                                "vols": {}, "want": 40, "ts": dbm.now()})
+                                                "vols": {}, "want": 40, "ts": dbm.now(), "v": 2})
         assert await assets.load_spot_names() == 1, "açılışta kv'den yüklenir"
         assert assets.label("@107") == "PURR/USDC"
         # evren yenilemesi de senkron önbelleği doldurur (kv beklemeden)
@@ -158,7 +158,7 @@ def test_web_surfaces():
         from test_routes_smoke import _fresh, get
         app = await _fresh()
         await dbm.kv_set(assets.SPOT_NAMES_KV, {"coins": ["@107"], "names": {"@107": "PURR/USDC"},
-                                                "vols": {}, "want": 40, "ts": dbm.now()})
+                                                "vols": {}, "want": 40, "ts": dbm.now(), "v": 2})
         await assets.load_spot_names()
         t = dbm.now()
         async with dbm.db() as c:
@@ -186,7 +186,7 @@ def test_diag_accepts_readable_name():
         assets.set_spot_names(NAMES)
         await dbm.kv_set("ws_universe", {"crypto": ["PUMP"], "spot": ["@107"], "ts": dbm.now()})
         await dbm.kv_set("spot_top_coins", {"coins": ["@107"], "names": NAMES,
-                                            "vols": {"@107": 238_000}, "want": 40, "ts": dbm.now()})
+                                            "vols": {"@107": 238_000}, "want": 40, "ts": dbm.now(), "v": 2})
         out = await tl.diag_coin(Config(), "PURR/USDC")
         assert "PURR/USDC" in out and "dinleniyor ✓" in out, out
         assert "spot" in out and "@107" not in out, out

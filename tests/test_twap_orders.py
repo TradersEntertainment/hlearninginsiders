@@ -27,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 os.environ.setdefault("DB_PATH", "/tmp/hlr-test-twaporders.db")
-from app import db as dbm  # noqa: E402
+from app import assets, db as dbm  # noqa: E402
 from app.config import EDITABLE_FIELDS, Config  # noqa: E402
 from app.radar import twap  # noqa: E402
 
@@ -52,7 +52,7 @@ async def _seed():
                 "order_ts,order_min,day_volume) VALUES(?,?,?,?,?,?,?,?,?,0.1,0.1,50,?,?,?,?,?,?,?,?,240,?)",
                 (coin, a, sd, f, l, n, tot, tot / n, gp, t, src, pu, eu, rem, st, en, f, 50e6))
     await dbm.kv_set("spot_top_coins", {"coins": ["@107"], "names": {"@107": "PURR/USDC"},
-                                        "vols": {"@107": 3.2e6}, "want": 40, "ts": t})
+                                        "vols": {"@107": 3.2e6}, "want": 40, "ts": t, "v": 2})
     return t
 
 
@@ -195,6 +195,17 @@ def test_spot_universe_maps_volume_by_pair_name():
         assert (await dbm.kv_get(SPOT_KV))["v"] >= 2
         from app.radar import twaplive
         assert (await twaplive.volumes())["@272"][0] == 14_408_935.0, "TWAP kapısı doğru spot hacmini görür"
+        # inceleme: eski (kayık) kayıt varken ilk istek düşerse ne ad ne hacim ondan okunur
+        await dbm.kv_set(SPOT_KV, {"coins": ["@272"], "names": {"@496": "USDC"}, "vols": {"@272": 55_000.0},
+                                   "want": 50, "ts": dbm.now() - 1200})
+
+        class Down:
+            async def spot_meta_and_ctxs(self):
+                raise RuntimeError("429")
+        coins, names, vols = await top_spot_coins(Down(), 40)
+        assert coins == ["@272"] and names == {} and vols == {}, (coins, names, vols)   # dinleme sürer, değer yok
+        assert "@272" not in await twaplive.volumes()
+        assert await assets.load_spot_names() == 0
     asyncio.run(run())
     print("✅ spot evreni) hacim çift ADIYLA, token adı NUMARASIYLA eşlenir (boşluklar kaydırmaz); eski önbellek yenilenir")
 

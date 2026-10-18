@@ -324,7 +324,7 @@ def test_review_fixes_no_false_hidden_claim():
         assert not bot.sent and ht.STATS["reasons"] == {"ignored": 1}
         # 6) ince spot çifti → yok (büyük olsa da)
         await _fresh()
-        await dbm.kv_set("spot_top_coins", {"ts": dbm.now(), "vols": {"@107": 400_000}})
+        await dbm.kv_set("spot_top_coins", {"ts": dbm.now(), "vols": {"@107": 400_000}, "v": 2})
         feed("@107", A, "buy", 20, 80_000)                       # $1.6M
         await tl.evaluate(cfg, Notifier(cfg, bot), None, Col([]))
         assert not bot.sent and ht.STATS["reasons"] == {"spot_thin": 1}, ht.STATS

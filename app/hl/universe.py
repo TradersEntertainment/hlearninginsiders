@@ -295,10 +295,10 @@ async def top_spot_coins(client: HLClient, top_n: int,
         return [], {}, {}
     cached = await kv_get(SPOT_KV) or {}
     coins = [c for c in (cached.get("coins") or []) if isinstance(c, str)]
-    names = dict(cached.get("names") or {})
-    vols = {k: float(v) for k, v in (cached.get("vols") or {}).items()}
-    if coins and now() - int(cached.get("ts") or 0) < ttl and int(cached.get("want") or 0) >= top_n \
-            and int(cached.get("v") or 0) == SPOT_KV_V:
+    ok_v = int(cached.get("v") or 0) == SPOT_KV_V          # eski (kayık) kayıt: ad ve hacim güvenilmez
+    names = dict(cached.get("names") or {}) if ok_v else {}
+    vols = {k: float(v) for k, v in (cached.get("vols") or {}).items()} if ok_v else {}
+    if coins and now() - int(cached.get("ts") or 0) < ttl and int(cached.get("want") or 0) >= top_n and ok_v:
         return coins[:top_n], names, vols
     try:
         data = await client.spot_meta_and_ctxs()
@@ -351,8 +351,9 @@ async def top_spot_coins(client: HLClient, top_n: int,
 
 
 async def spot_names() -> dict:
-    """Borsa adı → okunur ad ('@107' → 'HYPE/USDC'); istek atmaz."""
-    return dict(((await kv_get(SPOT_KV)) or {}).get("names") or {})
+    """Borsa adı → okunur ad ('@107' → 'HYPE/USDC'); istek atmaz. Eski sürüm kaydı (kayık adlar) yok sayılır."""
+    rec = (await kv_get(SPOT_KV)) or {}
+    return dict(rec.get("names") or {}) if int(rec.get("v") or 0) == SPOT_KV_V else {}
 
 
 async def get_universe() -> list[dict]:

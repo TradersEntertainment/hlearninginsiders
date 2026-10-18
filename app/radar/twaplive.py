@@ -665,7 +665,10 @@ async def volumes(client=None) -> dict[str, tuple[float, int]]:
         # Spot çiftleri (@107…): hacim spot evreni kv'sinde. Olmazsa kapı
         # `no_vol` der ve spot TWAP'ı hiç değerlendirilmez.
         from ..db import kv_get as _kv
+        from ..hl.universe import SPOT_KV_V
         sp = await _kv("spot_top_coins") or {}
+        if int(sp.get("v") or 0) != SPOT_KV_V:
+            sp = {}                                      # eski (kayık) kayıt: yanlış hacimle kapı açılmasın → no_vol
         sts = int(sp.get("ts") or 0)
         for c, v in (sp.get("vols") or {}).items():
             try:
