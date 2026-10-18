@@ -792,6 +792,8 @@ async def _subsystems(cfg, state=None) -> list[str]:
         from .radar import bookowners, tape
         out.append("  " + tape.diag_line())
         out.append("  " + bookowners.diag_line())
+        from .radar import livefeed
+        out.append("  " + livefeed.diag_line())
     except Exception as e:                             # noqa: BLE001
         out.append(f"  bant / defter sahipleri okunamadı ({type(e).__name__}: {e})")
     try:

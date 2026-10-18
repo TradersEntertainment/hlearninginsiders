@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
 {% block title %}{% if rows and (rows[0].score or 0) >= 50 %}🚨{% elif ticker %}🐋{% endif %}{{ symbol }}{% if summ and summ.mark %} {{ summ.mark|px }}{% endif %}{% if event and not event.passed %} · 📅{% endif %} · HL Radar{% endblock %}
-{% block bodyattrs %} data-refresh="{{ 10 if (scanning or book_pending) else 45 }}"{% endblock %}
-{% block head %}<script src="/static/lightweight-charts.js" defer></script>{% endblock %}
+{% block bodyattrs %}{% if ticker %} class="term"{% endif %} data-refresh="{{ 10 if scanning else 60 }}"{% endblock %}
+{% block head %}<script src="/static/lightweight-charts.js" defer></script>{% if ticker %}<script src="/static/term.js" defer></script>{% endif %}{% endblock %}
 {% block content %}
 {% if not ticker %}
 <div class="panel">
@@ -27,65 +27,173 @@
 {% if scanning %}
 <div class="scanbar"><span class="swimmer">🐋</span> Balinalar aranıyor<span class="dots"></span> veriler kendiliğinden gelecek (sayfa zıplamaz)</div>
 {% endif %}
-<div class="panel">
-  <h2>{{ symbol }} <span class="st">({{ coin }}{% if kind == 'crypto' %} · ana dex kripto{% elif klass == 'kripto' %} · {{ coin.split(':')[0] }} dex kripto{% endif %})</span>
-    {% if propr %}<span class="pbadge"
-      title="propr.xyz'de listeli">✅ PROPR'da listeli</span>{% endif %}</h2>
-  <div class="kpi">
-    <div><div class="l">Fiyat (mark)</div><div class="v">{{ summ.mark|px }}</div>
-      <div class="s">{% if summ.px_change_pct is not none %}<b class="{{ 'long' if summ.px_change_pct > 0 else ('short' if summ.px_change_pct < 0 else 'dim') }}">{{ '%+.1f'|format(summ.px_change_pct) }}%</b> · 24 saat{% else %}24 saatlik değişim henüz yok{% endif %}{% if mark_src == 'candle' %} · <span class="warn">fiyat = son mumun kapanışı, metrik yok</span>{% endif %}</div></div>
-    <div><div class="l">Açık pozisyon (OI)</div><div class="v">{{ summ.oi_ntl|usd }}</div>
-      <div class="s">{% if summ.oi_change_pct is not none %}24 saatte <b>{{ '%+.0f'|format(summ.oi_change_pct) }}%</b>{% if summ.oi_change_pct >= 50 %} ⚠️ hızlı büyüme{% endif %}{% else %}24 saatlik kıyas henüz yok{% endif %}</div></div>
-    <div><div class="l">Kapsama (havuz / HL OI)</div>
-      <div class="v">{% if coverage and coverage.pct_long is not none %}L %{{ '%.0f'|format(coverage.pct_long) }} · S %{{ '%.0f'|format(coverage.pct_short) }}{% else %}—{% endif %}</div>
-      <div class="s">{% if coverage and coverage.oi_ntl %}{{ coverage.n }} pozisyon havuzda · HL OI {{ coverage.oi_ntl|usd }}{% if coverage.scan and coverage.scan.n_addrs is not none %} · son tarama {{ coverage.scan.n_addrs }} adres → {{ coverage.scan.n_found }} poz{% endif %}{% if coverage.census and coverage.census.text %} · {{ coverage.census.text }}{% endif %}{% if coverage.over %} · <span class="warn">⚠️ %100 üstü = bayat satır</span>{% endif %}{% else %}HL OI bilinmiyor — oran hesaplanamaz{% endif %}</div></div>
-    <div><div class="l">Funding</div>
-      <div class="v">{% if summ.funding is not none %}{{ '%+.4f'|format(summ.funding * 100) }}%{% else %}—{% endif %}</div>
-      <div class="s">{% if summ.funding is none %}ölçüm yok{% elif summ.funding > 0 %}saatlik · longlar shortlara ödüyor{% elif summ.funding < 0 %}saatlik · shortlar longlara ödüyor{% else %}saatlik · sıfır{% endif %}</div></div>
-    <div><div class="l">24 saatlik hacim</div><div class="v">{{ summ.day_volume|usd }}</div><div class="s">HL perp</div></div>
-    {% if event %}
-    <div class="ihit" data-tip="{{ event.when_txt }}" tabindex="0">
-      <div class="l">📅 Bilanço</div>
-      <div class="v">{% if event.passed %}açıklandı{% else %}{{ event.countdown }}{% endif %}</div>
-      <div class="s">{{ event.icon }} {{ event.tsi }} TSİ{% if not event.exact %} (~){% endif %}{% if event.maybe_passed %} · ⚠️ sabah açıklanmış olabilir{% endif %}</div></div>
-    {% endif %}
+{# 📟 Kullanıcı 18.10: "grafik ve liq falan her şey tam tek bakışta sığacak şekilde tasarım yapman lazım, terminal gibi
+   akmalı canlı veriler de ben o sayfadaysam". Üst bant + iki sıra panel ekrana sığar (≥1200px), paneller kendi içinde
+   kayar; canlı veri /t/{coin}/live akışından (static/term.js). Ayrıntı panelleri aşağıda. #}
+{% if tape_cover is not defined %}{% set tape_cover = {"label": "son 15 dk", "warn": "", "unknown": false} %}{% endif %}
+{% set tm = term if term is defined and term else {"seq": 0, "live_rows": [], "px": none, "prev": none, "live": false, "twaps": []} %}
+<section class="term" id="term" data-path="{{ ref or symbol }}" data-k="{{ k }}" data-sym="{{ symbol }}"
+         data-seq="{{ tm.seq }}" data-prev="{{ tm.prev or '' }}" data-px="{{ tm.px or summ.mark or '' }}">
+  <div class="tbar">
+    <span class="sym">{{ symbol }} <span class="st">{{ coin }}{% if kind == 'crypto' %} · ana dex kripto{% elif klass == 'kripto' %} · {{ coin.split(':')[0] }} dex kripto{% endif %}</span></span>
+    {% if propr %}<span class="pbadge" title="propr.xyz'de listeli">✅ PROPR'da listeli</span>{% endif %}
+    <span class="mono" id="tpx" title="Son işlem fiyatı (canlı akış); akış yoksa sayfanın mark fiyatı">{{ (tm.px or summ.mark)|px5 }}</span>
+    <span class="k">24 sa <b id="tchg" class="{{ 'long' if (summ.px_change_pct or 0) > 0 else ('short' if (summ.px_change_pct or 0) < 0 else 'dim') }}">{% if summ.px_change_pct is not none %}{{ '%+.2f'|format(summ.px_change_pct) }}%{% else %}—{% endif %}</b></span>
+    <span class="k">OI <b>{{ summ.oi_ntl|usd }}</b>{% if summ.oi_change_pct is not none %} <span class="{{ 'warn' if summ.oi_change_pct >= 50 else '' }}">{{ '%+.0f'|format(summ.oi_change_pct) }}%</span>{% endif %}</span>
+    <span class="k" title="{% if summ.funding is none %}ölçüm yok{% elif summ.funding > 0 %}saatlik · longlar shortlara ödüyor{% elif summ.funding < 0 %}saatlik · shortlar longlara ödüyor{% else %}saatlik · sıfır{% endif %}">Fund <b>{% if summ.funding is not none %}{{ '%+.4f'|format(summ.funding * 100) }}%{% else %}—{% endif %}</b></span>
+    <span class="k">Hacim 24s <b>{{ summ.day_volume|usd }}</b></span>
+    <span class="k" title="Havuzdaki (süpürmede görülen) pozisyonların toplamı{% if scanned_ts %} · {{ 'son ölçüm' if kind == 'crypto' else 'son tarama' }} {{ scanned_ts|dt }}{% endif %}">L <b class="long">{{ long_total|usd }}</b> / S <b class="short">{{ short_total|usd }}</b></span>
+    <span class="k ihit" tabindex="0" data-tip="Kapsama (havuz / HL OI) · {% if coverage and coverage.oi_ntl %}{{ coverage.n }} pozisyon havuzda · HL OI {{ coverage.oi_ntl|usd }}{% if coverage.scan and coverage.scan.n_addrs is not none %} · son tarama {{ coverage.scan.n_addrs }} adres → {{ coverage.scan.n_found }} poz{% endif %}{% if coverage.census and coverage.census.text %} · {{ coverage.census.text }}{% endif %}{% if coverage.over %} · ⚠️ %100 üstü = bayat satır{% endif %}{% else %}HL OI bilinmiyor — oran hesaplanamaz{% endif %}">Kapsama (havuz / HL OI) <b>{% if coverage and coverage.pct_long is not none %}L %{{ '%.0f'|format(coverage.pct_long) }} · S %{{ '%.0f'|format(coverage.pct_short) }}{% else %}—{% endif %}</b>{% if coverage and coverage.over %} <span class="warn">⚠️</span>{% endif %}</span>
+    {% if event %}<span class="k ihit" data-tip="{{ event.when_txt }}" tabindex="0">📅 bilanço <b>{% if event.passed %}açıklandı{% else %}{{ event.countdown }}{% endif %}</b> <span class="dim">{{ event.tsi }} TSİ</span></span>{% endif %}
+    {% if mark_src == 'candle' %}<span class="k warn">fiyat = son mumun kapanışı, metrik yok</span>{% endif %}
+    <span class="tact">
+      <span class="tlive {{ 'on' if tm.live and listened is not false else 'off' }}" id="tlive">{% if listened is false %}○ bu coin canlı akışta dinlenmiyor{% elif tm.live %}◌ bağlanıyor{% else %}○ HL akışı şu an kopuk{% endif %}</span>
+      {% if kind == 'crypto' %}
+      <form method="post" action="/t/{{ ref or symbol }}/tazele{{ k }}"><button type="submit" class="btn sm" title="Pozisyonlar süpürmeden gelir (tur 75–125 dk); tazele en büyük 15 adresin defterini şimdi çeker">🔄 Defterleri tazele</button></form>
+      {% if tz == 'ok' %}<span class="long">✓ Defterler tazelendi</span>{% elif tz == 'skip' %}<span class="dim">az önce tazelendi — 60 sn bekle</span>{% elif tz == 'none' %}<span class="dim">tazelenecek adres yok</span>{% elif tz == 'err' %}<span class="bad">✗ HL'ye ulaşılamadı</span>{% endif %}
+      {% else %}
+      <form method="post" action="/t/{{ ref or symbol }}/scan{{ k }}"><button type="submit" class="btn sm">⟳ Yeniden tara</button></form>
+      {% if is_admin %}<form method="post" action="/t/{{ ref or symbol }}/send{{ k }}"><button type="submit" class="btn sm" {% if not has_bot %}disabled title="bot yok — TELEGRAM_BOT_TOKEN tanımlı değil"{% endif %}>📨 Telegram'a gönder</button></form>
+      {% else %}<a href="/login{{ '?nxt=/t/' + (ref or symbol) if not k else k + '&nxt=/t/' + (ref or symbol) }}" class="btn ghost sm">🔐 giriş</a>{% endif %}
+      {% if tg == 'ok' %}<span class="long">✓ Telegram'a gitti!</span>{% elif tg == 'err' %}<span class="bad">✗ Gönderilemedi</span>{% endif %}
+      {% endif %}
+    </span>
   </div>
-  <div class="btnrow">
-    {% if kind == 'crypto' %}
-    {# Tarama/gönderme hisse hattı (autoscan, earnings raporu) — kriptoda 404
-       verirdi. Kripto satırları süpürmeden gelir; tek eylem defterleri tazelemek. #}
-    <form method="post" action="/t/{{ ref or symbol }}/tazele{{ k }}">
-      <button type="submit" class="btn sm">🔄 Defterleri tazele</button>
-    </form>
-    {% if tz == 'ok' %}<span class="long">✓ Defterler tazelendi</span>
-    {% elif tz == 'skip' %}<span class="hint">az önce tazelendi — 60 sn bekle</span>
-    {% elif tz == 'none' %}<span class="hint">tazelenecek adres yok</span>
-    {% elif tz == 'err' %}<span class="bad">✗ HL'ye ulaşılamadı — logları kontrol et</span>{% endif %}
-    <span class="hint">Pozisyonlar süpürmeden gelir (tur 75–125 dk); tazele en büyük 15 adresin defterini şimdi çeker</span>
-    {% else %}
-    <form method="post" action="/t/{{ ref or symbol }}/scan{{ k }}">
-      <button type="submit" class="btn sm">⟳ Yeniden tara</button>
-    </form>
-    {% if is_admin %}
-    <form method="post" action="/t/{{ ref or symbol }}/send{{ k }}">
-      <button type="submit" class="btn sm" {% if not has_bot %}disabled{% endif %}>📨 Telegram'a gönder</button>
-    </form>
-    {% if not has_bot %}<span class="hint">bot yok — <code>TELEGRAM_BOT_TOKEN</code> tanımlı değil</span>{% endif %}
-    {% else %}
-    <a href="/login{{ '?nxt=/t/' + (ref or symbol) if not k else k + '&nxt=/t/' + (ref or symbol) }}" class="btn ghost sm">🔐 giriş yap</a>
-    {% endif %}
-    {% if tg == 'ok' %}<span class="long">✓ Telegram'a gitti!</span>
-    {% elif tg == 'err' %}<span class="bad">✗ Gönderilemedi — token/chat id'yi ve logları kontrol et</span>{% endif %}
-    {% endif %}
-    <span class="hint">Long <b>{{ long_total|usd }}</b> / Short <b>{{ short_total|usd }}</b>
-      {% if scanned_ts %} · {{ 'son ölçüm' if kind == 'crypto' else 'son tarama' }} {{ scanned_ts|dt }}{% endif %}</span>
+
+  <div class="tgrid">
+    {# 📈 grafik: 1 sa mumlar chart.json'dan; son mum canlı akışla büyür (pxLive). Liq barları haritanın izdüşümü. #}
+    <div class="tp t-chart" data-keep="pxchart">
+      <div class="th">📈 Fiyat <span class="st ihit" tabindex="0" data-tip="Hyperliquid perp mumları (1 saatlik) · son mum canlı işlemlerle güncellenir · yatay çizgiler: 💥 likidasyon duvarları ve 📍 balina girişleri · sağdaki bloklar: o fiyat bandında patlayacak toplam $ (üstte short, altta long), çerçeveli = 🧲 duvar · alttaki şerit: saatin tarihsel karnesi">· liq duvarları, girişler, liq blokları ⓘ</span>{% if kind != 'crypto' and klass != 'kripto' %}<span class="st">· 📊 işaretli mumlar geçmiş bilanço günleri</span>{% endif %}</div>
+      <div class="tb">
+        <div id="pxchart" data-sym="{{ ref or symbol }}{{ k }}" data-pending="{{ 0 if pxchart else 1 }}">
+          <p class="dim" id="pxmsg">{% if pxchart %}Grafik çiziliyor…{% else %}Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.{% endif %}</p>
+        </div>
+        <div class="legend pxlegend" hidden>
+          <span><i class="sw f-liq-short"></i> short liq — fiyat <b>çıkarsa</b></span>
+          <span><i class="sw f-liq-long"></i> long liq — fiyat <b>düşerse</b></span>
+        </div>
+      </div>
+    </div>
+
+    {# 🧱 canlı defter: l2Book (coin başına 4 sn önbellek, izleyici sayısından bağımsız); ✅ = doğrulanmış açık emir #}
+    <div class="tp t-book" data-keep="tbook">
+      <div class="th">🧱 Canlı defter <span class="st ihit" tabindex="0" data-tip="HL defteri (her yönde en yakın 12 kademe), birkaç saniyede bir · çubuk = kademedeki $ · ✅ = adayın açık emri HL'de doğrulandı · dolan = son 15 dk'da o fiyatta bekleyen emri dolan adres · defter anonimdir: aday olmayan sahip bulunamaz">ⓘ</span><span class="r" id="tbookts"></span></div>
+      <div class="tthick" id="tthick">
+        {%- set gb = ((book or {}).grouped or {}).bid or [] %}{% set ga = ((book or {}).grouped or {}).ask or [] %}
+        {%- if gb or ga %}
+        {%- for lv, side in [(gb[0] if gb else none, 'bid'), (ga[0] if ga else none, 'ask')] if lv %}
+        <div class="tk"><b class="{{ 'long' if side == 'bid' else 'short' }}">{{ '🟢' if side == 'bid' else '🔴' }} {{ lv.px|px5 }}</b> {{ lv.usd|usd }} ({{ lv.n }} emir)
+          {%- for a, u in (lv.owners or [])[:2] %} ✅<a class="ad" href="/whale/{{ a }}{{ k }}">{{ a[:6] }}…{{ a[-4:] }}</a> <span class="dim">{{ u|usd }}</span>{% endfor %}
+          {%- if not lv.owners %} <span class="dim">{{ 'sahip bilinmiyor (açık emirler sorulamadı)' if book.owners_unknown else 'sahip bulunamadı' }}</span>{% endif %}</div>
+        {%- endfor %}
+        {%- else %}<div class="dim">en kalın kademeler ve sahipleri hazırlanıyor (30 sn'de bir)</div>{% endif %}
+      </div>
+      <div class="tb mono" id="tladder"><div class="dim">defter canlı akışla gelir…</div></div>
+    </div>
+
+    {# ⏱ akan işlemler: kollektörün akışı, ek istek yok; büyük işlem = son 400 işlemin en büyük %10'u #}
+    <div class="tp t-tape" data-keep="ttape">
+      <div class="th">⏱ İşlemler <span class="st ihit" tabindex="0" data-tip="Bu coindeki bütün alım-satımlar, geldiği anda · yön: piyasadan alan/satan (agresör) · sol adres piyasadan alan/satan, sağdaki (→) defterdeki emri dolan · 🔹 = HL TWAP alt emri · vurgulu = son işlemlerin en büyük %10'u · adrese tıkla → cüzdan karnesi">ⓘ</span><span class="r" id="tcount"></span></div>
+      <div class="tb"><div id="tfeed" data-srv="1">
+        {%- for r in tm.live_rows %}
+        <div class="tr {{ 'b' if r[4] == 'B' else 's' }}" data-usd="{{ r[3] }}" title="{{ 'Piyasadan ALIŞ' if r[4] == 'B' else 'Piyasadan SATIŞ' }}">
+          <span class="tm">{{ (r[1] // 1000)|hms }}</span><span class="sd">{{ 'ALIŞ' if r[4] == 'B' else 'SATIŞ' }}</span>
+          <span class="us">{{ r[3]|usd }}{% if r[7] %} 🔹{% endif %}</span><span class="pr">{{ r[2]|px5 }}</span>
+          <span class="wh">{% if r[5] %}<a class="ad" href="/whale/{{ r[5] }}{{ k }}">{{ r[5][:6] }}…{{ r[5][-4:] }}</a>{% endif %}{% if r[6] %}<span class="dim"> → </span><a class="ad mk" href="/whale/{{ r[6] }}{{ k }}">{{ r[6][:6] }}…{{ r[6][-4:] }}</a>{% endif %}</span></div>
+        {%- else %}
+        <div class="dim">{% if listened is false %}{{ symbol }} canlı akışta dinlenmiyor — işlem akışı yok.{% else %}işlemler geldikçe burada akar…{% endif %}</div>
+        {%- endfor %}
+      </div></div>
+    </div>
+
+    {# 💥 liq: kademe özeti + likidasyona en yakınlar (mesafe canlı fiyatla) #}
+    <div class="tp t-liq">
+      <div class="th">💥 Likidasyon <span class="st">· en yakınlar</span><a class="r" href="#liqmap">harita ↓</a></div>
+      <div class="tb" data-sid="tliq">
+        {% if liq %}
+        <div class="lc">
+          <div>↑ <b>%2</b> {{ liq.cascade.up[0].total|usd }} · <b>%5</b> {{ liq.cascade.up[1].total|usd }} · <b>%10</b> {{ liq.cascade.up[2].total|usd }} <span class="shortliq-t">short patlar</span></div>
+          <div>↓ <b>%2</b> {{ liq.cascade.down[0].total|usd }} · <b>%5</b> {{ liq.cascade.down[1].total|usd }} · <b>%10</b> {{ liq.cascade.down[2].total|usd }} <span class="longliq-t">long patlar</span></div>
+        </div>
+        {% endif %}
+        {% if liq_rows %}
+        <table>
+          <tr><th class="l">Adres</th><th>Yön</th><th>$</th><th class="nw">Liq</th><th title="Likidasyona uzaklık — canlı fiyatla güncellenir">Mesafe</th><th class="nw">Kald.</th></tr>
+          {% for p in liq_rows[:30] %}
+          <tr data-liqpx="{{ p.liq_px }}"><td class="l"><a class="ad" href="/whale/{{ p.address }}{{ k }}">{{ p.address[:6] }}…{{ p.address[-4:] }}</a></td>
+            <td class="{{ p.side }}">{{ 'L' if p.side == 'long' else 'S' }}</td><td><b>{{ p.notional|usd }}</b></td>
+            <td class="nw">{{ p.liq_px|px5 }}</td><td class="dist {{ 'warn' if (p.liq_dist or 99) < 5 else '' }}" title="liq {{ p.liq_px|px5 }} · {{ (p.leverage or 0)|int }}x">%{{ '%.1f'|format(p.liq_dist or 0) }}</td><td class="dim nw">{{ (p.leverage or 0)|int }}x</td></tr>
+          {% endfor %}
+        </table>
+        {% else %}<p class="dim">Likidasyon fiyatı bilinen pozisyon yok (şimdiye ≤ %{{ max_liq|int }}).</p>{% endif %}
+      </div>
+      <div class="tf">liq fiyatları son süpürmeye ait{% if liq and liq.meta.latest_ts %} · {{ liq.meta.latest_ts|age }} önce{% endif %} · mesafe canlı fiyatla</div>
+    </div>
+
+    {# ⏱ 15 dk akış: toplamlar ve en çok net alan/satan — /live 's' olayıyla 5 sn'de bir #}
+    <div class="tp t-flow" data-keep="tflow">
+      <div class="th">📊 Akış <span class="st" id="flabel">{{ tape_cover.label }}{% if (tape or {}).twap %} · 🔹 TWAP {{ tape.twap|usd }}{% endif %}</span><a class="r" href="#tape15">tümü ↓</a></div>
+      <div class="tb">
+        <div class="fk">
+          <div><div class="l">Piyasadan alış</div><div class="v long" id="fbuy">{{ ((tape or {}).buy or 0)|usd }}</div></div>
+          <div><div class="l">Piyasadan satış</div><div class="v short" id="fsell">{{ ((tape or {}).sell or 0)|usd }}</div></div>
+          <div><div class="l">Net</div>{% set fnet = (tape or {}).net or 0 %}<div class="v {{ 'long' if fnet > 0 else ('short' if fnet < 0 else 'dim') }}" id="fnet">{{ fnet|sgnusd }}</div></div>
+          <div><div class="l">İşlem / adres</div><div class="v" id="fn">{{ (tape or {}).n or 0 }} / {{ (tape or {}).n_addr or 0 }}</div></div>
+        </div>
+        <div class="twarn" id="fwarn"{% if not tape_cover.warn %} hidden{% endif %}>{% if tape_cover.warn %}⚠️ {{ tape_cover.warn }}{% endif %}</div>
+        <div class="fw">
+          <div><h4>En çok net alan</h4><div id="fbuyers">
+            {%- for f in ((tape or {}).buyers or [])[:8] %}<div class="wr"><a class="ad" href="/whale/{{ f.addr }}{{ k }}">{{ f.addr[:6] }}…{{ f.addr[-4:] }}</a><b class="long">{{ f.net|sgnusd }}</b></div>{% else %}<div class="dim">yok</div>{% endfor %}</div></div>
+          <div><h4>En çok net satan</h4><div id="fsellers">
+            {%- for f in ((tape or {}).sellers or [])[:8] %}<div class="wr"><a class="ad" href="/whale/{{ f.addr }}{{ k }}">{{ f.addr[:6] }}…{{ f.addr[-4:] }}</a><b class="short">{{ f.net|sgnusd }}</b></div>{% else %}<div class="dim">yok</div>{% endfor %}</div></div>
+        </div>
+      </div>
+    </div>
+
+    {# 📋 TWAP: sürenler üstte, plana göre; doldu/kalan/durum yalnız ölçülen (twap.fill_view) #}
+    <div class="tp t-twap">
+      <div class="th">📋 TWAP <span class="st">· sürenler üstte</span><a class="r" href="#twaps">tümü ↓</a></div>
+      <div class="tb" data-sid="ttwap">
+        {% if tm.twaps %}
+        <table>
+          <tr><th class="l">Adres</th><th>Yön</th><th>Plan</th><th>Doldu</th><th class="l">Durum</th></tr>
+          {% for r in tm.twaps %}
+          <tr><td class="l"><a class="ad" href="/whale/{{ r.address }}{{ k }}">{{ r.address[:6] }}…{{ r.address[-4:] }}</a></td>
+            <td class="{{ 'long' if r.side == 'buy' else 'short' }}">{{ 'AL' if r.side == 'buy' else 'SAT' }}</td>
+            <td><b>{{ r.size_usd|usd }}</b></td><td class="dim"{% if r.fill_tip %} title="{{ r.fill_tip }}"{% endif %}>{{ r.fill_txt or '—' }}</td>
+            {%- set stp = (r.state_txt or '').split(' ', 1) %}
+            <td class="l {{ 'long' if r.state in ('forming', 'running') else 'dim' }}" title="{{ r.state_txt }} · {{ r.state_tip }}">{{ stp[0] }}<span class="nw"> {{ stp[1] if stp|length > 1 else '' }}</span></td></tr>
+          {% endfor %}
+        </table>
+        {% else %}<p class="dim">Bu coinde görülen TWAP yok{% if panel_err.twap %} (okunamadı){% endif %}.</p>{% endif %}
+      </div>
+    </div>
+
+    {# 🐋 en büyük pozisyonlar — mesafe canlı fiyatla #}
+    <div class="tp t-pos">
+      <div class="th">🐋 Pozisyonlar <span class="st">· {{ rows|length }} · L {{ n_long }} / S {{ n_short }}</span><a class="r" href="#positions">tümü ↓</a></div>
+      <div class="tb" data-sid="tpos">
+        {% if rows %}
+        <table>
+          <tr><th class="l">Adres</th><th>Yön</th><th>$</th><th class="nw">Liq</th><th title="Likidasyona uzaklık — canlı fiyatla">Mesafe</th><th>uPnL</th></tr>
+          {% for p in rows[:30] %}
+          <tr data-liqpx="{{ p.liq_px or '' }}"><td class="l"><a class="ad" href="/whale/{{ p.address }}{{ k }}">{{ p.address[:6] }}…{{ p.address[-4:] }}</a></td>
+            <td class="{{ p.side }}">{{ 'L' if p.side == 'long' else 'S' }}</td><td><b>{{ p.notional|usd }}</b></td>
+            <td class="dim nw" title="entry {{ p.entry_px|px5 }} · {{ (p.leverage or 0)|int }}x">{{ p.liq_px|px5 }}</td>
+            <td class="dist" title="liq {{ p.liq_px|px5 }} · entry {{ p.entry_px|px5 }} · {{ (p.leverage or 0)|int }}x">{% if p.liq_dist is not none %}%{{ '%.1f'|format(p.liq_dist) }}{% else %}—{% endif %}</td>
+            <td class="{{ 'long' if (p.upnl or 0) > 0 else 'short' }}">{{ p.upnl|sgnusd }}</td></tr>
+          {% endfor %}
+        </table>
+        {% elif scanning %}<p class="dim">🐋 İlk tarama sürüyor…</p>
+        {% else %}<p class="dim">Havuzda açık pozisyon yok.</p>{% endif %}
+      </div>
+    </div>
   </div>
-</div>
+</section>
 
 {# 🔝 Kullanıcı 18.10: "son 15dk alımlar satımlar hepsi, orderbookta en kalın emirlerin sahipleri, gelmiş geçmiş
    büyük twap emirleri en üstte olsun" #}
-{% if tape_cover is not defined %}{% set tape_cover = {"label": "son 15 dk", "warn": "", "unknown": false} %}{% endif %}
-<div class="panel">
+<div class="panel" id="tape15">
   <h2>⏱ Son 15 dakika <span class="st">· bu coindeki bütün alım-satımlar, adresiyle · canlı akıştan, istek atmadan</span></h2>
   {% if panel_err.tape %}<p class="alert bad">⚠️ bant okunamadı: {{ panel_err.tape }}</p>{% endif %}
   {% if tape and tape.n %}
@@ -195,7 +303,7 @@
   {% elif book and book.err %}
   {{ m.empty(["Defter okunamadı (" ~ book.err|join(', ') ~ ") — sayfa birazdan yeniden dener."]) }}
   {% elif book_pending %}
-  {{ m.empty(["Defter ve sahipler hazırlanıyor — sayfa 10 sn içinde kendiliğinden yenilenir."]) }}
+  {{ m.empty(["Defter ve sahipler hazırlanıyor — yukarıdaki 🧱 canlı defter birkaç saniyede dolar, bu panel sayfa yenilenince."]) }}
   {% else %}
   {{ m.empty(["Defter okunamadı — birazdan yeniden dene."]) }}
   {% endif %}
@@ -214,7 +322,7 @@
   {% endif %}
 </div>
 
-<div class="panel">
+<div class="panel" id="twaps">
   <h2>📋 TWAP emirleri <span class="st">· bu coindeki geçmiş ve canlı TWAP'lar · emir boyutuna göre, sürenler üstte</span></h2>
   <p class="sub">Düzenli aralıklarla, benzer boyutta gelen fill dizisi = <b>TWAP</b>. Dizi yakalanınca
   adresin <b>HL emir geçmişi</b> sorulur ve emrin <b>planlanan toplamı</b>, <b>dolanı</b>, <b>kalanı</b>
@@ -338,26 +446,6 @@
   {% endif %}
 </div>
 
-<div class="panel" data-keep="pxchart">
-  <h2>📈 Fiyat grafiği <span class="st">· liq duvarları ve balina girişleri işaretli</span></h2>
-  <p class="sub">Hyperliquid perp mumları (1 saatlik). Yatay çizgiler balinaların
-  <b>likidasyon duvarları</b> ve <b>giriş seviyeleri</b> — fiyat oraya değerse ne olacağını burada görürsün.
-  Sağdaki yatay bloklar likidasyon haritasının fiyat eksenine izdüşümü: blok uzunluğu o fiyat bandında
-  patlayacak toplam $ (altta long, üstte short); ayrıntı ve adresler aşağıdaki 💥 haritada.
-  Alttaki ince şerit o saatin tarihsel karnesi (yeşil = güçlü saat, kırmızı = zayıf).
-  {% if kind != 'crypto' and klass != 'kripto' %}📊 işaretli mumlar geçmiş bilanço günleri.{% endif %}</p>
-  <div id="pxchart" data-sym="{{ ref or symbol }}{{ k }}"
-       data-pending="{{ 0 if pxchart else 1 }}"
-      >
-    <p class="dim" id="pxmsg">{% if pxchart %}Grafik çiziliyor…{% else %}Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.{% endif %}</p>
-  </div>
-  {# JS bar çizince açar; bar yoksa gizli kalır (harita paneli nedenini zaten yazar) #}
-  <div class="legend pxlegend" hidden>
-    <span><i class="sw f-liq-short"></i> short liq bloğu — fiyat <b>çıkarsa</b> patlar</span>
-    <span><i class="sw f-liq-long"></i> long liq bloğu — fiyat <b>düşerse</b> patlar</span>
-    <span class="dim">blok boyu = banttaki toplam $ · çerçeveli = 🧲 duvar</span>
-  </div>
-</div>
 
 {% if tv_sym %}
 <details class="panel guidetv" data-keep="tvembed">
@@ -479,7 +567,7 @@
 {% endif -%}
 {%- endmacro %}
 
-<div class="panel">
+<div class="panel" id="liqmap">
   <h2>💥 Likidasyon haritası <span class="st">· fiyat nereye giderse kim patlar</span></h2>
   {% if panel_err.liq %}
   <p class="alert bad">⚠️ Likidasyon haritası çizilemedi — <code>{{ panel_err.liq }}</code>. Sunucu günlüğüne bak.</p>
@@ -575,7 +663,7 @@
   {% endif %}
 </div>
 
-<div class="panel">
+<div class="panel" id="positions">
   <h2>🐋 En büyük pozisyonlar <span class="st">· kim ne kadar koydu, kaçtan girdi, kaç kaldıraçla</span></h2>
   <p class="sub">{% if kind == 'crypto' %}Bu coine en çok para koyan cüzdanlar — süpürmede görülenler, her boyut.
   Şüphe skoru yok: skor hisse hattına ait (bilanço, taze cüzdan, tek hisse…); sıralama notional.

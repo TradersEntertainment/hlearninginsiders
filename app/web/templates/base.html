@@ -547,6 +547,113 @@ details.guidetv[open] summary{margin-bottom:2px}
   font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
 .lqbar.wall{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--head) 45%,transparent)}
 .pxlegend{margin-top:6px}
+/* ── 📟 Coin terminali (kullanıcı 18.10: "grafik ve liq falan her şey tek bakışta sığsın, terminal gibi aksın").
+   Masaüstünde (≥1200px) üst bant + iki sıra panel ekrana SIĞAR (paneller kendi içinde kayar); altta ayrıntı
+   panelleri. Telefonda alt alta, sabit yükseklikli. Sayılar eşit genişlikli; dekor kapalı. ── */
+body.term .blob,body.term .spark,body.term .whale{display:none}
+body.term main{padding:8px 10px;max-width:none}
+body.term header{padding:6px 14px;gap:10px;flex-wrap:nowrap}
+body.term header h1{font-size:15px;white-space:nowrap}
+body.term header input[type=text]{width:150px;padding:5px 12px}
+body.term header button{padding:5px 12px}
+body.term .topnav{display:flex;flex:1 1 auto;min-width:0;gap:2px;overflow-x:auto;scrollbar-width:none;
+  mask-image:linear-gradient(90deg,#000 calc(100% - 22px),transparent)}
+body.term .topnav::-webkit-scrollbar{display:none}
+body.term .topnav a{margin:0;flex:0 0 auto;padding:2px 7px}
+body.term header h1 .wig{animation:none}
+.term{--tfs:12.5px;--trow:18px;font-size:var(--tfs);font-variant-numeric:tabular-nums;margin-bottom:14px}
+.term .mono,.term .tr,.term .lr,.term .wr{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace}
+.tbar{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 18px;padding:8px 14px;margin-bottom:8px;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-m)}
+.tbar .sym{font-size:18px;font-weight:800;color:var(--head)}
+.tbar .sym .st{font-size:var(--fs-xs)}
+.tbar #tpx{font-size:22px;font-weight:800;color:var(--fg-strong);border-radius:6px;padding:0 4px;transition:background .6s}
+.tbar #tpx.up{animation:flup .8s}.tbar #tpx.dn{animation:fldn .8s}
+@keyframes flup{from{background:color-mix(in srgb,var(--green) 35%,transparent)}}
+@keyframes fldn{from{background:color-mix(in srgb,var(--red) 35%,transparent)}}
+.tbar .k{color:var(--dim);font-size:var(--fs-s)}
+.tbar .k b{color:var(--fg);font-size:var(--fs-m)}
+.tbar .tact{margin-left:auto;display:flex;gap:8px;align-items:center}
+.tbar form{display:inline}
+.tlive{font-weight:800;font-size:var(--fs-s);white-space:nowrap}
+.tlive.on{color:var(--green)}.tlive.wait{color:var(--amber)}.tlive.off{color:var(--dim)}
+.tgrid{display:grid;gap:8px}
+.tp{background:var(--panel);border:1px solid var(--border);border-radius:var(--r-m);display:flex;
+  flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+.tp>.th{display:flex;gap:8px;align-items:baseline;padding:6px 10px 5px;border-bottom:1px solid var(--border);
+  font-weight:800;color:var(--head);font-size:var(--fs-m);white-space:nowrap;overflow:hidden}
+.tp>.th .st{font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.tp>.th .r{margin-left:auto;color:var(--dim);font-weight:600;font-size:var(--fs-xs)}
+.tp>.th a{font-weight:600;font-size:var(--fs-xs)}
+.tp>.tb{flex:1;min-height:0;overflow:auto;padding:4px 8px 6px;scrollbar-width:thin}
+.tp>.tf{padding:3px 10px 5px;border-top:1px solid var(--border);color:var(--dim);font-size:var(--fs-xs);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp table{font-size:var(--tfs)}
+.tp th,.tp td{padding:2px 5px;line-height:1.35}
+.tp tr:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.t-chart .tb{padding:0;position:relative}
+.t-chart #pxchart{height:100%;min-height:220px}
+.t-chart .pxlegend{position:absolute;top:4px;left:8px;z-index:4;margin:0;padding:2px 8px;font-size:var(--fs-xs);
+  border-radius:var(--r-s);background:rgba(var(--panel-solid),.82);pointer-events:none}
+/* akış: yeni satır kısa parlar; büyük işlem kalın ve vurgulu */
+.tr{display:grid;grid-template-columns:62px 42px 62px 72px 1fr;gap:6px;align-items:center;height:var(--trow);
+  white-space:nowrap;border-radius:4px;padding:0 4px}
+.tr .sd{font-weight:800}.tr.b .sd,.tr.b .us{color:var(--green)}.tr.s .sd,.tr.s .us{color:var(--red)}
+.tr .tm,.tr .pr{color:var(--dim)}.tr .us{text-align:right;font-weight:700}.tr .pr{text-align:right}
+.tr .wh{overflow:hidden;text-overflow:ellipsis}
+.tr.big{background:color-mix(in srgb,var(--amber) 9%,transparent)}.tr.big .us{font-weight:900}
+.tr.new{animation:trnew 1.2s ease-out}
+@keyframes trnew{from{background:color-mix(in srgb,var(--accent) 22%,transparent)}}
+.ad{color:var(--accent)}.ad.mk{color:var(--dim)}
+/* defter merdiveni: kademe başına derinlik çubuğu, sahip rozeti */
+.lr{position:relative;display:grid;grid-template-columns:minmax(64px,1fr) 64px 34px minmax(70px,1.3fr);gap:6px;
+  height:var(--trow);align-items:center;padding:0 6px;white-space:nowrap}
+.lr .lb{position:absolute;top:2px;bottom:2px;right:0;z-index:0;border-radius:3px 0 0 3px;opacity:.28}
+.lr.a .lb{background:var(--red)}.lr.b .lb{background:var(--green)}
+.lr>span{position:relative;z-index:1}
+.lr.a .lp{color:var(--red)}.lr.b .lp{color:var(--green)}
+.lr .lu{text-align:right;font-weight:700}.lr .ln{text-align:right;color:var(--faint)}
+.lr .lo{overflow:hidden;text-overflow:ellipsis}
+.lmid{text-align:center;color:var(--dim);font-size:var(--fs-xs);padding:3px 0;margin:2px 0;
+  border-top:1px dashed var(--border);border-bottom:1px dashed var(--border)}
+.tthick{display:grid;gap:2px;padding:4px 8px;border-bottom:1px solid var(--border);font-size:var(--fs-s)}
+.tthick .tk{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ok{margin-right:2px}
+/* 15 dk akış */
+.fk{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:2px 0 6px}
+.fk>div{background:var(--surface-1);border-radius:6px;padding:3px 6px;min-width:0}
+.fk .l{color:var(--dim);font-size:var(--fs-xs)}.fk .v{font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fw{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fw h4{margin:2px 0;font-size:var(--fs-xs);color:var(--dim);font-weight:700}
+.wr{display:flex;gap:6px;align-items:baseline;white-space:nowrap;line-height:1.5}
+.wr .dim{font-size:var(--fs-xs);margin-left:auto}
+.twarn{color:var(--amber);font-size:var(--fs-xs)}
+/* liq: kademe özeti + en yakınlar (mesafe canlı fiyatla) */
+.lc{display:grid;gap:2px;font-size:var(--fs-s);color:var(--dim);padding:2px 0 6px;border-bottom:1px dashed var(--border);margin-bottom:4px}
+.lc b{color:var(--fg)}
+@media(min-width:1200px){
+  /* üst bant + 2 sıra: ekrana sığar (başlık ~44px, bant ~46px, aralıklar) */
+  .tgrid{grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:minmax(0,56fr) minmax(0,44fr);
+    height:max(600px,calc(100vh - var(--term-top,130px)))}
+  .t-chart{grid-column:span 6}.t-book{grid-column:span 3}.t-tape{grid-column:span 3}
+  .t-liq,.t-flow,.t-twap,.t-pos{grid-column:span 3}
+}
+@media(min-width:1200px) and (max-width:1599px){
+  .term .nw{display:none}                       /* dar masaüstü: ikincil sütun ipucuna geçer */
+}
+@media(max-width:1199px){
+  .tgrid{grid-template-columns:1fr}
+  .t-chart{height:340px}.t-book{height:440px}.t-tape{height:380px}
+  .t-liq,.t-flow,.t-twap,.t-pos{max-height:420px}
+}
+@media(max-width:700px){
+  body.term header{flex-wrap:wrap}
+  body.term .topnav{flex:1 0 100%;order:9}
+  .tbar #tpx{font-size:19px}
+  .tbar .tact{margin-left:0}
+  .tr{grid-template-columns:56px 38px 56px 64px 1fr;gap:4px}
+  .t-chart{height:280px}
+}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
     transition-duration:.01ms!important;scroll-behavior:auto!important}
@@ -947,6 +1054,8 @@ function hexa(c, a){
 
 function pxTheme(){
   return {
+    // tarih/saat biçimi tarayıcı diline bırakılmaz: geçersiz dil etiketi ("en-US@posix") grafiği çizdirmiyordu
+    localization: {locale: 'tr-TR'},
     layout: {background: {color: 'transparent'}, textColor: cssv('--dim', '#a79ec4'),
              fontFamily: getComputedStyle(document.body).fontFamily},
     grid: {vertLines: {color: cssv('--card-stroke', '#282138')},
@@ -1192,7 +1301,26 @@ async function initPriceChart(){
   }
 
   chart.timeScale().fitContent();
-  PXCHART = {chart: chart, series: s, box: box, ov: ov, ro: ro, redraw: drawLiq};
+  var lc = d.candles[d.candles.length - 1];
+  PXCHART = {chart: chart, series: s, box: box, ov: ov, ro: ro, redraw: drawLiq,
+             last: {time: lc.t, open: lc.o, high: lc.h, low: lc.l, close: lc.c},
+             step: d.candles.length > 1 ? (d.candles[d.candles.length - 1].t - d.candles[d.candles.length - 2].t) : 3600};
+}
+
+// 📟 Canlı mum (terminal): son mum gelen işlem fiyatıyla büyür, saat dönünce yenisi açılır. Mumlar chart.json'dan
+// (1 sa) bir kez gelir; yalnız SON mum canlıdır — geçmiş mumlar yeniden çizilmez.
+function pxLive(p, ts){
+  if(!PXCHART || !PXCHART.series || !PXCHART.last || !(p > 0)) return;
+  var L = PXCHART.last, st = PXCHART.step || 3600;
+  var bt = Math.floor(ts / st) * st;
+  if(bt < L.time) return;
+  if(bt === L.time){
+    L.high = Math.max(L.high, p); L.low = Math.min(L.low, p); L.close = p;
+  } else {
+    L = PXCHART.last = {time: bt, open: L.close, high: Math.max(L.close, p), low: Math.min(L.close, p), close: p};
+  }
+  try{ PXCHART.series.update(L); }catch(e){}
+  if(PXCHART.redraw) PXCHART.redraw();
 }
 
 function pxRetheme(){
@@ -1295,6 +1423,9 @@ else initTv();
       var dets = Array.prototype.map.call(document.querySelectorAll('main details'),
                                           function(d){ return d.open; });
       var x = scrollX, y = scrollY;
+      // Panel İÇİ kaydırma (📟 terminal: liq / TWAP / pozisyon listeleri kendi içinde kayar) — [data-sid] ile korunur
+      var sids = {};
+      cm.querySelectorAll('[data-sid]').forEach(function(b){ sids[b.dataset.sid] = [b.scrollTop, b.scrollLeft]; });
       nm.classList.add('no-pop');  // yenilemede panel giriş animasyonu oynamasın
       // Canlı düğümleri NAKLET: mum grafiği ve TradingView gömülüsü her turda
       // yok edilip yeniden kurulursa titrer, iframe yeniden yüklenir, grafik
@@ -1305,6 +1436,10 @@ else initTv();
       });
       cm.replaceWith(nm);
       scrollTo(x, y);
+      nm.querySelectorAll('[data-sid]').forEach(function(b){
+        var v = sids[b.dataset.sid]; if(v){ b.scrollTop = v[0]; b.scrollLeft = v[1]; }
+      });
+      if(typeof window.termAfterRefresh === 'function') window.termAfterRefresh();
       var nd = document.querySelectorAll('main details');
       dets.forEach(function(o, i){ if(nd[i] && nd[i].open !== o) nd[i].open = o; });
       var boxes = document.querySelectorAll('.tabs');

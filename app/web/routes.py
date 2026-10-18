@@ -9,7 +9,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from ..config import EDITABLE_FIELDS, convert_value, display_value
@@ -36,6 +36,8 @@ def _usd(n):
     if n is None:
         return "-"
     a = abs(n)
+    if a >= 1_000_000_000:                     # 📟 terminal: "$3298.90M" yerine "$3.30B" (BTC OI, 24 sa hacim)
+        return f"${n / 1_000_000_000:.2f}B"
     if a >= 1_000_000:
         return f"${n / 1_000_000:.2f}M"
     if a >= 1_000:
@@ -79,6 +81,13 @@ def _dt(ts):
     return datetime.fromtimestamp(ts, TR).strftime("%d.%m %H:%M")
 
 
+def _hms(ts):
+    """📟 terminal akışı: yalnız saat (TSİ, saniyeli)."""
+    if not ts:
+        return "-"
+    return datetime.fromtimestamp(ts, TR).strftime("%H:%M:%S")
+
+
 def _posage(p):
     """Pozisyon yaşı: açılış biliniyorsa yaşı, bilinmiyorsa 'en az' alt sınırı.
 
@@ -108,7 +117,7 @@ def _sgnusd(v):
     return ("+" if v > 0 else "-") + _usd(abs(v))
 
 
-templates.env.filters.update(usd=_usd, px=_px, px5=_px5, age=_age, dt=_dt, posage=_posage, sgnusd=_sgnusd,
+templates.env.filters.update(usd=_usd, px=_px, px5=_px5, age=_age, dt=_dt, hms=_hms, posage=_posage, sgnusd=_sgnusd,
                              dist=_tgfmt.dist_txt)
 
 
@@ -825,6 +834,24 @@ async def coin_page(request: Request, symbol: str):
     book_pending = _bo.kick(getattr(request.app.state, "client", None), coin) and book is None
     col = getattr(request.app.state, "collector", None)
     listened = (coin in col.valid_coins) if col is not None and getattr(col, "valid_coins", None) else None
+    # 📟 Terminal (kullanıcı 18.10: "tek bakışta sığsın, terminal gibi aksın"): coin izlenmeye başlar (işlem halkası),
+    # ilk boyama son işlemlerle (halka boşsa 15 dk bandının en büyükleri, zamana göre), canlı fiyat son işlemden.
+    from ..radar import livefeed as _lf
+    _lf.watch(coin)
+    _lf.depth(getattr(request.app.state, "client", None), coin)   # defteri ısıt: akış bağlanınca merdiven hemen dolsun
+    live_rows = [_lf.row(r) for r in _lf.since(coin, 0, limit=60)][::-1]
+    if not live_rows and tape_sum and tape_sum.get("trades"):
+        live_rows = [[0, int(tr["ts"]) * 1000, tr["px"], round(tr["usd"], 2), "B" if tr["side"] == "buy" else "A",
+                      tr["taker"], tr["maker"], 1 if tr["twap"] else 0]
+                     for tr in sorted(tape_sum["trades"], key=lambda x: -x["ts"])[:40]]
+    last = _lf.LAST.get(coin)
+    term = {"seq": _lf.last_seq(coin), "live_rows": live_rows, "px": last[1] if last else None,
+            "px_ts": last[0] if last else None,
+            "prev": (float(summ["mark"]) / (1 + float(summ["px_change_pct"]) / 100)
+                     if summ.get("mark") and summ.get("px_change_pct") not in (None, -100) else None),
+            "live": bool(col is not None and getattr(col, "connected", False)),
+            "twaps": sorted(twaps, key=lambda r: (r.get("state") not in ("forming", "running"),
+                                                  -float(r.get("size_usd") or 0)))[:14]}
 
     # Kapsama: havuz / HL OI (dürüstlük satırı). Süs — hesaplanamazsa sayfa düşmez.
     try:
@@ -836,6 +863,7 @@ async def coin_page(request: Request, symbol: str):
 
     return _render(request, "coin.html", {
         "tape": tape_sum, "tape_cover": tape_cover, "book": book, "book_pending": book_pending, "listened": listened,
+        "term": term,
         "coverage": cov,
         "hmeta": hmeta, "hchart": hchart, "panel_err": panel_err,
         "hstats_pending": hstats_pending, "now_verdict": now_verdict,
@@ -862,6 +890,101 @@ async def coin_page(request: Request, symbol: str):
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
     })
+
+
+def _sse(event: str, data) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+@router.get("/t/{symbol}/live")
+async def coin_live(request: Request, symbol: str):
+    """📟 Terminal düzeninin canlı akışı (SSE). Kullanıcı (18.10): "terminal gibi akmalı canlı veriler de ben o
+    sayfadaysam". Olaylar: `t` işlemler (kollektörün akışından, ek HL isteği yok), `s` 15 dk toplamları + kapsama
+    (STATS_TTL), `b` canlı defter (DEPTH_TTL, coin başına tek istek), `o` defter sahipleri (bookowners 30 sn), `x` akış
+    yok / kapandı. Ömür livefeed.STREAM_LIFE; istemci `?seq=` ile kaldığı yerden yeniden bağlanır."""
+    import asyncio as _aio
+    from ..radar import bookowners as _bo
+    from ..radar import livefeed as lf
+    _guard(request)
+    t = await resolve_coin(symbol)
+    if not t:
+        raise HTTPException(404, "coin yok")
+    coin = t["coin"]
+    if lf.STATS["streams"] >= lf.MAX_STREAMS:
+        lf.STATS["rejected"] += 1
+        return Response("canlı akış tavanı dolu", status_code=503, headers={"Retry-After": "20"})
+    lf.watch(coin)
+    client = getattr(request.app.state, "client", None)
+    col = getattr(request.app.state, "collector", None)
+    try:
+        seq = int(request.query_params.get("seq") or 0)
+    except ValueError:
+        seq = 0
+
+    async def gen():
+        nonlocal seq
+        lf.STATS["streams"] += 1
+        lf.STATS["opened"] += 1
+        t0 = last_beat = _aio.get_running_loop().time()
+        last_s = last_b = -999.0
+        last_o = None
+        try:
+            listened = (coin in col.valid_coins) if col is not None and getattr(col, "valid_coins", None) else None
+            live = bool(col is not None and getattr(col, "connected", False))
+            yield "retry: 3000\n\n"
+            yield _sse("hello", {"coin": coin, "listened": listened, "live": live, "seq": lf.last_seq(coin),
+                                 "px": (lf.LAST.get(coin) or (0, None))[1]})
+            if seq == 0:                                # ilk bağlanış: halkadaki son işlemler
+                rows = lf.since(coin, 0, limit=80)
+                if rows:
+                    seq = rows[-1][0]
+                    yield _sse("t", {"r": [lf.row(r) for r in rows], "init": 1})
+            while True:
+                now_l = _aio.get_running_loop().time()
+                if now_l - t0 > lf.STREAM_LIFE or await request.is_disconnected():
+                    break
+                lf.watch(coin)
+                sent = False
+                rows = lf.since(coin, seq)
+                if rows:
+                    seq = rows[-1][0]
+                    yield _sse("t", {"r": [lf.row(r) for r in rows]})
+                    sent = True
+                if now_l - last_s >= lf.STATS_TTL:
+                    last_s = now_l
+                    st = lf.stats(coin)
+                    yield _sse("s", {**st, "px": (lf.LAST.get(coin) or (0, None))[1],
+                                     "live": bool(col is not None and getattr(col, "connected", False))})
+                    sent = True
+                if now_l - last_b >= lf.DEPTH_TTL:
+                    last_b = now_l
+                    d = lf.depth(client, coin)
+                    if d:
+                        yield _sse("b", d)
+                        sent = True
+                    else:                               # henüz yok: 4 sn beklemeden yeniden bak
+                        last_b = now_l - lf.DEPTH_TTL + 0.7
+                    bk = _bo.cached(coin)
+                    _bo.kick(client, coin)              # 30 sn önbellek: izleyici sayısından bağımsız
+                    if bk and bk.get("ts") != last_o:
+                        last_o = bk.get("ts")
+                        yield _sse("o", lf.owners(bk))
+                        sent = True
+                if sent:
+                    last_beat = now_l
+                elif now_l - last_beat >= lf.HEARTBEAT:
+                    last_beat = now_l
+                    yield ": ♥\n\n"
+                await _aio.sleep(lf.TICK)
+            yield _sse("x", {"why": "ömür doldu", "seq": seq})
+        except Exception:                               # noqa: BLE001
+            lf.STATS["errors"] += 1
+            log.debug("canlı akış %s", coin, exc_info=True)
+        finally:
+            lf.STATS["streams"] -= 1
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 def _page_ref(t: dict) -> str:

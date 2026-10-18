@@ -14,7 +14,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
-from ..radar import openmove, stickywall, tape, twapfast, twaplive, twaploose
+from ..radar import livefeed, openmove, stickywall, tape, twapfast, twaplive, twaploose
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -433,7 +433,9 @@ class Collector:
             zero = twapfast.is_twap_hash(t.get("hash"))    # HL TWAP alt emri: sahibi taker
             # 📼 15 dk bant (coin sayfası / /defter): her işlem, taban yok. Sıcak yol: senkron, I/O yok.
             try:
-                tape.observe(coin, aggr, buyer, seller, px, sz, ts, zero, tid)
+                if tape.observe(coin, aggr, buyer, seller, px, sz, ts, zero, tid):
+                    # 📟 canlı sayfa akışı: yalnız bantta sayılan işlem (izlenmeyen coinde yalnız son fiyat)
+                    livefeed.push(coin, int(t["time"]), px, sz, aggr, buyer, seller, zero)
             except Exception:
                 tape.STATS["errors"] += 1
             for addr, side in ((buyer, "buy"), (seller, "sell")):

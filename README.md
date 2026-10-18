@@ -1571,11 +1571,51 @@ ana dex özeti kv'si; ikisi de yoksa son mumun kapanışı (sayfa söyler). Ana
 sayfadaki 🪙 **Ana dex kripto** paneli hacimce ilk 40'ı listeler; balina ve
 devler sayfalarındaki kripto coinler artık bağlantılıdır.
 
+## 📟 Coin terminali: grafik, defter, işlem akışı, liq, TWAP, pozisyonlar tek ekranda — canlı
+
+Kullanıcı (18.10): "grafik ve liq falan her şey tam tek bakışta sığacak şekilde tasarım yapman lazım, terminal gibi
+akmalı canlı veriler de ben o sayfadaysam, iyice uğraş". Ölçüm (sayfa haritası): eski coin sayfası ~12.000 px'ti
+(~13 ekran); grafik 6.100'üncü, liq haritası 7.500'üncü pikselden başlıyordu; "canlı" bir şey yoktu — sayfa 45 sn'de
+bir tamamen yeniden iniyor, grafik ilk açılıştan sonra hiç güncellenmiyor, fiyat 1–5 dk bayat kalabiliyordu.
+
+**Düzen** (`coin.html` üstü, stil `base.html` "📟 Coin terminali"): üst bant — sembol, **canlı fiyat** (son işlem; değişince
+yeşil/kırmızı parlar, sekme başlığında da), 24 sa değişim (canlı fiyatla), OI, funding, hacim, L/S toplamları,
+kapsama, bilanço, canlı akış göstergesi (● canlı / ◌ bağlanıyor / ○ akış yok — nedeniyle), tazele/tara. Altında iki sıra
+panel; masaüstünde (≥1200 px) **ekrana sığar**, her panel kendi içinde kayar (1920×1080 ve 1366×768'de ölçüldü):
+- **📈 Fiyat:** 1 sa mumlar + liq duvarı / giriş çizgileri + liq blokları; **son mum canlı işlemlerle büyür**.
+- **🧱 Canlı defter:** HL defteri (her yönde en yakın kademeler, panele sığdığı kadar) birkaç saniyede bir, derinlik
+  çubuklu; ✅ = doğrulanmış açık emir sahibi (bookowners), üstte en kalın gruplu kademeler ve sahipleri.
+- **⏱ İşlemler:** bütün işlemler geldiği anda akar — saat, yön (piyasadan), $, fiyat, piyasadan alan/satan → defterdeki
+  emri dolan; 🔹 TWAP alt emri; son işlemlerin en büyük %10'u vurgulu.
+- **💥 Likidasyon:** %2/%5/%10 kademe özeti + likidasyona en yakınlar; **mesafe canlı fiyatla** yeniden hesaplanır.
+- **📊 Akış:** son 15 dk alış / satış / net, işlem / adres, en çok net alan / satan (5 sn'de bir); kapsama uyarısı.
+- **📋 TWAP:** sürenler üstte, plana göre; doldu / durum `twap.fill_view` ile (ölçülen).
+- **🐋 Pozisyonlar:** en büyükler, liq ve **canlı mesafe**, uPnL.
+Dar masaüstünde (1200–1599 px) ikincil sütunlar ipucuna geçer; telefonda paneller alt alta. Bütün ayrıntı panelleri
+(tam tablolar, giriş haritası, saat karnesi, liq haritası, TradingView) terminalin altında, aşağı kaydırınca.
+
+**Canlı akış** (`app/radar/livefeed.py`, uç `GET /t/{coin}/live`, istemci `static/term.js`): SSE. İşlemler kollektörün
+zaten aldığı WS akışından — **ek HL isteği yok**; yalnız bantta sayılan işlem yayılır (yeniden yollanan / açılış
+öncesi gitmez). Halka yalnız sayfası son 15 dk'da açılmış coinde tutulur (bellek). 15 dk toplamları coin başına 5 sn,
+defter (l2Book, ağırlık 2, düşük şerit) coin başına 4 sn önbellek — izleyici sayısından bağımsız; defter sahipleri
+bookowners'ın 30 sn önbelleğiyle. Akış 4 dk yaşar, istemci kaldığı yerden (`seq`) yeniden bağlanır (tekrar yok;
+sunucu yeniden başladıysa sıra sıfırlanır); gizli sekmede yeniden bağlanmaz. Eşzamanlı akış en çok 24. Sayfanın geri
+kalanı 60 sn'de bir yumuşak yenilenir; canlı paneller (grafik, defter, akış, toplamlar) nakledilir, panel içi kaydırma
+korunur. Eskiden sayfa her 45 sn'de defter sahiplerini yeniden kurduruyordu.
+
+**Kör nokta, açıkça:** canlı akış yalnız WS'in dinlediği coinlerde (kripto ilk `CRYPTO_WATCH_TOP`, spot ilk
+`SPOT_WATCH_TOP`, hisseler) — değilse gösterge "dinlenmiyor" der. Canlı fiyat = son işlem (mark değil); funding / OI /
+24 sa hacim sayfa yenilemesiyle (metrik turu 1–5 dk). Mumlar 1 saatlik; geçmiş mumlar yeniden çekilmez, yalnız son mum
+canlı. Liq fiyatları ve pozisyonlar süpürmeden (dakikalar–saatler); canlı olan yalnız mesafe. Bu deneme Railway'de
+SSE'nin tamponlanmadığını varsayar (`X-Accel-Buffering: no`); akmıyorsa gösterge "bağlanıyor"da kalır.
+`/tani`'de "📟 canlı sayfa akışı" satırı.
+
 ## 🔝 Coin sayfasının üstü: son 15 dk · en kalın emirler ve sahipleri · TWAP'lar (+ `/defter PUMP`)
 
 Kullanıcı (18.10): "sitemde pump yazıp girdiğimde son 15dk alımlar satımlar hepsi, orderbookta en kalın emirlerin
 sahipleri, gelmiş geçmiş büyük twap emirleri en üstte olsun" · "bu kim nasıl bulabilirim … hem sitede hem telegramda
-sorarak olmalı". Her coin sayfasının (`/t/PUMP`, hisse ve kripto) en üstünde üç panel:
+sorarak olmalı". Her coin sayfasında (`/t/PUMP`, hisse ve kripto) 📟 terminalin hemen altında üç panel (terminaldeki
+🧱 / ⏱ / 📋 panellerinin tam hâli):
 
 - **⏱ Son 15 dakika** (`app/radar/tape.py`): kollektörün zaten aldığı canlı işlem akışından (WS `trades`, alıcı ve
   satıcı adresiyle) — **ek HL isteği yok**. Piyasadan alış / satış / net, işlem ve adres sayısı, 🔹 TWAP alt emri
@@ -1604,7 +1644,8 @@ sorarak olmalı". Her coin sayfasının (`/t/PUMP`, hisse ve kripto) en üstünd
   tetikli emri (Stop / TP) bayraksız verdiği için tamamlamadan gelip görünen kademeye düşen ya da büyük olan emir
   `orderStatus` ile doğrulanır; doğrulanamayan sahip sayılmaz (HL `orderStatus` yalnız yakın geçmişi bilir, saatlerdir
   bekleyen emre "unknownOid" der: bu "emir yok" sayılmaz, "doğrulanamadı" sayılır). Açık emirler hiç sorulamadıysa (HL hız sınırı / hepsi
-  okunamadı) kademe "sahip bilinmiyor" der, "bulunamadı" değil. Sayfa açılınca arka planda kurulur (30 sn önbellek; hazır değilse sayfa 10 sn'de yenilenir). Sahip sorguları
+  okunamadı) kademe "sahip bilinmiyor" der, "bulunamadı" değil. Sayfa açılınca arka planda kurulur (30 sn önbellek); terminal canlı akışla getirir, bu panel sayfa
+  yenilenince (60 sn). Sahip sorguları
   süre sınırlıdır (bitmeyen aday "okunamadı" sayılır, okunmuş defter atılmaz); düşük şerit 429 sonrası duraklıyken
   adaylar sorulmaz ("ertelendi"). Hisse sayfalarında duvar radarının kayıtları da bu panelde.
 - **📋 TWAP emirleri**: bu coinin süren ve geçmiş TWAP'ları (eskiden sayfanın altındaydı).

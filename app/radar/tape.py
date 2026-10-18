@@ -121,21 +121,22 @@ def _add_addr(b: _Bucket, addr: str, buy: float, sell: float, taker: float, twap
 
 
 def observe(coin: str, aggr: str, buyer: str, seller: str, px: float, sz: float, ts: int,
-            twap: bool = False, tid: str = "") -> None:
+            twap: bool = False, tid: str = "") -> bool:
     """Tek işlem (kollektörün sıcak yolu). `aggr`: 'B' (alıcı agresör) / 'A' (satıcı agresör) / bilinmiyor.
-    `tid`: HL işlem kimliği — yeniden yollanan işlem (yeniden bağlanma) ikinci kez sayılmaz."""
+    `tid`: HL işlem kimliği — yeniden yollanan işlem (yeniden bağlanma) ikinci kez sayılmaz.
+    Dönüş: işlem bantta SAYILDI mı (📟 canlı akış yalnız sayılanı yayar — tekrar / açılış öncesi gitmez)."""
     usd = float(px) * float(sz)
     if usd <= 0 or not coin:
-        return
+        return False
     if int(ts) < STARTED:                            # abonelikte yollanan açılış öncesi işlem: "öncesi yok" doğru kalsın
         STATS["pre"] += 1
-        return
+        return False
     if _dup(coin, int(ts), str(tid or "")):
         STATS["dups"] += 1
-        return
+        return False
     b = _bucket(coin, ts)
     if b is None:
-        return
+        return False
     STATS["trades"] += 1
     b.n += 1
     if aggr == "B":
@@ -162,6 +163,7 @@ def observe(coin: str, aggr: str, buyer: str, seller: str, px: float, sz: float,
             b.makers[key] = b.makers.get(key, 0.0) + usd
         else:
             b.other_maker += usd
+    return True
 
 
 def _gaps(lo: int, hi: int) -> tuple[list[list[int]], bool]:

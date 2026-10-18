@@ -179,7 +179,7 @@ def test_top_panels_with_data():
                  "restart": False, "live_down": False}
         html2 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=empty, tape_cover=tp.cover(empty), book=None,
                              book_pending=True, listened=False))
-        assert "canlı akışta dinlenmiyor" in html2 and "hazırlanıyor" in html2 and 'data-refresh="10"' in html2
+        assert "canlı akışta dinlenmiyor" in html2 and "hazırlanıyor" in html2 and 'data-refresh="60"' in html2
         # akış şu an kopuk: "işlem görülmedi" değil bilinmiyor
         down = {**empty, "live_down": True, "full": False}
         html3 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=down, tape_cover=tp.cover(down),
@@ -192,7 +192,7 @@ def test_top_panels_with_data():
         html4 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=summ, tape_cover=tp.cover(summ), book=bad,
                              book_pending=False, listened=True))
         assert "Defter okunamadı (defter okunamadı)" in html4 and " adım" not in html4
-        assert 'data-refresh="45"' in html4 and "Alış (fiyatın altı)" not in html4
+        assert 'data-refresh="60"' in html4 and "Alış (fiyatın altı)" not in html4
         # bant hatası: uyarı var, "işlem görülmedi" çelişkisi yok
         html5 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=None, tape_cover=tp.cover(None), book=None,
                              book_pending=False, listened=True, panel_err={"tape": "bozuk"}))
