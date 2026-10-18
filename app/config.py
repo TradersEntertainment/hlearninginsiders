@@ -928,6 +928,8 @@ class Config:
         self.hidden_twap_rate_x = float(os.getenv("HIDDEN_TWAP_RATE_X", "0.5"))
         self.hidden_twap_big_usd = float(os.getenv("HIDDEN_TWAP_BIG_USD", "1000000"))
         self.hidden_twap_taker_min_pct = float(os.getenv("HIDDEN_TWAP_TAKER_MIN_PCT", "50"))
+        # otomatik "mm" etiketli adreste dilimlerin bu %'si piyasadansa (tek yönlü) gizli TWAP için etiket yok sayılır
+        self.hidden_twap_mm_taker_min_pct = float(os.getenv("HIDDEN_TWAP_MM_TAKER_MIN_PCT", "90"))
         self.twap_follow_poll_sec = int(os.getenv("TWAP_FOLLOW_POLL_SEC", "120"))
         self.twap_follow_expire_days = int(os.getenv("TWAP_FOLLOW_EXPIRE_DAYS", "7"))
         self.twap_follow_progress = True

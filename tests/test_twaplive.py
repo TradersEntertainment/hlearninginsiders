@@ -372,12 +372,21 @@ def test_evaluate_alert_crypto():
         out = await tl.evaluate(cfg, notifier, collector=col)
         assert out["alerted"] == 0 and len(bot.sent) == 1 and tl.REG.runs[("INJ", A, "buy")].alerted_ts
         assert col.calls == [A, A] and (await dbm.kv_get(tl.LAST_KV))[0]["reason"] == "cooldown"
-        # entity mm → sorgusuz elenir
+        # entity mm → elenir. 19.10'dan beri: dizi tek yönlü ve ≥ %90 piyasadansa 🕵️ için HL'ye sorulur (otomatik
+        # etiket piyasadan dilimleyen balinayı susturuyordu) — ama HL emri varsa normal kanallar yine kapalı
         await _fresh()
         await set_vol("INJ", 9.9e6)
         async with dbm.db() as c:
             await c.execute("INSERT INTO addresses(address,first_seen,entity) VALUES(?,?,'mm')", (B, now))
         slices("INJ", B, "buy", 50, t0=now - 49 * 30 - 5)
+        col = FakeCol([order()])
+        out = await tl.evaluate(cfg, notifier, collector=col)
+        assert out["skipped_mm"] == 1 and out["alerted"] == 0 and col.calls == [B]
+        await _fresh()                                   # taker bilinmiyor → eskisi gibi sorgusuz elenir
+        await set_vol("INJ", 9.9e6)
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO addresses(address,first_seen,entity) VALUES(?,?,'mm')", (B, now))
+        slices("INJ", B, "buy", 50, t0=now - 49 * 30 - 5, taker=None)
         col = FakeCol([order()])
         out = await tl.evaluate(cfg, notifier, collector=col)
         assert out["skipped_mm"] == 1 and out["alerted"] == 0 and col.calls == []

@@ -617,6 +617,15 @@ async def verify_hidden(collector, run: Run, now_ts: int, cfg, out: dict) -> boo
     return not native_overlap(parse_twap_orders(c[1], run.coin, run.side, run.px_last, now_ts), run)
 
 
+def hiddentwap_override(cfg, run: "Run", m: dict | None) -> bool:
+    """Otomatik 'mm' etiketli adresin bu dizisi 🕵️ gizli TWAP'a gidebilir mi (hiddentwap.auto_mm_override)."""
+    try:
+        from . import hiddentwap
+        return hiddentwap.auto_mm_override(cfg, run, m)
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
 def is_ended(run: Run, m: dict | None, ref_ts: int) -> bool:
     gap = float((m or {}).get("avg_gap") or run.rate_day and 30 or 30)
     return ref_ts - run.last_ts > max(END_GAPS * gap, END_MIN_SEC)
@@ -1559,7 +1568,12 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
                 decide(run, "irregular")
                 continue
             out["regular"] += 1
-            if ents.get(run.address) in ("mm", "vault"):
+            ent = ents.get(run.address) or ""
+            # 🕵️ Otomatik "mm" etiketi piyasadan tek yönlü dilimleyen balinayı da susturuyordu (19.10, 0x30af…393e:
+            # 74 bin işlemin hepsi piyasadan, etiket kuralı 24 sa'te 80 işlem + iki yön). Yalnız gizli TWAP yolu
+            # için yok sayılır (hiddentwap.auto_mm_override); normal TWAP / ayna / 🔸🕐 kanalları eskisi gibi kapalı.
+            mm_hidden = ent == "mm" and hiddentwap_override(cfg, run, m)
+            if ent == "vault" or (ent == "mm" and not mm_hidden):
                 out["skipped_mm"] += 1
                 decide(run, "mm")
                 continue
@@ -1602,6 +1616,10 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
             # Dizi başlamadan çok önce bitmiş eski emir BU dizinin emri değil (🕵️ gizli TWAP olabilir): ne 🧪
             # LOG-TWAP ne /twaplar kaydı ona bağlanır — yoksa aynı dizi hem "emirsiz" hem "$4M HL TWAP" görünürdü.
             own = bool(order) and native_overlap([order], run)
+            if mm_hidden and (own or g in ("ok", "big")):
+                out["skipped_mm"] += 1                    # etiketli adresin HL emri: normal kanallar kapalı (eskisi gibi)
+                decide(run, "mm")
+                continue
             if own:
                 _lab_twap(run, order, det, g, ts, lookup_min, min_slices)   # 🧪 kapıdan ÖNCE: geçen + kalan
                 big_q.append((run, m, order, det, day_vol))
@@ -1937,6 +1955,14 @@ async def diag_address(cfg, collector, addr: str) -> str:
     addr = (addr or "").lower()
     ts = now()
     lines = [f"📡 <b>Canlı TWAP</b> · 👤 {alink(addr)}"]
+    # Adres etiketi "niye gelmedi"nin ilk cevabı (19.10: otomatik 'mm' etiketi radarı sessizce susturuyordu)
+    ent = (await entities([addr])).get(addr) or ""
+    if ent:
+        lines.append(esc({"mm": "🤖 Adres etiketi: mm (otomatik — 24 sa'te ≥ 80 işlem + iki yön) → canlı TWAP kanalları"
+                                " dışı; 🕵️ gizli TWAP'a yalnız tek yönlü, ≥ %"
+                                f"{float(getattr(cfg, 'hidden_twap_mm_taker_min_pct', 90) or 0):g} piyasadan dizi gider",
+                          "vault": "🏦 Adres etiketi: vault → TWAP radarı dışı",
+                          "manual": "🚫 Adres etiketi: elle elendi (/ignore) → TWAP radarı dışı"}.get(ent, f"Adres etiketi: {ent}")))
     runs = _runs_for(lambda r: r.address == addr)
     lines.append("Bellekteki diziler: " + ("\n".join("• " + esc(_run_line(r)) for r in runs[:8]) if runs
                                             else "yok (son 4 saatte bu adresten düzenli akış görmedik)"))

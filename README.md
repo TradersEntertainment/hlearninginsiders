@@ -513,7 +513,11 @@ devralır (eski TWAP akışı, 'twap' bekleme işareti, 🧪 LOG-TWAP değişmez
   6'sında onun yönünde, hacim ağırlıklı +%1.7 (küçük örneklem — kanıt değil; LOG-HTWAP bunu sürekli ölçer).
 - **Kapı:** twaplive'ın düzenli dizisi (≥ 10 dilim, ≥ 5 dk, ≥ $50K) + emir sorgusu BAŞARILI ve bu coin + yönde TWAP
   emri yok ya da dizi başlamadan bitmiş eski emir (tur sorgu tavanına takılan / düşen sorguda karar yok);
-  bilinen MM/vault ve `/ignore` ile elenen adres yok · dizide HL TWAP alt emri dolumu (sıfır hash, adres taker)
+  bilinen MM/vault ve `/ignore` ile elenen adres yok — **otomatik "mm" etiketi** ise dizi tek yönlü ve
+  dilimlerin ≥ `HIDDEN_TWAP_MM_TAKER_MIN_PCT`'i (%90) piyasadansa yok sayılır (kullanıcı 19.10: "bu adam gizli twap
+  yapıyor ama bana bildirim gelmedi" — 0x30af…393e'nin 74 bin işleminin hepsi piyasadan; etiket kuralı 24 sa'te 80
+  işlem + iki yön, onu 12–17.10 arasında "mm" sayıyordu ve radar diziyi HL'ye hiç sormadan atıyordu; normal TWAP
+  kanalları etiketli adreste eskisi gibi kapalı) · dizide HL TWAP alt emri dolumu (sıfır hash, adres taker)
   hiç görülmemiş · **iddiadan önce taze kanıt:** emir geçmişi dizinin son diliminden sonra alınmış olmalı (adres
   önbelleği eskiyse zorla sorulur) ve dizinin süresiyle örtüşen HL TWAP emri olmamalı · taker payı ≥
   `HIDDEN_TWAP_TAKER_MIN_PCT` (%50) · aynı adres aynı coinde karşı yönde bu dizinin ≥ %25'i kadar dizi yapıyorsa

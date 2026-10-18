@@ -536,6 +536,63 @@ def test_equity_own_group_and_propr_note():
 
 # ---------------- kablolama ----------------
 
+def test_auto_mm_label_whale():
+    """Kullanıcı (19.10): "https://hypurrscan.io/address/0x30af…393e#txs bu adam gizli twap yapıyor ama bana bildirim
+    gelmedi". Kök neden (yeniden üretildi): otomatik 'mm' etiketi (24 sa'te ≥ 80 işlem + iki yön) — 74 bin işleminin
+    hepsi piyasadan olan balinayı 12–17.10'da etiketliyordu; radar diziyi HL'ye sormadan atıyordu.
+    Kararlar: etiket yalnız 🕵️ için, dizi tek yönlü + ≥ HIDDEN_TWAP_MM_TAKER_MIN_PCT (%90) piyasadan + HL alt emri yoksa
+    yok sayılır; normal TWAP kanalları etiketli adreste kapalı kalır; vault / elle eleme değişmez.
+    Pinlenenler: (a) mm + %100 piyasadan → 🕵️ tek mesaj, yalnız kendi grubu, "adres etiketi: mm" satırı yok;
+    (b) %85 piyasadan → yok, sorgu yok; (c) vault → yok; (d) mm + HL emri → hiçbir kanal; (e) mm + karşı yön → yok."""
+    async def run():
+        async def setup(ent):
+            await _fresh()
+            async with dbm.db() as c:
+                await c.execute("INSERT INTO addresses(address,first_seen,entity) VALUES(?,?,?)", (A, dbm.now(), ent))
+                await c.commit()
+        cfg = _cfg()
+        # (a)
+        await setup("mm")
+        feed("PUMP", A, "buy", 20, 60_000)
+        bot = Bot()
+        col = Col([])
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
+        assert [c for c, _ in bot.sent] == ["-555"], bot.sent
+        assert "adres etiketi" not in bot.sent[0][1] and ht.STATS["reasons"] == {"big": 1}, ht.STATS
+        # (b) %85 piyasadan: etiket geçerli
+        await setup("mm")
+        for i in range(20):
+            tl.observe("PUMP", A, "buy", PX, 6000, 60_000, dbm.now() - 5 - (19 - i) * 30, 0 if i % 7 == 3 else 1)
+        bot, col = Bot(), Col([])
+        out = await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
+        assert bot.sent == [] and col.calls == [] and out["skipped_mm"] == 1
+        # (c) vault
+        await setup("vault")
+        feed("PUMP", A, "buy", 20, 60_000)
+        bot, col = Bot(), Col([])
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
+        assert bot.sent == [] and col.calls == []
+        # (d) mm + örtüşen HL emri: normal kanal da yok
+        await setup("mm")
+        feed("PUMP", A, "buy", 20, 60_000)
+        bot, col = Bot(), Col([order()])
+        out = await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
+        assert bot.sent == [] and out["skipped_mm"] == 1 and out["alerted"] == 0
+        # (e) mm + aynı coinde karşı yön dizisi (≥ %25)
+        await setup("mm")
+        feed("PUMP", A, "buy", 20, 60_000)
+        feed("PUMP", A, "sell", 20, 20_000, t_end=dbm.now() - 20)
+        bot, col = Bot(), Col([])
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
+        assert bot.sent == [], bot.sent
+        # /twap 0xADRES etiketi söyler
+        txt = await tl.diag_address(cfg, None, A)
+        assert "Adres etiketi: mm (otomatik" in txt
+    asyncio.run(run())
+    print("✅ otomatik mm) %100 piyasadan tek yönlü dizi 🕵️ grubuna gider (etiket satırı yok); %85 / vault / HL emri /"
+          " karşı yön → yok; /twap 0xADRES etiketi yazar")
+
+
 def test_wiring():
     from app import notify
     from app.lab import specs

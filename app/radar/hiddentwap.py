@@ -97,6 +97,21 @@ def two_sided(reg, run) -> bool:
     return bool(opp and opp.last_ts >= run.first_ts and opp.total >= TWO_SIDED_SHARE * run.total)
 
 
+def auto_mm_override(cfg, run, m: dict | None) -> bool:
+    """Otomatik 'mm' etiketi (scorer: 24 sa'te ≥ 80 işlem + iki yön) bu dizide yok sayılır mı: dizi düzenli, HL alt emri
+    dolumu yok, dilimlerin ≥ HIDDEN_TWAP_MM_TAKER_MIN_PCT'i (%90) piyasadan ve aynı coinde karşı yön yok. Piyasa yapıcı
+    pasif kotasyon verir; tahtayı tek yönde süpüren balina değildir (kullanıcı 19.10: "bu adam gizli twap yapıyor ama
+    bana bildirim gelmedi" — 0x30af…393e, 74 bin işlemin hepsi piyasadan, etiket yüzünden radar diziyi hiç sormadı).
+    'vault' ve elle eleme ('manual') değişmez."""
+    if not m or getattr(run, "nat_n", 0):
+        return False
+    tk = m.get("taker_pct")
+    if tk is None or float(tk) < float(getattr(cfg, "hidden_twap_mm_taker_min_pct", 90) or 0):
+        return False
+    from .twaplive import REG
+    return not two_sided(REG, run)
+
+
 def gate(cfg, run, m: dict, day_vol, reg) -> tuple[str, float | None]:
     """'ok' | 'big' geçer; diğerleri nedendir. İkinci değer: dakika hacmine oran. `day_vol` TAZE olmalı
     (bayatsa çağıran None verir → yalnız 'big' yolu)."""
@@ -194,7 +209,9 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
     rid = (run.coin, run.address, run.side, int(run.first_ts))
     if not enabled(cfg):
         return _count("off", rid)
-    if (ents.get(run.address) or "") in IGNORED:
+    ent = ents.get(run.address) or ""
+    mm_ok = ent == "mm" and auto_mm_override(cfg, run, m)
+    if ent in IGNORED and not mm_ok:
         return _count("ignored", rid)
     if getattr(run, "nat_n", 0):
         return _count("native", rid)              # dizide HL TWAP alt emri dolumu: emir var demektir
@@ -239,7 +256,7 @@ async def consider(cfg, notifier, client, run, m: dict, day_vol, ents: dict, ts:
         return _count(reason, rid)
     pos = await twaplive.position_ctx(client, run.coin, run.address)
     ctx = {"day_vol": day_vol, "rate_x": x, "pos": pos, "gate": g, "klass": twaplive.klass_of(run.coin), "sat": sat,
-           "entity": ents.get(run.address) or ""}
+           "entity": "" if mm_ok else ent}           # otomatik mm etiketi yanıltıcı: dizi ölçüldü, piyasadan
     text = fmt.hidden_twap(m, ctx)
     op["alerted"] = ts                            # talep ÖNCE: teslimden sonraki DB hatası ikinci mesaj doğurmasın
     if not await notifier.send("htwap", text, priority="high", key=f"htwap:{key}", chat_id=chat,
