@@ -17,25 +17,55 @@
   OI sabit = el değiştirmiş.</span></p>
 
   <form method="get" action="/neoldu" class="btnrow">
-    <input type="text" name="sym" class="sq" size="16" placeholder="sembol: HYPE / NVDA" value="{{ sym }}">
-    <input type="text" name="t0" class="sq" size="6" placeholder="18:25" value="{{ t0_s }}">
+    <input type="text" name="sym" class="sq" size="16" placeholder="sembol: HYPE / NVDA / HYPE/USDC" value="{{ sym }}">
+    <input type="text" name="t0" class="sq" size="11" placeholder="18:25" value="{{ t0_s }}">
     <span class="dim">→</span>
-    <input type="text" name="t1" class="sq" size="6" placeholder="18:35" value="{{ t1_s }}">
-    {% if k %}<input type="hidden" name="k" value="{{ k[3:] }}">{% endif %}
+    <input type="text" name="t1" class="sq" size="11" placeholder="18:35" value="{{ t1_s }}">
+    {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
     <button type="submit" class="btn sm">Sor</button>
-    <span class="hint">saatler TSİ{% if note %} · {{ note }}{% endif %}</span>
+    <span class="hint">saatler TSİ · 18:25 · 17.10 18:25 · dün 23:50{% if note %} · <b>{{ note }}</b>{% endif %}</span>
   </form>
 </div>
 
 {% if rep %}
 <div class="panel">
-  <h2>{{ rep.symbol }} <span class="st">·
-    {{ rep.t0|dt }} → {{ rep.t1|dt }} ({{ rep.minutes }} dk)
-    {%- if rep.is_crypto %} · kripto{% else %} · hisse perp{% endif %}</span></h2>
+  <h2>{{ rep.label }} <span class="st">·
+    {{ rep.t0|dt }} → {{ rep.t1|dt }} ({{ rep.minutes }} dk) · {{ rep.market }}</span></h2>
 
-  {% if not rep.found and not rep.is_crypto %}
-  <p class="alert warn">⚠️ <b>{{ rep.symbol }}</b> evrende bulunamadı — ham coin adı
-    olarak denendi.</p>
+  {% if not rep.found %}
+  <p class="alert warn">⚠️ <b>{{ sym }}</b> bulunamadı (hisse evreninde de, ana dex kripto listesinde de, spot
+    çiftlerinde de yok) — ham ad <code>{{ rep.coin }}</code> olarak denendi. Yazım hatası olabilir.</p>
+  {% endif %}
+  {% if spot_alts %}
+  <p class="sub dim">🔀 {{ rep.symbol }} spot çiftleri ayrı sorulur:
+    {% for c, lb in spot_alts %}<a href="/neoldu?sym={{ lb|urlencode }}&t0={{ rep.t0 }}&t1={{ rep.t1 }}{{ ('&key=' + k[5:]) if k else '' }}">{{ lb }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+
+  {# ── veri kaynağı: tabloya ne girdi, ne girmedi ─────────────────────────── #}
+  {% if rep.listening == false %}
+  <p class="alert warn">📡 <b>Bu coini şu an canlı dinlemiyoruz</b> (ana dex'te hacimce ilk coinler, spotta ilk
+    çiftler dinleniyor; liste 10 dk'da bir yenilenir). Boş tablo "işlem olmadı" demek DEĞİL.</p>
+  {% endif %}
+  {% if rep.source == 'tape' %}
+  <p class="kunye">📼 <b>Kaynak: canlı bant — bu penceredeki BÜTÜN işlemler</b> (taban yok, TWAP dilimleri dahil)
+    · kapsam {{ rep.tape_lo|hms }} → {{ rep.tape_hi|hms }} <span class="hint">(30 sn çözünürlük)</span></p>
+  {% else %}
+  <p class="kunye">🗄 <b>Kaynak: işlem kaydı</b> —
+    {% if rep.floor is none %}bu sınıfta işlem kaydı KAPALI.
+    {% else %}yalnız <b>{{ rep.floor|usd }}</b> üstü işlemler ve tek mesajda toplamı bu tabanı geçen parçalar
+      yazılıyor; küçük işlemler ve TWAP dilimlerinin çoğu bu tabloda yok.{% endif %}
+    <span class="hint">Son 15 dk içindeki pencereler canlı banttan eksiksiz gelir.</span></p>
+  {% endif %}
+  {% if rep.live_down %}
+  <p class="alert warn">🔌 Canlı akış şu an kopuk — bu aralık bilinmiyor.</p>
+  {% elif rep.gaps %}
+  <p class="alert warn">🔌 Canlı akış bu pencerede {% for g in rep.gaps %}{{ g[0]|hms }}–{{ g[1]|hms }}{% if not loop.last %}, {% endif %}{% endfor %}
+    arası kopuktu (toplam {{ rep.gap_sec }} sn) — o süredeki işlemler eksik.</p>
+  {% endif %}
+  {% if rep.restart_in %}
+  <p class="sub warn">♻️ Bot {{ rep.boot|dt }}'de yeniden başladı: o anki birkaç saniye/dakikalık geçişte işlem eksik olabilir.</p>
+  {% elif rep.before_boot and rep.source == 'fills' %}
+  <p class="sub dim">ℹ️ Pencere botun son açılışından ({{ rep.boot|dt }}) önce; o dönemin akış kopuklukları bilinmiyor.</p>
   {% endif %}
 
   {# ── MANŞET: OI okuması ───────────────────────────────────────────────── #}
@@ -59,13 +89,23 @@
   {% endif %}
 
   <div class="kpi">
-    <div><div class="l">İşlem kaydı</div><div class="v">{{ rep.n_fills }}</div><div class="s">{{ rep.rows|length }} adres</div></div>
-    <div><div class="l">Alım</div><div class="v long">{{ rep.buy|usd }}</div><div class="s">penceredeki toplam alış</div></div>
-    <div><div class="l">Satım</div><div class="v short">{{ rep.sell|usd }}</div><div class="s">penceredeki toplam satış</div></div>
+    {% if rep.source == 'tape' %}
+    <div><div class="l">İşlem</div><div class="v">{{ rep.n_trades }}</div><div class="s">{{ rep.n_addr }} adres</div></div>
+    {% else %}
+    <div><div class="l">Kayıt</div><div class="v">{{ rep.n_fills }}</div><div class="s">{{ rep.n_addr }} adres · her işlem iki tarafıyla</div></div>
+    {% endif %}
+    {# İşlem kaydında satır yoksa $0 ölçülmüş değil: taban altı / dinlenmeyen / kayıt dışı olabilir → "—" #}
+    {% set noval = not rep.n_addr and rep.source != 'tape' %}
+    <div><div class="l">Piyasadan alım</div><div class="v long">{{ '—' if noval else rep.buy|usd }}</div><div class="s">alıcının fiyatı süpürdüğü işlemler</div></div>
+    <div><div class="l">Piyasadan satım</div><div class="v short">{{ '—' if noval else rep.sell|usd }}</div><div class="s">satıcının süpürdüğü{% if not noval %} · net
+      <b class="{{ 'long' if rep.net > 0 else ('short' if rep.net < 0 else 'dim') }}">{{ '+' if rep.net > 0 else ('-' if rep.net < 0 else '') }}{{ (rep.net|abs)|usd }}</b>{% endif %}</div></div>
     <div><div class="l">Pozisyonu bilinen</div><div class="v">{{ rep.n_known }}</div>
-      <div class="s">{% if rep.n_unseen %}{{ rep.n_unseen }} adrese hiç uğramadık{% elif rep.n_flat %}{{ rep.n_flat }} tanesi pozisyon taşımıyordu{% else %}tüm adreslerin defteri bakılmış{% endif %}</div></div>
+      <div class="s">{% if rep.n_unseen %}{{ rep.n_unseen }} adrese hiç uğramadık{% elif rep.n_flat %}{{ rep.n_flat }} tanesi pozisyon taşımıyordu{% elif rep.rows %}tüm adreslerin defteri bakılmış{% else %}adres yok{% endif %}</div></div>
   </div>
-  {% if rep.before_records %}
+  {% if rep.purged %}
+  <p class="alert warn">🗑 <b>Bu pencerenin işlem kayıtları silindi</b> — işlem kaydı {{ rep.keep_days }} gün saklanıyor.
+    Tablonun boş (ya da eksik) olması "işlem olmadı" demek DEĞİL.</p>
+  {% elif rep.before_records %}
   <p class="alert warn">📼 <b>Bu pencere kayıt başlangıcından önce.</b>
     {% if rep.is_crypto %}Kripto işlemlerini yakın zamana kadar HİÇ
       kaydetmiyorduk (akış yalnız tetikleyiciydi); kayıt
@@ -74,13 +114,15 @@
     Tablonun boş olması "işlem olmadı" demek DEĞİL, "o an tutmuyorduk" demek.</p>
   {% endif %}
   {# ── veri künyesi ─────────────────────────────────────────────────────── #}
-  <p class="kunye">🧾 Bu pencerede <b>{{ rep.n_fills }}</b> işlem kaydımız var ·
-    alım <b class="long">{{ rep.buy|usd }}</b> / satım <b class="short">{{ rep.sell|usd }}</b> ·
-    {{ rep.rows|length }} adres · <b>{{ rep.n_known }}</b> tanesinin pozisyonu ölçüldü
+  <p class="kunye">🧾 Bu pencerede <b>{{ rep.n_fills }}</b> {{ 'işlem' if rep.source == 'tape' else 'işlem kaydımız' }} var
+    {%- if not noval %} · piyasadan alım <b class="long">{{ rep.buy|usd }}</b> / satım <b class="short">{{ rep.sell|usd }}</b>{% endif %}
+    {%- if rep.aggr_unknown %} <span class="hint">(yönü bilinmeyen {{ rep.aggr_unknown|usd }} sayılmadı)</span>{% endif %} ·
+    {{ rep.n_addr }} adres{% if rep.cut %} <span class="warn">(tabloda en büyük {{ rep.rows|length }}; {{ rep.cut }} adres gösterilmiyor — toplamlar hepsinden)</span>{% endif %}
+    · gösterilenlerden <b>{{ rep.n_known }}</b> tanesinin pozisyonu ölçüldü
     {%- if rep.n_flat %} · {{ rep.n_flat }} tanesi baktığımızda pozisyon taşımıyordu{% endif %}
     {%- if rep.n_unseen %} · <span class="bad">{{ rep.n_unseen }} adrese hiç uğramadık</span>{% endif %}
     {%- if rep.n_stale %} · <span class="warn">{{ rep.n_stale }} çıkarım bayat veriye dayanıyor ⏳</span>{% endif %}.
-    {% if rep.is_crypto %}Kripto işlem kaydı eşiği <b>{{ crypto_floor|usd }}</b>.{% endif %}</p>
+    </p>
   <p class="kunye">🗄 Pozisyonlar <b>her boyutta</b> tutuluyor (son 14 gün).
     Bundan ayrı olarak <b>{{ big_floor|usd }}</b> üstü pozisyonlar rekor arşivine
     (<code>/devler</code>) girer ve orada geçmişiyle birlikte kalır — iki tablo
@@ -143,8 +185,14 @@
   </table>
   </div></div>
   {% else %}
+  {% if rep.source == 'tape' %}
+  {{ m.empty(["Bu pencerede işlem görülmedi.", "Kaynak canlı bant: dinlediğimiz coinin bütün işlemleri burada olurdu."]) }}
+  {% elif rep.listening == false %}
+  {{ m.empty(["Bu pencerede işlem kaydı yok.", "Bu coini şu an dinlemiyoruz — boşluk, işlem olmadı demek değil."]) }}
+  {% else %}
   {{ m.empty(["Bu pencerede işlem kaydı yok.",
-              ("Kripto tarafında yalnız " ~ crypto_floor|usd ~ " üstü işlemler kaydediliyor — daha küçükler hiç yazılmaz." if rep.is_crypto else "Hisse tarafında eşik üstü işlemler canlı akıştan kaydedilir; akış o an kopuksa boşluk olur.")]) }}
+              ("Bu sınıfta işlem kaydı kapalı." if rep.floor is none else "Yalnız " ~ rep.floor|usd ~ " üstü işlemler kaydediliyor — daha küçükler hiç yazılmaz; akış o an kopuksa boşluk olur.")]) }}
+  {% endif %}
   {% endif %}
 </div>
 
@@ -185,10 +233,14 @@
   <p class="sub"><b>Cevaplayabilir:</b> pencerede kimin ne kadar alıp sattığını,
   agresör olup olmadığını, bilinen pozisyonuyla ne yaptığını (açtı/artırdı/
   kırptı/kapattı) ve toplamda yeni para mı girdi yoksa pozisyon mu kapandığını.</p>
-  <p class="sub"><b>Cevaplayamaz:</b> eşiğin altındaki işlemleri (kaydedilmiyor),
-  ve kayıt başlangıcından önceki pencereleri. Kripto işlem kaydı yakın zamanda
-  açıldı — ondan öncesi için elimizde <b>hiçbir şey</b> yok, boş tablo bunu
-  gizlemesin diye sayfa ayrıca uyarıyor.</p>
+  <p class="sub"><b>Son 15 dakika eksiksiz:</b> pencere son 15 dk içindeyse (ve bot o
+  süre boyunca açıksa) kaynak canlı banttır — dinlediğimiz coinin <b>bütün</b>
+  işlemleri, adresiyle, tabansız. Daha eski pencereler işlem kaydından gelir.</p>
+  <p class="sub"><b>Cevaplayamaz:</b> daha eski pencerelerde tabanın altındaki
+  işlemleri (kaydedilmiyor), dinlemediğimiz coinleri, canlı akışın kopuk kaldığı
+  süreleri, saklama süresinden ({{ rep.keep_days if rep else 14 }} gün) eski ve kayıt
+  başlangıcından önceki pencereleri. Boş tablo bunları gizlemesin diye sayfa
+  her birini ayrıca yazıyor.</p>
   <p class="sub dim">Pozisyon verisi derin keşif turuna bağlı (75-125 dk), yani
   çıkarım bayat olabilir — ⏳ ile işaretlenir. "Profilleri tazele" düğmesi
   rapordaki adreslerin defterini anında çeker ve çıkarımı düzeltir.</p>

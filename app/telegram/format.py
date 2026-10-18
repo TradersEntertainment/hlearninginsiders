@@ -1352,6 +1352,7 @@ _VERDICT_ICON = (
 _EMPTY_TEXT = {
     "not_listening": "👥 Adres kırılımı yok — bu coini canlı DİNLEMİYORUZ",
     "below_floor": "👥 {floor} üstü tek işlem yok — hacim küçük parçalardan gelmiş",
+    "no_trades": "👥 Bu pencerede işlem görülmedi (canlı bant)",
     "unknown": "👥 Adres kırılımı yok (dinleme durumu bilinmiyor)",
 }
 
@@ -1393,8 +1394,9 @@ def what_happened(b: dict | None) -> list[str]:
         # farklı çıkar ve pencere yazılmazsa mesaj kendi kendisiyle çelişiyor
         # gibi okunur. Kapalı seans bant tetiğinde ise alarmın penceresi (hafta
         # sonu) ile kırılımın penceresi (son 1 saat) zaten farklı.
+        # Alım/satım PİYASADAN (agresör): her işlemin iki tarafı da kayıtlı, "toplam alış" = "toplam satış" olurdu.
         line = (f"👥 son {b.get('minutes') or 1}dk · {b['n_addr']} adres ·"
-                f" alım <b>{usd(b.get('buy'))}</b>"
+                f" piyasadan alım <b>{usd(b.get('buy'))}</b>"
                 f" / satım <b>{usd(b.get('sell'))}</b>")
         net = b.get("net") or 0
         line += f" · net {'+' if net >= 0 else '−'}{usd(abs(net))}"

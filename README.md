@@ -1724,7 +1724,7 @@ kırılımı** — artık Telegram mesajlarının içine de giriyor. Kapsam: **h
 5dk hacim $3.2M · önceki rekorun 1.9×'i · fiyat 0.0045 🔴 -0.40%
 📊 24s hacim $58.6M
 📉 Yeni SHORT açılmış — açık pozisyon arttı, fiyat düştü (OI +1.24%, fiyat -0.40%)
-👥 6 adres · alım $1.2M / satım $0.9M · net +$310K · taker %78
+👥 son 5dk · 6 adres · piyasadan alım $1.2M / satım $0.9M · net +$310K
   • 0x1a2b..9f3c +$420K · LONG $2.1M · long'unu artırdı
   • 0x77de..01aa −$260K · SHORT $980K · short açtı/artırdı
 ```
@@ -1743,10 +1743,11 @@ Artık böyle bir çakışmada **ileri** doğru genişletiliyor — kovadan sonr
 örnek `last` olur, iki uç olayı gerçekten kuşatır. Geriye gitmek işe yaramazdı:
 olaydan *önce* biten bir aralığı ölçmüş olurduk.
 
-Genişletme sınırsız değil (`OI_MAX_SPAN = 1800`). Üç red kuralı, üçü de aynı
-sebeple — **ölçmediğimiz bir şeyi ölçmüş gibi göstermemek**: fark yoksa,
-aralık 30 dakikayı aşıyorsa, ya da ölçüm olayın tamamen öncesinde kalıyorsa
-okuma reddedilir ve "belirsiz" denir. *2 saatlik bir OI hareketini 5 dakikalık
+Genişletme sınırsız değil (`OI_MAX_SPAN = 1800`, uzun pencerede pencere +
+`OI_SLACK` 15 dk). Üç red kuralı, üçü de aynı sebeple — **ölçmediğimiz bir şeyi
+ölçmüş gibi göstermemek**: fark yoksa, iki örnek arası bu sınırı aşıyorsa, ya
+da ölçüm olayın tamamen öncesinde kalıyorsa okuma reddedilir, "belirsiz" denir
+ve gerekçesi yazılır. *2 saatlik bir OI hareketini 5 dakikalık
 bir olaya yormak, "belirsiz" demekten daha kötü bir yalandır.* Genişletildiyse
 hem mesaj hem `/neoldu` bunu yazar.
 
@@ -1897,7 +1898,8 @@ eşit olduğunda sınırda bir anahtar hem "gönderilmiş" hem "kaydı yok" olab
 
 Grafikte absürt bir hacim gördüğünde: **sembol + saat aralığı gir**, o
 pencerede kimin ne aldığını/sattığını ve **açtı mı kapattı mı** çıkarımını gör.
-Saatler TSİ ve `18:25` gibi yazılır (epoch değil).
+Saatler TSİ: `18:25`, `17.10 18:25`, `dün 23:50` (epoch da olur, saniye ya da ms).
+Pencere en çok 6 saat.
 
 **Neden OI?** Bir işlemin "alış" olması *açtı* demek değildir — bir satış hem
 long kapatmak hem short açmak olabilir. İkisini ayıran tek şey **açık
@@ -1948,6 +1950,38 @@ yeni short açtı · pozisyonu kapattı · aldı ve sattı (scalp)*.
 
 Sekme ayrıca aynı penceredeki bağlamı toplar: likidasyona yaklaşanlar, emir
 duvarları, hacim rekoru ve bizim gönderdiğimiz alarmlar.
+
+### Eksik veri denetimi (18.10)
+
+Kullanıcı (18.10): "ne oldu? sekmesi neden eksik veri çekiyor ?". Canlı ölçüm
+(14 coin, 5 dk): $5K tabanında BTC işlemlerinin ~%26'sı, HYPE ~%18, PUMP ~%5
+kayda giriyordu; TWAP dilimlerinin neredeyse hiçbiri. Düzeltilenler:
+
+- **Son 15 dk eksiksiz.** Pencere son 15 dk içindeyse (ve bot o süre açıksa)
+  kaynak 📼 canlı banttır (`tape.window`): dinlenen coinin **bütün** işlemleri,
+  adresiyle, tabansız, 30 sn çözünürlükte. Daha eskisi işlem kaydından gelir;
+  sayfa hangisi olduğunu ve tabanı yazar.
+- **Parti kuralı.** Tek mesajda bir parça tabanı geçince aynı adresin taban
+  altı parçaları hiç yazılmıyordu (1×$6K + 20×$2K → $6K). Artık kalan, sentetik
+  bir toplam satırı olarak yazılır. Yeniden bağlanınca HL'nin yeniden yolladığı
+  işlemler ikinci bir toplam satırı yazmaz (çift sayım; `tape.seen`).
+- **Coin çözümü** coin sayfasıyla aynı (`resolve_coin`): kPEPE gibi küçük
+  harfli coinler, STX (ana dex Stacks; para:STX ayrı), `HYPE/USDC` gibi spot
+  çiftleri. Bulunamayan ad söylenir; HYPE yazınca spot çiftleri linklenir.
+- **Alım / satım = piyasadan** (agresör). Her işlem iki tarafıyla kaydedildiği
+  için "toplam alış" ile "toplam satış" tanım gereği eşitti; HYPE'ta yön ters
+  çıktı. Alarm özetindeki 👥 satırı da aynı; anlamsız toplam taker % kalktı.
+- **60 adres kesimi** yazılır, toplamlar bütün adreslerden.
+- **OI:** uzun pencere okunur (sınır pencereyle büyür); spotta OI olmadığı,
+  kaydedilmeyen coin (ana dex'te yalnız PROPR) ve sonraki örneğin henüz
+  gelmediği ayrı gerekçelerle yazılır.
+- **Dinlenmeyen coin** ("şu an dinlemiyoruz"), **canlı akış kopukluğu** ve
+  **yeniden başlama** notu; **saklama dışı** pencere "silindi" der ("kayıt
+  başlamadı" değil); para coinleri "kripto dex", spotun tabanı kendi ayarı.
+
+Kör nokta, açıkça: 15 dakikadan eski pencerede taban altı işlemler yine yok
+(taban kararı ayrı); bot yeniden başlamadan önceki akış kopuklukları bilinmiyor;
+"dinlemiyoruz" notu şimdiki listeye bakar, geçmişteki listeye değil.
 
 ## Cüzdan Bakiyesi Kolonu
 

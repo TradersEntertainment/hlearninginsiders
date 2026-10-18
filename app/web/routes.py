@@ -5,7 +5,7 @@ import json
 import logging
 import pathlib
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
@@ -1285,41 +1285,87 @@ async def cryptovol_page(request: Request):
     })
 
 
-def _parse_window(request: Request) -> tuple[int, int, str]:
-    """`t0`/`t1` epoch ya da `HH:MM` (TSİ, bugün). Varsayılan: son 15 dakika.
+NEOLDU_MAX_SEC = 6 * 3600          # "ne oldu" penceresi en çok (BTC fills'i günde ~100K satır; sayfa hafif kalsın)
 
-    Grafikten okuduğun saati yazacaksın; epoch yazdırmak absürt olurdu.
+
+def _parse_window(request: Request, now_ts: int | None = None) -> tuple[int, int, str]:
+    """`t0`/`t1`: `SS:DD` (TSİ, bugün), `gg.aa SS:DD`, `dün SS:DD` ya da epoch (sn ya da ms). Varsayılan: son 15 dk.
+
+    Grafikten okuduğun saati yazacaksın; epoch yazdırmak absürt olurdu. "ne oldu" denetimi (18.10):
+      • ms epoch (grafik araçları ms verir) 500 hatası veriyordu ("year 58767") → ms ise 1000'e bölünür.
+      • Şimdiden 1 sa ilerisi "bugün" sayılıyordu: 22:30'da "23:00 → 23:20" 50 dk SONRASINI soruyordu (boş). Artık
+        başlangıç ileriyse dün; bitiş başlangıcın ardındaki ilk o saat (gece yarısını aşan pencere); şimdiden
+        ilerisi şimdiye çekilir.
+      • Okunamayan giriş sessizce varsayılana düşüyordu → not yazılır. Pencere en çok NEOLDU_MAX_SEC.
     """
     import time as _t
     q = request.query_params
-    end = int(_t.time())
-    start = end - 900
+    end = int(now_ts if now_ts is not None else _t.time())
+    bad: list[str] = []
 
-    def one(v, ref):
-        v = (v or "").strip()
+    def clock(v: str, ref: int) -> int | None:
+        """'18:25' / '18.25' / '17.10 18:25' / 'dün 18:25' → ref gününde (ya da verilen günde) TSİ epoch."""
+        parts = v.lower().split()
+        day = datetime.fromtimestamp(ref, TR)
+        if len(parts) == 2:
+            d, v = parts
+            if d in ("dün", "dun"):
+                day = day - timedelta(days=1)
+            else:
+                dd, mm = (d.replace("/", ".").split(".") + [""])[:2]
+                day = day.replace(day=int(dd), month=int(mm) if mm else day.month)
+        elif len(parts) != 1:
+            raise ValueError(v)
+        hh, mi = (parts[-1].replace(".", ":").split(":") + ["0"])[:2]
+        return int(day.replace(hour=int(hh), minute=int(mi), second=0, microsecond=0).timestamp())
+
+    def one(key: str, ref: int, after: int | None = None) -> tuple[int | None, bool]:
+        """(epoch, saat mi yazıldı). `after` verilirse saat, ondan sonraki ilk o saat olur."""
+        v = (q.get(key) or "").strip()
         if not v:
-            return None
+            return None, False
         if v.isdigit() and len(v) >= 9:
-            return int(v)
+            t = int(v)
+            t = t // 1000 if t >= 10**12 else t
+            if not (1_500_000_000 <= t <= end + 86400):
+                bad.append(v)
+                return None, False
+            return t, False
+        dated = len(v.split()) == 2                      # 'dün 18:25' / '17.10 18:25': gün şimdiye göre
         try:
-            hh, mm = (v.replace(".", ":").split(":") + ["0"])[:2]
-            d = datetime.fromtimestamp(ref, TR).replace(
-                hour=int(hh), minute=int(mm), second=0, microsecond=0)
-            t = int(d.timestamp())
-            # Girilen saat ileriyse dünü kastetmiştir (gece yarısını aşan
-            # pencere): "23:50" yazıp 00:10'da sorduğunda boş dönmesin.
-            return t - 86400 if t > ref + 3600 else t
-        except (ValueError, TypeError):
-            return None
+            t = clock(v, ref if dated or after is None else after)
+        except (ValueError, TypeError, OverflowError):
+            bad.append(v)
+            return None, False
+        if after is not None and not dated:
+            while t < after:
+                t += 86400
+        elif not dated and t > ref + 60:
+            t -= 86400                                   # ileri bir saat: dünü kastetmiştir
+        return t, True
 
-    t0, t1 = one(q.get("t0"), end), one(q.get("t1"), end)
+    t0, _ = one("t0", end)
+    t1, _ = one("t1", end, after=t0)
+    note = ""
     if t0 and t1:
-        return min(t0, t1), max(t0, t1), ""
-    if t0:
-        return t0, t0 + 900, ""
-    if t1:
-        return t1 - 900, t1, ""
-    return start, end, "son 15 dakika (varsayılan)"
+        t0, t1 = min(t0, t1), max(t0, t1)
+        t1 = max(t1, t0 + 60)
+    elif t0:
+        t1 = t0 + 900
+    elif t1:
+        t0 = t1 - 900
+    else:
+        t0, t1, note = end - 900, end, "son 15 dakika (varsayılan)"
+    if t1 > end:
+        t1 = max(end, t0 + 60)
+        note = note or "bitiş şimdiye çekildi"
+    if t1 - t0 > NEOLDU_MAX_SEC:
+        t0 = t1 - NEOLDU_MAX_SEC
+        note = f"pencere en çok {NEOLDU_MAX_SEC // 3600} saat — başlangıç {datetime.fromtimestamp(t0, TR):%H:%M}'e çekildi"
+    if bad:
+        note = (f"okunamadı: {', '.join(bad)[:40]} — örnek: 18:25 · 17.10 18:25 · dün 23:50"
+                + (f" · {note}" if note else ""))
+    return int(t0), int(t1), note
 
 
 @router.get("/hareket")
@@ -1422,18 +1468,24 @@ async def forensics_page(request: Request):
     """Ne oldu? — belli bir dakika aralığında kim ne aldı/sattı, açtı mı kapattı mı."""
     _guard(request)
     cfg = request.app.state.cfg
-    sym = (request.query_params.get("sym") or "").strip().upper()
+    sym = (request.query_params.get("sym") or "").strip()
     t0, t1, note = _parse_window(request)
     rep = None
+    spot_alts: list[tuple[str, str]] = []
     if sym:
-        t = await find_ticker(sym)
-        coin = t["coin"] if t else sym          # kripto coin adı ham geçer
-        rep = await forensics.report(coin, t0, t1)
-        rep["found"] = bool(t)
+        # Coin sayfasıyla AYNI çözüm (resolve_coin): eskiden find_ticker + büyük harf → kPEPE hiç bulunmuyordu
+        # ('KPEPE' sorgulanıyordu), STX Stacks yerine para:STX'e gidiyordu, HYPE/USDC hiç bulunamıyordu.
+        t = await resolve_coin(sym)
+        coin = t["coin"] if t else (assets.spot_coin_of(sym) or sym)
+        rep = await forensics.report(coin, t0, t1, cfg)
+        rep["found"] = bool(t) or assets.is_spot(coin) and coin in assets.SPOT_NAMES
+        base = rep["symbol"].upper()
+        spot_alts = [(c, lb) for c, lb in sorted(assets.SPOT_NAMES.items(), key=lambda kv: kv[1])
+                     if str(lb).split("/")[0].upper() == base and c != coin][:6]
     return _render(request, "neoldu.html", {
-        "rep": rep, "sym": sym, "t0": t0, "t1": t1, "note": note,
-        "t0_s": datetime.fromtimestamp(t0, TR).strftime("%H:%M"),
-        "t1_s": datetime.fromtimestamp(t1, TR).strftime("%H:%M"),
+        "rep": rep, "sym": sym, "t0": t0, "t1": t1, "note": note, "spot_alts": spot_alts,
+        "t0_s": datetime.fromtimestamp(t0, TR).strftime("%d.%m %H:%M"),
+        "t1_s": datetime.fromtimestamp(t1, TR).strftime("%d.%m %H:%M"),
         "probe_max": getattr(cfg, "forensics_probe_max", 15),
         "crypto_floor": getattr(cfg, "crypto_fill_min_notional", 0),
         # Rekor arşivi kademesi — tek kaynağı bigpos.threshold, burada

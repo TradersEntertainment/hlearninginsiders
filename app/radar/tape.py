@@ -80,6 +80,49 @@ def _dup(coin: str, ts: int, tid: str) -> bool:
     return False
 
 
+def seen(coin: str, ts: int, tid: str) -> bool:
+    """SALT OKUMA: bu işlem bantta zaten sayıldı mı (yeniden yollanan) ya da açılıştan önce mi? observe'dan ÖNCE
+    sorulur. Kollektörün sentetik toplam satırı (agg…) bunu kullanır: yeniden bağlanınca gelen son 30 işlem farklı
+    gruplanıp farklı tid'li ikinci bir toplam satırı yazıyordu (çift sayım, "ne oldu" denetimi 18.10)."""
+    if int(ts) < STARTED:
+        return True
+    if not tid:
+        return False
+    h = HWM.get(coin)
+    return h is not None and (ts < h[0] or (ts == h[0] and str(tid) in h[1]))
+
+
+def window(coin: str, t0: int, t1: int, now_ts: int | None = None) -> dict | None:
+    """"Ne oldu?" penceresi banttan: [t0, t1] içinde TAMAMI kalan kovalar (şu an dolmakta olan kova t1 ≥ şimdi ise
+    sayılır — içindeki her işlem zaten t1'den önce). Pencerenin başı bandın tuttuğu aralığın (son WINDOW) ya da
+    açılışın önündeyse, ya da pencere tek kovadan kısaysa None: bant o kısmı görmedi, eksik veriyi tam diye
+    sunmayız. Coinin bantta kovası yoksa satırsız döner — "dinleniyor mu" sorusu çağıranın (forensics.listening).
+    Dönüş: {"rows": [{address, buy, sell, n, tk, known, twap}], "lo", "hi" (gerçek kapsam), "gaps", "live_down",
+    "buy"/"sell" (agresör), "n", "other"}."""
+    t = int(now_ts if now_ts is not None else time.time())
+    t0, t1 = int(min(t0, t1)), int(max(t0, t1))
+    lo = -(-t0 // BUCKET)                               # pencerenin içinde başlayan ilk kova
+    keep_lo = -(-(t - WINDOW) // BUCKET)                 # bandın hâlâ tuttuğu ilk TAM kova
+    live = t1 >= t - 5                                   # "şimdiye kadar" (istek ile rapor arası birkaç sn)
+    hi = t if live else (t1 // BUCKET) * BUCKET         # son TAM kovanın sonu
+    if lo < keep_lo or lo * BUCKET < STARTED or hi <= lo * BUCKET:
+        return None
+    q = [b for b in REG.get(coin) or ()
+         if b.minute >= lo and (b.minute * BUCKET + BUCKET <= hi or (live and b.minute * BUCKET < hi))]
+    addrs: dict[str, list] = {}
+    for b in q:
+        for a, r in b.addrs.items():
+            x = addrs.setdefault(a, [0.0, 0.0, 0.0, 0.0, 0])
+            for i in range(5):
+                x[i] += r[i]
+    gaps, down_now = _gaps(lo * BUCKET, hi)
+    return {"rows": [{"address": a, "buy": r[0], "sell": r[1], "n": r[4], "tk": r[2], "known": r[0] + r[1],
+                      "twap": r[3]} for a, r in addrs.items()],
+            "lo": lo * BUCKET, "hi": hi, "gaps": gaps, "gap_sec": sum(b - a for a, b in gaps),
+            "live_down": down_now and live, "buy": sum(b.buy for b in q), "sell": sum(b.sell for b in q),
+            "n": sum(b.n for b in q), "twap_usd": sum(b.twap for b in q), "other": sum(b.other_addr for b in q)}
+
+
 def _bucket(coin: str, ts: int) -> _Bucket | None:
     q = REG.get(coin)
     if q is None:

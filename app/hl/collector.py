@@ -431,6 +431,10 @@ class Collector:
                 except Exception:
                     stickywall.REG.errors += 1
             zero = twapfast.is_twap_hash(t.get("hash"))    # HL TWAP alt emri: sahibi taker
+            try:                                            # yeniden yollanan / açılış öncesi: sentetik toplama girmez
+                replay = tape.seen(coin, ts, tid)
+            except Exception:
+                replay = False
             # 📼 15 dk bant (coin sayfası / /defter): her işlem, taban yok. Sıcak yol: senkron, I/O yok.
             try:
                 if tape.observe(coin, aggr, buyer, seller, px, sz, ts, zero, tid):
@@ -464,7 +468,7 @@ class Collector:
                         twaploose.STATS["errors"] = twaploose.STATS.get("errors", 0) + 1
                 a = agg.setdefault((coin, addr, side), {
                     "ntl": 0.0, "sz": 0.0, "pxsz": 0.0, "tids": [],
-                    "tk": 0.0, "known": 0.0, "ts": ts, "wrote": False})
+                    "tk": 0.0, "known": 0.0, "ts": ts, "wrote": False, "fresh": 0.0, "rest": None})
                 a["ntl"] += notional
                 a["sz"] += sz
                 a["pxsz"] += px * sz
@@ -474,21 +478,40 @@ class Collector:
                     a["known"] += notional
                     if taker:
                         a["tk"] += notional
+                if not replay:
+                    a["fresh"] += notional
                 if notional >= self.fill_floor(coin):
                     rows.append((coin, tid, addr, side, px, sz, notional, ts, taker))
                     a["wrote"] = True
+                elif not replay:
+                    # Taban altı parça: tek tek yazılmaz, partinin KALANI olarak toplanır (aşağıda).
+                    r = a["rest"] = a["rest"] or {"ntl": 0.0, "sz": 0.0, "pxsz": 0.0, "tids": [],
+                                                  "tk": 0.0, "known": 0.0, "ts": ts}
+                    r["ntl"] += notional
+                    r["sz"] += sz
+                    r["pxsz"] += px * sz
+                    r["tids"].append(tid)
+                    r["ts"] = max(r["ts"], ts)
+                    if taker is not None:
+                        r["known"] += notional
+                        if taker:
+                            r["tk"] += notional
 
         # Büyük bir market emri aynı blokta onlarca küçük match'e bölünür: tek tek
         # hiçbiri eşiği geçmez ama TOPLAMI $500K olabilir. Böyle bir süpürme için
         # tek sentetik satır yaz (tid deterministik → tekrar teslimde dedupe olur).
+        # Partide tabanı geçen parça VARSA da taban altı kalan yazılır ("ne oldu" denetimi 18.10: 1×$6K +
+        # 20×$2K partisinde $40K kayboluyordu; canlıda tek BTC adresinde $156K). Yeniden yollanan / açılış öncesi
+        # işlem toplama girmez: farklı gruplanıp farklı tid'li ikinci satır olurdu (çift sayım).
         for (coin, addr, side), a in agg.items():
-            if a["wrote"] or a["ntl"] < self.fill_floor(coin) or not a["sz"]:
+            r = a["rest"]
+            if not r or not r["sz"] or a["fresh"] < self.fill_floor(coin):
                 continue
             taker = None
-            if a["known"] > 0:
-                taker = 1 if a["tk"] >= a["known"] / 2 else 0
-            rows.append((coin, f"agg{min(a['tids'])}", addr, side,
-                         a["pxsz"] / a["sz"], a["sz"], a["ntl"], a["ts"], taker))
+            if r["known"] > 0:
+                taker = 1 if r["tk"] >= r["known"] / 2 else 0
+            rows.append((coin, f"agg{min(r['tids'])}", addr, side,
+                         r["pxsz"] / r["sz"], r["sz"], r["ntl"], r["ts"], taker))
 
         # Kripto akışı da artık satır üretebiliyor (bkz. fill_floor): "ne oldu"
         # sekmesi o kayıtlar olmadan "kim ne aldı" sorusunu cevaplayamıyordu.

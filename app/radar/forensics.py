@@ -42,6 +42,8 @@ MAX_ADDRS = 60
 # bir örnek geri gitmek sorunu çözer, ama 30 dakikayı aşan bir farkı olayın
 # kendisine yormak uydurma olur.
 OI_MAX_SPAN = 1800
+# Uzun pencerede iki uç arasındaki fark = pencere + bu kadar (örnekleme 300 sn; iki uç da bir örnek kayabilir).
+OI_SLACK = 900
 # Net, brütün bu oranından küçükse "scalp": adres alıp satmış, pozisyonunu
 # anlamlı biçimde değiştirmemiş. Sıfıra tam eşitlik aramak $95K alıp $92K satan
 # birini "long'unu artırdı" diye etiketliyordu — yanıltıcı.
@@ -56,11 +58,11 @@ def _pct(new, old):
     return (new - old) / old * 100 if old else None
 
 
-def read_oi(oi_chg, px_chg) -> dict:
-    """OI + fiyat değişiminden "ne oldu" okuması. Veri yoksa BELİRSİZ."""
+def read_oi(oi_chg, px_chg, why_none: str = "") -> dict:
+    """OI + fiyat değişiminden "ne oldu" okuması. Veri yoksa BELİRSİZ — gerekçesi ölçümden (`why_none`):
+    eskiden her durumda "kripto OI kaydı yeni açıldı" yazıyordu, 35 dk'lık pencerede veri dururken de."""
     if oi_chg is None or px_chg is None:
-        return {"verdict": "belirsiz", "why": "OI ölçümü yok — kripto OI kaydı "
-                "yeni açıldı ya da bu pencerede örnek düşmemiş"}
+        return {"verdict": "belirsiz", "why": why_none or "bu pencere için OI ölçümü yok"}
     if abs(oi_chg) < OI_NOISE_PCT:
         return {"verdict": "el değiştirmiş",
                 "why": f"OI neredeyse sabit (%{oi_chg:+.2f}) — pozisyonlar el "
@@ -112,15 +114,16 @@ async def _metrics_around(coin: str, t0: int, t1: int,
     Ama genişletme sınırsız DEĞİL. Üç red kuralı, üçü de aynı sebeple:
     ölçmediğimiz bir şeyi ölçmüş gibi göstermemek.
       • `last.ts <= first.ts` → ortada fark yok
-      • `span > max_span`     → 2 saatlik bir OI hareketini 5 dakikalık olaya
-                                yormak, "belirsiz" demekten DAHA KÖTÜ bir yalan
+      • `span > max(max_span, pencere + OI_SLACK)` → 2 saatlik bir OI hareketini
+                                5 dakikalık olaya yormak, "belirsiz" demekten DAHA
+                                KÖTÜ bir yalan (uzun pencerede sınır pencereyle büyür)
       • `last.ts < t0`        → ölçüm olayın tamamen ÖNCESİNDE kalmış
-    Reddedilirse `last = None` olur ve `read_oi` "belirsiz" der.
+    Reddedilirse `last = None` olur, `why` gerekçeyi taşır ve `read_oi` "belirsiz" der.
 
     Alarm anında pencereden sonraki örnek HENÜZ GELMEMİŞ olabilir; o zaman
     okuma dürüstçe "belirsiz" kalır — uydurmaktansa susmak.
     """
-    out = {"first": None, "last": None, "widened": False, "span": None}
+    out = {"first": None, "last": None, "widened": False, "span": None, "why": ""}
     async with db() as conn:
         out["first"] = await _sample_at(conn, coin, t0)
         out["last"] = await _sample_at(conn, coin, t1)
@@ -131,14 +134,32 @@ async def _metrics_around(coin: str, t0: int, t1: int,
             # Olaydan SONRAKİ ilk örnek, iki ucu birlikte olayı kuşatır.
             out["last"] = await _sample_after(conn, coin, t1)
             out["widened"] = bool(out["last"])
+        if not out["first"]:
+            cur = await conn.execute("SELECT MIN(ts) t FROM asset_metrics WHERE coin=?", (coin,))
+            r = await cur.fetchone()
+            out["first_any"] = int(r["t"]) if r and r["t"] else 0
     f, l = out["first"], out["last"]
     if not f or not l:
-        out["last"] = None if not f else out["last"]
+        if not f:
+            out["last"] = None
+            out["why"] = ("bu coinin OI'si kaydedilmiyor" if not out.get("first_any") else
+                          "pencere OI kaydının başlangıcından önce")
+        else:
+            out["why"] = "pencereden sonraki OI örneği henüz gelmedi (5 dk'da bir ölçülüyor)"
         return out
     span = int(l["ts"]) - int(f["ts"])
     out["span"] = span
-    if span <= 0 or span > int(max_span) or int(l["ts"]) < int(t0):
+    # Sınır pencereyle ölçeklenir: 60 dk'lık pencerenin iki ucu ~60 dk arayla ölçülür ve bu doğrudur. Eskiden
+    # sabit 30 dk'ydı; 35 dk'yı aşan HER pencere "belirsiz" çıkıyordu ("ne oldu" denetimi 18.10).
+    allow = max(int(max_span), int(t1) - int(t0) + OI_SLACK)
+    if span <= 0:
+        out["last"], out["why"] = None, "pencerede OI değişimini ölçecek iki ayrı örnek yok"
+    elif span > allow:
         out["last"] = None
+        out["why"] = (f"OI örnekleri {span // 60} dk arayla — pencereden çok geniş, o harekete bu "
+                      "pencereyi yormuyoruz")
+    elif int(l["ts"]) < int(t0):
+        out["last"], out["why"] = None, "OI örnekleri pencerenin öncesinde kalmış"
     return out
 
 
@@ -170,15 +191,73 @@ def group_fills(rows: list[dict]) -> list[dict]:
             a["known"] += float(r["notional"] or 0)
             if r["taker"]:
                 a["tk"] += float(r["notional"] or 0)
-    out = []
-    for a in by.values():
+    return finish_groups(list(by.values()))
+
+
+def finish_groups(groups: list[dict]) -> list[dict]:
+    """Adres satırlarına net / brüt / yön / taker % ekle, brüte göre sırala. KESMEZ: toplamlar ve adres sayısı
+    hepsinden hesaplanır, sayfa ilk MAX_ADDRS'i gösterir ve kesimi yazar (eskiden kesilmiş listeden toplanıyordu:
+    300 adreslik pencerede "60 adres · alım $4.33M", gerçek $12.7M — "ne oldu" denetimi 18.10)."""
+    for a in groups:
         a["net"] = a["buy"] - a["sell"]
         a["gross"] = a["buy"] + a["sell"]
         a["dir"] = "buy" if a["net"] > 0 else ("sell" if a["net"] < 0 else "flat")
         a["taker_pct"] = (a["tk"] / a["known"] * 100) if a["known"] > 0 else None
-        out.append(a)
-    out.sort(key=lambda x: -x["gross"])
-    return out[:MAX_ADDRS]
+    groups.sort(key=lambda x: -x["gross"])
+    return groups
+
+
+def market_of(coin: str) -> str:
+    """'spot' | 'kripto' (ana dex) | 'kripto dex' (para:…) | 'hisse perp' | 'HIP-3 perp' (endeks/emtia).
+    Eskiden `":" not in coin` → para:ANSEM "hisse perp" etiketi alıyordu."""
+    from .. import assets
+    if assets.is_spot(coin):
+        return "spot"
+    if ":" not in coin:
+        return "kripto"
+    if assets.is_crypto_dex(coin):
+        return "kripto dex"
+    return "hisse perp" if assets.kind(coin) == "equity" else "HIP-3 perp"
+
+
+def floor_of(cfg, coin: str) -> float | None:
+    """Bu coinde fills'e yazılan en küçük işlem ($) — collector.fill_floor ile aynı sınıflama; None = kayıt kapalı.
+    Sayfa ve alarm özeti doğru tabanı yazsın (eskiden spotta kripto tabanı, para:… coinde hisse tabanı yazılıyordu)."""
+    m = market_of(coin)
+    if m == "kripto dex":
+        return float(getattr(cfg, "crypto_dex_fill_min_notional", 1000) or 0)
+    if m in ("kripto", "spot"):
+        v = float(getattr(cfg, "crypto_fill_min_notional" if m == "kripto" else "spot_fill_min_notional", 0) or 0)
+        return v if v > 0 else None
+    return float(getattr(cfg, "min_fill_notional", 0) or 0)
+
+
+def stream_gaps(t0: int, t1: int) -> dict:
+    """Pencerede canlı akışın kopuk kaldığı süreler (kollektörün `down_log`'u + şu anki kopukluk) ve botun son
+    açılışı. fills yalnız canlı akıştan yazılır: kopukluk kalıcı boşluktur (HL yeniden bağlanınca coin başına
+    yalnız son 30 işlemi yollar). Açılıştan ÖNCEKİ kopukluklar bellekte yok → `before_boot` (bilinmiyor)."""
+    from . import tape
+    raw: list[tuple[int, int]] = []
+    try:
+        from ..hl import collector as col
+        live = col.LIVE
+    except Exception:                                   # noqa: BLE001
+        live = None
+    if live is not None:
+        for a, b in list(getattr(live, "down_log", None) or ()):
+            raw.append((int(a), int(b)))
+        down = float(getattr(live, "down_since", 0) or 0)
+        if down:
+            raw.append((int(down), max(int(t1), int(down))))
+    gaps: list[list[int]] = []
+    for a, b in sorted((max(a, t0), min(b, t1)) for a, b in raw if b > t0 and a < t1):
+        if gaps and a <= gaps[-1][1]:
+            gaps[-1][1] = max(gaps[-1][1], b)
+        elif b > a:
+            gaps.append([a, b])
+    boot = int(tape.STARTED)
+    return {"gaps": gaps, "gap_sec": sum(b - a for a, b in gaps), "boot": boot,
+            "restart_in": t0 < boot <= t1, "before_boot": t0 < boot}
 
 
 def infer(a: dict, pos: dict | None, t0: int, t1: int,
@@ -337,54 +416,115 @@ async def fills_since() -> dict:
     return {"crypto": crypto, "equity": equity}
 
 
-async def report(coin: str, t0: int, t1: int) -> dict:
-    """Pencere raporu. `coin` ham HL adı ('HYPE' ya da 'xyz:NVDA')."""
+async def report(coin: str, t0: int, t1: int, cfg=None) -> dict:
+    """Pencere raporu. `coin` ham HL adı ('HYPE', 'kPEPE', 'xyz:NVDA', '@107').
+
+    KAYNAK İKİ TANE ("ne oldu" denetimi 18.10, canlı ölçüm): `fills` yalnız taban üstü işlemi tutar ($5K'da BTC
+    işlemlerinin ~%26'sı, PUMP'ın ~%5'i, TWAP dilimlerinin neredeyse hiçbiri). Son 15 dk'nın BÜTÜN işlemleri 📼
+    bantta (tape.py) adresiyle bellekte — pencere bandın tuttuğu aralıktaysa oradan okunur, değilse fills'ten;
+    hangisi olduğu ve tabanı rapora yazılır.
+
+    ALIM/SATIM = PİYASADAN (agresör) alım/satım. Her işlem iki tarafıyla (alıcı `buy`, satıcı `sell`) yazıldığı
+    için "toplam alış" ile "toplam satış" tanım gereği eşittir; eskiden aradaki farkı yalnız taban yaratıyordu ve
+    HYPE'ta yön TERS çıktı (sayfa alım > satım, gerçekte piyasadan satış 2 kat).
+    """
+    from ..config import get_config
+    from . import tape
+    cfg = cfg or get_config()
     t0, t1 = int(min(t0, t1)), int(max(t0, t1))
-    is_crypto = ":" not in coin
-    met = await _metrics_around(coin, t0, t1)
+    market = market_of(coin)
+    is_crypto = market in ("kripto", "kripto dex", "spot")
+    if market == "spot":
+        met = {"first": None, "last": None, "widened": False, "span": None,
+               "why": "spotta açık pozisyon (OI) yok — bu okuma yalnız perp'te yapılır"}
+    else:
+        met = await _metrics_around(coin, t0, t1)
+        if not met["first"] and market == "kripto":
+            try:
+                from ..propr import is_listed as _pl
+                if not _pl(coin):
+                    met["why"] = "bu coinin OI'si kaydedilmiyor (ana dex'te yalnız PROPR'daki coinler)"
+            except Exception:                           # noqa: BLE001
+                pass
     oi_chg = px_chg = None
     if met["first"] and met["last"]:
         oi_chg = _pct(met["last"]["oi"], met["first"]["oi"])
         px_chg = _pct(met["last"]["mark_px"], met["first"]["mark_px"])
 
-    rows = await _fills(coin, t0, t1)
-    grouped = group_fills(rows)
-    addrs = [g["address"] for g in grouped]
+    listen = await listening(coin)
+    ts_now = now()
+    tw = tape.window(coin, t0, t1, ts_now) if listen is not False else None
+    if tw is not None and not listen and coin not in tape.REG:
+        tw = None                                       # dinlendiği bilinmiyor ve bantta yok: "0 işlem" denemez
+    rows: list[dict] = []
+    if tw is not None:
+        src = "tape"
+        grouped = finish_groups([{**r, "first_ts": None, "last_ts": None} for r in tw["rows"]])
+        aggr_buy, aggr_sell, aggr_unk = tw["buy"], tw["sell"], 0.0
+        n_trades = tw["n"]
+        gaps = {"gaps": tw["gaps"], "gap_sec": tw["gap_sec"], "boot": int(tape.STARTED),
+                "restart_in": False, "before_boot": False}
+    else:
+        src = "fills"
+        rows = await _fills(coin, t0, t1)
+        grouped = group_fills(rows)
+        aggr_buy = sum(float(r["notional"] or 0) for r in rows if r.get("taker") and r["side"] == "buy")
+        aggr_sell = sum(float(r["notional"] or 0) for r in rows if r.get("taker") and r["side"] == "sell")
+        aggr_unk = sum(float(r["notional"] or 0) for r in rows if r.get("taker") is None)
+        n_trades = None
+        gaps = stream_gaps(t0, t1)
+    shown = grouped[:MAX_ADDRS]
+    addrs = [g["address"] for g in shown]
     pos = await _positions(coin, addrs)
     prb = await probed(addrs)
-    for g in grouped:
+    for g in shown:
         p = pos.get(g["address"])
         g["pos"] = p
         g["probed_ts"] = prb.get(g["address"], 0)
         g["infer"] = infer(g, p, t0, t1, g["probed_ts"])
 
     since = await fills_since()
-    start = since["crypto" if is_crypto else "equity"]
+    start = since["crypto" if ":" not in coin else "equity"]
+    keep_d = max(int(getattr(cfg, "fills_retention_days", 14) or 14), 7)
+    purged = src == "fills" and t0 < ts_now - keep_d * 86400
     return {
-        "coin": coin, "symbol": coin.split(":")[-1], "is_crypto": is_crypto,
+        "coin": coin, "symbol": coin.split(":")[-1], "label": _label(coin), "market": market,
+        "is_crypto": is_crypto,
         "t0": t0, "t1": t1, "minutes": max(1, (t1 - t0) // 60),
         "metrics": met, "oi_chg": oi_chg, "px_chg": px_chg,
-        "oi": read_oi(oi_chg, px_chg),
+        "oi": read_oi(oi_chg, px_chg, met.get("why") or ""),
         # Ölçüm penceresi genişletildiyse SÖYLENİR: okuma 5 dakikanın değil
         # bu kadar saniyenin okuması demektir.
         "widened": bool(met.get("widened")), "span": met.get("span"),
-        "n_fills": len(rows), "rows": grouped,
-        "buy": sum(g["buy"] for g in grouped),
-        "sell": sum(g["sell"] for g in grouped),
-        "n_known": sum(1 for g in grouped if g["pos"]),
+        "source": src, "tape_lo": tw["lo"] if tw else None, "tape_hi": tw["hi"] if tw else None,
+        "live_down": bool(tw and tw.get("live_down")),
+        "floor": floor_of(cfg, coin), "listening": listen,
+        "gaps": gaps["gaps"], "gap_sec": gaps["gap_sec"], "boot": gaps["boot"],
+        "restart_in": gaps["restart_in"], "before_boot": gaps["before_boot"],
+        "n_fills": len(rows) if src == "fills" else n_trades, "n_trades": n_trades,
+        "rows": shown, "n_addr": len(grouped), "cut": max(0, len(grouped) - len(shown)),
+        "buy": aggr_buy, "sell": aggr_sell, "net": aggr_buy - aggr_sell, "aggr_unknown": aggr_unk,
+        "n_known": sum(1 for g in shown if g["pos"]),
         # Baktığımız ama pozisyon taşımayan adresler: "bilmiyoruz" DEĞİL,
         # bilgi. Künye ikisini ayrı saymazsa sayfa hâlâ eksik görünür.
-        "n_flat": sum(1 for g in grouped
+        "n_flat": sum(1 for g in shown
                       if not g["pos"] and g.get("probed_ts")),
-        "n_unseen": sum(1 for g in grouped
+        "n_unseen": sum(1 for g in shown
                         if not g["pos"] and not g.get("probed_ts")),
-        "n_stale": sum(1 for g in grouped if g["infer"].get("stale")),
+        "n_stale": sum(1 for g in shown if g["infer"].get("stale")),
         "ctx": await _context(coin, t0, t1),
+        # Saklama süresinin dışı: kayıt SİLİNDİ (eskiden "kayıt başlamadı" deniyordu).
+        "purged": purged, "keep_days": keep_d,
         # Kayıt başlangıcından ÖNCE bir pencere soruldu mu? "Boş" ile
         # "o dönemde tutmuyorduk" apayrı cevaplar.
-        "before_records": bool(start and t1 < int(start)) or not start,
+        "before_records": src == "fills" and not purged and (bool(start and t1 < int(start)) or not start),
         "records_since": start,
     }
+
+
+def _label(coin: str) -> str:
+    from .. import assets
+    return assets.label(coin)
 
 
 async def refresh_profiles(cfg, client, coin: str, addrs: list[str],
@@ -446,14 +586,17 @@ async def listening(coin: str) -> bool | None:
     saymak "bu coini dinlemiyoruz" diye kesin konuşmak olurdu — oysa tek
     bildiğimiz, bilmediğimiz.
 
-    Hisse (`xyz:`) perp'lerinin hepsine abone olunuyor; soru yalnız kripto
-    tarafında anlamlı.
+    İzlenen HIP-3 dex'lerinin (xyz, para…) hepsine abone olunuyor. Ana dex
+    kriptoda hacimce ilk CRYPTO_WATCH_TOP, spotta ilk SPOT_WATCH_TOP çift
+    dinleniyor (`ws_universe`, 600 sn'de bir yenilenir) — cevap ŞU ANIN cevabı.
     """
-    if ":" in coin:
-        return True
     from ..db import kv_get
+    if ":" in coin:
+        from .. import assets
+        from ..config import get_config
+        return coin.split(":")[0] in assets.watched_dexes(get_config())
     u = await kv_get("ws_universe") or {}
-    coins = u.get("crypto")
+    coins = u.get("spot" if coin.startswith("@") else "crypto")
     if not isinstance(coins, list):
         return None
     return coin in coins
@@ -516,20 +659,21 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
     listen = await listening(coin)
     empty = ""
     if not rows:
-        empty = ("below_floor" if listen else
+        empty = ("no_trades" if listen and rep.get("source") == "tape" else
+                 "below_floor" if listen else
                  ("unknown" if listen is None else "not_listening"))
-    floor = (getattr(cfg, "min_fill_notional", 0) if ":" in coin
-             else getattr(cfg, "crypto_fill_min_notional", 0))
-    tk = sum(r["tk"] for r in rows), sum(r["known"] for r in rows)
+    floor = rep.get("floor") if "floor" in rep else floor_of(cfg, coin)
     return {
         "coin": coin, "symbol": rep["symbol"], "t0": t0, "t1": t1,
         "minutes": rep["minutes"],
         "verdict": rep["oi"]["verdict"], "why": rep["oi"]["why"],
         "oi_chg": rep["oi_chg"], "px_chg": rep["px_chg"],
         "widened": rep["widened"], "span": rep["span"],
-        "n_addr": len(rows), "buy": rep["buy"], "sell": rep["sell"],
-        "net": rep["buy"] - rep["sell"],
-        "taker_pct": (tk[0] / tk[1] * 100) if tk[1] > 0 else None,
+        # Alım/satım PİYASADAN (agresör) — report'un tanımı. Toplam taker % artık yazılmaz: her işlemin bir taker
+        # bir maker tarafı var, pencere toplamında hep ~%50 çıkıyordu (adres satırındaki taker % anlamlı, o duruyor).
+        "n_addr": int(rep.get("n_addr") or len(rows)), "buy": rep["buy"], "sell": rep["sell"],
+        "net": rep["buy"] - rep["sell"], "source": rep.get("source") or "fills",
+        "taker_pct": None,
         "top": head, "listening": listen, "floor": floor,
         "probed": n_probed, "probe_err": probe_err, "empty_reason": empty,
         "before_records": rep["before_records"],
