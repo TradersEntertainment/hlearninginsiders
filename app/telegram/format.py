@@ -1,6 +1,7 @@
 """Telegram mesaj şablonları (HTML)."""
 import html
 import json
+import math
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -560,10 +561,15 @@ def wall_gone(w: dict) -> str:
 # ---------------- 🧲 yapışkan duvar ----------------
 
 def px5(p: float | None) -> str:
-    """5 anlamlı hane (HL tick'i): 0.062640 → 0.06264; `px` 4 haneye keser."""
+    """5 anlamlı hane (HL tick'i): 0.062640 → 0.06264; `px` 4 haneye keser. 0.0001 altı da düz yazılır
+    (0.0000735; `g` biçimi "7.35e-05" yazardı)."""
     if not p:
         return "-"
-    return f"{p:,.0f}" if p >= 10_000 else f"{p:.5g}"
+    if p >= 10_000:
+        return f"{p:,.0f}"
+    if p < 1e-4:
+        return f"{p:.{4 - math.floor(math.log10(p))}f}".rstrip("0").rstrip(".")
+    return f"{p:.5g}"
 
 
 def _sticky_head(w: dict) -> tuple[str, str, str]:
@@ -3464,36 +3470,73 @@ def hidden_twap(m: dict, ctx: dict) -> str:
 
 
 def _lv_owner_txt(lv: dict, short: bool = False) -> str:
-    own = " · ".join(f"✅ {alink(a)} {usd(u)}" for a, u in (lv.get("owners") or [])[:2 if short else 3])
-    mk = " · ".join(f"{alink(a)} {usd(u)}" for a, u in (lv.get("makers") or [])[:2 if short else 3])
-    parts = []
-    if own:
-        parts.append(own + (f" · bulunamayan {usd(lv.get('unknown_usd'))}" if float(lv.get("unknown_usd") or 0) >= 1000
-                            else ""))
+    """Kademenin sahip metni: ✅ doğrulanmış açık emir · bulunamayan kısım · "dolan" (son 15 dk'da bu kademede pasif
+    emri dolan) · "dolan, şu an emri yok" (açık emirleri okundu, bu kademede emri kalmamış — sahip sayılmaz)."""
+    n = 2 if short else 3
+    own = " · ".join(f"✅ {alink(a)} {usd(u)}" for a, u in (lv.get("owners") or [])[:n])
+    mk = " · ".join(f"{alink(a)} {usd(u)}" for a, u in (lv.get("makers") or [])[:n])
+    gone = " · ".join(f"{alink(a)} {usd(u)}" for a, u in (lv.get("makers_gone") or [])[:n])
+    unk = float(lv.get("unknown_usd") or 0)
+    parts = [own] if own else ["sahip bulunamadı"]
+    if own and unk >= 1000:
+        parts.append(f"bulunamayan {usd(unk)}")
     if mk:
         parts.append(f"dolan: {mk}")
-    return " · ".join(parts) if parts else "sahip bulunamadı"
+    if gone:
+        parts.append(f"dolan, şu an emri yok: {gone}")
+    return " · ".join(parts)
 
 
 def _sgn_usd(v: float) -> str:
-    """+$8K / -$4K (usd() eksiyi "$-4K" yazar)."""
+    """+$8K / -$4K (usd() eksiyi "$-4K" yazar); $0,5 altı işaretsiz."""
     v = float(v or 0)
-    return ("+" if v > 0 else "-" if v < 0 else "") + usd(abs(v))
+    if abs(v) < 0.5:
+        return usd(0)
+    return ("+" if v > 0 else "-") + usd(abs(v))
+
+
+def dist_txt(p: float, mid: float | None) -> str:
+    """Fiyata uzaklık "%+0.44"; %0,005'ten yakınsa "fiyatta" ("%-0.00" yazılmaz)."""
+    if not mid:
+        return ""
+    d = (p - mid) / mid * 100
+    return "fiyatta" if abs(d) < 0.005 else f"%{d:+.2f}"
+
+
+def _reach_txt(book: dict) -> str:
+    """l2Book'un kapsadığı aralık (her yönde 20 kademe): "fiyatın %4.7 altı – %4.7 üstü"."""
+    r = ((book.get("depth") or {}).get("reach") or {})
+    g = r.get("grouped") or (None, None)
+    raw = r.get("raw") or (None, None)
+    lo, hi = (g if any(x is not None for x in g) else raw)
+    if lo is None and hi is None:
+        return ""
+    return ("fiyatın " + (f"%{abs(lo):.1f} altı" if lo is not None else "?") + " – "
+            + (f"%{abs(hi):.1f} üstü" if hi is not None else "?"))
+
+
+BOOK_MSG_MAX = 3900             # bot._split 4000'de böler: /defter tek mesaj kalsın
 
 
 def book_owners(coin: str, book: dict | None, summ: dict | None, listened: bool | None = None,
                 name: str | None = None) -> str:
     """🧱 /defter PUMP (kullanıcı 18.10): en kalın emirler ve sahipleri + son 15 dk. İlk 4 satır: 1) en kalın alış /
-    satış kademesi (HL arayüzü gibi gruplu) · 2) sahipleri · 3) son 15 dk alış / satış / net · 4) en büyük net alıcı /
-    satıcı. Ayrıntı altta. Sahip yalnız ölçümle (pasif dolum / doğrulanmış açık emir) — tahmin yok."""
+    satış kademesi (HL arayüzü gibi gruplu; gruplu okunamadıysa tam fiyat) · 2) sahipleri · 3) son 15 dk alış /
+    satış / net (kapsama ölçülür: restart / kopukluk yazılır) · 4) en büyük net alıcı / satıcı. Ayrıntı altta.
+    Sahip yalnız ölçümle (pasif dolum / doğrulanmış açık emir) — tahmin yok."""
+    from ..radar import tape as _tape
     sym = esc(name or assets.label(coin))
     lines = []
-    gb = ((book or {}).get("grouped") or {}).get("bid") or []
-    ga = ((book or {}).get("grouped") or {}).get("ask") or []
+    grp = (book or {}).get("grouped") or {}
+    raw_ = (book or {}).get("raw") or {}
+    gb, ga = grp.get("bid") or [], grp.get("ask") or []
+    head_raw = not (gb or ga)
+    if head_raw:                                        # gruplu okunamadı: ilk satır tam fiyattan
+        gb, ga = raw_.get("bid") or [], raw_.get("ask") or []
     if book and (gb or ga):
         mid = book.get("mid")
-        dist = lambda lv: f" (%{(lv['px'] - mid) / mid * 100:+.2f})" if mid else ""   # noqa: E731
-        head = [f"🧱 <b>{sym} defteri</b>"]
+        dist = lambda lv: f" ({dist_txt(lv['px'], mid)})" if mid else ""   # noqa: E731
+        head = [f"🧱 <b>{sym} defteri</b>" + (" (tam fiyat)" if head_raw else "")]
         if gb:
             head.append(f"🟢 alış {px5(gb[0]['px'])}{dist(gb[0])} <b>{usd(gb[0]['usd'])}</b> ({gb[0]['n']} emir)")
         if ga:
@@ -3510,11 +3553,13 @@ def book_owners(coin: str, book: dict | None, summ: dict | None, listened: bool 
     else:
         lines.append(f"🧱 <b>{sym} defteri</b> okunamadı" + (f" ({esc(', '.join(book.get('err') or []))})"
                                                               if book.get("err") else ""))
+    cv = _tape.cover(summ)
+    warn = f" · ⚠️ {cv['warn']}" if cv["warn"] else ""
     if summ and summ.get("n"):
         net = float(summ.get("net") or 0)
-        lines.append(f"⏱ son 15 dk: piyasadan alış <b>{usd(summ['buy'])}</b> · satış <b>{usd(summ['sell'])}</b> · net "
+        lines.append(f"⏱ {cv['label']}: piyasadan alış <b>{usd(summ['buy'])}</b> · satış <b>{usd(summ['sell'])}</b> · net "
                      f"<b>{_sgn_usd(net)}</b> · {summ['n']} işlem, {summ['n_addr']} adres"
-                     + (f" · 🔹 TWAP {usd(summ['twap'])}" if summ.get("twap") else ""))
+                     + (f" · 🔹 TWAP {usd(summ['twap'])}" if summ.get("twap") else "") + warn)
         tb, ts_ = (summ.get("buyers") or [None])[0], (summ.get("sellers") or [None])[0]
         tops = []
         if tb:
@@ -3525,36 +3570,57 @@ def book_owners(coin: str, book: dict | None, summ: dict | None, listened: bool 
             lines.append("👥 " + " · ".join(tops))
     elif listened is False:
         lines.append(f"⏱ {sym} canlı akışta dinlenmiyor — son 15 dk'nın işlemleri yok")
+    elif cv["unknown"]:
+        lines.append(f"⏱ son 15 dk bilinmiyor: {cv['warn']}")
     else:
-        lines.append("⏱ son 15 dk'da işlem görülmedi"
-                     + (" (bot yeni başladı)" if summ and summ.get("covered_sec", 900) < summ.get("window", 900) else ""))
-    # — ayrıntı —
+        lines.append(f"⏱ {cv['label']}'da işlem görülmedi" + (f" ({cv['warn']})" if cv["warn"] else ""))
+    # — ayrıntı (sığmazsa sondan kırpılır: mesaj tek parça kalsın; ilk 4 satır hiç kırpılmaz) —
+    det: list[str] = []
     if book and (gb or ga):
-        lines.append("")
-        for side, title, rows in (("bid", "🟢 Alış kademeleri (gruplu)", gb), ("ask", "🔴 Satış kademeleri (gruplu)", ga)):
+        for title, rows in (("🟢 Alış kademeleri", gb), ("🔴 Satış kademeleri", ga)):
             if not rows:
                 continue
-            lines.append(f"<b>{title}</b>")
+            det.append(f"<b>{title} ({'tam fiyat' if head_raw else 'gruplu'})</b>")
             for lv in rows[:3]:
-                lines.append(f"• {px5(lv['px'])} <b>{usd(lv['usd'])}</b> ({lv['n']} emir) — {_lv_owner_txt(lv)}")
-        raw = [lv for side in ("bid", "ask") for lv in ((book.get("raw") or {}).get(side) or [])[:2]]
+                det.append(f"• {px5(lv['px'])} <b>{usd(lv['usd'])}</b> ({lv['n']} emir) — {_lv_owner_txt(lv)}")
+        raw = [] if head_raw else [lv for side in ("bid", "ask") for lv in (raw_.get(side) or [])[:2]]
         if raw:
-            lines.append("<b>Tam fiyat</b> (ilk 20 kademe): " + " · ".join(
+            det.append("<b>Tam fiyat</b> (ilk 20 kademe): " + " · ".join(
                 f"{px5(lv['px'])} {usd(lv['usd'])} ({lv['n']} emir{', tek' if lv['n'] == 1 else ''})" for lv in raw))
         if book.get("orders"):
-            lines.append("<b>Bulunan büyük emirler:</b> " + " · ".join(
+            det.append("<b>Bulunan büyük emirler:</b> " + " · ".join(
                 f"{alink(o['addr'])} {'alış' if o['side'] == 'bid' else 'satış'} {px5(o['px'])} {usd(o['usd'])}"
                 for o in book["orders"][:5]))
     if summ and summ.get("trades"):
-        lines.append("<b>En büyük işlemler (15 dk):</b> " + " · ".join(
+        det.append("<b>En büyük işlemler (15 dk):</b> " + " · ".join(
             f"{'🟢' if tr['side'] == 'buy' else '🔴'} {usd(tr['usd'])}{' 🔹' if tr['twap'] else ''} {alink(tr['taker'])}"
             for tr in summ["trades"][:4] if tr.get("taker")))
     foot = ("<i>Defter anonim: sahip yalnız ölçümle bulunur — ✅ = adayın açık emri HL'de doğrulandı, \"dolan\" = son 15 dk'da"
             " o fiyatta bekleyen emri dolan adres. Aday olmayan sahip bulunamaz. Gruplu kademe birden çok emrin toplamıdır.")
     if book:
-        foot += f" {book.get('cands', 0)} aday soruldu · {int(book.get('age') or 0)} sn önce."
-    lines.append(foot + "</i>")
-    return "\n".join(lines)
+        reach = _reach_txt(book)
+        if reach:
+            foot += f" HL defteri her yönde 20 kademe verir: {reach}; dışı görünmez."
+        foot += f" {book.get('cands', 0)} aday soruldu"
+        if book.get("failed"):
+            foot += f" ({book['failed']} okunamadı)"
+        if book.get("partial"):
+            foot += f" · {book['partial']} adayın emir listesi eksik (HL 100'de kesti, tamamı okunamadı)"
+        foot += f" · defter {int(book.get('age') or 0)} sn önce okundu"
+        if book.get("orders_ts") and book.get("ts"):
+            oage = int(book.get("age") or 0) + max(0, int(book["ts"]) - int(book["orders_ts"]))
+            foot += f", açık emirler en eski {oage} sn önce soruldu"
+        if book.get("err") and (gb or ga):
+            foot += f" · ⚠️ {esc(', '.join(book['err']))}"
+        foot += "."
+    foot += "</i>"
+    cut = 0
+    while det and len("\n".join(lines + [""] + det + [foot])) > BOOK_MSG_MAX:
+        det.pop()
+        cut += 1
+    if cut:
+        foot = foot[:-len("</i>")] + f" Ayrıntının {cut} satırı sığmadı: sitede tamamı.</i>"
+    return "\n".join(lines + ([""] + det if det else []) + [foot])
 
 
 LIVE_TWAP_TOP = 15

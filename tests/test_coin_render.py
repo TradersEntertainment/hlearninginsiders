@@ -134,36 +134,83 @@ if __name__ == "__main__":
 
 def test_top_panels_with_data():
     """Kullanıcı 18.10: coin sayfasının üstünde son 15 dk'nın alım-satımları (adresiyle), en kalın emirler ve
-    sahipleri, TWAP'lar. Bant ve defter verisi doluyken çizim; boşken / dinlenmiyorken nedenli boş."""
+    sahipleri, TWAP'lar. Bant ve defter verisi doluyken çizim; boşken / dinlenmiyorken / kopukken / defter
+    okunamamışken nedenli boş (inceleme 18.10: "0.0 adım" + boş tablo, "işlem görülmedi" yerine bilinmiyor).
+
+    Pinlenenler: kapsam (fiyata %) başlıkta; "dolan, şu an emri yok" ayrı; sahip yoksa "sahip bulunamadı";
+    emir verisinin yaşı künyede; hisse duvar radarı aynı panelde; bant hatasında çelişkili ikinci metin yok."""
     import time as _t
+    from app.hl import collector as col
     from app.radar import tape as tp
     tp.REG.clear()
+    tp.HWM.clear()
     t = int(_t.time())
-    B, S = "0x" + "b" * 40, "0x" + "c" * 40
-    tp.observe("PUMP", "B", B, S, 0.0042, 2_000_000, t - 30)            # $8.4K alış, satıcı ask'ta pasif
-    tp.observe("PUMP", "A", S, B, 0.0041, 3_000_000, t - 20, twap=True)  # $12.3K satış (TWAP), alıcı bid'de pasif
-    summ = tp.summary("PUMP", t)
-    book = {"coin": "PUMP", "mid": 0.004118, "unit": 1e-05, "age": 12, "cands": 4, "failed": 0, "err": [],
-            "raw": {"bid": [{"px": 0.0041, "usd": 7.78e6, "n": 20, "owners": [(B, 1.2e6)], "unknown_usd": 6.58e6,
-                             "makers": [(B, 12_300.0)]}], "ask": []},
-            "grouped": {"bid": [{"px": 0.0041, "usd": 9.8e6, "n": 197, "owners": [], "unknown_usd": 9.8e6,
-                                 "makers": []}], "ask": []},
-            "orders": [{"addr": B, "side": "bid", "px": 0.0041, "usd": 1.2e6, "ro": False, "dist_pct": -0.44}]}
-    html = render(**ctx(V2, kind="crypto", mark_src="ctx", ticker={"coin": "PUMP", "kind": "crypto"},
-                        symbol="PUMP", coin="PUMP", rows=CROW, liq_rows=CROW, entry=None, liq=None,
-                        summ={"mark": 0.0041, "oi_ntl": 1e6, "funding": 0.0001, "day_volume": 5e6,
-                              "oi_change_pct": None, "px_change_pct": 3.1},
-                        tape=summ, book=book, book_pending=False, listened=True))
-    assert "Piyasadan alış" in html and "$8K" in html and "🔹 TWAP" in html and "En çok net alan" in html
-    assert "HL arayüzü gibi gruplu" in html and "Tam fiyat · ilk 20 kademe" in html and "$9.80M" in html
-    assert "0.00001 adım" in html or "1e-05 adım" in html
-    assert "bulunamayan $6.58M" in html and "✅" in html and "Bulunan büyük emirler" in html and "dolan:" in html
-    assert "12 sn önce ölçüldü" in html and "4 aday adresin" in html
-    # dinlenmiyor / hazırlanıyor
-    html2 = render(**ctx(V2, kind="crypto", mark_src="ctx", ticker={"coin": "PUMP", "kind": "crypto"},
-                         symbol="PUMP", coin="PUMP", rows=[], liq_rows=[], entry=None, liq=None,
-                         tape={"n": 0, "covered_sec": 900, "window": 900}, book=None, book_pending=True,
-                         listened=False))
-    assert "canlı akışta dinlenmiyor" in html2 and "hazırlanıyor" in html2 and 'data-refresh="10"' in html2
-    tp.REG.clear()
-    print("✅ üst paneller) 15 dk bant + en kalın emirler/sahipler + TWAP en üstte; dinlenmiyor / hazırlanıyor")
+    old_started, old_live = tp.STARTED, col.LIVE
+    tp.STARTED, col.LIVE = t - 10_000, None
+    try:
+        B, S, G = "0x" + "b" * 40, "0x" + "c" * 40, "0x" + "f" * 40
+        tp.observe("PUMP", "B", B, S, 0.0042, 2_000_000, t - 30)            # $8.4K alış, satıcı ask'ta pasif
+        tp.observe("PUMP", "A", B, S, 0.0041, 3_000_000, t - 20, twap=True)  # $12.3K satış (TWAP), alıcı bid'de pasif
+        summ = tp.summary("PUMP", t)
+        book = {"coin": "PUMP", "ts": t - 12, "mid": 0.004118, "unit": 1e-05, "unit_txt": "0.00001", "age": 12,
+                "cands": 4, "failed": 0, "partial": 1, "err": [], "orders_ts": t - 40,
+                "depth": {"reach": {"raw": (-0.47, 0.47), "grouped": (-4.7, 4.66)}},
+                "raw": {"bid": [{"px": 0.0041, "usd": 7.78e6, "n": 20, "owners": [(B, 1.2e6)], "unknown_usd": 6.58e6,
+                                 "makers": [(B, 12_300.0)], "makers_gone": [(G, 6_000.0)]}], "ask": []},
+                "grouped": {"bid": [{"px": 0.0041, "usd": 9.8e6, "n": 197, "owners": [], "unknown_usd": 9.8e6,
+                                     "makers": [], "makers_gone": []}], "ask": []},
+                "orders": [{"addr": B, "side": "bid", "px": 0.0041, "usd": 1.2e6, "ro": False, "dist_pct": -0.44}]}
+        base = dict(kind="crypto", mark_src="ctx", ticker={"coin": "PUMP", "kind": "crypto"}, symbol="PUMP",
+                    coin="PUMP", entry=None, liq=None)
+        html = render(**ctx(V2, **base, rows=CROW, liq_rows=CROW,
+                            summ={"mark": 0.0041, "oi_ntl": 1e6, "funding": 0.0001, "day_volume": 5e6,
+                                  "oi_change_pct": None, "px_change_pct": 3.1},
+                            tape=summ, tape_cover=tp.cover(summ), book=book, book_pending=False, listened=True))
+        assert "Piyasadan alış" in html and "$8K" in html and "🔹 TWAP" in html and "En çok net alan" in html
+        assert "HL arayüzü gibi gruplu · 0.00001 adım" in html and "Tam fiyat · ilk 20 kademe" in html
+        assert "$9.80M" in html and "kapsam: fiyatın %4.70 altı – %4.66 üstü" in html, "l2Book kapsamı yazılı"
+        assert "bulunamayan $6.58M" in html and "✅" in html and "Bulunan büyük emirler" in html and "dolan:" in html
+        assert "dolan, şu an emri yok:" in html and "sahip bulunamadı" in html
+        assert "Defter 12 sn önce okundu" in html and "4 aday adresin" in html and "en eskisi 40 sn önce" in html
+        assert "HL 100'de kesti" in html and "görülenlerin hepsi sayıldı" in html and "Son 15 dk" in html
+        assert "(%-0.44)" in html and "%-0.00" not in html
+        # dinlenmiyor / hazırlanıyor
+        empty = {"n": 0, "window": 900, "span": 900, "covered_sec": 900, "gaps": [], "gap_sec": 0, "full": True,
+                 "restart": False, "live_down": False}
+        html2 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=empty, tape_cover=tp.cover(empty), book=None,
+                             book_pending=True, listened=False))
+        assert "canlı akışta dinlenmiyor" in html2 and "hazırlanıyor" in html2 and 'data-refresh="10"' in html2
+        # akış şu an kopuk: "işlem görülmedi" değil bilinmiyor
+        down = {**empty, "live_down": True, "full": False}
+        html3 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=down, tape_cover=tp.cover(down),
+                             book=None, book_pending=False, listened=True))
+        assert "Son 15 dk bilinmiyor: canlı akış şu an kopuk" in html3 and "işlem görülmedi" not in html3
+        # defter okunamadı (hata sonucu): boş tablo ve "0.0 adım" yok, döngü yok
+        bad = {"coin": "PUMP", "ts": t, "age": 3, "err": ["defter okunamadı"], "raw": {"bid": [], "ask": []},
+               "grouped": {"bid": [], "ask": []}, "orders": [], "cands": 0, "failed": 0, "partial": 0, "mid": None,
+               "unit": 0.0, "unit_txt": "", "depth": {}, "orders_ts": None}
+        html4 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=summ, tape_cover=tp.cover(summ), book=bad,
+                             book_pending=False, listened=True))
+        assert "Defter okunamadı (defter okunamadı)" in html4 and " adım" not in html4
+        assert 'data-refresh="45"' in html4 and "Alış (fiyatın altı)" not in html4
+        # bant hatası: uyarı var, "işlem görülmedi" çelişkisi yok
+        html5 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=None, tape_cover=tp.cover(None), book=None,
+                             book_pending=False, listened=True, panel_err={"tape": "bozuk"}))
+        assert "bant okunamadı: bozuk" in html5 and "işlem görülmedi" not in html5
+        # kopukluk bandın içinde: "hepsi sayıldı" denmez
+        gap = {**summ, "gaps": [[t - 300, t - 120]], "gap_sec": 180, "full": False}
+        html6 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=gap, tape_cover=tp.cover(gap), book=None,
+                             book_pending=False, listened=True))
+        assert "canlı akış bu aralıkta 3 dk kopuktu" in html6 and "hepsi sayıldı" not in html6
+        # hisse: duvar radarı aynı panelde
+        wall = {"side": "bid", "notional": 2.5e6, "sz": 10_000, "px_lo": 99.0, "px_hi": 99.5, "peak_notional": 3e6,
+                "dist_pct": -1.2, "address": ADDR, "first_ts": t - 600}
+        html7 = render(**ctx(V2, tape=empty, tape_cover=tp.cover(empty), book=None, book_pending=False,
+                             listened=True, bwalls=[wall]))
+        assert "🧱 Duvar radarı (hisse)" in html7 and "ALIŞ <b>$2.50M</b>" in html7 and "sahibi" in html7
+    finally:
+        tp.STARTED, col.LIVE = old_started, old_live
+        tp.REG.clear()
+        tp.HWM.clear()
+    print("✅ üst paneller) 15 dk bant + en kalın emirler/sahipler + TWAP en üstte; dinlenmiyor / hazırlanıyor /"
+          " kopuk (bilinmiyor) / defter okunamadı / bant hatası / hisse duvarı")

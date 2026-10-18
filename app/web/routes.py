@@ -19,6 +19,7 @@ from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import (MAIN_CTX_KV, crypto_names, find_in_hip3, find_ticker, get_universe, hip3_known,
                            resolve_coin, similar_names)
 from ..propr import is_listed as propr_listed
+from ..telegram import format as _tgfmt
 from ..tvsymbols import tv_symbol
 from ..radar import (autoscan, bars, bigpos, clusters, cryptoliq, cryptovol, equityvol, liqattack, liqmap, movers,
                      forensics, funding, hourstats, lowvol, metrics, offhours,
@@ -94,19 +95,21 @@ def _posage(p):
 
 
 def _px5(p):
-    """5 anlamlı hane (HL tick'i) — `px` 0.0626'ya keser, yapışkan duvarın adımı kaybolur."""
-    if not p:
-        return "-"
-    return f"{p:,.0f}" if p >= 10_000 else f"{p:.5g}"
+    """5 anlamlı hane (HL tick'i) — `px` 0.0626'ya keser, yapışkan duvarın adımı kaybolur. Biçim Telegram'la tek
+    yerde (format.px5: 0.0001 altı da düz yazılır)."""
+    return _tgfmt.px5(p)
 
 
 def _sgnusd(v):
-    """+$8K / -$4K (`usd` eksiyi "$-4K" yazar)."""
+    """+$8K / -$4K (`usd` eksiyi "$-4K" yazar); $0,5 altı işaretsiz."""
     v = float(v or 0)
-    return ("+" if v > 0 else "-" if v < 0 else "") + _usd(abs(v))
+    if abs(v) < 0.5:
+        return _usd(0)
+    return ("+" if v > 0 else "-") + _usd(abs(v))
 
 
-templates.env.filters.update(usd=_usd, px=_px, px5=_px5, age=_age, dt=_dt, posage=_posage, sgnusd=_sgnusd)
+templates.env.filters.update(usd=_usd, px=_px, px5=_px5, age=_age, dt=_dt, posage=_posage, sgnusd=_sgnusd,
+                             dist=_tgfmt.dist_txt)
 
 
 def _stale_acct(ts) -> bool:
@@ -817,6 +820,7 @@ async def coin_page(request: Request, symbol: str):
     from ..radar import bookowners as _bo
     from ..radar import tape as _tape
     tape_sum = _safe(panel_err, "tape", _tape.summary, coin)
+    tape_cover = _tape.cover(tape_sum)
     book = _bo.cached(coin)
     book_pending = _bo.kick(getattr(request.app.state, "client", None), coin) and book is None
     col = getattr(request.app.state, "collector", None)
@@ -831,7 +835,7 @@ async def coin_page(request: Request, symbol: str):
         cov = None
 
     return _render(request, "coin.html", {
-        "tape": tape_sum, "book": book, "book_pending": book_pending, "listened": listened,
+        "tape": tape_sum, "tape_cover": tape_cover, "book": book, "book_pending": book_pending, "listened": listened,
         "coverage": cov,
         "hmeta": hmeta, "hchart": hchart, "panel_err": panel_err,
         "hstats_pending": hstats_pending, "now_verdict": now_verdict,

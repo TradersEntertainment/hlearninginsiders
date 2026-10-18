@@ -930,6 +930,11 @@ class TelegramBot:
         from ..radar import bookowners, tape
         t = await resolve_coin(tick)
         coin = (t or {}).get("coin") or assets.spot_coin_of(tick)
+        if not coin:                                    # yalnız spotta olan token (UBTC → @N): önce USDC çifti
+            tu = tick.upper()
+            pairs = [(c, str(lbl or "").upper()) for c, lbl in assets.SPOT_NAMES.items()
+                     if str(lbl or "").split("/")[0].upper() == tu]
+            coin = next((c for c, lbl in pairs if lbl == f"{tu}/USDC"), "") or (pairs[0][0] if pairs else "")
         if not coin:
             await self.send(f"❓ <b>{fmt.esc(tick.upper())}</b> diye bir coin bulamadım (ör. /defter PUMP).", chat_id)
             return True

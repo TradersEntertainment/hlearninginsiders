@@ -84,6 +84,7 @@
 
 {# 🔝 Kullanıcı 18.10: "son 15dk alımlar satımlar hepsi, orderbookta en kalın emirlerin sahipleri, gelmiş geçmiş
    büyük twap emirleri en üstte olsun" #}
+{% if tape_cover is not defined %}{% set tape_cover = {"label": "son 15 dk", "warn": "", "unknown": false} %}{% endif %}
 <div class="panel">
   <h2>⏱ Son 15 dakika <span class="st">· bu coindeki bütün alım-satımlar, adresiyle · canlı akıştan, istek atmadan</span></h2>
   {% if panel_err.tape %}<p class="alert bad">⚠️ bant okunamadı: {{ panel_err.tape }}</p>{% endif %}
@@ -124,15 +125,18 @@
       <td class="l">{% if tr.maker %}{{ m.addr(tr.maker, k, 6) }}{% else %}—{% endif %}</td></tr>
     {% endfor %}
   </table></div></div>
-  <p class="kunye">🧾 Son {{ (tape.window // 60) }} dk · {{ tape.n }} işlemin hepsi sayıldı (en büyük {{ tape.trades|length }} listede)
-    {%- if tape.covered_sec < tape.window %} · ⚠️ bot {{ (tape.covered_sec // 60) }} dk önce yeniden başladı, öncesi bantta yok{% endif %}
+  <p class="kunye">🧾 {{ tape_cover.label|capitalize }} · {{ tape.n }} işlem
+    {%- if tape.full %} — görülenlerin hepsi sayıldı{% else %} sayıldı · ⚠️ {{ tape_cover.warn }}{% endif %} (en büyük {{ tape.trades|length }} listede)
     {%- if tape.other %} · {{ tape.other|usd }} adres tavanını aştı (toplamlarda var, adres listesinde yok){% endif %}
     · HL'de işlemin yönü piyasadan alan/satan tarafa göre yazılır; 🔹 = HL TWAP alt emri.</p>
+  {% elif panel_err.tape %}
   {% elif listened is false %}
   {{ m.empty([symbol ~ " canlı akışta dinlenmiyor — son 15 dk'nın işlemleri bu yüzden yok.",
               "Kripto için dinlenen coinler hacme göre ilk N (Ayarlar → CRYPTO_WATCH_TOP); spot için SPOT_WATCH_TOP."]) }}
+  {% elif tape_cover.unknown %}
+  {{ m.empty(["Son 15 dk bilinmiyor: " ~ tape_cover.warn ~ "."]) }}
   {% else %}
-  {{ m.empty(["Son 15 dk'da bu coinde işlem görülmedi" ~ (" (bot " ~ ((tape.covered_sec or 0) // 60) ~ " dk önce yeniden başladı)" if tape and tape.covered_sec < tape.window else "") ~ "."]) }}
+  {{ m.empty([tape_cover.label|capitalize ~ "'da bu coinde işlem görülmedi" ~ (" (" ~ tape_cover.warn ~ ")" if tape_cover.warn else "") ~ "."]) }}
   {% endif %}
 </div>
 
@@ -142,29 +146,34 @@
     <b>pasif dolum</b> (son 15 dk'da o fiyatta bekleyen emri dolan adres) ve <b>doğrulanmış açık emir</b> (aday adreslerin
     açık emirleri HL'ye sorulur: o coinde pasif dolumu olanlar, pozisyonu olanlar, son 15 dk'nın büyük alıcı/satıcıları).
     Aday olmayan sahip bulunamaz; kademenin bulunamayan kısmı ayrıca yazılır.</p>
-  {% if book %}
-  {% for view, vtitle in [("grouped", "HL arayüzü gibi gruplu · " ~ (book.unit_txt or book.unit) ~ " adım"), ("raw", "Tam fiyat · ilk 20 kademe")] %}
-  <h3>{{ vtitle }}</h3>
+  {% if book and (book.raw.bid or book.raw.ask or book.grouped.bid or book.grouped.ask) %}
+  {% for view, vtitle in [("grouped", "HL arayüzü gibi gruplu · " ~ book.unit_txt ~ " adım"), ("raw", "Tam fiyat · ilk 20 kademe")] %}
+  {% set reach = ((book.depth or {}).reach or {})[view] or (none, none) %}
+  {% if book[view].bid or book[view].ask %}
+  <h3>{{ vtitle }}{% if reach[0] is not none or reach[1] is not none %} <span class="st">· kapsam: fiyatın {% if reach[0] is not none %}%{{ '%.2f'|format(-reach[0]) }} altı{% else %}?{% endif %} – {% if reach[1] is not none %}%{{ '%.2f'|format(reach[1]) }} üstü{% else %}?{% endif %} (HL her yönde 20 kademe verir, dışı görünmez)</span>{% endif %}</h3>
   <div class="grid2">
     {% for side, stitle, cls in [("bid", "Alış (fiyatın altı)", "long"), ("ask", "Satış (fiyatın üstü)", "short")] %}
     <div>
       <div class="tscroll"><div class="tscroll-x"><table>
         <tr><th class="l">{{ stitle }}</th><th>Tutar</th><th title="Bu kademedeki emir sayısı (HL'nin verdiği)">Emir</th><th class="l">Sahip</th></tr>
         {% for lv in book[view][side] %}
-        <tr><td class="l {{ cls }}">{{ lv.px|px5 }}{% if book.mid %} <span class="dim">(%{{ '%+.2f'|format((lv.px - book.mid) / book.mid * 100) }})</span>{% endif %}</td>
+        <tr><td class="l {{ cls }}">{{ lv.px|px5 }}{% if book.mid %} <span class="dim">({{ lv.px|dist(book.mid) }})</span>{% endif %}</td>
           <td><b>{{ lv.usd|usd }}</b></td>
           <td class="dim">{{ lv.n }}{% if lv.n == 1 %} <span title="Tek emir">●</span>{% endif %}</td>
           <td class="l">
             {%- for a, u in lv.owners %}✅ {{ m.addr(a, k, 6) }} {{ u|usd }}{% if not loop.last %} · {% endif %}{% endfor %}
-            {%- if lv.owners and lv.unknown_usd >= 1000 %} · <span class="dim">bulunamayan {{ lv.unknown_usd|usd }}</span>{% endif %}
-            {%- if lv.makers %}{% if lv.owners %}<br>{% endif %}<span class="dim" title="Son 15 dk'da bu fiyatta bekleyen emri dolan adresler — emir sahipleri">dolan:</span>
+            {%- if lv.owners %}{% if lv.unknown_usd >= 1000 %} · <span class="dim">bulunamayan {{ lv.unknown_usd|usd }}</span>{% endif %}
+            {%- else %}<span class="dim">sahip bulunamadı</span>{% endif %}
+            {%- if lv.makers %}<br><span class="dim" title="Son 15 dk'da bu fiyatta bekleyen emri dolan adresler (dolan kısım). Kalan emrin sahibi oldukları ayrıca ölçülmedi, ✅ değilse.">dolan:</span>
               {% for a, u in lv.makers %}{{ m.addr(a, k, 6) }} {{ u|usd }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}
-            {%- if not lv.owners and not lv.makers %}<span class="dim">bulunamadı</span>{% endif %}</td></tr>
+            {%- if lv.makers_gone %}<br><span class="dim" title="Son 15 dk'da burada emri doldu; açık emirleri okundu, bu kademede şu an emri yok — sahip değil">dolan, şu an emri yok:</span>
+              {% for a, u in lv.makers_gone %}{{ m.addr(a, k, 6) }} {{ u|usd }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}</td></tr>
         {% endfor %}
       </table></div></div>
     </div>
     {% endfor %}
   </div>
+  {% endif %}
   {% endfor %}
   {% if book.orders %}
   <h3>Bulunan büyük emirler <span class="st">· adaylardan doğrulanan, ≥ $25K</span></h3>
@@ -174,12 +183,16 @@
     <tr><td class="l">{{ m.addr(o.addr, k, 6) }}</td>
       <td class="{{ 'long' if o.side == 'bid' else 'short' }}">{{ 'ALIŞ' if o.side == 'bid' else 'SATIŞ' }}{% if o.ro %} <span class="dim">reduce-only</span>{% endif %}</td>
       <td>{{ o.px|px5 }}</td><td><b>{{ o.usd|usd }}</b></td>
-      <td class="dim">{% if o.dist_pct is defined and o.dist_pct is not none %}%{{ '%+.2f'|format(o.dist_pct) }}{% else %}—{% endif %}</td></tr>
+      <td class="dim">{% if book.mid %}{{ o.px|dist(book.mid) }}{% else %}—{% endif %}</td></tr>
     {% endfor %}
   </table></div></div>
   {% endif %}
-  <p class="kunye">🧾 {{ book.age }} sn önce ölçüldü · {{ book.cands }} aday adresin açık emirleri soruldu{% if book.failed %} ({{ book.failed }} okunamadı){% endif %}
+  <p class="kunye">🧾 Defter {{ book.age }} sn önce okundu · {{ book.cands }} aday adresin açık emirleri soruldu{% if book.failed %} ({{ book.failed }} okunamadı){% endif %}
+    {%- if book.orders_ts %}, en eskisi {{ book.age + [0, book.ts - book.orders_ts]|max }} sn önce{% endif %}
+    {%- if book.partial %} · {{ book.partial }} adayın emir listesi eksik (HL 100'de kesti, tamamı okunamadı — o adreslerde "emri yok" denemez){% endif %}
     {%- if book.err %} · ⚠️ {{ book.err|join(', ') }}{% endif %} · gruplu kademe birden çok emrin toplamıdır (HL arayüzündeki satır gibi).</p>
+  {% elif book and book.err %}
+  {{ m.empty(["Defter okunamadı (" ~ book.err|join(', ') ~ ") — sayfa birazdan yeniden dener."]) }}
   {% elif book_pending %}
   {{ m.empty(["Defter ve sahipler hazırlanıyor — sayfa 10 sn içinde kendiliğinden yenilenir."]) }}
   {% else %}

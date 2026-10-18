@@ -13,7 +13,12 @@ Kararlar:
     pasif, bid'deki emri doldu). Pasif tarafın adresi = o fiyattaki bekleyen emrin SAHİBİ (defter anonim; dolan emir
     sahibini ele verir) → bookowners bunu kullanır.
   • Sıfır hash'li dolum HL TWAP alt emridir (twapfast.is_twap_hash) — işlem satırında 🔹 işareti.
-  • Restart bellekteki bandı sıfırlar: özet kapsamayı (`covered_sec`) yazar — tahmin yok.
+  • Restart bellekteki bandı sıfırlar; canlı akış kopabilir. Özet kapsamayı ölçer: açılıştan önceki kısım, kollektörün
+    kopuk kaldığı aralıklar (`down_log`) ve şu anki kopukluk (`down_since`) → `gaps`, `covered_sec`, `live_down`.
+    Kopukken "işlem görülmedi" değil "bilinmiyor" yazılır — tahmin yok.
+  • HL abonelikte (yeniden bağlanınca da) coinin son 30 işlemini yeniden yollar (inceleme 18.10, canlı ölçüldü):
+    coin başına yüksek-su işareti + aynı saniyede tid (openmove._dup ile aynı) → hiçbir işlem iki kez sayılmaz.
+  • Pencere: yalnız TAMAMI son 15 dk'da kalan kovalar sayılır (yarım dakika 30 sn kova) → kapsam 14,5–15 dk, asla fazla.
 """
 from __future__ import annotations
 
@@ -22,14 +27,14 @@ import time
 from collections import deque
 
 WINDOW = 900                 # 15 dk
-BUCKET = 60                  # dakikalık kova
+BUCKET = 30                  # yarım dakikalık kova (pencere en çok bu kadar kısalır, asla uzamaz)
 TOP_PER_BUCKET = 40          # kova başına en büyük işlem
 ADDR_CAP = 4000              # kova başına adres (BTC gibi coinlerde dakikada binlerce adres olabilir)
 MAKER_CAP = 3000             # kova başına (yön, fiyat, adres) pasif dolum kaydı
 COIN_CAP = 600               # en çok bu kadar coin (kollektör ~160 dinler)
 
 STARTED = int(time.time())
-STATS: dict = {"trades": 0, "errors": 0, "coins": 0}
+STATS: dict = {"trades": 0, "errors": 0, "coins": 0, "dups": 0, "late": 0}
 
 
 class _Bucket:
@@ -49,6 +54,25 @@ class _Bucket:
 
 
 REG: dict[str, deque] = {}
+HWM: dict[str, tuple[int, set]] = {}     # coin → (en yeni saniye, o saniyede görülen tid'ler)
+
+
+def _dup(coin: str, ts: int, tid: str) -> bool:
+    """Yeniden yollanan işlem mi? HL akışı coin başına artan sırada; yeniden bağlanınca son 30 işlem yine gelir.
+    En yeni andan eskisi zaten görüldü, aynı saniyede tid bakılır. tid yoksa (test / eski çağrı) süzülmez."""
+    if not tid:
+        return False
+    h = HWM.get(coin)
+    if h is not None:
+        if ts < h[0]:
+            return True
+        if ts == h[0]:
+            if tid in h[1]:
+                return True
+            h[1].add(tid)
+            return False
+    HWM[coin] = (ts, {tid})
+    return False
 
 
 def _bucket(coin: str, ts: int) -> _Bucket | None:
@@ -61,13 +85,14 @@ def _bucket(coin: str, ts: int) -> _Bucket | None:
     minute = int(ts) // BUCKET
     if q and q[-1].minute == minute:
         return q[-1]
-    if q and minute < q[-1].minute:                  # geç gelen (sıra dışı) işlem: kendi kovası varsa oraya
+    if q and minute < q[-1].minute:                  # geç gelen (sıra dışı) işlem: yalnız kendi kovası varsa oraya
         for b in reversed(q):
             if b.minute == minute:
                 return b
             if b.minute < minute:
                 break
-        return None if minute <= q[0].minute - 1 else q[-1]
+        STATS["late"] += 1
+        return None                                  # kovası yok: yanlış (daha yeni) kovaya yazmaktansa sayma
     b = _Bucket(minute)
     q.append(b)
     keep = WINDOW // BUCKET + 1
@@ -91,10 +116,14 @@ def _add_addr(b: _Bucket, addr: str, buy: float, sell: float, taker: float, twap
 
 
 def observe(coin: str, aggr: str, buyer: str, seller: str, px: float, sz: float, ts: int,
-            twap: bool = False) -> None:
-    """Tek işlem (kollektörün sıcak yolu). `aggr`: 'B' (alıcı agresör) / 'A' (satıcı agresör) / bilinmiyor."""
+            twap: bool = False, tid: str = "") -> None:
+    """Tek işlem (kollektörün sıcak yolu). `aggr`: 'B' (alıcı agresör) / 'A' (satıcı agresör) / bilinmiyor.
+    `tid`: HL işlem kimliği — yeniden yollanan işlem (yeniden bağlanma) ikinci kez sayılmaz."""
     usd = float(px) * float(sz)
     if usd <= 0 or not coin:
+        return
+    if _dup(coin, int(ts), str(tid or "")):
+        STATS["dups"] += 1
         return
     b = _bucket(coin, ts)
     if b is None:
@@ -127,11 +156,43 @@ def observe(coin: str, aggr: str, buyer: str, seller: str, px: float, sz: float,
             b.other_maker += usd
 
 
+def _gaps(lo: int, hi: int) -> tuple[list[list[int]], bool]:
+    """[lo, hi] içinde bandın görmediği aralıklar: açılıştan önce + kollektörün kopuk kaldığı süreler (down_log) +
+    şu anki kopukluk (down_since → şimdi). (birleşik aralıklar, şu an kopuk mu). openmove.coverage ile aynı ölçü."""
+    raw: list[tuple[int, int]] = []
+    if STARTED > lo:
+        raw.append((lo, STARTED))
+    down_now = False
+    try:
+        from ..hl import collector as col
+        live = col.LIVE
+    except Exception:                                   # noqa: BLE001
+        live = None
+    if live is not None:
+        for a, b in list(getattr(live, "down_log", None) or ()):
+            raw.append((int(a), int(b)))
+        down = float(getattr(live, "down_since", 0) or 0)
+        if down:
+            down_now = True
+            raw.append((int(down), max(hi, int(down))))
+    gaps: list[list[int]] = []
+    for a, b in sorted((max(a, lo), min(b, hi)) for a, b in raw if b > lo and a < hi):
+        if gaps and a <= gaps[-1][1]:
+            gaps[-1][1] = max(gaps[-1][1], b)
+        elif b > a:
+            gaps.append([a, b])
+    return gaps, down_now
+
+
 def summary(coin: str, now_ts: int | None = None, window: int = WINDOW, top: int = 30, top_addr: int = 12) -> dict:
     """Son `window` sn: toplamlar, en büyük işlemler, en çok alan / satan adresler (net), pasif dolumlar kademeyle.
+    Yalnız TAMAMI pencerede kalan kovalar sayılır (kapsam window−BUCKET … window, asla fazla). Kapsama ölçülür:
+    `span` (kovaların kapsadığı sn), `gaps` (açılış öncesi / kopukluk), `covered_sec` (span − boşluk), `restart`
+    (bot pencerenin içinde açıldı), `live_down` (akış şu an kopuk → "işlem yok" denemez, bilinmiyor).
     Veri yoksa {"n": 0, ...} (coin dinlenmiyor ya da sessiz)."""
     t = int(now_ts if now_ts is not None else time.time())
-    lo = (t - window) // BUCKET
+    lo = -(-(t - window) // BUCKET)                     # tavan: pencerenin dışına taşan kova sayılmaz
+    start = lo * BUCKET
     q = [b for b in REG.get(coin) or () if b.minute >= lo]
     buy = sum(b.buy for b in q)
     sell = sum(b.sell for b in q)
@@ -150,6 +211,10 @@ def summary(coin: str, now_ts: int | None = None, window: int = WINDOW, top: int
              for a, r in addrs.items()]
     buyers = sorted((f for f in flows if f["net"] > 0), key=lambda f: -f["net"])[:top_addr]
     sellers = sorted((f for f in flows if f["net"] < 0), key=lambda f: f["net"])[:top_addr]
+    span = max(0, t - start)
+    gaps, down_now = _gaps(start, t)
+    gap_sec = sum(b - a for a, b in gaps)
+    restart = STARTED > start
     return {
         "coin": coin, "n": sum(b.n for b in q), "buy": buy, "sell": sell, "net": buy - sell,
         "twap": sum(b.twap for b in q), "n_addr": len(addrs),
@@ -159,9 +224,32 @@ def summary(coin: str, now_ts: int | None = None, window: int = WINDOW, top: int
         "buyers": buyers, "sellers": sellers,
         "makers": makers,                       # (yön, px, adres) → $ — bookowners
         "other": sum(b.other_addr for b in q),
-        "covered_sec": max(0, min(window, t - STARTED)), "window": window,
+        "window": window, "span": span, "gaps": gaps, "gap_sec": gap_sec,
+        "covered_sec": max(0, span - gap_sec), "restart": restart,
+        "live_down": down_now, "full": not gaps,
         "first_ts": q[0].minute * BUCKET if q else None,
     }
+
+
+def cover(summ: dict | None) -> dict:
+    """Özetin kapsaması, metin için (Telegram ve sayfa aynı ölçüyü yazsın):
+    {"label": "son 15 dk" | "son 7 dk", "warn": uyarı ya da "", "unknown": işlem yok denemez mi}."""
+    s = summ or {}
+    win = int(s.get("window") or WINDOW)
+    span = int(s.get("span") if s.get("span") is not None else win)
+    if s.get("live_down"):
+        return {"label": f"son {win // 60} dk", "warn": "canlı akış şu an kopuk — bu aralık bilinmiyor",
+                "unknown": True}
+    if s.get("restart"):
+        mins = max(1, int(s.get("covered_sec") or 0) // 60)
+        return {"label": f"son {mins} dk", "warn": f"bot {mins} dk önce yeniden başladı, öncesi bantta yok",
+                "unknown": False}
+    gap = int(s.get("gap_sec") or 0)
+    if gap > 0:
+        g = f"{gap} sn" if gap < 120 else f"{gap // 60} dk"
+        return {"label": f"son {win // 60} dk", "warn": f"canlı akış bu aralıkta {g} kopuktu, o süre eksik olabilir",
+                "unknown": False}
+    return {"label": f"son {max(1, -(-span // 60))} dk", "warn": "", "unknown": False}
 
 
 def makers_near(summ: dict, side: str, px_lo: float, px_hi: float) -> list[tuple[str, float]]:
@@ -177,4 +265,7 @@ def makers_near(summ: dict, side: str, px_lo: float, px_hi: float) -> list[tuple
 def diag_line() -> str:
     mem = sum(len(b.addrs) + len(b.makers) + len(b.big) for q in REG.values() for b in q)
     return (f"📼 15 dk bant: {STATS['coins']} coin · {STATS['trades']:,} işlem (açılıştan beri)"
-            f" · {mem:,} kayıt bellekte" + (f" · ⚠️ {STATS['errors']} hata" if STATS["errors"] else ""))
+            f" · {mem:,} kayıt bellekte"
+            + (f" · {STATS['dups']:,} yeniden yollanan işlem atıldı" if STATS["dups"] else "")
+            + (f" · {STATS['late']:,} geç işlem sayılmadı" if STATS["late"] else "")
+            + (f" · ⚠️ {STATS['errors']} hata" if STATS["errors"] else ""))

@@ -1569,19 +1569,27 @@ sorarak olmalı". Her coin sayfasının (`/t/PUMP`, hisse ve kripto) en üstünd
   satıcı adresiyle) — **ek HL isteği yok**. Piyasadan alış / satış / net, işlem ve adres sayısı, 🔹 TWAP alt emri
   dolumları; en çok **net alan** ve **net satan** adresler (alış, satış, net, piyasadan payı); en büyük işlemler
   (piyasadan alan/satan ve karşı tarafta **defterdeki emri dolan** adres). Bütün işlemler sayılır, liste en büyükleri
-  gösterir. Bellek sınırlı: işlemler tek tek değil dakikalık kovalarda tutulur (kova başına adres / en büyük işlem /
-  pasif dolum tavanı; tavanı aşan "diğer"e sayılır, toplamlar doğru). Restart bandı sıfırlar — sayfa kapsamayı yazar.
-  Coin canlı akışta dinlenmiyorsa (kripto: hacimce ilk `CRYPTO_WATCH_TOP`, spot: `SPOT_WATCH_TOP`) bunu söyler.
+  gösterir. Bellek sınırlı: işlemler tek tek değil 30 sn'lik kovalarda tutulur (kova başına adres / en büyük işlem /
+  pasif dolum tavanı; tavanı aşan "diğer"e sayılır, toplamlar doğru); yalnız tamamı pencerede kalan kova sayılır
+  (kapsam 14,5–15 dk, asla fazla). HL yeniden bağlanınca coinin son 30 işlemini yeniden yollar: işlem kimliğiyle
+  süzülür, hiçbiri iki kez sayılmaz. Kapsama ölçülür: restart bandı sıfırlar ("bot N dk önce yeniden başladı"), canlı
+  akışın kopuk kaldığı süre yazılır ("o süre eksik olabilir"), akış şu an kopuksa "işlem görülmedi" değil
+  **bilinmiyor** yazılır. Coin canlı akışta dinlenmiyorsa (kripto: hacimce ilk `CRYPTO_WATCH_TOP`, spot:
+  `SPOT_WATCH_TOP`) bunu söyler.
 - **🧱 En kalın emirler ve sahipleri** (`app/radar/bookowners.py`): iki görünüm — **HL arayüzü gibi gruplu**
   (3 anlamlı basamak; PUMP'ta 0.00001 adım) ve **tam fiyat** (HL'nin verdiği ilk 20 kademe). Ölçüm (18.10): arayüzde
   PUMP "0.004100 · $9.29M" satırı tek emir DEĞİLDİ — 0.004100–0.004109 aralığındaki 160 emrin toplamıydı (tam fiyatta
   0.004100'de $7.78M, 20 emir). HL gruplaması alış kovasını aşağı, satış kovasını yukarı yuvarlar (canlıda birebir
   doğrulandı). **Defter anonimdir**; sahip iki yoldan ölçülür, tahmin yok: (1) **pasif dolum** — son 15 dk'da o
   fiyatta bekleyen emri dolan adres (bant), (2) **doğrulanmış açık emir** — adayların (o coinde pasif dolumu olanlar,
-  pozisyonu olanlar, son 15 dk'nın büyük alıcı/satıcıları; en çok 10) `frontendOpenOrders`'ı (ağırlık 20, düşük şerit,
-  adres başına 2 dk önbellek) sorulur, kademeye denk gelen emir ✅ ile yazılır. Kademenin bulunamayan kısmı ayrıca
-  yazılır; ≥ $25K bulunan emirler ayrı listede. Sayfa açılınca arka planda kurulur (30 sn önbellek; hazır değilse sayfa
-  10 sn'de yenilenir). Hisse sayfalarında duvar radarının kayıtları da bu panelde.
+  pozisyonu olanlar, son 15 dk'nın büyük alıcı/satıcıları; en çok 10, önce en kalın kademelerde dolumu görülenler)
+  `frontendOpenOrders`'ı (ağırlık 20, düşük şerit, adres başına 60 sn önbellek; mesaj ve sayfa emir verisinin yaşını
+  yazar) sorulur, kademeye denk gelen emir ✅ ile yazılır. Kademenin bulunamayan kısmı adetle hesaplanıp ayrıca yazılır;
+  ≥ $25K bulunan emirler ayrı listede. "Dolan" adresin açık emirleri okunup o kademede emri yoksa "dolan, şu an emri
+  yok" diye ayrı yazılır (sahip sanılmasın). `frontendOpenOrders` bazı hesaplarda (HLP kasası) 100'de keser: 100
+  gelirse sınırsız `openOrders` ile tamamlanır, o da okunamazsa kesik listede "emri yok" denmez. Sayfa açılınca arka planda kurulur (30 sn önbellek; hazır değilse sayfa 10 sn'de yenilenir). Sahip sorguları
+  süre sınırlıdır (bitmeyen aday "okunamadı" sayılır, okunmuş defter atılmaz); düşük şerit 429 sonrası duraklıyken
+  adaylar sorulmaz ("ertelendi"). Hisse sayfalarında duvar radarının kayıtları da bu panelde.
 - **📋 TWAP emirleri**: bu coinin süren ve geçmiş TWAP'ları (eskiden sayfanın altındaydı).
 
 **Telegram: `/defter PUMP`** (eş: `/kim PUMP`, `/pumpdefter`) — sahip DM'inde ve botun kendi kanal / gruplarında.
@@ -1591,7 +1599,9 @@ kurulumu en çok 10 sn bekler.
 
 **Kör nokta, açıkça:** aday olmayan bir adresin bekleyen emri bulunamaz (HL'nin açık API'si sahibi vermez). Düğümün
 işlem akışı (`explorerTxs`) adres taşır ama ölçümde blokların ~%0,1'ini yayınlıyordu (30 sn'de 449K işlemden 404'ü) —
-güvenilir değil, kullanılmadı. Emir hiç dolmamışsa ve sahibi aday değilse "bulunamadı" yazılır. Tam kapsam için adresli
+güvenilir değil, kullanılmadı. Emir hiç dolmamışsa ve sahibi aday değilse "bulunamadı" yazılır. HL defteri (`l2Book`)
+her yönde en yakın 20 kademeyi verir; dışındaki emirler görünmez — sayfa ve mesaj kapsanan aralığı (fiyata %)
+yazar. Tam kapsam için adresli
 defter (L4) satan ücretli bir veri sağlayıcı gerekir. `/tani`'de "📼 15 dk bant" ve "🧱 defter sahipleri" satırları.
 
 ## Tasarım dili — "sessiz, okunur, dürüst"

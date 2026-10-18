@@ -307,16 +307,17 @@ class HLClient:
                                 "req": {"coin": coin, "interval": interval,
                                         "startTime": start_ms, "endTime": end_ms}})
 
-    async def l2_book(self, coin: str, n_sig_figs: int | None = None):
+    async def l2_book(self, coin: str, n_sig_figs: int | None = None, retries: int = 4):
         """Emir defteri (anonim toplam derinlik) — levels: [bids, asks].
 
         `n_sig_figs` (2–5): fiyat bu kadar anlamlı haneye TOPLULAŞTIRILIR; 20
         seviye daha geniş bir aralığı kapsar (zincir simülasyonu 3 kullanır).
-        Duvar radarı hassas seviye ister, varsayılanı (None) kullanır."""
+        Duvar radarı hassas seviye ister, varsayılanı (None) kullanır. `retries`:
+        kullanıcı bekleyen yollar (/defter) 429 tekrarlarında süreyi aşmasın diye 1."""
         p: dict = {"type": "l2Book", "coin": coin}
         if n_sig_figs:
             p["nSigFigs"] = int(n_sig_figs)
-        return await self.info(p)
+        return await self.info(p, retries=retries)
 
     async def frontend_open_orders(self, user: str, dex: str = ""):
         """Adresin açık (bekleyen) emirleri — duvar sahipliğini bulmak için."""

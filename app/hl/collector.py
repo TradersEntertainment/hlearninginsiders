@@ -429,7 +429,7 @@ class Collector:
             zero = twapfast.is_twap_hash(t.get("hash"))    # HL TWAP alt emri: sahibi taker
             # 📼 15 dk bant (coin sayfası / /defter): her işlem, taban yok. Sıcak yol: senkron, I/O yok.
             try:
-                tape.observe(coin, aggr, buyer, seller, px, sz, ts, zero)
+                tape.observe(coin, aggr, buyer, seller, px, sz, ts, zero, tid)
             except Exception:
                 tape.STATS["errors"] += 1
             for addr, side in ((buyer, "buy"), (seller, "sell")):
