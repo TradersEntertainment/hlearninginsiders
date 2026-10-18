@@ -550,19 +550,21 @@ details.guidetv[open] summary{margin-bottom:2px}
 /* ── 📟 Coin terminali (kullanıcı 18.10: "grafik ve liq falan her şey tek bakışta sığsın, terminal gibi aksın").
    Masaüstünde (≥1200px) üst bant + iki sıra panel ekrana SIĞAR (paneller kendi içinde kayar); altta ayrıntı
    panelleri. Telefonda alt alta, sabit yükseklikli. Sayılar eşit genişlikli; dekor kapalı. ── */
-body.term .blob,body.term .spark,body.term .whale{display:none}
-body.term main{padding:8px 10px;max-width:none}
-body.term header{padding:6px 14px;gap:10px;flex-wrap:nowrap}
-body.term header h1{font-size:15px;white-space:nowrap}
-body.term header input[type=text]{width:150px;padding:5px 12px}
-body.term header button{padding:5px 12px}
-body.term .topnav{display:flex;flex:1 1 auto;min-width:0;gap:2px;overflow-x:auto;scrollbar-width:none;
-  mask-image:linear-gradient(90deg,#000 calc(100% - 22px),transparent)}
-body.term .topnav::-webkit-scrollbar{display:none}
-body.term .topnav a{margin:0;flex:0 0 auto;padding:2px 7px}
-body.term header h1 .wig{animation:none}
-.term{--tfs:12.5px;--trow:18px;font-size:var(--tfs);font-variant-numeric:tabular-nums;margin-bottom:14px}
-.term .mono,.term .tr,.term .lr,.term .wr{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace}
+/* sayfa sınıfı body.termpage (inceleme 18.10: body'deki "term" sınıfı .term kuralını bütün sayfaya yayıp ayrıntı
+   tablolarını 12.5px'e indiriyordu). Menü sarılır: görünmez kaydırma şeridinde bağlantıların çoğuna fareyle ulaşılmıyordu. */
+body.termpage .blob,body.termpage .spark,body.termpage .whale{display:none}
+body.termpage main{padding:8px 10px;max-width:none}
+body.termpage header{padding:6px 14px;gap:4px 10px;flex-wrap:wrap}
+body.termpage header h1{font-size:15px;white-space:nowrap}
+body.termpage header input[type=text]{width:150px;padding:5px 12px}
+body.termpage header button{padding:5px 12px}
+@media(min-width:701px){                      /* telefonda diğer sayfalar gibi tek satır kayar */
+  body.termpage .topnav{display:flex;flex:1 0 100%;order:9;flex-wrap:wrap;gap:2px}
+  body.termpage .topnav a{margin:0;flex:0 0 auto;padding:1px 7px;font-size:var(--fs-s)}
+}
+body.termpage header h1 .wig{animation:none}
+section.term{--tfs:12.5px;--trow:18px;font-size:var(--tfs);font-variant-numeric:tabular-nums;margin-bottom:14px}
+section.term .mono,section.term .tr,section.term .lr,section.term .wr{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace}
 .tbar{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 18px;padding:8px 14px;margin-bottom:8px;
   background:var(--panel);border:1px solid var(--border);border-radius:var(--r-m)}
 .tbar .sym{font-size:18px;font-weight:800;color:var(--head)}
@@ -586,6 +588,7 @@ body.term header h1 .wig{animation:none}
 .tp>.th .r{margin-left:auto;color:var(--dim);font-weight:600;font-size:var(--fs-xs)}
 .tp>.th a{font-weight:600;font-size:var(--fs-xs)}
 .tp>.tb{flex:1;min-height:0;overflow:auto;padding:4px 8px 6px;scrollbar-width:thin}
+.t-tape .tb{overflow-anchor:none}             /* yer koruma term.js'te (tarayıcı çapasıyla çift telafi olmasın) */
 .tp>.tf{padding:3px 10px 5px;border-top:1px solid var(--border);color:var(--dim);font-size:var(--fs-xs);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tp table{font-size:var(--tfs)}
@@ -634,12 +637,15 @@ body.term header h1 .wig{animation:none}
 @media(min-width:1200px){
   /* üst bant + 2 sıra: ekrana sığar (başlık ~44px, bant ~46px, aralıklar) */
   .tgrid{grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:minmax(0,56fr) minmax(0,44fr);
-    height:max(600px,calc(100vh - var(--term-top,130px)))}
+    height:max(440px,calc(100vh - var(--term-top,130px)))}   /* 440: 1366×768 ekranın tarayıcı içi ~657px'i */
   .t-chart{grid-column:span 6}.t-book{grid-column:span 3}.t-tape{grid-column:span 3}
   .t-liq,.t-flow,.t-twap,.t-pos{grid-column:span 3}
 }
 @media(min-width:1200px) and (max-width:1599px){
-  .term .nw{display:none}                       /* dar masaüstü: ikincil sütun ipucuna geçer */
+  section.term .nw{display:none}                /* dar masaüstü: ikincil sütun ipucuna geçer */
+}
+@media(min-width:1200px) and (max-width:1799px){
+  .t-flow .fk{grid-template-columns:repeat(2,1fr)}   /* 4 kutu sığmıyor: Net ve "işlem / adres" kesiliyordu */
 }
 @media(max-width:1199px){
   .tgrid{grid-template-columns:1fr}
@@ -647,8 +653,6 @@ body.term header h1 .wig{animation:none}
   .t-liq,.t-flow,.t-twap,.t-pos{max-height:420px}
 }
 @media(max-width:700px){
-  body.term header{flex-wrap:wrap}
-  body.term .topnav{flex:1 0 100%;order:9}
   .tbar #tpx{font-size:19px}
   .tbar .tact{margin-left:0}
   .tr{grid-template-columns:56px 38px 56px 64px 1fr;gap:4px}
@@ -1039,6 +1043,7 @@ initTips();
 // Kütüphane 'defer' yüklenir; panel <main>'de ama [data-keep] sayesinde
 // yumuşak yenilemede NAKLEDİLİR — grafik yeniden kurulmaz, zoom kaybolmaz.
 var PXCHART = null;
+var TERM_LIVE_KEEP = ['tbook', 'ttape', 'tflow'];   // akışla dolan terminal panelleri (grafik her zaman naklolur)
 
 function cssv(n, fb){
   var v = getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -1082,12 +1087,39 @@ function fmtUsd(v){
   return '$' + Math.round(v);
 }
 
+// Tek kurulum: yumuşak yenileme ve yeniden deneme aynı anda iki grafik kurmasın. Mumlar hazırlanıyorsa (pending)
+// 3 sn arayla en çok 10 kez yeniden sorar — eskiden sayfanın 60 sn'lik yenilemesini bekliyordu (inceleme 18.10).
 async function initPriceChart(){
   var box = document.getElementById('pxchart');
   if(!box) { pxDestroy(); return; }
   if(PXCHART && PXCHART.box === box) return;   // nakledilmiş, canlı — dokunma
+  if(box._loading) return;
+  box._loading = true;
+  var pending = false;
+  try{ pending = await _initPriceChart(box); }finally{ box._loading = false; }
+  if(pending && (box._try = (box._try || 0) + 1) <= 10) setTimeout(initPriceChart, 3000);
+}
+
+// Canlı mum bir saati atladıysa (sekme gizliydi / akış koptu / mum önbelleği bayattı) arada akmayan işlemler grafikte
+// yok: mumlar yeniden çekilir (en çok 3 kez, artan aralıkla) — uydurma OHLC kalmasın.
+// Dönüş: false = vazgeçildi (3 deneme bitti; çağıran eski davranışa döner), aksi hâlde yeniden çekiliyor / bekliyor.
+function pxReload(){
+  var box = document.getElementById('pxchart');
+  if(!box) return false;
+  if(box._loading) return true;
+  var n = (box._reloads || 0) + 1;
+  if(n > 3) return false;
+  if(box._reloadAt && Date.now() - box._reloadAt < 60000 * Math.pow(2, n - 2)) return true;
+  box._reloads = n;
+  box._reloadAt = Date.now();
   pxDestroy();
-  if(typeof LightweightCharts === 'undefined') return;  // defer henüz gelmedi
+  initPriceChart();
+  return true;
+}
+
+async function _initPriceChart(box){
+  pxDestroy();
+  if(typeof LightweightCharts === 'undefined') return false;  // defer henüz gelmedi
   var sym = box.dataset.sym || '';
   var msg = document.getElementById('pxmsg');
   var d;
@@ -1099,14 +1131,14 @@ async function initPriceChart(){
   }catch(e){
     if(msg) msg.textContent = 'Mum verisi alınamadı.';
     box.classList.add('empty');
-    return;
+    return false;
   }
   if(!d.candles || !d.candles.length){
     if(msg) msg.textContent = d.pending
-      ? 'Mumlar çekiliyor — birazdan burada belirir, sayfa kendini yeniler.'
+      ? 'Mumlar çekiliyor — birazdan burada belirir.'
       : 'Bu coin için mum verisi yok.';
     box.classList.add('empty');     // 360px boşluk bırakma; mum gelince kalkar
-    return;
+    return !!d.pending;
   }
   if(msg) msg.remove();
   // Kutu naklediliyor (data-keep): bekleme→hazır geçişinde 'empty' kalırsa
@@ -1305,6 +1337,7 @@ async function initPriceChart(){
   PXCHART = {chart: chart, series: s, box: box, ov: ov, ro: ro, redraw: drawLiq,
              last: {time: lc.t, open: lc.o, high: lc.h, low: lc.l, close: lc.c},
              step: d.candles.length > 1 ? (d.candles[d.candles.length - 1].t - d.candles[d.candles.length - 2].t) : 3600};
+  return false;
 }
 
 // 📟 Canlı mum (terminal): son mum gelen işlem fiyatıyla büyür, saat dönünce yenisi açılır. Mumlar chart.json'dan
@@ -1314,6 +1347,7 @@ function pxLive(p, ts){
   var L = PXCHART.last, st = PXCHART.step || 3600;
   var bt = Math.floor(ts / st) * st;
   if(bt < L.time) return;
+  if(bt > L.time + st && pxReload() !== false) return;   // arada mum(lar) atlandı: uydurmak yerine yeniden çek
   if(bt === L.time){
     L.high = Math.max(L.high, p); L.low = Math.min(L.low, p); L.close = p;
   } else {
@@ -1430,7 +1464,11 @@ else initTv();
       // Canlı düğümleri NAKLET: mum grafiği ve TradingView gömülüsü her turda
       // yok edilip yeniden kurulursa titrer, iframe yeniden yüklenir, grafik
       // durumu (zoom/kaydırma) sıfırlanır. Yer tutucusuyla yer değiştirir.
+      // 📟 Canlı akış paneli yalnız akış GERÇEKTEN akıyorsa naklolur; akmıyorsa (503 tavanı / tamponlama / kopuk)
+      // sunucunun yeni değerleri kalır — eskiden açılıştaki değerde donuyordu (inceleme 18.10).
+      var liveOk = typeof window.termLive === 'function' ? window.termLive() : false;
       cm.querySelectorAll('[data-keep]').forEach(function(live){
+        if(TERM_LIVE_KEEP.indexOf(live.dataset.keep) >= 0 && !liveOk) return;
         var slot = nm.querySelector('[data-keep="' + live.dataset.keep + '"]');
         if(slot) slot.replaceWith(live);
       });

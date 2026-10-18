@@ -11,9 +11,12 @@ Kararlar (ölçümler: sayfa haritası 18.10):
   • 15 dk toplamları (tape.summary 25–88 ms CPU, olay döngüsünü bloklar) izleyici başına değil coin başına STATS_TTL
     önbellekle; defter (l2Book, ağırlık 2) coin başına DEPTH_TTL önbellek + tek süren istek (düşük şerit); defter
     sahipleri bookowners'ın kendi 30 sn önbelleğiyle (pahalı: aday başına ağırlık 20).
-  • SSE bağlantısı en çok STREAM_LIFE yaşar (EventSource kendiliğinden yeniden bağlanır, `seq` ile kaldığı yerden):
-    açık akış uvicorn'un kapanışını bekletmesin; Railway boş HTTP'yi 5 dk'da keser → HEARTBEAT. Eşzamanlı akış
-    MAX_STREAMS ile sınırlı (tek process: WS kollektörü ve Telegram aynı döngüde).
+  • SSE bağlantısı en çok STREAM_LIFE yaşar (EventSource kendiliğinden yeniden bağlanır, `seq` ile kaldığı yerden).
+    Açık akış uvicorn'un kapanışını en çok STREAM_LIFE bekletir (yerelde `--timeout-graceful-shutdown 5`); Railway
+    boş HTTP'yi 5 dk'da keser → HEARTBEAT. Eşzamanlı akış MAX_STREAMS ile sınırlı (tek process: WS kollektörü ve
+    Telegram aynı döngüde). Sunucu yeniden başlarsa istemcinin `seq`'i yeni sayaçtan büyük kalır → sıfırlanır (rota).
+  • Canlı fiyat yalnız TAZE son işlemden (`fresh_px`, PX_MAX_AGE): dinlenmeyen ya da akışı kopuk coinde LAST donar,
+    bayat fiyat taze mark'ın önüne geçip son muma sahte fitil çiziyordu (inceleme 18.10).
 """
 from __future__ import annotations
 
@@ -34,6 +37,7 @@ DEPTH_TTL = 4                # canlı defter (coin başına önbellek)
 DEPTH_TIMEOUT = 4.0
 HEARTBEAT = 15               # veri yokken yorum satırı (proxy bağlantıyı kesmesin)
 DEPTH_LEVELS = 12            # yön başına gönderilen defter kademesi
+PX_MAX_AGE = 120             # son işlem fiyatı bundan eskiyse canlı fiyat sayılmaz (sayfa mark'a düşer)
 
 WATCH: dict[str, float] = {}
 BUF: dict[str, deque] = {}
@@ -75,6 +79,14 @@ def push(coin: str, ts_ms: int, px: float, sz: float, aggr: str, buyer: str, sel
     maker = seller if aggr == "B" else (buyer if aggr == "A" else "")
     q.append((SEQ[0], int(ts_ms), float(px), float(sz), aggr, taker, maker, 1 if twap else 0))
     STATS["pushed"] += 1
+
+
+def fresh_px(coin: str, listened=None, max_age: int = PX_MAX_AGE) -> tuple[float | None, int | None]:
+    """(fiyat, ts_ms) — son işlem PX_MAX_AGE'den tazeyse ve coin dinleniyorsa; değilse (None, None)."""
+    last = LAST.get(coin)
+    if listened is False or not last or time.time() * 1000 - last[0] > max_age * 1000:
+        return None, None
+    return last[1], last[0]
 
 
 def since(coin: str, seq: int, limit: int = 120) -> list[tuple]:

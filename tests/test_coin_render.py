@@ -161,7 +161,7 @@ def test_top_panels_with_data():
                                      "makers": [], "makers_gone": []}], "ask": []},
                 "orders": [{"addr": B, "side": "bid", "px": 0.0041, "usd": 1.2e6, "ro": False, "dist_pct": -0.44}]}
         base = dict(kind="crypto", mark_src="ctx", ticker={"coin": "PUMP", "kind": "crypto"}, symbol="PUMP",
-                    coin="PUMP", entry=None, liq=None)
+                    coin="PUMP", entry=None, liq=None, pxchart=True)
         html = render(**ctx(V2, **base, rows=CROW, liq_rows=CROW,
                             summ={"mark": 0.0041, "oi_ntl": 1e6, "funding": 0.0001, "day_volume": 5e6,
                                   "oi_change_pct": None, "px_change_pct": 3.1},
@@ -180,6 +180,13 @@ def test_top_panels_with_data():
         html2 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=empty, tape_cover=tp.cover(empty), book=None,
                              book_pending=True, listened=False))
         assert "canlı akışta dinlenmiyor" in html2 and "hazırlanıyor" in html2 and 'data-refresh="60"' in html2
+        # dinlenmeyen coinin akış paneli $0 yazmaz (inceleme 18.10): "—" ve nedeni
+        flow2 = html2[html2.index('class="tp t-flow"'):html2.index('class="tp t-twap"')]
+        assert 'id="fbuy">—<' in flow2 and "dinlenmiyor — bilinmiyor" in flow2 and "$0" not in flow2, flow2[:900]
+        # mum önbelleği yoksa grafik beklenir: sayfa 10 sn'de yenilenir (eskiden 60 sn boş kalıyordu)
+        nochart = render(**ctx(V2, **{**base, "pxchart": False}, rows=[], liq_rows=[], tape=empty,
+                               tape_cover=tp.cover(empty), book=None, book_pending=False, listened=True))
+        assert 'data-refresh="10"' in nochart
         # akış şu an kopuk: "işlem görülmedi" değil bilinmiyor
         down = {**empty, "live_down": True, "full": False}
         html3 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=down, tape_cover=tp.cover(down),

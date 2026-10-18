@@ -228,11 +228,11 @@ def test_coin_page_panel():
         assert "$300K" in body and "0xdddd..dddd" in body, "o coinin emri listede"
         assert "HYPE" not in body and "PURR/USDC" not in body, "başka coinin emri sızmaz"
         assert "30 gün" in body and "tahmin yok" in body, "kör nokta ve tahmin yasağı künyede"
-        # bellekteki OLUŞAN dizi de görünür ve "📡 oluşuyor" der
+        # bellekteki OLUŞAN dizi de görünür ve "📡 oluşuyor" der (TWAP kanıtı: düzenli dizi — inceleme 18.10'dan beri
+        # HL izi / düzeni olmayan 3+ işlemli adres listelenmez)
         tl.REG.runs.clear()
-        r = tl.Run("xyz:SNDK", "0x" + "e" * 40, "buy", t - 600, 10.0)
-        r.n, r.total, r.last_ts = 12, 120_000.0, t
-        tl.REG.runs[r.key] = r
+        for i in range(12):
+            tl.REG.observe("xyz:SNDK", "0x" + "e" * 40, "buy", 10.0, 1000, 10_000.0, t - 600 + i * 50, 1)
         st, body = await get(app, "/t/SNDK")
         assert "📡 oluşuyor" in body and "0xeeee..eeee" in body, "kaydedilmemiş canlı dizi de panelde"
         # aynı tur hem DB'de hem bellekte ise TEK satır

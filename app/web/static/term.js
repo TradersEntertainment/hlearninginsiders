@@ -1,8 +1,8 @@
 /* 📟 Coin terminali — canlı akış istemcisi (kullanıcı 18.10: "terminal gibi akmalı canlı veriler de ben o sayfadaysam").
  *
  * Sunucu: GET /t/{coin}/live (SSE). Olaylar:
- *   hello {coin, listened, live, seq, px}   t {r:[[seq, ts_ms, px, $, 'B'|'A', piyasadan, pasif, twap]], init}
- *   s {n, buy, sell, net, n_addr, twap, label, warn, unknown, buyers, sellers, px, live}
+ *   hello {coin, listened, live, seq, px, px_ts}   t {r:[[seq, ts_ms, px, $, 'B'|'A', piyasadan, pasif, twap]], init}
+ *   s {n, buy, sell, net, n_addr, twap, label, warn, unknown, buyers, sellers, px, px_ts, listened, live}
  *   b {bids:[[px, sz, n]], asks:[...], ts}   o {lv:[{v,s,px,lo,hi,usd,n,own,mk,gone,unk}], unknown, ts, ...}
  *   x {why, seq}  → akış kapandı (ömür), kaldığı yerden yeniden bağlan.
  * Yumuşak yenileme (base.html) canlı panelleri [data-keep] ile NAKLEDER; bu betik onlara bağlı kalır.
@@ -67,12 +67,13 @@
     status('wait', '◌ bağlanıyor');
     es.addEventListener('hello', function(e){
       var d = JSON.parse(e.data);
-      if(d.seq < T.seq) T.seq = 0;                     // sunucu yeniden başladı: sıra baştan
+      T.fail = 0;
+      if(d.seq < T.seq) T.seq = 0;                     // sunucu yeniden başladı: sıra baştan (sunucu da sıfırlar)
       T.listened = d.listened;
       if(d.listened === false) status('off', '○ bu coin canlı akışta dinlenmiyor');
       else if(!d.live) status('off', '○ HL akışı şu an kopuk — veri bilinmiyor');
       else status('on', '● canlı');
-      if(d.px) price(d.px, Date.now(), true);
+      if(d.px) price(d.px, d.px_ts || Date.now(), true);
     });
     es.addEventListener('t', function(e){ trades(JSON.parse(e.data)); });
     es.addEventListener('s', function(e){ flow(JSON.parse(e.data)); });
@@ -83,7 +84,12 @@
       if(!document.hidden) setTimeout(connect, 250);   // gizli sekme: geri gelince bağlanır (sunucu akışı boşa açık kalmasın)
     });
     es.onerror = function(){
-      if(es.readyState === 2){ T.es = null; status('wait', '◌ yeniden bağlanıyor'); setTimeout(connect, 4000); }
+      if(es.readyState === 2){
+        // kapandı (503 tavanı / sunucu yok): üst üste hatada bekleme katlanır (4 → 8 → 16 → 30 sn)
+        T.es = null; T.fail = (T.fail || 0) + 1;
+        status('wait', '◌ yeniden bağlanıyor');
+        setTimeout(connect, Math.min(30000, 4000 * Math.pow(2, T.fail - 1)));
+      }
       else status('wait', '◌ yeniden bağlanıyor');
     };
   }
@@ -109,7 +115,7 @@
       c.textContent = (ch > 0 ? '+' : '') + ch.toFixed(2) + '%';
       c.className = ch > 0 ? 'long' : (ch < 0 ? 'short' : 'dim');
     }
-    document.title = T.sym + ' ' + px(p) + ' · HL Radar';
+    document.title = (T.tpre || '') + T.sym + ' ' + px(p) + (T.tsuf || '') + ' · HL Radar';   // 🐋/🚨 ve 📅 kalsın
     if(typeof pxLive === 'function') pxLive(p, Math.floor((ms || Date.now()) / 1000));
     if(!T.distT) T.distT = setTimeout(function(){ T.distT = null; distances(); }, 800);
   }
@@ -119,7 +125,7 @@
     var rows = (d.r || []).filter(function(r){ return r[0] > T.seq; });
     if(!rows.length) return;
     T.seq = rows[rows.length - 1][0];
-    var box = $('#ttape .tb'), list = $('#tfeed');
+    var box = $('.t-tape .tb'), list = $('#tfeed');
     if(!list) return;
     if(d.init && list.dataset.srv) { list.textContent = ''; delete list.dataset.srv; }
     var keep = box && box.scrollTop > 4, h0 = list.scrollHeight;
@@ -133,6 +139,8 @@
     list.insertBefore(frag, list.firstChild);
     while(list.children.length > MAX_ROWS) list.removeChild(list.lastChild);
     if(keep && box) box.scrollTop += list.scrollHeight - h0;   // okuyan kullanıcının yeri kaymasın
+    // canlı mum paketin HER işlemini görsün (yalnız sonuncusu değil: paket içi tepe / dip kaybolmasın)
+    if(typeof pxLive === 'function') rows.forEach(function(r){ pxLive(r[2], Math.floor(r[1] / 1000)); });
     var last = rows[rows.length - 1];
     price(last[2], last[1]);
     var cnt = $('#tcount');
@@ -165,27 +173,31 @@
   // ---- 15 dk akış ----
   function flow(d){
     T.flowSeen = true;
-    if(d.px) price(d.px, Date.now(), true);
+    if(d.listened != null) T.listened = d.listened;
+    if(d.px) price(d.px, d.px_ts || Date.now(), true);
     if(d.live === false) status('off', '○ HL akışı şu an kopuk — veri bilinmiyor');
     else if(T.listened !== false && T.es) status('on', '● canlı');
+    // Ölçüm yoksa (dinlenmiyor / akış kopuk) $0 yazılmaz: "—" ve nedeni (ölçülü dil: veri yoksa bilinmiyor)
+    var unk = T.listened === false || !!d.unknown;
     var set = function(id, v, cls){ var e = document.getElementById(id); if(e){ e.textContent = v; if(cls != null) e.className = 'v ' + cls; } };
-    set('fbuy', usd(d.buy));
-    set('fsell', usd(d.sell));
-    set('fnet', susd(d.net), d.net > 0 ? 'long' : (d.net < 0 ? 'short' : 'dim'));
-    set('fn', d.n + ' / ' + d.n_addr);
+    set('fbuy', unk ? '—' : usd(d.buy));
+    set('fsell', unk ? '—' : usd(d.sell));
+    set('fnet', unk ? '—' : susd(d.net), unk ? 'dim' : (d.net > 0 ? 'long' : (d.net < 0 ? 'short' : 'dim')));
+    set('fn', unk ? '—' : d.n + ' / ' + d.n_addr);
     var lab = $('#flabel');
-    if(lab) lab.textContent = d.label + (d.twap ? ' · 🔹 TWAP ' + usd(d.twap) : '');
+    if(lab) lab.textContent = d.label + (d.twap && !unk ? ' · 🔹 TWAP ' + usd(d.twap) : '');
+    var why = T.listened === false ? 'bu coin canlı akışta dinlenmiyor — bilinmiyor' : d.warn;
     var w = $('#fwarn');
-    if(w){ w.textContent = d.warn ? '⚠️ ' + d.warn : ''; w.hidden = !d.warn; }
-    who('#fbuyers', d.buyers, 'long');
-    who('#fsellers', d.sellers, 'short');
+    if(w){ w.textContent = why ? '⚠️ ' + why : ''; w.hidden = !why; }
+    who('#fbuyers', d.buyers, 'long', unk);
+    who('#fsellers', d.sellers, 'short', unk);
   }
 
-  function who(sel, rows, cls){
+  function who(sel, rows, cls, unk){
     var box = $(sel);
     if(!box) return;
     box.textContent = '';
-    if(!rows || !rows.length){ box.appendChild(el('div', 'dim', 'yok')); return; }
+    if(!rows || !rows.length){ box.appendChild(el('div', 'dim', unk ? 'bilinmiyor' : 'yok')); return; }
     rows.forEach(function(f){
       var r = el('div', 'wr');
       r.appendChild(alink(f[0]));
@@ -257,6 +269,11 @@
     var box = $('#tthick'), o = T.own;
     if(!box || !o || !o.lv) return;
     box.textContent = '';
+    if(!o.lv.length){
+      box.appendChild(el('div', 'dim', o.err && o.err.length ? 'Defter okunamadı (' + o.err.join(', ') + ') — birazdan yeniden denenir'
+                                                          : 'defterde kademe yok'));
+      return;
+    }
     ['bid', 'ask'].forEach(function(side){
       var lv = o.lv.filter(function(l){ return l.s === side && l.v === 'g'; })
                    .sort(function(a, b){ return b.usd - a.usd; })[0];
@@ -303,7 +320,8 @@
     if(T && T.es){ try{ T.es.close(); }catch(e){} }
     T = {root: root, path: root.dataset.path, k: root.dataset.k || '', sym: root.dataset.sym,
          seq: +root.dataset.seq || 0, prev: +root.dataset.prev || 0, px: +root.dataset.px || 0,
-         sizes: [], n: 0, book: null, own: null, es: null};
+         tpre: root.dataset.tpre || '', tsuf: root.dataset.tsuf || '',
+         sizes: [], n: 0, book: null, own: null, es: null, fail: 0};
     if(T.px) price(T.px, Date.now(), true);
     document.querySelectorAll('#tfeed .tr[data-usd]').forEach(function(r){ T.sizes.push(+r.dataset.usd); });
     connect();
@@ -313,13 +331,22 @@
   window.termAfterRefresh = function(){
     if(!T) return init();
     var root = document.getElementById('term');
-    if(root && root !== T.root){ T.root = root; T.prev = +root.dataset.prev || T.prev; }
+    if(root && root !== T.root){
+      T.root = root; T.prev = +root.dataset.prev || T.prev;
+      T.tpre = root.dataset.tpre || ''; T.tsuf = root.dataset.tsuf || '';   // 🚨 yenilemede değişebilir
+    }
     if(T.px) price(T.px, Date.now(), true);
     distances();
   };
+  // akış GERÇEKTEN akıyor mu (base.html yumuşak yenilemesi canlı panelleri yalnız o zaman nakleder)
+  window.termLive = function(){ return !!(T && T.es && T.es.readyState === 1 && T.flowSeen); };
   document.addEventListener('visibilitychange', function(){
     if(!T) return;
-    if(!document.hidden && !T.es) connect();
+    if(document.hidden){ T.hiddenAt = Date.now(); return; }
+    // gizliyken akış kapandıysa arada akmayan işlemler grafikte yok: bir dakikayı aştıysa mumlar yeniden çekilir
+    if(!T.es && T.hiddenAt && Date.now() - T.hiddenAt > 60000 && typeof pxReload === 'function') pxReload();
+    T.hiddenAt = 0;
+    if(!T.es) connect();
   });
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

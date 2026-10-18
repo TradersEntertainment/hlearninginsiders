@@ -629,11 +629,14 @@ Doldu: HL bitiş/iptal kaydı varsa HL'nin rakamı (yüzde ya da "dolmadı"), s�
 dilimleri ("≈ %N" / "≥ $X"), HL'nin emir anındaki 0'ı ise **"bilinmiyor"** — asla "%0". Kalan yalnız ölçülebiliyorsa
 (iptalde dolmayan, "≈" satırda plan − dolan). Durum da ölçüme göre: 🏁 bitti yalnız HL 'finished' derse; ⛔ iptal;
 süresi geçmiş ama HL bitişi alınmamış emir "⌛ süresi doldu"; açık görünüp susan "⏸ dilim gelmiyor"; HL emri
-sorgulanamamış dizi "⏹ dizi durdu". **Kök neden ve onarım:** tur bellekten düşünce (her restart / 4 sa pencere)
-kayıt emir anındaki 0'da takılı kalıyordu; `twaplive.close_stale` iki dakikada bir süresi geçmiş 'activated'
-satırlardan en büyük altısının HL bitiş kaydını kollektörün WS'inden (REST ağırlığı yok) çekip günceller; bulamazsa
-15 dk sonra yeniden dener. `/tani`'de "⌛ süresi geçmiş TWAP kaydı kapatma" satırı. Coin sayfasının "📡 oluşuyor"
-satırları artık en az 3 dilimli ya da HL emri olan turlar (tek işlem dizi değil).
+sorgulanamamış dizi "⏹ dizi durdu"; HL 'stopped' kaydı "⏹ durduruldu". Bitmiş emrin yüzdesi adetle (fiyat kayınca
+"%101" çıkmaz); kaydedilmiş süren emir de radarın gördüğü HL dilimlerini gösterir (Telegram'la aynı ölçü).
+**Kök neden ve onarım:** tur bellekten düşünce (her restart / 4 sa pencere) kayıt emir anındaki 0'da takılı
+kalıyordu; `twaplive.close_stale` iki dakikada bir süresi geçmiş 'activated' satırlardan en uzun süredir
+sorulmamış altısının HL bitiş kaydını kollektörün WS'inden çekip günceller. WS görüntüsü yalnız son 30 kaydı verir:
+yoğun adreste bitiş kaydı WS'te olamazsa turda bir REST `twapHistory` (ağırlık 20) sorulur; bulamazsa 15 dk sonra
+yeniden dener. `/tani`'de "⌛ süresi geçmiş TWAP kaydı kapatma" satırı. Coin sayfasının "📡 oluşuyor" satırları
+yalnız TWAP kanıtı olan turlar: HL emri, HL alt emri dolumu ya da düzenli dizi (3+ işlemli her adres değil).
 
 ### TWAP ayna grubu (`TWAP_MIRROR_CHAT_ID`)
 
@@ -1581,7 +1584,8 @@ bir tamamen yeniden iniyor, grafik ilk açılıştan sonra hiç güncellenmiyor,
 **Düzen** (`coin.html` üstü, stil `base.html` "📟 Coin terminali"): üst bant — sembol, **canlı fiyat** (son işlem; değişince
 yeşil/kırmızı parlar, sekme başlığında da), 24 sa değişim (canlı fiyatla), OI, funding, hacim, L/S toplamları,
 kapsama, bilanço, canlı akış göstergesi (● canlı / ◌ bağlanıyor / ○ akış yok — nedeniyle), tazele/tara. Altında iki sıra
-panel; masaüstünde (≥1200 px) **ekrana sığar**, her panel kendi içinde kayar (1920×1080 ve 1366×768'de ölçüldü):
+panel; masaüstünde (≥1200 px) **ekrana sığar**, her panel kendi içinde kayar (tarayıcı içi görünür alan: 1920×970,
+1366×657 — 1366×768 ekranın araç çubukları düşülmüş hâli; ızgara en az 440 px):
 - **📈 Fiyat:** 1 sa mumlar + liq duvarı / giriş çizgileri + liq blokları; **son mum canlı işlemlerle büyür**.
 - **🧱 Canlı defter:** HL defteri (her yönde en yakın kademeler, panele sığdığı kadar) birkaç saniyede bir, derinlik
   çubuklu; ✅ = doğrulanmış açık emir sahibi (bookowners), üstte en kalın gruplu kademeler ve sahipleri.
@@ -1589,7 +1593,8 @@ panel; masaüstünde (≥1200 px) **ekrana sığar**, her panel kendi içinde ka
   emri dolan; 🔹 TWAP alt emri; son işlemlerin en büyük %10'u vurgulu.
 - **💥 Likidasyon:** %2/%5/%10 kademe özeti + likidasyona en yakınlar; **mesafe canlı fiyatla** yeniden hesaplanır.
 - **📊 Akış:** son 15 dk alış / satış / net, işlem / adres, en çok net alan / satan (5 sn'de bir); kapsama uyarısı.
-- **📋 TWAP:** sürenler üstte, plana göre; doldu / durum `twap.fill_view` ile (ölçülen).
+- **📋 TWAP:** HL emirleri önde (sürenler üstte, plana göre), HL emri bilinmeyen diziler en çok 4 satır ("ölç." = plan
+  değil, ölçülen dilim toplamı); doldu / durum `twap.fill_view` ile (ölçülen).
 - **🐋 Pozisyonlar:** en büyükler, liq ve **canlı mesafe**, uPnL.
 Dar masaüstünde (1200–1599 px) ikincil sütunlar ipucuna geçer; telefonda paneller alt alta. Bütün ayrıntı panelleri
 (tam tablolar, giriş haritası, saat karnesi, liq haritası, TradingView) terminalin altında, aşağı kaydırınca.
@@ -1598,15 +1603,18 @@ Dar masaüstünde (1200–1599 px) ikincil sütunlar ipucuna geçer; telefonda p
 zaten aldığı WS akışından — **ek HL isteği yok**; yalnız bantta sayılan işlem yayılır (yeniden yollanan / açılış
 öncesi gitmez). Halka yalnız sayfası son 15 dk'da açılmış coinde tutulur (bellek). 15 dk toplamları coin başına 5 sn,
 defter (l2Book, ağırlık 2, düşük şerit) coin başına 4 sn önbellek — izleyici sayısından bağımsız; defter sahipleri
-bookowners'ın 30 sn önbelleğiyle. Akış 4 dk yaşar, istemci kaldığı yerden (`seq`) yeniden bağlanır (tekrar yok;
-sunucu yeniden başladıysa sıra sıfırlanır); gizli sekmede yeniden bağlanmaz. Eşzamanlı akış en çok 24. Sayfanın geri
-kalanı 60 sn'de bir yumuşak yenilenir; canlı paneller (grafik, defter, akış, toplamlar) nakledilir, panel içi kaydırma
-korunur. Eskiden sayfa her 45 sn'de defter sahiplerini yeniden kurduruyordu.
+bookowners'tan, akış açıkken en çok 45 sn'de bir yeniden kurulur (eski sayfa düzeniyle aynı yük). Akış 4 dk yaşar,
+istemci kaldığı yerden (`seq`) yeniden bağlanır (tekrar yok); sunucu yeniden başladıysa (deploy) **iki taraf da**
+sırayı sıfırlar — eskiden bant ~4 dk donuyordu. Gizli sekmede yeniden bağlanmaz; geri gelince arada bir saat atlandıysa
+mumlar yeniden çekilir (canlı mum paketin her işlemini görür). Akış 503 / kopukken bekleme katlanır (4 → 30 sn).
+Eşzamanlı akış en çok 24. Sayfanın geri kalanı 60 sn'de bir yumuşak yenilenir (grafik bekleniyorsa 10 sn); canlı
+paneller (grafik; defter, işlemler, toplamlar yalnız akış akıyorsa) nakledilir, panel içi kaydırma korunur. Canlı
+fiyat yalnız 2 dk'dan taze son işlemden; dinlenmeyen coinde akış paneli "—" ve nedenini yazar ($0 değil).
 
 **Kör nokta, açıkça:** canlı akış yalnız WS'in dinlediği coinlerde (kripto ilk `CRYPTO_WATCH_TOP`, spot ilk
 `SPOT_WATCH_TOP`, hisseler) — değilse gösterge "dinlenmiyor" der. Canlı fiyat = son işlem (mark değil); funding / OI /
-24 sa hacim sayfa yenilemesiyle (metrik turu 1–5 dk). Mumlar 1 saatlik; geçmiş mumlar yeniden çekilmez, yalnız son mum
-canlı. Liq fiyatları ve pozisyonlar süpürmeden (dakikalar–saatler); canlı olan yalnız mesafe. Bu deneme Railway'de
+24 sa hacim sayfa yenilemesiyle (metrik turu 1–5 dk). Mumlar 1 saatlik; yalnız son mum canlı, geçmiş mumlar ancak
+arada bir saat atlanınca yeniden çekilir (en çok 3 kez). Liq fiyatları ve pozisyonlar süpürmeden (dakikalar–saatler); canlı olan yalnız mesafe. Bu deneme Railway'de
 SSE'nin tamponlanmadığını varsayar (`X-Accel-Buffering: no`); akmıyorsa gösterge "bağlanıyor"da kalır.
 `/tani`'de "📟 canlı sayfa akışı" satırı.
 
@@ -2653,7 +2661,7 @@ Mum grafiği [TradingView Lightweight Charts](https://github.com/tradingview/lig
 ```bash
 pip install -r requirements.txt
 cp .env.example .env   # doldur
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --timeout-graceful-shutdown 5   # açık canlı akış kapanışı 4 dk bekletmesin
 # http://localhost:8000
 ```
 

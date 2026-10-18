@@ -844,14 +844,12 @@ async def coin_page(request: Request, symbol: str):
         live_rows = [[0, int(tr["ts"]) * 1000, tr["px"], round(tr["usd"], 2), "B" if tr["side"] == "buy" else "A",
                       tr["taker"], tr["maker"], 1 if tr["twap"] else 0]
                      for tr in sorted(tape_sum["trades"], key=lambda x: -x["ts"])[:40]]
-    last = _lf.LAST.get(coin)
-    term = {"seq": _lf.last_seq(coin), "live_rows": live_rows, "px": last[1] if last else None,
-            "px_ts": last[0] if last else None,
+    lpx, lts = _lf.fresh_px(coin, listened)
+    term = {"seq": _lf.last_seq(coin), "live_rows": live_rows, "px": lpx, "px_ts": lts,
             "prev": (float(summ["mark"]) / (1 + float(summ["px_change_pct"]) / 100)
                      if summ.get("mark") and summ.get("px_change_pct") not in (None, -100) else None),
             "live": bool(col is not None and getattr(col, "connected", False)),
-            "twaps": sorted(twaps, key=lambda r: (r.get("state") not in ("forming", "running"),
-                                                  -float(r.get("size_usd") or 0)))[:14]}
+            "twaps": term_twaps(twaps)}
 
     # Kapsama: havuz / HL OI (dürüstlük satırı). Süs — hesaplanamazsa sayfa düşmez.
     try:
@@ -890,6 +888,23 @@ async def coin_page(request: Request, symbol: str):
         "n_long": sum(1 for p in rows if p["side"] == "long"),
         "n_short": sum(1 for p in rows if p["side"] == "short"),
     })
+
+
+TERM_TWAPS = 14            # terminal 📋 TWAP paneli satır sayısı
+TERM_FORMING = 4           # bunların en çok bu kadarı HL emri bilinmeyen (oluşan / emirsiz) dizi (HL satırı azsa fazlası)
+BOOK_KICK_AGE = 45         # akış açıkken defter sahipleri en erken bu kadar sn'de bir yeniden kurulur (eski sayfa düzeni)
+
+
+def term_twaps(twaps: list[dict]) -> list[dict]:
+    """📋 Terminal TWAP paneli (TERM_TWAPS satır): HL emri olanlar önde (süren → büyük), emri bilinmeyen diziler en çok
+    TERM_FORMING (HL satırı azsa boşluk onlarla dolar). Eskiden "📡 oluşuyor" satırları büyük bitmiş HL emirlerini
+    panelden itiyordu (inceleme 18.10: BTC'de 14 satırın hepsi HL izi olmayan adres)."""
+    hl_rows = sorted((r for r in twaps if r.get("planned_known")),
+                     key=lambda r: (not r.get("running"), -float(r.get("size_usd") or 0)))
+    no_hl = sorted((r for r in twaps if not r.get("planned_known")), key=lambda r: -float(r.get("size_usd") or 0))
+    pick = no_hl[:TERM_FORMING]
+    out = hl_rows[:TERM_TWAPS - len(pick)] + pick
+    return out + no_hl[TERM_FORMING:TERM_FORMING + TERM_TWAPS - len(out)]
 
 
 def _sse(event: str, data) -> str:
@@ -932,8 +947,13 @@ async def coin_live(request: Request, symbol: str):
             listened = (coin in col.valid_coins) if col is not None and getattr(col, "valid_coins", None) else None
             live = bool(col is not None and getattr(col, "connected", False))
             yield "retry: 3000\n\n"
+            if seq > lf.last_seq(coin):
+                # Sunucu yeniden başladı (sayaç sıfırdan) ya da halka budandı: istemcinin eski seq'i yeni işlemleri
+                # STREAM_LIFE boyunca süzüyordu (deploy sonrası bant ~4 dk donuyor, gösterge "● canlı" — inceleme 18.10)
+                seq = 0
+            px, px_ts = lf.fresh_px(coin, listened)
             yield _sse("hello", {"coin": coin, "listened": listened, "live": live, "seq": lf.last_seq(coin),
-                                 "px": (lf.LAST.get(coin) or (0, None))[1]})
+                                 "px": px, "px_ts": px_ts})
             if seq == 0:                                # ilk bağlanış: halkadaki son işlemler
                 rows = lf.since(coin, 0, limit=80)
                 if rows:
@@ -953,7 +973,8 @@ async def coin_live(request: Request, symbol: str):
                 if now_l - last_s >= lf.STATS_TTL:
                     last_s = now_l
                     st = lf.stats(coin)
-                    yield _sse("s", {**st, "px": (lf.LAST.get(coin) or (0, None))[1],
+                    px, px_ts = lf.fresh_px(coin, listened)
+                    yield _sse("s", {**st, "px": px, "px_ts": px_ts, "listened": listened,
                                      "live": bool(col is not None and getattr(col, "connected", False))})
                     sent = True
                 if now_l - last_b >= lf.DEPTH_TTL:
@@ -965,7 +986,8 @@ async def coin_live(request: Request, symbol: str):
                     else:                               # henüz yok: 4 sn beklemeden yeniden bak
                         last_b = now_l - lf.DEPTH_TTL + 0.7
                     bk = _bo.cached(coin)
-                    _bo.kick(client, coin)              # 30 sn önbellek: izleyici sayısından bağımsız
+                    if not bk or float(bk.get("age") or 0) >= BOOK_KICK_AGE:
+                        _bo.kick(client, coin)          # coin başına önbellek: izleyici sayısından bağımsız
                     if bk and bk.get("ts") != last_o:
                         last_o = bk.get("ts")
                         yield _sse("o", lf.owners(bk))

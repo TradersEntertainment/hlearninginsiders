@@ -13,12 +13,13 @@ Pinlenenler:
   • stats coin başına önbellek; depth hemen döner, arka planda tek istek (düşük şerit), duraklı şeritte sormaz
   • owners: bookowners sonucu kısa hâl (✅ / dolan / emri yok, bilinmiyor bayrağı)
   • SSE: hello → t (init) → s → b → x; tavan dolunca 503; seq ile yeniden bağlanınca eski işlem yeniden gelmez
-  • sayfa: body.term, #term (path/seq/prev/px), 7 panel, canlı paneller data-keep, kayan listeler data-sid, term.js,
+  • sayfa: body.termpage, #term (path/seq/prev/px), 7 panel, canlı paneller data-keep, kayan listeler data-sid, term.js,
     ayrıntı panelleri altta (çapalar), TWAP / pozisyon / liq sıkışık hâlde; dar ekranda ikincil sütun .nw
   • base.html: pxLive (son mum canlı), panel içi kaydırma korunur, termAfterRefresh, grafik dili tr-TR
   • /tani satırı, README bölümü (kör nokta)
 """
 import asyncio
+import re
 import json
 import os
 import sys
@@ -263,8 +264,11 @@ def test_terminal_page_and_wiring():
         st, body = await rs.get(app, "/t/HYPE")
         return st, body
     st, html = asyncio.run(run())
-    assert st == 200 and '<body class="term"' in html and 'id="term"' in html and 'data-path="HYPE"' in html
-    assert '<script src="/static/term.js" defer>' in html and 'data-refresh="60"' in html
+    assert st == 200 and '<body class="termpage"' in html and 'id="term"' in html and 'data-path="HYPE"' in html
+    # mum önbelleği yok (taze DB): grafik beklenir → 10 sn (inceleme 18.10)
+    assert '<script src="/static/term.js" defer>' in html and 'data-refresh="10"' in html
+    for sid in ("ttape", "tflow", "tbook"):                 # nakledilen panellerin iç kaydırması da korunur
+        assert f'data-sid="{sid}"' in html, sid
     for cls, keep in (("t-chart", "pxchart"), ("t-book", "tbook"), ("t-tape", "ttape"), ("t-flow", "tflow")):
         assert f'class="tp {cls}" data-keep="{keep}"' in html, cls
     for cls in ("t-liq", "t-twap", "t-pos"):
@@ -277,11 +281,11 @@ def test_terminal_page_and_wiring():
         assert anchor in html, anchor
     assert html.index('id="term"') < html.index("<h2>⏱ Son 15 dakika") < html.index("<h2>📋 TWAP emirleri")
     st2, h2 = asyncio.run(_get_missing())
-    assert st2 == 200 and 'class="term"' not in h2, "coin yoksa terminal yok"
+    assert st2 == 200 and 'class="termpage"' not in h2 and 'id="term"' not in h2, "coin yoksa terminal yok"
     base = open(os.path.join(ROOT, "app/web/templates/base.html"), encoding="utf-8").read()
     assert "function pxLive(p, ts)" in base and "PXCHART.series.update(L)" in base
     assert "termAfterRefresh" in base and "[data-sid]" in base and "localization: {locale: 'tr-TR'}" in base
-    assert ".term .nw{display:none}" in base and "--term-top" in base
+    assert "section.term .nw{display:none}" in base and "--term-top" in base and not re.search(r"body\.term(?!page)", base)
     js = open(os.path.join(ROOT, "app/web/static/term.js"), encoding="utf-8").read()
     for frag in ("new EventSource(", "/live", "'seq=' + (T.seq || 0)", "if(d.seq < T.seq) T.seq = 0",
                  "pxLive(p,", "document.title", "addEventListener('x'", "document.hidden", "data-liqpx"):
@@ -291,7 +295,7 @@ def test_terminal_page_and_wiring():
     assert "livefeed.diag_line()" in open(os.path.join(ROOT, "app/diag.py"), encoding="utf-8").read()
     readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
     assert "## 📟 Coin terminali" in readme and "GET /t/{coin}/live" in readme and "**Kör nokta, açıkça:** canlı akış" in readme
-    print("✅ sayfa) body.term, #term, 7 panel (canlı olanlar data-keep), kayan listeler data-sid, term.js, ayrıntı"
+    print("✅ sayfa) body.termpage, #term, 7 panel (canlı olanlar data-keep), kayan listeler data-sid, term.js, ayrıntı"
           " altta; base.html pxLive / kaydırma / tr-TR; kanca; /tani; README")
 
 

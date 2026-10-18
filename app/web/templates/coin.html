@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
 {% block title %}{% if rows and (rows[0].score or 0) >= 50 %}🚨{% elif ticker %}🐋{% endif %}{{ symbol }}{% if summ and summ.mark %} {{ summ.mark|px }}{% endif %}{% if event and not event.passed %} · 📅{% endif %} · HL Radar{% endblock %}
-{% block bodyattrs %}{% if ticker %} class="term"{% endif %} data-refresh="{{ 10 if scanning else 60 }}"{% endblock %}
+{% block bodyattrs %}{% if ticker %} class="termpage"{% endif %} data-refresh="{{ 10 if (scanning or (ticker and not pxchart)) else 60 }}"{% endblock %}
 {% block head %}<script src="/static/lightweight-charts.js" defer></script>{% if ticker %}<script src="/static/term.js" defer></script>{% endif %}{% endblock %}
 {% block content %}
 {% if not ticker %}
@@ -32,8 +32,11 @@
    kayar; canlı veri /t/{coin}/live akışından (static/term.js). Ayrıntı panelleri aşağıda. #}
 {% if tape_cover is not defined %}{% set tape_cover = {"label": "son 15 dk", "warn": "", "unknown": false} %}{% endif %}
 {% set tm = term if term is defined and term else {"seq": 0, "live_rows": [], "px": none, "prev": none, "live": false, "twaps": []} %}
+{#- sekme başlığının işaretleri (term.js fiyatı yazarken korur): 🚨 skor ≥ 50, 🐋 coin, · 📅 yaklaşan bilanço #}
 <section class="term" id="term" data-path="{{ ref or symbol }}" data-k="{{ k }}" data-sym="{{ symbol }}"
-         data-seq="{{ tm.seq }}" data-prev="{{ tm.prev or '' }}" data-px="{{ tm.px or summ.mark or '' }}">
+         data-seq="{{ tm.seq }}" data-prev="{{ tm.prev or '' }}" data-px="{{ tm.px or summ.mark or '' }}"
+         data-tpre="{% if rows and (rows[0].score or 0) >= 50 %}🚨{% else %}🐋{% endif %}"
+         data-tsuf="{% if event and not event.passed %} · 📅{% endif %}">
   <div class="tbar">
     <span class="sym">{{ symbol }} <span class="st">{{ coin }}{% if kind == 'crypto' %} · ana dex kripto{% elif klass == 'kripto' %} · {{ coin.split(':')[0] }} dex kripto{% endif %}</span></span>
     {% if propr %}<span class="pbadge" title="propr.xyz'de listeli">✅ PROPR'da listeli</span>{% endif %}
@@ -44,7 +47,7 @@
     <span class="k">Hacim 24s <b>{{ summ.day_volume|usd }}</b></span>
     <span class="k" title="Havuzdaki (süpürmede görülen) pozisyonların toplamı{% if scanned_ts %} · {{ 'son ölçüm' if kind == 'crypto' else 'son tarama' }} {{ scanned_ts|dt }}{% endif %}">L <b class="long">{{ long_total|usd }}</b> / S <b class="short">{{ short_total|usd }}</b></span>
     <span class="k ihit" tabindex="0" data-tip="Kapsama (havuz / HL OI) · {% if coverage and coverage.oi_ntl %}{{ coverage.n }} pozisyon havuzda · HL OI {{ coverage.oi_ntl|usd }}{% if coverage.scan and coverage.scan.n_addrs is not none %} · son tarama {{ coverage.scan.n_addrs }} adres → {{ coverage.scan.n_found }} poz{% endif %}{% if coverage.census and coverage.census.text %} · {{ coverage.census.text }}{% endif %}{% if coverage.over %} · ⚠️ %100 üstü = bayat satır{% endif %}{% else %}HL OI bilinmiyor — oran hesaplanamaz{% endif %}">Kapsama (havuz / HL OI) <b>{% if coverage and coverage.pct_long is not none %}L %{{ '%.0f'|format(coverage.pct_long) }} · S %{{ '%.0f'|format(coverage.pct_short) }}{% else %}—{% endif %}</b>{% if coverage and coverage.over %} <span class="warn">⚠️</span>{% endif %}</span>
-    {% if event %}<span class="k ihit" data-tip="{{ event.when_txt }}" tabindex="0">📅 bilanço <b>{% if event.passed %}açıklandı{% else %}{{ event.countdown }}{% endif %}</b> <span class="dim">{{ event.tsi }} TSİ</span></span>{% endif %}
+    {% if event %}<span class="k ihit" data-tip="{{ event.when_txt }}" tabindex="0">📅 bilanço <b>{% if event.passed %}açıklandı{% else %}{{ event.countdown }}{% endif %}</b> <span class="dim">{{ event.tsi }} TSİ{% if not event.exact %} (~){% endif %}</span>{% if event.maybe_passed and not event.passed %} <span class="warn">⚠️ sabah açıklanmış olabilir</span>{% endif %}</span>{% endif %}
     {% if mark_src == 'candle' %}<span class="k warn">fiyat = son mumun kapanışı, metrik yok</span>{% endif %}
     <span class="tact">
       <span class="tlive {{ 'on' if tm.live and listened is not false else 'off' }}" id="tlive">{% if listened is false %}○ bu coin canlı akışta dinlenmiyor{% elif tm.live %}◌ bağlanıyor{% else %}○ HL akışı şu an kopuk{% endif %}</span>
@@ -86,15 +89,16 @@
           {%- for a, u in (lv.owners or [])[:2] %} ✅<a class="ad" href="/whale/{{ a }}{{ k }}">{{ a[:6] }}…{{ a[-4:] }}</a> <span class="dim">{{ u|usd }}</span>{% endfor %}
           {%- if not lv.owners %} <span class="dim">{{ 'sahip bilinmiyor (açık emirler sorulamadı)' if book.owners_unknown else 'sahip bulunamadı' }}</span>{% endif %}</div>
         {%- endfor %}
-        {%- else %}<div class="dim">en kalın kademeler ve sahipleri hazırlanıyor (30 sn'de bir)</div>{% endif %}
+        {%- elif book and book.err %}<div class="dim">Defter okunamadı ({{ book.err|join(', ') }}) — birazdan yeniden denenir</div>
+        {%- else %}<div class="dim">en kalın kademeler ve sahipleri hazırlanıyor</div>{% endif %}
       </div>
-      <div class="tb mono" id="tladder"><div class="dim">defter canlı akışla gelir…</div></div>
+      <div class="tb mono" id="tladder" data-sid="tbook"><div class="dim">defter canlı akışla gelir…</div></div>
     </div>
 
     {# ⏱ akan işlemler: kollektörün akışı, ek istek yok; büyük işlem = son 400 işlemin en büyük %10'u #}
     <div class="tp t-tape" data-keep="ttape">
       <div class="th">⏱ İşlemler <span class="st ihit" tabindex="0" data-tip="Bu coindeki bütün alım-satımlar, geldiği anda · yön: piyasadan alan/satan (agresör) · sol adres piyasadan alan/satan, sağdaki (→) defterdeki emri dolan · 🔹 = HL TWAP alt emri · vurgulu = son işlemlerin en büyük %10'u · adrese tıkla → cüzdan karnesi">ⓘ</span><span class="r" id="tcount"></span></div>
-      <div class="tb"><div id="tfeed" data-srv="1">
+      <div class="tb" data-sid="ttape"><div id="tfeed" data-srv="1">
         {%- for r in tm.live_rows %}
         <div class="tr {{ 'b' if r[4] == 'B' else 's' }}" data-usd="{{ r[3] }}" title="{{ 'Piyasadan ALIŞ' if r[4] == 'B' else 'Piyasadan SATIŞ' }}">
           <span class="tm">{{ (r[1] // 1000)|hms }}</span><span class="sd">{{ 'ALIŞ' if r[4] == 'B' else 'SATIŞ' }}</span>
@@ -125,6 +129,7 @@
             <td class="nw">{{ p.liq_px|px5 }}</td><td class="dist {{ 'warn' if (p.liq_dist or 99) < 5 else '' }}" title="liq {{ p.liq_px|px5 }} · {{ (p.leverage or 0)|int }}x">%{{ '%.1f'|format(p.liq_dist or 0) }}</td><td class="dim nw">{{ (p.leverage or 0)|int }}x</td></tr>
           {% endfor %}
         </table>
+        {% elif not summ.mark %}<p class="dim">Güncel fiyat yok — likidasyona mesafe hesaplanamıyor.</p>
         {% else %}<p class="dim">Likidasyon fiyatı bilinen pozisyon yok (şimdiye ≤ %{{ max_liq|int }}).</p>{% endif %}
       </div>
       <div class="tf">liq fiyatları son süpürmeye ait{% if liq and liq.meta.latest_ts %} · {{ liq.meta.latest_ts|age }} önce{% endif %} · mesafe canlı fiyatla</div>
@@ -133,19 +138,24 @@
     {# ⏱ 15 dk akış: toplamlar ve en çok net alan/satan — /live 's' olayıyla 5 sn'de bir #}
     <div class="tp t-flow" data-keep="tflow">
       <div class="th">📊 Akış <span class="st" id="flabel">{{ tape_cover.label }}{% if (tape or {}).twap %} · 🔹 TWAP {{ tape.twap|usd }}{% endif %}</span><a class="r" href="#tape15">tümü ↓</a></div>
-      <div class="tb">
+      {#- ölçüm yoksa $0 yazılmaz (dinlenmiyor / bant okunamadı / akış kopuk): "—" ve nedeni #}
+      {%- set fl_why = ('bu coin canlı akışta dinlenmiyor — bilinmiyor' if listened is false else
+                        ('bant okunamadı — bilinmiyor' if panel_err.tape else
+                         (tape_cover.warn if tape_cover.unknown else ''))) %}
+      <div class="tb" data-sid="tflow">
         <div class="fk">
-          <div><div class="l">Piyasadan alış</div><div class="v long" id="fbuy">{{ ((tape or {}).buy or 0)|usd }}</div></div>
-          <div><div class="l">Piyasadan satış</div><div class="v short" id="fsell">{{ ((tape or {}).sell or 0)|usd }}</div></div>
-          <div><div class="l">Net</div>{% set fnet = (tape or {}).net or 0 %}<div class="v {{ 'long' if fnet > 0 else ('short' if fnet < 0 else 'dim') }}" id="fnet">{{ fnet|sgnusd }}</div></div>
-          <div><div class="l">İşlem / adres</div><div class="v" id="fn">{{ (tape or {}).n or 0 }} / {{ (tape or {}).n_addr or 0 }}</div></div>
+          <div><div class="l">Piyasadan alış</div><div class="v long" id="fbuy">{{ '—' if fl_why else ((tape or {}).buy or 0)|usd }}</div></div>
+          <div><div class="l">Piyasadan satış</div><div class="v short" id="fsell">{{ '—' if fl_why else ((tape or {}).sell or 0)|usd }}</div></div>
+          <div><div class="l">Net</div>{% set fnet = (tape or {}).net or 0 %}<div class="v {{ 'dim' if fl_why else ('long' if fnet > 0 else ('short' if fnet < 0 else 'dim')) }}" id="fnet">{{ '—' if fl_why else fnet|sgnusd }}</div></div>
+          <div><div class="l">İşlem / adres</div><div class="v" id="fn">{% if fl_why %}—{% else %}{{ (tape or {}).n or 0 }} / {{ (tape or {}).n_addr or 0 }}{% endif %}</div></div>
         </div>
-        <div class="twarn" id="fwarn"{% if not tape_cover.warn %} hidden{% endif %}>{% if tape_cover.warn %}⚠️ {{ tape_cover.warn }}{% endif %}</div>
+        {%- set fw_txt = fl_why or tape_cover.warn %}
+        <div class="twarn" id="fwarn"{% if not fw_txt %} hidden{% endif %}>{% if fw_txt %}⚠️ {{ fw_txt }}{% endif %}</div>
         <div class="fw">
           <div><h4>En çok net alan</h4><div id="fbuyers">
-            {%- for f in ((tape or {}).buyers or [])[:8] %}<div class="wr"><a class="ad" href="/whale/{{ f.addr }}{{ k }}">{{ f.addr[:6] }}…{{ f.addr[-4:] }}</a><b class="long">{{ f.net|sgnusd }}</b></div>{% else %}<div class="dim">yok</div>{% endfor %}</div></div>
+            {%- for f in ((tape or {}).buyers or [])[:8] %}<div class="wr"><a class="ad" href="/whale/{{ f.addr }}{{ k }}">{{ f.addr[:6] }}…{{ f.addr[-4:] }}</a><b class="long">{{ f.net|sgnusd }}</b></div>{% else %}<div class="dim">{{ 'bilinmiyor' if fl_why else 'yok' }}</div>{% endfor %}</div></div>
           <div><h4>En çok net satan</h4><div id="fsellers">
-            {%- for f in ((tape or {}).sellers or [])[:8] %}<div class="wr"><a class="ad" href="/whale/{{ f.addr }}{{ k }}">{{ f.addr[:6] }}…{{ f.addr[-4:] }}</a><b class="short">{{ f.net|sgnusd }}</b></div>{% else %}<div class="dim">yok</div>{% endfor %}</div></div>
+            {%- for f in ((tape or {}).sellers or [])[:8] %}<div class="wr"><a class="ad" href="/whale/{{ f.addr }}{{ k }}">{{ f.addr[:6] }}…{{ f.addr[-4:] }}</a><b class="short">{{ f.net|sgnusd }}</b></div>{% else %}<div class="dim">{{ 'bilinmiyor' if fl_why else 'yok' }}</div>{% endfor %}</div></div>
         </div>
       </div>
     </div>
@@ -156,11 +166,11 @@
       <div class="tb" data-sid="ttwap">
         {% if tm.twaps %}
         <table>
-          <tr><th class="l">Adres</th><th>Yön</th><th>Plan</th><th>Doldu</th><th class="l">Durum</th></tr>
+          <tr><th class="l">Adres</th><th>Yön</th><th title="HL emrinin planı; emir bilinmiyorsa ölçülen dilim toplamı (ölç.)">Plan</th><th>Doldu</th><th class="l">Durum</th></tr>
           {% for r in tm.twaps %}
           <tr><td class="l"><a class="ad" href="/whale/{{ r.address }}{{ k }}">{{ r.address[:6] }}…{{ r.address[-4:] }}</a></td>
             <td class="{{ 'long' if r.side == 'buy' else 'short' }}">{{ 'AL' if r.side == 'buy' else 'SAT' }}</td>
-            <td><b>{{ r.size_usd|usd }}</b></td><td class="dim"{% if r.fill_tip %} title="{{ r.fill_tip }}"{% endif %}>{{ r.fill_txt or '—' }}</td>
+            <td><b>{{ r.size_usd|usd }}</b>{% if not r.planned_known %} <span class="dim" title="HL emri bilinmiyor — ölçülen dilim toplamı, plan değil">ölç.</span>{% endif %}</td><td class="dim"{% if r.fill_tip %} title="{{ r.fill_tip }}"{% endif %}>{{ r.fill_txt or '—' }}</td>
             {%- set stp = (r.state_txt or '').split(' ', 1) %}
             <td class="l {{ 'long' if r.state in ('forming', 'running') else 'dim' }}" title="{{ r.state_txt }} · {{ r.state_tip }}">{{ stp[0] }}<span class="nw"> {{ stp[1] if stp|length > 1 else '' }}</span></td></tr>
           {% endfor %}

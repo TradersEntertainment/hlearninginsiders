@@ -28,6 +28,7 @@ from app import db as dbm  # noqa: E402
 from app.radar import twap, twaplive as tl  # noqa: E402
 
 A, B = "0x" + "a" * 40, "0x" + "b" * 40
+C, D = "0x" + "c" * 40, "0x" + "d" * 40
 
 
 def test_fill_view_measured_only():
@@ -126,10 +127,16 @@ def test_live_rows_and_templates():
     t = dbm.now()
     for i in range(2):                                   # 2 işlemlik tur: dizi değil → listelenmez
         tl.REG.observe("PUMP", A, "buy", 0.004, 1000, 4, t - 60 + i)
-    for i in range(4):
-        tl.REG.observe("PUMP", B, "sell", 0.004, 1000, 4, t - 120 + i * 30)
+    for i in range(4):                                   # 4 düzensiz işlem, HL izi yok: TWAP kanıtı yok → listelenmez
+        tl.REG.observe("PUMP", C, "sell", 0.004, 1000 * (1 + 3 * (i % 2)), 4, t - 400 + i * i * 40)
+    for i in range(12):                                  # düzenli dizi (30 sn, eşit boy) → "📡 oluşuyor"
+        tl.REG.observe("PUMP", B, "sell", 0.004, 1000, 4, t - 400 + i * 30)
+    for i in range(3):                                   # HL alt emri dolumu (sıfır hash) → listelenir
+        tl.REG.observe("PUMP", D, "buy", 0.004, 1000, 4, t - 100 + i * 30, 1, True)
     rows = tl.live_runs("PUMP")
-    assert [r["address"] for r in rows] == [B] and rows[0]["state_txt"] == "📡 oluşuyor" and rows[0]["fill_txt"] == "—"
+    assert sorted(r["address"] for r in rows) == sorted([B, D]), [r["address"] for r in rows]
+    rb = next(r for r in rows if r["address"] == B)
+    assert rb["state_txt"] == "📡 oluşuyor" and rb["fill_txt"] == "—"
     tl.REG.runs.clear()
     bad = re.compile(r"'%\.0f'\|format\(r\.(filled_pct|order_pct)\)")
     for p in ("coin.html", "twaplar.html", "twap.html"):
@@ -139,7 +146,7 @@ def test_live_rows_and_templates():
     diag = open(os.path.join(ROOT, "app/diag.py"), encoding="utf-8").read()
     assert "close_diag()" in diag
     src = open(os.path.join(ROOT, "app/radar/twaplive.py"), encoding="utf-8").read()
-    assert 'out["closed"] = await close_stale(collector, ts)' in src
+    assert 'out["closed"] = await close_stale(collector, ts, client)' in src
     readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
     assert "twap.fill_view" in readme and "twaplive.close_stale" in readme and "⌛ süresi doldu" in readme
     print("✅ canlı satır + şablonlar) tek işlem dizi değil; üç şablonda %0 basan ifade yok; /tani; kanca; README")

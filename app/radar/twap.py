@@ -72,6 +72,29 @@ def _pct(p: float) -> str:
     return f"%{p:.0f}" if p >= 1 else (f"%{p:.1f}" if p >= 0.1 else "<%0.1")
 
 
+# HL emir geçmişinin BİTİŞ durumları ('stopped' de bitiştir: close_stale yazıyordu, sayfa "⌛ HL bitiş kaydı
+# alınmadı" diyordu — inceleme 18.10, HL geçmişinde 113 örnek).
+DONE_STATES = ("finished", "terminated", "error", "stopped")
+
+
+def _seen_row(r: dict, ts: int) -> None:
+    """DB satırı süren HL emrini taşıyorsa (HL 'activated' kaydı dolanı 0 yazar) radarın gördüğü HL dilimlerini ekle
+    (fill_hl0 / fill_seen …) — canlı satırla ve Telegram'la aynı ölçü. Eskiden yalnız henüz kaydedilmemiş canlı satır
+    alıyordu; kaydedilen süren emir sitede "bilinmiyor", Telegram'da "≈ %61" çıkıyordu (inceleme 18.10). Senkron."""
+    if (r.get("order_status") or "") != "activated" or float(r.get("executed_usd") or 0) > 0 or not r.get("order_ts"):
+        return
+    try:
+        from .twaplive import with_seen
+        w = with_seen({"status": "activated", "executed_usd": 0, "started_ts": r["order_ts"],
+                       "planned_usd": r.get("planned_usd"), "planned_sz": r.get("planned_sz")},
+                      r["coin"], r["address"], r["side"], ts) or {}
+    except Exception:                                  # noqa: BLE001 — süs; tablo düşmesin
+        return
+    for k in ("fill_hl0", "fill_seen", "fill_full", "fill_seen_sz"):
+        if k in w:
+            r[k] = w[k]
+
+
 def fill_view(r: dict, ts: int | None = None) -> dict:
     """Web TWAP tablolarının Doldu / Kalan / Durum hücreleri — yalnız ÖLÇÜLEN (kullanıcı 18.10 ekran görüntüsü: bitmiş
     emirlerde "Doldu %0 · Kalan $2.99M · 🏁 bitti"; kural: "%0" yazılmaz, ölçülemeyen dolan yazılmaz, 2fdcb75).
@@ -89,8 +112,12 @@ def fill_view(r: dict, ts: int | None = None) -> dict:
     pu = float(r.get("planned_usd") or 0)
     eu = float(r.get("executed_usd") or 0)
     fill, tip, left = "—", "", "—"
-    if pu > 0 and st in ("finished", "terminated", "error"):
-        fill = _pct(eu / pu * 100) if eu > 0 else "dolmadı"
+    rem_v = r.get("remaining_usd")
+    if pu > 0 and st in DONE_STATES:
+        # Yüzde ADETLE (kalan, planla aynı fiyattan çevrili): $ oranı fiyat kaydıkça tam dolmuş emri "%101 / %98"
+        # gösteriyordu, Telegram aynı emre adetle %100 diyor (inceleme 18.10). Kalan yoksa (eski satır) $ oranı.
+        p = ((pu - float(rem_v)) / pu * 100) if rem_v is not None else (eu / pu * 100)
+        fill = _pct(min(100.0, max(0.0, p))) if eu > 0 else "dolmadı"
         tip = f"HL bitiş kaydı: {usd(eu)} doldu" if eu > 0 else "HL bitiş kaydı: dolan yok"
         rem = float(r.get("remaining_usd") or 0)
         if st != "finished" and rem >= 1:
@@ -119,6 +146,8 @@ def fill_view(r: dict, ts: int | None = None) -> dict:
         state, txt, stip = "running", "▶ sürüyor", "Son dilim yakın zamanda geldi ve emir kapanmadı"
     elif st in ("terminated", "error"):
         state, txt, stip = "cancelled", "⛔ iptal", "HL kaydı: iptal / hata ile bitti"
+    elif st == "stopped":
+        state, txt, stip = "halted", "⏹ durduruldu", "HL kaydı: emir durduruldu (stopped)"
     elif st == "finished":
         state, txt, stip = "finished", "🏁 bitti", "HL kaydı: tamamlandı"
     elif pu > 0 and end_ts and end_ts < ts:
@@ -242,6 +271,8 @@ async def recent(limit: int = 80, hours: int = 48) -> list[dict]:
             left = int(r["order_ts"]) + int(float(r["order_min"]) * 60) - ts
         r["left_sec"] = max(0, left) if left is not None else None
         r["order_pct_txt"] = _pct(r["order_pct"]) if r["order_pct"] is not None else None
+        if r["active"]:
+            _seen_row(r, ts)
         v = fill_view({**r, "running": r["active"]}, ts)   # kopya: recent() satırına "running" eklenmesin
         r.update({k: v[k] for k in ("fill_txt", "fill_tip", "left_txt", "state", "state_txt", "state_tip")})
     rows.sort(key=lambda r: (not r["active"], -(r["total"] or 0)))
@@ -317,7 +348,7 @@ async def all_orders(hours: int = 168, status: str = "hepsi", market: str = "hep
         r["size_usd"] = order_size(r)
         r["planned_known"] = bool(r.get("planned_usd"))
         st = (r.get("order_status") or "").lower()
-        done = bool(r.get("ended_ts")) or st in ("finished", "terminated", "error")
+        done = bool(r.get("ended_ts")) or st in DONE_STATES
         r["running"] = (not done) and is_active(r, ts)
         r["cancelled"] = st in ("terminated", "error")
         pu, eu = r.get("planned_usd"), r.get("executed_usd")
@@ -326,6 +357,8 @@ async def all_orders(hours: int = 168, status: str = "hepsi", market: str = "hep
         if pu and r.get("order_ts") and r.get("order_min") and r["running"]:
             left = int(r["order_ts"]) + int(float(r["order_min"]) * 60) - ts
         r["left_sec"] = max(0, left) if left is not None else None
+        if r["running"]:
+            _seen_row(r, ts)
         fill_view(r, ts)
         if status == "suren" and not r["running"]:
             continue

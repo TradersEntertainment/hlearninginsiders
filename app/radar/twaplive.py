@@ -787,32 +787,66 @@ async def persist(run: Run, m: dict | None, src: str = "live", order: dict | Non
 CLOSE_EVERY = 120           # süresi geçmiş 'activated' satırlar en çok bu sıklıkla taranır (sn)
 CLOSE_MAX = 6               # tur başına en çok bu kadar satır (adres başına tek WS sorgusu)
 CLOSE_RETRY = 900           # aynı satır en erken bu kadar sonra yeniden sorulur (sn)
-CLOSE: dict = {"last": 0, "asked": 0, "fixed": 0, "miss": 0}
+CLOSE: dict = {"last": 0, "asked": 0, "fixed": 0, "miss": 0, "rest": 0}
+WS_HIST_N = 30              # HL userTwapHistory WS görüntüsü yalnız en yeni 30 kaydı verir (inceleme 18.10, ölçüldü)
+CLOSE_REST_MAX = 1          # tur başına en çok bu kadar REST twapHistory (ağırlık 20) — WS'te olamayacak bitiş kaydı
 
 
-async def close_stale(collector, ts: int) -> int:
+def _ws_cut(hist, rows: list[dict]) -> bool:
+    """WS görüntüsü dolu (WS_HIST_N) ve en eski kaydı bu satırların planlanan bitişinden YENİ mi: bitiş kaydı WS'te
+    olamaz (yoğun TWAP'çı: 30 kayıt birkaç saati kapsıyor). O zaman REST geçmişine bakılır."""
+    if not isinstance(hist, (list, tuple)) or len(hist) < WS_HIST_N:
+        return False
+    times = []
+    for h in hist:
+        try:
+            t = int(float(h.get("time") or 0))
+            times.append(t // 1000 if t > 10 ** 11 else t)
+        except (AttributeError, TypeError, ValueError):
+            continue
+    if not times:
+        return False
+    end = min(int(r["order_ts"]) + int(float(r.get("order_min") or 0) * 60) for r in rows)
+    return min(times) > end
+
+
+async def close_stale(collector, ts: int, client=None) -> int:
     """Kayıtta 'activated' kalmış ama süresi geçmiş emirlerin HL bitiş kaydını sonradan çek (kullanıcı 18.10: coin
     sayfasında bitmiş emirler "Doldu %0 · Kalan = plan" görünüyordu). HL dolanı yalnız 'finished' / 'terminated'
     kaydında yazar; tur bellekten düşünce (restart / pencere budaması) satır emir anındaki 0'da takılı kalıyordu.
     Kaynak kollektörün WS'i (userTwapHistory, REST ağırlığı yok). Bulunan kayıt: durum, dolan, kalan güncellenir;
-    bulunamazsa lookup_ts yazılır (CLOSE_RETRY sonra yeniden). Dönüş: güncellenen satır sayısı."""
+    bulunamazsa lookup_ts yazılır (CLOSE_RETRY sonra yeniden). Dönüş: güncellenen satır sayısı.
+    İnceleme (18.10): WS görüntüsü yalnız son 30 kaydı veriyor — yoğun adreste bitiş kaydı WS'te olamaz (`_ws_cut`) →
+    turda en çok CLOSE_REST_MAX REST twapHistory; sıra en uzun süredir sorulmamış satırdan (bulunamayan büyük satırlar
+    küçükleri aç bırakıyordu)."""
     if collector is None or ts - CLOSE["last"] < CLOSE_EVERY or not getattr(collector, "connected", False):
         return 0
     CLOSE["last"] = ts
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT coin, address, side, first_ts, order_ts, planned_usd, planned_sz FROM twap_runs"
+            "SELECT coin, address, side, first_ts, order_ts, order_min, planned_usd, planned_sz FROM twap_runs"
             " WHERE order_status = 'activated' AND order_ts > 0 AND order_min > 0"
             " AND order_ts + order_min * 60 < ? AND COALESCE(lookup_ts, 0) < ?"
-            " ORDER BY planned_usd DESC LIMIT ?", (ts - 60, ts - CLOSE_RETRY, CLOSE_MAX))
+            " ORDER BY COALESCE(lookup_ts, 0) ASC, planned_usd DESC LIMIT ?", (ts - 60, ts - CLOSE_RETRY, CLOSE_MAX))
         rows = [dict(r) for r in await cur.fetchall()]
     fixed = 0
     by_addr: dict[str, list] = {}
     for r in rows:
         by_addr.setdefault(r["address"], []).append(r)
+    rest_left = CLOSE_REST_MAX
     for addr, rs in by_addr.items():
         CLOSE["asked"] += 1
         hist = await collector.fetch_twap_history(addr)
+        if client is not None and rest_left > 0 and _ws_cut(hist, rs):
+            rest_left -= 1
+            CLOSE["rest"] += 1
+            try:
+                full = await asyncio.wait_for(client.info({"type": "twapHistory", "user": addr}, retries=1,
+                                                          priority="low"), 8)
+                if isinstance(full, list):
+                    hist = full
+            except Exception as e:                      # noqa: BLE001 — WS görüntüsüyle devam (bulunamaz → sonra)
+                log.debug("twapHistory REST %s: %s", addr[:10], e)
         async with db() as conn:
             for r in rs:
                 pk = (r["coin"], r["address"], r["side"], r["first_ts"])
@@ -841,7 +875,7 @@ async def close_stale(collector, ts: int) -> int:
 def close_diag() -> str:
     c = CLOSE
     return (f"⌛ süresi geçmiş TWAP kaydı kapatma: {c['asked']} adres soruldu · {c['fixed']} satır HL bitiş kaydıyla"
-            f" güncellendi · {c['miss']} bulunamadı")
+            f" güncellendi · {c['miss']} bulunamadı" + (f" · {c['rest']} REST geçmişi (WS son 30 kayıt)" if c["rest"] else ""))
 
 
 async def _rehydrate(window_sec: int) -> int:
@@ -1720,7 +1754,7 @@ async def evaluate(cfg, notifier, client=None, collector=None) -> dict:
     except Exception:
         log.debug("gizli twap istatistiği", exc_info=True)
     try:
-        out["closed"] = await close_stale(collector, ts)   # ⌛ süresi geçmiş 'activated' kayıtlar: HL bitişi
+        out["closed"] = await close_stale(collector, ts, client)   # ⌛ süresi geçmiş 'activated' kayıtlar: HL bitişi
     except Exception:
         log.debug("süresi geçmiş TWAP kapatma", exc_info=True)
     decisions.sort(key=lambda d: -(d.get("planned") or d.get("total") or 0))
@@ -1845,15 +1879,19 @@ def live_runs(coin: str) -> list[dict]:
     DİKKAT: `twap_live_enabled` kapalıysa ya da yeniden başlatmadan hemen sonra
     bu liste BOŞTUR — sayfa bunu künyede söyler, "TWAP yok" diye yalan söylemez.
 
-    18.10 (sayfa haritası): REG işlem gören HER adres için tur açar — tek-iki işlemlik tur dizi değildir; en az
-    LIVE_ROW_MIN dilim ya da HL emri olan tur listelenir (PUMP'ta yüzlerce satır sayfayı 1 MB yapıyordu). Dolan:
+    18.10 (sayfa haritası): REG işlem gören HER adres için tur açar — tek-iki işlemlik tur dizi değildir; yalnız
+    HL emri, en az LIVE_ROW_MIN HL alt emri dolumu ya da düzenli dizisi (measure) olan tur listelenir (PUMP'ta
+    yüzlerce satır sayfayı 1 MB yapıyordu; piyasa yapıcılar "TWAP" görünüyordu). Dolan:
     HL 'activated' kaydı 0 yazar → radarın gördüğü HL dilimleri (with_seen, Telegram'la aynı ölçü)."""
     from .twap import fill_view
     out = []
     ts = now()
     for r in _runs_for(lambda x: x.coin == coin):
         o = r.order if (r.order and native_overlap([r.order], r)) else {}   # dizi öncesi bitmiş emir onun değil
-        if not o and r.n < LIVE_ROW_MIN:
+        # TWAP KANITI: HL emri, HL alt emri dolumu (sıfır hash) ya da düzenli dizi. Eskiden 3+ işlemli HER adres
+        # "📡 oluşuyor" diye listeleniyordu (BTC'de 137 satırın 7'sinde HL dilimi vardı) ve büyük bitmiş HL emirleri
+        # terminalin 14 satırından düşüyordu (inceleme 18.10).
+        if not o and r.nat_n < LIVE_ROW_MIN and not (r.n >= LIVE_ROW_MIN and r.slices and measure(r)):
             continue
         w = with_seen(o, r.coin, r.address, r.side, ts) or {}
         out.append({
