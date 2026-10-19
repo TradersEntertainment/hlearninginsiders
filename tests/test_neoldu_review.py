@@ -235,3 +235,65 @@ if __name__ == "__main__":
     test_route_default_form_and_spot()
     test_parse_reversed_and_year()
     test_oi_purged_and_recording_off()
+    test_round2_neoldu()
+
+
+def test_round2_neoldu():
+    """2. tur: 20:00 → 03:00 gece yarısını aşar (ters değil); açılıştan ÖNCE biten pencere 'pencerenin içinde
+    yeniden başladı' demez; gelecekteki pencere 'kısa' denmez; bandın başı kesikse 'BÜTÜN' / tam sayılmaz; kayıtta
+    pencere içinde açılış → alarm 'kopuktu'; coin sonradan dinlendiyse 'sub_late'; bant bilinmiyorsa künye 0 demez."""
+    from datetime import datetime
+    from app.web.routes import TR, _parse_window
+
+    class R:
+        def __init__(self, **q):
+            self.query_params = q
+    at = lambda d, h, m: int(datetime(2026, 10, d, h, m, tzinfo=TR).timestamp())   # noqa: E731
+    now = at(18, 12, 0)
+    assert _parse_window(R(t0="20:00", t1="03:00"), now)[:2] == (at(17, 21, 0), at(18, 3, 0))
+
+    async def run():
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "r2.db"))
+        from app.hl import collector as colm
+        from app.telegram import format as fmt
+        n = dbm.now()
+        old = (tape.STARTED, dict(tape.REG), dict(tape.HWM), colm.LIVE)
+        try:
+            colm.LIVE = _Live(valid_coins={"PUMP"})
+            await dbm.kv_set("ws_universe", {"crypto": ["PUMP"], "spot": [], "ts": n})
+            tape.STARTED = n - 120
+            rep = await fx.report("PUMP", n - 600, n - 300)
+            assert rep["tape_why"] == "before_boot", rep["tape_why"]
+            rep = await fx.report("PUMP", n + 600, n + 900)
+            assert rep["tape_why"] == "future"
+            # kayıt yolu, pencere içinde açılış, satır yok → alarm "kopuktu"
+            async with dbm.db() as c:
+                await c.execute("INSERT INTO fills(coin,tid,address,side,px,sz,notional,ts,taker) VALUES"
+                                "('PUMP','x',?,'buy',1,9000,9000,?,1)", (A, n - 86400))
+                await c.commit()
+            br = await fx.window_brief(get_config(), None, "PUMP", n - 300, n, probe=False)
+            assert br["empty_reason"] == "stream_gap", br["empty_reason"]
+            # bandın başı kesik: tam sayılmaz
+            tape.STARTED = n - 5000
+            tape.REG.pop("PUMP", None)
+            tape.HWM.pop("PUMP", None)
+            for i in range(30):
+                tape.observe("PUMP", "B", A, B, 1.0, 1000, n - 880 + i * 29, tid=f"q{i}")
+            rep = await fx.report("PUMP", n - 960, n)
+            assert rep["source"] == "tape" and rep["head_cut"] and not rep["tape_full"], (rep["head_cut"], rep["tape_full"])
+            # coin sonradan dinlendi, işlem yok → sub_late
+            colm.LIVE = _Live(valid_coins={"NEWC"}, valid_since={"NEWC": float(n - 100)})
+            await dbm.kv_set("ws_universe", {"crypto": ["NEWC"], "spot": [], "ts": n})
+            tape.REG.pop("NEWC", None)
+            br = await fx.window_brief(get_config(), None, "NEWC", n - 300, n, probe=False)
+            assert br["empty_reason"] == "sub_late" and any("dinlenmeye başladı" in x for x in fmt.what_happened(br))
+        finally:
+            tape.STARTED = old[0]
+            tape.REG.clear(); tape.REG.update(old[1])
+            tape.HWM.clear(); tape.HWM.update(old[2])
+            colm.LIVE = old[3]
+    asyncio.run(run())
+    tpl = open(os.path.join(ROOT, "app/web/templates/neoldu.html"), encoding="utf-8").read()
+    assert "Bu pencerenin işlemleri <b>bilinmiyor</b>" in tpl and "adresler bilinmiyor" in tpl
+    print("✅ 2. tur) 20:00→03:00 gece yarısı; açılış öncesi / gelecek pencere doğru neden; baş kesik tam değil;"
+          " açılış içeren pencere 'kopuktu'; sonradan dinlenen coin 'sub_late'; künye 0 demez")

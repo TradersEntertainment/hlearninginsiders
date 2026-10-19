@@ -33,7 +33,7 @@
     {{ rep.t0|dt }} → {{ rep.t1|dt }} ({{ rep.minutes }} dk) · {{ rep.market }}</span></h2>
 
   {% if not rep.found and rep.spot_shape %}
-  <p class="alert warn">⚠️ <b>{{ sym }}</b> izlediğimiz ilk {{ rep.spot_known }} spot çiftinin arasında yok —
+  <p class="alert warn">⚠️ <b>{{ sym }}</b> izlediğimiz {% if rep.spot_known %}ilk {{ rep.spot_known }} {% endif %}spot çiftinin arasında yok —
     HL'de olabilir ama bu çifti dinlemiyoruz. Ham ad <code>{{ rep.coin }}</code> olarak denendi.</p>
   {% elif not rep.found %}
   <p class="alert warn">⚠️ <b>{{ sym }}</b> bulunamadı (hisse evreninde de, ana dex kripto listesinde de, bildiğimiz
@@ -106,7 +106,7 @@
   {% set noval = not rep.n_addr and (rep.source != 'tape' or rep.tape_unknown or not rep.tape_full) %}
   <div class="kpi">
     {% if rep.source == 'tape' %}
-    <div><div class="l">İşlem</div><div class="v">{{ '—' if noval else rep.n_trades }}</div><div class="s">{{ rep.n_addr }} adres</div></div>
+    <div><div class="l">İşlem</div><div class="v">{{ '—' if noval else rep.n_trades }}</div><div class="s">{{ 'adresler bilinmiyor' if noval else rep.n_addr ~ ' adres' }}</div></div>
     {% else %}
     <div><div class="l">Kayıt</div><div class="v">{{ rep.n_fills }}</div><div class="s">{{ rep.n_addr }} adres · her işlem iki tarafıyla</div></div>
     {% endif %}
@@ -128,6 +128,9 @@
     Tablonun boş olması "işlem olmadı" demek DEĞİL, "o an tutmuyorduk" demek.</p>
   {% endif %}
   {# ── veri künyesi ─────────────────────────────────────────────────────── #}
+  {% if noval and rep.source == 'tape' %}
+  <p class="kunye">🧾 Bu pencerenin işlemleri <b>bilinmiyor</b> (yukarıdaki kapsam notlarına bak).</p>
+  {% else %}
   <p class="kunye">🧾 Bu pencerede <b>{{ rep.n_fills }}</b> {{ 'işlem' if rep.source == 'tape' else 'işlem kaydımız' }} var
     {%- if not noval %} · piyasadan alım <b class="long">{{ rep.buy|usd }}</b> / satım <b class="short">{{ rep.sell|usd }}</b>{% endif %}
     {%- if rep.aggr_unknown %} <span class="hint">(yönü bilinmeyen {{ rep.aggr_unknown|usd }} sayılmadı)</span>{% endif %} ·
@@ -137,6 +140,7 @@
     {%- if rep.n_unseen %} · <span class="bad">{{ rep.n_unseen }} adrese hiç uğramadık</span>{% endif %}
     {%- if rep.n_stale %} · <span class="warn">{{ rep.n_stale }} çıkarım bayat veriye dayanıyor ⏳</span>{% endif %}.
     </p>
+  {% endif %}
   <p class="kunye">🗄 Pozisyonlar <b>her boyutta</b> tutuluyor (son 14 gün).
     Bundan ayrı olarak <b>{{ big_floor|usd }}</b> üstü pozisyonlar rekor arşivine
     (<code>/devler</code>) girer ve orada geçmişiyle birlikte kalır — iki tablo
@@ -200,7 +204,9 @@
   </div></div>
   {% else %}
   {% if rep.source == 'tape' and (rep.tape_unknown or not rep.tape_full) %}
-  {{ m.empty(["Bu pencerenin işlemleri bilinmiyor.", "Canlı akış kopuktu ya da coin pencerenin içinde dinlenmeye başladı — boş tablo işlem olmadı demek değil."]) }}
+  {{ m.empty(["Bu pencerenin işlemleri bilinmiyor.",
+              ("Pencerenin başı canlı bandın dışında kaldı" if rep.head_cut and not (rep.gaps or rep.live_down or rep.sub_since)
+               else "Canlı akış kopuktu ya da coin pencerenin içinde dinlenmeye başladı") ~ " — boş tablo işlem olmadı demek değil."]) }}
   {% elif rep.source == 'tape' %}
   {{ m.empty(["Bu pencerede işlem görülmedi.", "Kaynak canlı bant: dinlediğimiz coinin bütün işlemleri burada olurdu."]) }}
   {% elif rep.listening == false %}

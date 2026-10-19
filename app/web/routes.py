@@ -899,12 +899,14 @@ def term_twaps(twaps: list[dict]) -> list[dict]:
     """📋 Terminal TWAP paneli (TERM_TWAPS satır): HL emri olanlar önde (süren → büyük), emri bilinmeyen diziler en çok
     TERM_FORMING (HL satırı azsa boşluk onlarla dolar). Eskiden "📡 oluşuyor" satırları büyük bitmiş HL emirlerini
     panelden itiyordu (inceleme 18.10: BTC'de 14 satırın hepsi HL izi olmayan adres)."""
-    hl_rows = sorted((r for r in twaps if r.get("planned_known")),
-                     key=lambda r: (not r.get("running"), -float(r.get("size_usd") or 0)))
-    no_hl = sorted((r for r in twaps if not r.get("planned_known")), key=lambda r: -float(r.get("size_usd") or 0))
+    key = lambda r: (not (r.get("running") or r.get("forming")), -float(r.get("size_usd") or 0))   # noqa: E731
+    hl_rows = sorted((r for r in twaps if r.get("planned_known")), key=key)
+    no_hl = sorted((r for r in twaps if not r.get("planned_known")), key=key)   # süren / oluşan önce (arşiv sonra)
     pick = no_hl[:TERM_FORMING]
     out = hl_rows[:TERM_TWAPS - len(pick)] + pick
-    return out + no_hl[TERM_FORMING:TERM_FORMING + TERM_TWAPS - len(out)]
+    out += no_hl[TERM_FORMING:TERM_FORMING + TERM_TWAPS - len(out)]
+    out.sort(key=lambda r: not (r.get("running") or r.get("forming")))   # başlık "sürenler üstte" doğru kalsın
+    return out
 
 
 def _sse(event: str, data) -> str:
@@ -1365,9 +1367,9 @@ def _parse_window(request: Request, now_ts: int | None = None) -> tuple[int, int
             r = t
             while r < after:
                 r += 86400
-            # gece yarısını aşan kısa pencere (23:50 → 00:10) ileri sarılır; ters yazılmış saatler (18:35 → 18:25)
-            # sarılmaz, aşağıdaki min/max sıralar (inceleme 18.10: ileri sarmak 6 sa'lik alakasız pencere veriyordu)
-            if r - after <= NEOLDU_MAX_SEC:
+            # iki okumadan KISA olanı: gece yarısını aşan pencere (23:50 → 00:10, 20:00 → 03:00) ileri sarılır; ters
+            # yazılmış saatler (18:35 → 18:25) sarılmaz, aşağıdaki min/max sıralar (inceleme 18.10)
+            if r - after < after - t:
                 t = r
         elif not dated and t > ref + 60:
             t -= 86400                                   # ileri bir saat: dünü kastetmiştir
@@ -1512,7 +1514,7 @@ async def forensics_page(request: Request):
         rep["found"] = bool(t) or (forensics.is_spot_coin(coin) and coin in assets.SPOT_NAMES)
         # spot biçimli ad ('@N' / 'X/Y') ama ad önbelleğinde yok: HL'de olabilir, biz yalnız ilk N çifti biliyoruz
         rep["spot_shape"] = not rep["found"] and ("/" in sym or sym.startswith("@"))
-        rep["spot_known"] = len(assets.SPOT_NAMES)
+        rep["spot_known"] = min(int(getattr(cfg, "spot_watch_top", 0) or 0), len(assets.SPOT_NAMES))   # dinlenen
         base = rep["symbol"].split("/")[0].upper()
         spot_alts = [(c, lb) for c, lb in sorted(assets.SPOT_NAMES.items(), key=lambda kv: kv[1])
                      if str(lb).split("/")[0].upper() == base and c != coin][:6]

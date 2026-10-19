@@ -167,13 +167,13 @@ def test_templates_and_client():
                  "Defter okunamadı ({{ book.err|join(', ') }})", "dinlenmiyor — bilinmiyor"):
         assert frag in coin, frag
     base = open(os.path.join(ROOT, "app/web/templates/base.html"), encoding="utf-8").read()
-    for frag in ("max(440px,", "function pxReload()", "box._loading", "TERM_LIVE_KEEP", "window.termLive",
+    for frag in ("max(440px,", "function pxReload(gap)", "box._loading", "TERM_LIVE_KEEP", "window.termLive",
                  ".t-flow .fk{grid-template-columns:repeat(2,1fr)}", ".t-tape .tb{overflow-anchor:none}",
                  "body.termpage .topnav{display:flex;flex:1 0 100%;order:9;flex-wrap:wrap"):
         assert frag in base, frag
     js = open(os.path.join(ROOT, "app/web/static/term.js"), encoding="utf-8").read()
     for frag in ("$('.t-tape .tb')", "window.termLive", "Math.pow(2, T.fail - 1)", "T.tpre", "d.px_ts",
-                 "rows.forEach(function(r){ pxLive(", "pxReload()", "unk ? '—'", "Defter okunamadı ("):
+                 "rows.forEach(function(r){ pxLive(", "pxReload(false)", "unk ? '—'", "Defter okunamadı ("):
         assert frag in js, frag
     assert "$('#ttape .tb')" not in js
     routes = open(os.path.join(ROOT, "app/web/routes.py"), encoding="utf-8").read()
@@ -191,3 +191,35 @@ if __name__ == "__main__":
     test_fill_view_pct_stopped_seen()
     test_term_twaps_order()
     test_templates_and_client()
+    test_round2_fixes()
+
+
+def test_round2_fixes():
+    """2. inceleme turu (18.10/19.10, yeniden üretildi): terminal TWAP'ta süren/oluşan emirsiz dizi arşivin arkasında
+    kalmaz; erken iptal edilen emrin bitişi WS'te yoksa REST'e sorulur (yalnız WS'te bulunamayan satır için);
+    istemci: grafik yeniden çekilince katman üst üste binmez, işlem olmayan fiyat mumu oynatmaz, boşluk dolmazsa
+    yeniden çekme durur, işlem satırı çift eklenmez, kırpma okuma yerini oynatmaz, paket içi işlem tek çizim."""
+    from app.web import routes
+    hl = [{"planned_known": True, "running": False, "size_usd": 3e6, "address": f"h{i}"} for i in range(12)]
+    arch = [{"planned_known": False, "running": False, "size_usd": 6e6, "address": f"a{i}"} for i in range(5)]
+    live = [{"planned_known": False, "running": True, "forming": True, "size_usd": 4e5, "address": "live"}]
+    out = routes.term_twaps(hl + arch + live)
+    assert out[0]["address"] == "live" and len(out) == routes.TERM_TWAPS, [r["address"] for r in out]
+    # _ws_cut: erken iptal — WS'in en eskisi planlanan bitişten ESKİ ama emir başlangıcından YENİ → REST
+    now = dbm.now()
+    hist = [{"time": now - 3 * 3600 + i} for i in range(30)]
+    row = {"order_ts": now - 25 * 3600, "order_min": 1440}
+    assert tl._ws_cut(hist, [row]), "erken iptal: bitiş kaydı görüntünün dışında olabilir"
+    assert not tl._ws_cut(hist[:10], [row]), "dolu olmayan görüntüde her şey var"
+    base = open(os.path.join(ROOT, "app/web/templates/base.html"), encoding="utf-8").read()
+    for frag in ("box.querySelectorAll('.lqov,.pxbadge')", "'sub pxnote'", "PXCHART.ac.abort()", "box._gapT",
+                 "function pxLive(p, ts, lite)", "function pxReload(gap)"):
+        assert frag in base, frag
+    js = open(os.path.join(ROOT, "app/web/static/term.js"), encoding="utf-8").read()
+    for frag in ("function price(p, ms, quiet, noCandle)", "f !== T.feed", "pxLive(r[2], Math.floor(r[1] / 1000), true)",
+                 "if(!window.termLive() && +root.dataset.px > 0) T.px = +root.dataset.px", "pxReload(false)"):
+        assert frag in js, frag
+    i_comp, i_trim = js.index("box.scrollTop += list.scrollHeight - h0"), js.index("while(list.children.length > MAX_ROWS)")
+    assert i_comp < i_trim, "önce telafi, sonra kırpma"
+    print("✅ 2. tur) emirsiz süren dizi en üstte; erken iptalde REST; grafik katmanı tek, sahte mum yok, çift satır yok,"
+          " okuma yeri sabit, paket başına tek çizim")

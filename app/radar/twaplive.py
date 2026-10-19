@@ -802,8 +802,9 @@ CLOSE_REST_MAX = 1          # tur başına en çok bu kadar REST twapHistory (a�
 
 
 def _ws_cut(hist, rows: list[dict]) -> bool:
-    """WS görüntüsü dolu (WS_HIST_N) ve en eski kaydı bu satırların planlanan bitişinden YENİ mi: bitiş kaydı WS'te
-    olamaz (yoğun TWAP'çı: 30 kayıt birkaç saati kapsıyor). O zaman REST geçmişine bakılır."""
+    """WS görüntüsü dolu (WS_HIST_N) ve en eski kaydı bu satırların emir BAŞLANGICINDAN yeni mi: bitiş kaydı (ya da
+    erken iptal kaydı — iptal anında yazılır, planlanan bitişte değil) görüntünün dışında kalmış olabilir → REST.
+    Yalnız WS'te BULUNAMAYAN satırlar için sorulur (inceleme 18.10: planlanan bitişle kıyas erken iptali kaçırıyordu)."""
     if not isinstance(hist, (list, tuple)) or len(hist) < WS_HIST_N:
         return False
     times = []
@@ -815,8 +816,8 @@ def _ws_cut(hist, rows: list[dict]) -> bool:
             continue
     if not times:
         return False
-    end = min(int(r["order_ts"]) + int(float(r.get("order_min") or 0) * 60) for r in rows)
-    return min(times) > end
+    start = min(int(r["order_ts"]) for r in rows)
+    return min(times) > start
 
 
 async def close_stale(collector, ts: int, client=None) -> int:
@@ -843,27 +844,35 @@ async def close_stale(collector, ts: int, client=None) -> int:
     for r in rows:
         by_addr.setdefault(r["address"], []).append(r)
     rest_left = CLOSE_REST_MAX
+
+    def _hit(hist, r):
+        if hist is None:
+            return None
+        h = next((o for o in parse_twap_orders(hist, r["coin"], r["side"], 0, ts)
+                  if abs(int(o.get("started_ts") or 0) - int(r["order_ts"])) <= 2), None)
+        return None if (h is None or h["status"] == "activated") else h
+
     for addr, rs in by_addr.items():
         CLOSE["asked"] += 1
         hist = await collector.fetch_twap_history(addr)
-        if client is not None and rest_left > 0 and _ws_cut(hist, rs):
+        hits = {id(r): _hit(hist, r) for r in rs}
+        missed = [r for r in rs if hits[id(r)] is None]
+        if client is not None and rest_left > 0 and missed and _ws_cut(hist, missed):
             rest_left -= 1
             CLOSE["rest"] += 1
             try:
                 full = await asyncio.wait_for(client.info({"type": "twapHistory", "user": addr}, retries=1,
                                                           priority="low"), 8)
                 if isinstance(full, list):
-                    hist = full
+                    for r in missed:
+                        hits[id(r)] = _hit(full, r)
             except Exception as e:                      # noqa: BLE001 — WS görüntüsüyle devam (bulunamaz → sonra)
                 log.debug("twapHistory REST %s: %s", addr[:10], e)
         async with db() as conn:
             for r in rs:
                 pk = (r["coin"], r["address"], r["side"], r["first_ts"])
-                hit = None
-                if hist is not None:
-                    hit = next((o for o in parse_twap_orders(hist, r["coin"], r["side"], 0, ts)
-                                if abs(int(o.get("started_ts") or 0) - int(r["order_ts"])) <= 2), None)
-                if hit is None or hit["status"] == "activated":
+                hit = hits[id(r)]
+                if hit is None:
                     CLOSE["miss"] += 1
                     await conn.execute("UPDATE twap_runs SET lookup_ts=? WHERE coin=? AND address=? AND side=?"
                                        " AND first_ts=?", (ts, *pk))

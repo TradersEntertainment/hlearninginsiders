@@ -1354,6 +1354,8 @@ _EMPTY_TEXT = {
     "below_floor": "👥 {floor} üstü tek işlem yok — hacim küçük parçalardan gelmiş",
     "no_trades": "👥 Bu pencerede işlem görülmedi (canlı bant)",
     "stream_gap": "👥 Adres kırılımı yok — canlı akış bu pencerede kopuktu, işlemler bilinmiyor",
+    "sub_late": "👥 Adres kırılımı yok — coin pencerenin içinde dinlenmeye başladı, öncesindeki işlemler bilinmiyor",
+    "head_cut": "👥 Adres kırılımı yok — pencerenin başı canlı bandın dışında, o kısmın işlemleri bilinmiyor",
     "recording_off": "👥 Adres kırılımı yok — bu sınıfta işlem kaydı kapalı",
     "unknown": "👥 Adres kırılımı yok (dinleme durumu bilinmiyor)",
 }

@@ -73,7 +73,7 @@
       if(d.listened === false) status('off', '○ bu coin canlı akışta dinlenmiyor');
       else if(!d.live) status('off', '○ HL akışı şu an kopuk — veri bilinmiyor');
       else status('on', '● canlı');
-      if(d.px) price(d.px, d.px_ts || Date.now(), true);
+      if(d.px) price(d.px, d.px_ts || 0, true, !d.px_ts);
     });
     es.addEventListener('t', function(e){ trades(JSON.parse(e.data)); });
     es.addEventListener('s', function(e){ flow(JSON.parse(e.data)); });
@@ -95,7 +95,9 @@
   }
 
   // ---- fiyat: üst bant, sekme başlığı, grafiğin son mumu ----
-  function price(p, ms, quiet){
+  // `noCandle`: işlem olmayan fiyat (sayfanın mark'ı / eski canlı fiyat) — üst bant yazılır, mum OYNAMAZ (yoksa "şimdi"
+  // damgalı sahte fiyat son mumu uzatıp atlanmış saat sanılıyor, grafik her yenilemede yeniden çekiliyordu).
+  function price(p, ms, quiet, noCandle){
     p = +p;
     if(!(p > 0)) return;
     var prev = T.px;
@@ -116,7 +118,7 @@
       c.className = ch > 0 ? 'long' : (ch < 0 ? 'short' : 'dim');
     }
     document.title = (T.tpre || '') + T.sym + ' ' + px(p) + (T.tsuf || '') + ' · HL Radar';   // 🐋/🚨 ve 📅 kalsın
-    if(typeof pxLive === 'function') pxLive(p, Math.floor((ms || Date.now()) / 1000));
+    if(!noCandle && ms && typeof pxLive === 'function') pxLive(p, Math.floor(ms / 1000));
     if(!T.distT) T.distT = setTimeout(function(){ T.distT = null; distances(); }, 800);
   }
 
@@ -129,6 +131,7 @@
     if(!list) return;
     if(d.init && list.dataset.srv) { list.textContent = ''; delete list.dataset.srv; }
     var keep = box && box.scrollTop > 4, h0 = list.scrollHeight;
+    T.feed = list;
     var frag = document.createDocumentFragment();
     for(var i = rows.length - 1; i >= 0; i--){
       var r = rows[i];
@@ -137,10 +140,10 @@
       frag.appendChild(tradeRow(r, !d.init));
     }
     list.insertBefore(frag, list.firstChild);
-    while(list.children.length > MAX_ROWS) list.removeChild(list.lastChild);
-    if(keep && box) box.scrollTop += list.scrollHeight - h0;   // okuyan kullanıcının yeri kaymasın
+    if(keep && box) box.scrollTop += list.scrollHeight - h0;   // okuyan kullanıcının yeri kaymasın (ÖNCE telafi:
+    while(list.children.length > MAX_ROWS) list.removeChild(list.lastChild);   // alttan kırpılan satır yeri oynatmaz)
     // canlı mum paketin HER işlemini görsün (yalnız sonuncusu değil: paket içi tepe / dip kaybolmasın)
-    if(typeof pxLive === 'function') rows.forEach(function(r){ pxLive(r[2], Math.floor(r[1] / 1000)); });
+    if(typeof pxLive === 'function') rows.forEach(function(r){ pxLive(r[2], Math.floor(r[1] / 1000), true); });
     var last = rows[rows.length - 1];
     price(last[2], last[1]);
     var cnt = $('#tcount');
@@ -174,7 +177,7 @@
   function flow(d){
     T.flowSeen = true;
     if(d.listened != null) T.listened = d.listened;
-    if(d.px) price(d.px, d.px_ts || Date.now(), true);
+    if(d.px) price(d.px, d.px_ts || 0, true, !d.px_ts);
     if(d.live === false) status('off', '○ HL akışı şu an kopuk — veri bilinmiyor');
     else if(T.listened !== false && T.es) status('on', '● canlı');
     // Ölçüm yoksa (dinlenmiyor / akış kopuk) $0 yazılmaz: "—" ve nedeni (ölçülü dil: veri yoksa bilinmiyor)
@@ -322,7 +325,8 @@
          seq: +root.dataset.seq || 0, prev: +root.dataset.prev || 0, px: +root.dataset.px || 0,
          tpre: root.dataset.tpre || '', tsuf: root.dataset.tsuf || '',
          sizes: [], n: 0, book: null, own: null, es: null, fail: 0};
-    if(T.px) price(T.px, Date.now(), true);
+    if(T.px) price(T.px, 0, true, true);
+    T.feed = $('#tfeed');
     document.querySelectorAll('#tfeed .tr[data-usd]').forEach(function(r){ T.sizes.push(+r.dataset.usd); });
     connect();
   }
@@ -334,8 +338,19 @@
     if(root && root !== T.root){
       T.root = root; T.prev = +root.dataset.prev || T.prev;
       T.tpre = root.dataset.tpre || ''; T.tsuf = root.dataset.tsuf || '';   // 🚨 yenilemede değişebilir
+      // akış akmıyorken sunucunun yeni fiyatı esas (eski canlı fiyat üst bandı / başlığı / mesafeleri donduruyordu)
+      if(!window.termLive() && +root.dataset.px > 0) T.px = +root.dataset.px;
     }
-    if(T.px) price(T.px, Date.now(), true);
+    // işlem bandı sunucudan yeniden geldiyse (akış yokken nakledilmedi) sıra onun sırasına çekilir — yoksa akış
+    // geri gelince aynı işlemler ikinci kez eklenirdi
+    var f = document.getElementById('tfeed');
+    if(f && f !== T.feed){
+      T.feed = f;
+      if(root) T.seq = Math.max(T.seq, +root.dataset.seq || 0);
+      T.sizes = [];
+      f.querySelectorAll('.tr[data-usd]').forEach(function(r){ T.sizes.push(+r.dataset.usd); });
+    }
+    if(T.px) price(T.px, 0, true, true);
     distances();
   };
   // akış GERÇEKTEN akıyor mu (base.html yumuşak yenilemesi canlı panelleri yalnız o zaman nakleder)
@@ -344,7 +359,7 @@
     if(!T) return;
     if(document.hidden){ T.hiddenAt = Date.now(); return; }
     // gizliyken akış kapandıysa arada akmayan işlemler grafikte yok: bir dakikayı aştıysa mumlar yeniden çekilir
-    if(!T.es && T.hiddenAt && Date.now() - T.hiddenAt > 60000 && typeof pxReload === 'function') pxReload();
+    if(!T.es && T.hiddenAt && Date.now() - T.hiddenAt > 60000 && typeof pxReload === 'function') pxReload(false);
     T.hiddenAt = 0;
     if(!T.es) connect();
   });

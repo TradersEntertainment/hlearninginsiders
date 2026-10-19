@@ -468,8 +468,10 @@ async def report(coin: str, t0: int, t1: int, cfg=None) -> dict:
     rows: list[dict] = []
     tape_why = ""                                   # pencere son 15 dk'daysa ama bant kullanılmadıysa nedeni
     if tw is None and t0 >= ts_now - tape.WINDOW - tape.CLAMP_SEC:
-        tape_why = ("not_listening" if listen is False else
-                    "restart" if t0 < tape.STARTED else
+        tape_why = ("future" if t0 >= ts_now else
+                    "not_listening" if listen is False else
+                    "restart" if t0 < tape.STARTED <= t1 else
+                    "before_boot" if t1 < tape.STARTED else
                     "unknown" if listen is None else "short")
     if tw is not None:
         src = "tape"
@@ -515,7 +517,7 @@ async def report(coin: str, t0: int, t1: int, cfg=None) -> dict:
         # bant eksiksiz mi (kopukluk / pencere içinde dinlenmeye başlama yok) — değilse "BÜTÜN işlemler" denmez;
         # hiç kapsamadıysa (akış kopuk) ölçüm yok: $0 / "işlem görülmedi" yazılmaz
         "tape_full": bool(tw and tw.get("full")), "tape_unknown": bool(tw and tw.get("unknown")),
-        "sub_since": (tw or {}).get("sub_since") or 0,
+        "sub_since": (tw or {}).get("sub_since") or 0, "head_cut": (tw or {}).get("head_cut") or 0,
         "floor": floor_of(cfg, coin), "listening": listen,
         "gaps": gaps["gaps"], "gap_sec": gaps["gap_sec"], "boot": gaps["boot"],
         "restart_in": gaps["restart_in"], "before_boot": gaps["before_boot"],
@@ -688,7 +690,13 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
     if not rows:
         # Bant kopukken / pencere içinde dinlenmeye başlanmışken "işlem görülmedi" ölçüm değildir (inceleme 18.10:
         # hacim rekoru mesajının altında "işlem görülmedi" yazıyordu); kayıt kapalı sınıfta "taban üstü yok" da değil.
-        empty = ("stream_gap" if tape_src and (rep.get("tape_unknown") or not rep.get("tape_full", True)) else
+        # akış kopukluğu: bantta kopukluk / bilinmeyen, kayıtta ölçülen kopukluk ya da pencere içinde açılış (deploy
+        # boşluğu ölçülmez). Pencere TAMAMEN açılıştan önceyse önceki süreç kaydetti → kopukluk sayılmaz.
+        gap = ((rep.get("tape_unknown") or rep.get("gaps")) if tape_src else
+               (rep.get("gap_sec") or rep.get("restart_in")))
+        empty = ("stream_gap" if gap else
+                 "sub_late" if tape_src and rep.get("sub_since") else
+                 "head_cut" if tape_src and rep.get("head_cut") else
                  "no_trades" if listen and tape_src else
                  "not_listening" if listen is False else
                  "unknown" if listen is None else
@@ -704,7 +712,8 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
         "n_addr": int(rep.get("n_addr") or len(rows)), "buy": rep["buy"], "sell": rep["sell"],
         "net": rep["buy"] - rep["sell"], "source": rep.get("source") or "fills",
         "gap_sec": int(rep.get("gap_sec") or 0),
-        "partial": bool((tape_src and not rep.get("tape_full", True)) or (not tape_src and rep.get("gap_sec"))),
+        "partial": bool((tape_src and not rep.get("tape_full", True))
+                        or (not tape_src and (rep.get("gap_sec") or rep.get("restart_in")))),
         "taker_pct": None,
         "top": head, "listening": listen, "floor": floor,
         "probed": n_probed, "probe_err": probe_err, "empty_reason": empty,

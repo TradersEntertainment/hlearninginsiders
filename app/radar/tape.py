@@ -132,11 +132,15 @@ def window(coin: str, t0: int, t1: int, now_ts: int | None = None) -> dict | Non
     sub_gap = max(0, min(sub, hi) - lo * BUCKET) if sub > lo * BUCKET + 5 else 0
     gap_sec = sum(b - a for a, b in gaps)
     covered = max(0, hi - lo * BUCKET - gap_sec - sub_gap)
+    head = lo * BUCKET - t0                             # bandın başına çekilen kısım (CLAMP_SEC) + kova yuvarlaması
+    head_cut = head if head > BUCKET else 0             # kova yuvarlamasından fazlası: o baştaki işlemler bilinmiyor
     return {"rows": [{"address": a, "buy": r[0], "sell": r[1], "n": r[4], "tk": r[2], "known": r[0] + r[1],
                       "twap": r[3]} for a, r in addrs.items()],
             "lo": lo * BUCKET, "hi": hi, "gaps": gaps, "gap_sec": gap_sec,
             "sub_since": sub if sub_gap else 0, "sub_gap": sub_gap,
-            "live_down": down_now and live, "full": not gaps and not sub_gap and not (down_now and live),
+            "head_cut": head_cut,
+            "live_down": down_now and live,
+            "full": not gaps and not sub_gap and not head_cut and not (down_now and live),
             "unknown": (down_now and live) or covered <= 0,
             "buy": sum(b.buy for b in q), "sell": sum(b.sell for b in q),
             "n": sum(b.n for b in q), "twap_usd": sum(b.twap for b in q), "other": sum(b.other_addr for b in q)}

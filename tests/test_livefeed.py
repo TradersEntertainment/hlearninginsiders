@@ -283,7 +283,7 @@ def test_terminal_page_and_wiring():
     st2, h2 = asyncio.run(_get_missing())
     assert st2 == 200 and 'class="termpage"' not in h2 and 'id="term"' not in h2, "coin yoksa terminal yok"
     base = open(os.path.join(ROOT, "app/web/templates/base.html"), encoding="utf-8").read()
-    assert "function pxLive(p, ts)" in base and "PXCHART.series.update(L)" in base
+    assert "function pxLive(p, ts, lite)" in base and "PXCHART.series.update(L)" in base
     assert "termAfterRefresh" in base and "[data-sid]" in base and "localization: {locale: 'tr-TR'}" in base
     assert "section.term .nw{display:none}" in base and "--term-top" in base and not re.search(r"body\.term(?!page)", base)
     js = open(os.path.join(ROOT, "app/web/static/term.js"), encoding="utf-8").read()

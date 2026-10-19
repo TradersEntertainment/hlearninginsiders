@@ -1075,6 +1075,7 @@ function pxTheme(){
 
 function pxDestroy(){
   if(PXCHART && PXCHART.ro){ try{ PXCHART.ro.disconnect(); }catch(e){} }
+  if(PXCHART && PXCHART.ac){ try{ PXCHART.ac.abort(); }catch(e){} }   // kutudaki dinleyiciler (eski drawLiq) sussun
   if(PXCHART && PXCHART.chart){ try{ PXCHART.chart.remove(); }catch(e){} }
   PXCHART = null;
 }
@@ -1101,24 +1102,30 @@ async function initPriceChart(){
 }
 
 // Canlı mum bir saati atladıysa (sekme gizliydi / akış koptu / mum önbelleği bayattı) arada akmayan işlemler grafikte
-// yok: mumlar yeniden çekilir (en çok 3 kez, artan aralıkla) — uydurma OHLC kalmasın.
-// Dönüş: false = vazgeçildi (3 deneme bitti; çağıran eski davranışa döner), aksi hâlde yeniden çekiliyor / bekliyor.
-function pxReload(){
+// yok: mumlar yeniden çekilir (en çok dakikada bir) — uydurma OHLC kalmasın. Yeniden çekme son mumu ilerletmediyse
+// (HL'de o saatlerin mumu yok: işlemsiz HIP-3 coin) o boşluk "dolmaz" sayılır, bir daha çekilmez (inceleme 18.10:
+// her yenilemede grafik sıfırlanıyordu). `gap` false: sekmeye dönüş (aynı saatte kaçan tepe/dip için), boşluk sayılmaz.
+// Dönüş: false = vazgeçildi (çağıran eski davranışa döner), aksi hâlde yeniden çekiliyor / bekliyor.
+function pxReload(gap){
   var box = document.getElementById('pxchart');
   if(!box) return false;
   if(box._loading) return true;
-  var n = (box._reloads || 0) + 1;
-  if(n > 3) return false;
-  if(box._reloadAt && Date.now() - box._reloadAt < 60000 * Math.pow(2, n - 2)) return true;
-  box._reloads = n;
+  var lastT = PXCHART && PXCHART.last ? PXCHART.last.time : 0;
+  if(gap && lastT && box._gapT === lastT) return false;
+  if(box._reloadAt && Date.now() - box._reloadAt < 60000) return gap ? true : false;
   box._reloadAt = Date.now();
   pxDestroy();
-  initPriceChart();
+  initPriceChart().then(function(){
+    if(gap && lastT && PXCHART && PXCHART.box === box && PXCHART.last.time <= lastT) box._gapT = PXCHART.last.time;
+  });
   return true;
 }
 
 async function _initPriceChart(box){
   pxDestroy();
+  // aynı kutuda yeniden kurulum (pxReload): önceki kurulumun katmanı, rozetleri ve notu kalmasın (üst üste binerdi)
+  box.querySelectorAll('.lqov,.pxbadge').forEach(function(e){ e.remove(); });
+  if(box.parentNode) box.parentNode.querySelectorAll('.pxnote').forEach(function(e){ e.remove(); });
   if(typeof LightweightCharts === 'undefined') return false;  // defer henüz gelmedi
   var sym = box.dataset.sym || '';
   var msg = document.getElementById('pxmsg');
@@ -1204,7 +1211,7 @@ async function _initPriceChart(box){
   }
   if(skipped){
     var note = document.createElement('p');
-    note.className = 'sub';
+    note.className = 'sub pxnote';
     note.style.margin = '8px 0 0';
     note.textContent = '· ' + skipped + ' seviye fiyattan çok uzak olduğu için ' +
       'grafiğe sığmadı (mumlar okunmaz hâle gelmesin) — hepsi aşağıdaki ' +
@@ -1279,6 +1286,7 @@ async function _initPriceChart(box){
   //     Overlay DOM: pointer-events yok, grafik etkileşimi bozulmaz; ölçek
   //     değişince (kaydırma/zoom/boyut/tema) yeniden çizilir. ---
   var ov = null, ro = null, drawLiq = null;
+  var ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
   if(d.liq_bars && d.liq_bars.length){
     ov = document.createElement('div');
     ov.className = 'lqov';
@@ -1323,10 +1331,11 @@ async function _initPriceChart(box){
     var schedule = function(){ if(pend) return; pend = true; requestAnimationFrame(drawLiq); };
     chart.timeScale().subscribeVisibleLogicalRangeChange(schedule);
     if(window.ResizeObserver){ ro = new ResizeObserver(schedule); ro.observe(box); }
+    var lo = ac ? {passive: true, signal: ac.signal} : {passive: true};
     ['wheel', 'pointerup', 'touchend'].forEach(function(ev){
-      box.addEventListener(ev, schedule, {passive: true});
+      box.addEventListener(ev, schedule, lo);
     });
-    box.addEventListener('pointermove', function(e){ if(e.buttons) schedule(); }, {passive: true});
+    box.addEventListener('pointermove', function(e){ if(e.buttons) schedule(); }, lo);
     requestAnimationFrame(function(){ requestAnimationFrame(drawLiq); });
     var lg = box.parentNode.querySelector('.pxlegend');
     if(lg) lg.hidden = false;
@@ -1334,7 +1343,7 @@ async function _initPriceChart(box){
 
   chart.timeScale().fitContent();
   var lc = d.candles[d.candles.length - 1];
-  PXCHART = {chart: chart, series: s, box: box, ov: ov, ro: ro, redraw: drawLiq,
+  PXCHART = {chart: chart, series: s, box: box, ov: ov, ro: ro, ac: ac, redraw: drawLiq,
              last: {time: lc.t, open: lc.o, high: lc.h, low: lc.l, close: lc.c},
              step: d.candles.length > 1 ? (d.candles[d.candles.length - 1].t - d.candles[d.candles.length - 2].t) : 3600};
   return false;
@@ -1342,17 +1351,21 @@ async function _initPriceChart(box){
 
 // 📟 Canlı mum (terminal): son mum gelen işlem fiyatıyla büyür, saat dönünce yenisi açılır. Mumlar chart.json'dan
 // (1 sa) bir kez gelir; yalnız SON mum canlıdır — geçmiş mumlar yeniden çizilmez.
-function pxLive(p, ts){
+// `lite`: paket içi işlem — yalnız son mumun değerleri işlenir (saat dönerse eski mum kapanır); çizim paketin son
+// işleminde bir kez (her satırda liq katmanını yeniden kurmak WS yoğunluğunda ana iş parçacığını yoruyordu).
+function pxLive(p, ts, lite){
   if(!PXCHART || !PXCHART.series || !PXCHART.last || !(p > 0)) return;
   var L = PXCHART.last, st = PXCHART.step || 3600;
   var bt = Math.floor(ts / st) * st;
   if(bt < L.time) return;
-  if(bt > L.time + st && pxReload() !== false) return;   // arada mum(lar) atlandı: uydurmak yerine yeniden çek
+  if(bt > L.time + st && pxReload(true) !== false) return;   // arada mum(lar) atlandı: uydurmak yerine yeniden çek
   if(bt === L.time){
     L.high = Math.max(L.high, p); L.low = Math.min(L.low, p); L.close = p;
   } else {
+    if(lite){ try{ PXCHART.series.update(L); }catch(e){} }
     L = PXCHART.last = {time: bt, open: L.close, high: Math.max(L.close, p), low: Math.min(L.close, p), close: p};
   }
+  if(lite) return;
   try{ PXCHART.series.update(L); }catch(e){}
   if(PXCHART.redraw) PXCHART.redraw();
 }
