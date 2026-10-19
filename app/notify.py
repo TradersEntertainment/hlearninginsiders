@@ -35,6 +35,8 @@ KINDS: dict[str, tuple[str, str, str]] = {
     # BİLEREK PUBLIC_KINDS'te yok (adres bazlı takip; satılabilir bota gitmez). Ayar alanı YOK (boş): kullanıcı
     # 13.10 ayar sayfası istemiyor — yer HIDDEN_TWAP_CHAT_ID, kapatmak HIDDEN_TWAP_ENABLED=0 (Railway değişkeni)
     "htwap":     ("",                 "🕵️ Gizli TWAP (emirsiz dilimleme)",    "high"),
+    # 🏓 dar koridor: ölçüm bildirimi, PUBLIC_KINDS'te YOK; ayar alanı yok — yer RANGE_CHAT_ID, kapatmak RANGE_ENABLED=0
+    "koridor":   ("",                 "🏓 Dar koridor (RANGE_CHAT_ID)",       "normal"),
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "sticky":    ("notify_sticky",    "🧲 Yapışkan duvar (kripto kanalı)",    "high"),
     "acct":      ("notify_acct",      "👤 İzlenen hesaplar (hesap grubu)",     "high"),

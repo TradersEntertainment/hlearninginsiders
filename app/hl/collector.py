@@ -14,7 +14,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
-from ..radar import livefeed, openmove, stickywall, tape, twapfast, twaplive, twaploose
+from ..radar import koridor, livefeed, openmove, stickywall, tape, twapfast, twaplive, twaploose
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -425,6 +425,11 @@ class Collector:
                 openmove.observe(coin, px, sz, ts, tid)
             except Exception:
                 openmove.REG.errors += 1
+            # 🏓 dar koridor: 1 dk mum (yalnız evrendeki coin). Sıcak yol: senkron, I/O yok (app/radar/koridor.py)
+            try:
+                koridor.observe(coin, px, ts)
+            except Exception:
+                koridor.STATS["errors"] += 1
             # HL trade'inde `side` AGRESÖRÜ söyler: "B" = alıcı süpürdü, "A" = satıcı.
             # İnsider sinyalinde bilgi taşıyan taraf pasif maker değil, fiyatı
             # süpüren taker'dır — bu yüzden adres perspektifinden kaydediyoruz.

@@ -67,6 +67,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/hesaplar` | 🔂 Dilimli alım-satım durumu + 👤 izlenen hesapların son durumu: pozisyonlar, fiyatın dibindeki duvar, bekleyen kapatma / stop emirleri, son 1 saatin gerçekleşen dolumları |
 | `/alarm SNDK 480` · `/alarm SNDK %3` · `/alarm 0x…` | 🚨 Uyandırma alarmı: fiyat seviyesine gelince / ±%X oynayınca / hesabın pozisyonu liq'e %2 kalınca ya da kapanınca seni **Telegram'dan arar** (Rahatsız Etme'de bildirim gelmez, arama gelir). `/alarmlar` (🗑 ile kaldır) · `/alarm_test` · `/uyandim` |
 | `/acilis` | 🔔 Açılışın en hareketlileri: açılış penceresindeyse anlık sıralama, değilse son rapor (raporlar ABD açılışından 5 ve 30 dk sonra hisse kanalına) |
+| `/koridor` | 🏓 Şu an açık dar koridorlar (PROPR coinleri): kenarlar, genişlik, temas, başlangıç — ölçüm, sinyal değil |
 | `/5dk` · `/15dk` · `/5dk 15:30` | ⏱ Şimdiden (ya da verilen TSİ saatten) N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu ara durumu gösterir (haber saatleri için) |
 | `/seans` · `/seans NVDA` | 🕰 ABD seans karnesi (XYZ100 + SP500 tek mesaj; ya da tek ABD hissesi): bugün Asya / Londra / New York ne yaptı, Londra Asya tepesini/dibini süpürdü mü, geçmişte bu şekilde NY ne yaptı (taban oran ve z ile), getiri hangi seansta birikti, oynaklık ilişkisi — sayfa `/seans` |
 | `/strat` · `/strat KURAL` | 🧪 Strateji laboratuvarı (salt okunur): kayıtlı kurallar, durum, olay sayısı, kayıttan SONRAKİ kâğıt üstü ölçüm (net, %95 GA, küme sayısı) — betimleme, karar yalnız planlı bakışta · sayfa `/lab` |
@@ -2274,6 +2275,40 @@ karşılaştırmada şansla ~1.3 beklenir). Tutarlı olan **oynaklık**, AMD'nin
 geniş NY (Asya→NY ρ: XYZ100 +0.42 z 3.5, SP500 +0.33 z 2.7, NVDA +0.45 z 3.8 — düzeltme sonrası
 da), Londra→NY ilişki yok. Getiri gece birikmiş (XYZ100 Asya +%3.6, Londra −%0.6, NY −%0.3; SP500
 +%3.9 / +%1.6 / −%1.1) ama |t| < 2 — betimleme, kanıt değil.
+
+## 🏓 Dar koridor (`RANGE_CHAT_ID`)
+
+Kullanıcı (19.10, PONS ekranı): "böyle coinlerde bi tık hacimli olanlar … sürekli gitgel yapanlar dar bi alanda …
+bunu tarayıp … bildiren bir bot" → araştırmadan sonra "dar bant botunu kuralım". `app/radar/koridor.py`.
+
+**Ne yapar:** PROPR'da listeli, 24 sa hacmi ≥ `RANGE_MIN_VOL_USD` ($5M) coinlerde fiyat dar bir koridorda kenardan
+kenara gidip gelince **bir kez** yazar: kenarlar, genişlik, her kenardaki temas sayısı, yaş, eğim (yatay / yükselen /
+düşen), hacim ve tek satır geçmiş ölçüm. Koridor kırılınca (kapanış kenarın genişliğin %25'i dışında) tek "✂️ kırıldı"
+notu (`RANGE_BREAK_NOTE`). Mesaj YALNIZ `RANGE_CHAT_ID`'ye; boşsa hiç gönderilmez (ana sohbete düşmez), ölçüm ve
+`/koridor` sürer. Ayar sayfası yok — eşikler yalnız Railway değişkeni (`.env.example`).
+
+**Dedektör** (araştırmanın "pivot" tasarımı — insanın çizdiği gibi): zigzag dönüşleri (eşik: max(%0,25, 3 × son 300
+dk'nın medyan mum aralığı)); son ≤ 300 dk'nın tepe ve dip dönüşlerinden iki çizgi; her kenara ≥ `RANGE_MIN_TOUCHES`
+(4) **sıralı** temas (alt, üst, alt… — genişliğin %15'i içinde), hiçbir kapanış kenarın %25 W dışında değil, çizgiler
+paralel, dakikaların ≥ %70'inde işlem, ilk temastan ≥ `RANGE_MIN_MINUTES` (60) dk, genişlik %0,7–2
+(`RANGE_MIN/MAX_WIDTH_PCT`). Mumlar botun zaten aldığı WS işlemlerinden (ek HL isteği yok); açılışta ve WS kopukluğundan
+sonra son 600 dk bir kez HL'den (düşük şerit, coin başına ~31 ağırlık). Açık koridorlar kv'de: yeniden başlatmada aynı
+koridor ikinci kez gelmez.
+
+**Araştırma (19.10, ölçülen — tahmin değil):** 131 PROPR coini, 1 dk mum 3,4 gün + 5 dk mum 17 gün, üç bağımsız
+dedektör, her biri ayrıca doğrulandı ve rastgele-yürüyüş kopyalarıyla karşılaştırıldı:
+- Bu tür koridorlar rastgele fiyatta da aynı sıklıkta çıkıyor (gerçek / rastgele ≈ 0,9–1,2).
+- Gerçek zamanlı fark edildikten sonra ortanca ömür ~25 dk; 60 dk sonra %18–31'i sağlam.
+- Kenardan alım-satımın (alt kenarda al, üstte sat; stop %30 W dışarıda) komisyon öncesi ortalaması ≈ 0, rastgele
+  fiyatla aynı; %0,06–0,09 komisyonla −%0,05…−%0,10. Hiçbir genişlik / hacim / saat dilimi bunu tutarlı biçimde aşmadı.
+- Bu kuralla (≥ 4 temas, ≥ $5M, ≥ %0,7) günde ~8–11 bildirim, ~20 coinden; aynı kural rastgele kopyalarda günde ~14.
+- PONS 19.10: 10:36 (0,2614–0,2644, 4+4 temas) ve 12:15 (0,2621–0,2647) bildirimleri; ikisi de 11:02 / 12:17'de yukarı
+  kırıldı. Çizilen yükselen kanal ancak sabahın tamamı geriye dönük çizilince görünüyor.
+Bu yüzden mesaj bir **gözlemdir**: "fırsat", yön ya da giriş / çıkış yazmaz; geçmiş ölçümü tek satırla söyler.
+
+**Kör nokta, açıkça:** yalnız WS'te dinlenen coinler; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
+bot yeniden başladıktan sonra ilk geri doldurma bitene kadar (~1 dk) koridor aranmaz; xyz hisselerinin seans dışı
+saatleri seyrek işlemli (%70 işlem şartı çoğunu eler); kenar / temas mum (işlem fiyatı) üzerinden, emir defteri değil.
 
 ## 🔔 Açılışın En Hareketlileri (hisse kanalı)
 

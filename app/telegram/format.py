@@ -398,6 +398,7 @@ TASK_TR = {
     "sim": "liq simülasyonu", "slicewatch": "dilimli alım-satım izleyici",
     "seans": "ABD seans karnesi (mum arşivi)", "wake": "uyandırma alarmı",
     "openmove": "açılışın en hareketlileri",
+    "koridor": "dar koridor",
     "lab": "strateji laboratuvarı",
     "propr": "PROPR listesi (yalnız ekler)",
 }
@@ -2979,6 +2980,8 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
     ("📈 Hisse · seans · bilanço", [
         ("/acilis", "🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor · eş: /açılış /acılıs",
          False),
+        ("/koridor", "🏓 şu an açık dar koridorlar (PROPR, kenarlar · genişlik · temas · yaş; ölçüm, sinyal değil)"
+         " · eş: /koridorlar /bant /dar", False),
         ("/5dk · /15dk", "⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu"
          " · eş: /5 · /5 dk · /10dakika", False),
         ("/5dk 15:30", "⏱ ölçümü haber saatine kur (TSİ; 3 dk geriye de gider)", False),
@@ -3088,6 +3091,7 @@ def help_text() -> str:
         "/strat — 🧪 strateji laboratuvarı: kayıtlı kurallar, olay sayısı, kayıttan sonraki ölçüm (salt okunur) · /strat KURAL ayrıntı\n"
         "/alarm — 🚨 uyandırma: gece bir şey olursa seni Telegram'dan ARAR (/alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES) · /alarmlar · /alarm_test · /uyandim\n"
         "/acilis — 🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor (rapor 5 dk ve 30 dk'da hisse kanalına)\n"
+        "/koridor — 🏓 şu an açık dar koridorlar (PROPR coinleri; ölçüm, sinyal değil)\n"
         "/5dk · /15dk — ⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete · /5dk 15:30 haber saatine kur (3 dk geriye de gider) · ölçerken 📊 tuşu\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için bildirimdeki 🛑 tuşu ya da /birak_N; ↩️ geri alınabilir)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
@@ -3916,3 +3920,57 @@ def twap_end(m: dict, ctx: dict) -> str:
     lines.append(pr)
     lines.append(DISCLAIMER)
     return "\n".join(lines)
+
+
+# ---------------- 🏓 dar koridor (app/radar/koridor.py) ----------------
+
+def _slope_txt(slope_log_min: float, width: float) -> str:
+    """Eğim %/sa + yön (yatay: 1 saatte genişliğin %10'undan az kayıyor)."""
+    ph = (math.exp(slope_log_min * 60) - 1) * 100
+    kind = "yatay" if abs(slope_log_min * 60) < 0.1 * width else ("yükselen" if ph > 0 else "düşen")
+    return f"{kind} (eğim {ph:+.2f}%/sa)"
+
+
+def koridor_alert(coin: str, c: dict, vol: float | None) -> str:
+    """İlk 4 satır: ne + genişlik + yaş / PROPR / kenarlar + temas + şimdi / eğim + hacim. Ölçüm; öneri yok."""
+    from .. import assets
+    sym = esc(assets.label(coin))
+    lines = [f"🏓 <b>{sym}</b> · dar koridor %{c['W'] * 100:.2f} · {dur_txt(int(c['age_min']) * 60)} sürüyor"]
+    if is_listed(coin):
+        lines.append(PROPR_NOTE)
+    lines.append(f"alt {px5(c['lower'])} ({c['nL']} temas) · üst {px5(c['upper'])} ({c['nU']} temas)"
+                 f" · son kapanış {px5(c['close'])}")
+    lines.append(f"{_slope_txt(c['slope'], c['W'])} · 24s hacim {usd(vol) if vol else 'bilinmiyor'}"
+                 f" · dakikaların %{c.get('act_pct', 0)}'inde işlem")
+    lines.append(f"başlangıç {tr_time(int(c['start_ts']))} TSİ · bildirim {tr_time(int(c['t0']) + 60)} TSİ")
+    from ..radar.koridor import HIST_LINE
+    lines.append(HIST_LINE)
+    return "\n".join(lines) + DISCLAIMER
+
+
+def koridor_break(coin: str, c: dict, why: str, bar: list) -> str:
+    from .. import assets
+    sym = esc(assets.label(coin))
+    dx = (int(bar[0]) - int(c["t0"])) / 60
+    edge = math.exp((c["u0"] if why == "up" else c["l0"]) + c["slope"] * dx)
+    dist = (bar[4] / edge - 1) * 100
+    life = int(bar[0]) + 60 - int(c["start_ts"])
+    return (f"🏓✂️ <b>{sym}</b> koridoru kırıldı ({'yukarı' if why == 'up' else 'aşağı'}) · {tr_time(int(bar[0]))}"
+            f" TSİ kapanış {px5(bar[4])} — {'üst' if why == 'up' else 'alt'} kenarın %{abs(dist):.2f}"
+            f" {'üstü' if why == 'up' else 'altı'}\nkoridor {dur_txt(life)} sürdü (bildirimden sonra"
+            f" {dur_txt(int(bar[0]) + 60 - int(c['t0']) - 60)})")
+
+
+def koridor_list(rows: list, stats: dict, n_coins: int, n_ready: int, has_chat: bool) -> str:
+    head = (f"🏓 <b>Dar koridorlar</b> · {n_coins} coin izleniyor (PROPR, hacim tabanı üstü) · mumu yeterli: {n_ready}"
+            + ("" if has_chat else " · ⚠️ RANGE_CHAT_ID tanımsız: bildirim gitmiyor"))
+    if not rows:
+        return head + "\nŞu an açık koridor yok." + DISCLAIMER
+    out = [head]
+    for coin, c in rows[:15]:
+        from .. import assets
+        out.append(f"• <b>{esc(assets.label(coin))}</b> %{c['W'] * 100:.2f} · alt {px5(c['lower'])} / üst {px5(c['upper'])}"
+                   f" · {c['nL']}+{c['nU']} temas · başlangıç {tr_time(int(c['start_ts']))}"
+                   + ("" if c.get("sent") else " · (bildirilmedi)"))
+    return "\n".join(out) + DISCLAIMER
+

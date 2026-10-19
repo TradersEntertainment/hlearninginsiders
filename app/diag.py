@@ -805,6 +805,11 @@ async def _subsystems(cfg, state=None) -> list[str]:
     except Exception as e:                             # noqa: BLE001
         out.append(f"  TWAP kayıt kapatma okunamadı ({type(e).__name__}: {e})")
     try:
+        from .radar import koridor
+        out.append("  " + await koridor.diag_line(cfg))
+    except Exception as e:                             # noqa: BLE001
+        out.append(f"  dar koridor okunamadı ({type(e).__name__}: {e})")
+    try:
         from .radar import hiddentwap
         out.append("  " + await hiddentwap.diag_line(cfg))
     except Exception as e:                             # noqa: BLE001

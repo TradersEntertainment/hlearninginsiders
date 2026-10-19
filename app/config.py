@@ -949,6 +949,16 @@ class Config:
         # 🕵️ Gizli TWAP grubu (env-only): gizli TWAP uyarıları YALNIZ buraya (TWAP kanalı/ayna/ana sohbet asla);
         # boşsa gizli TWAP mesajı hiç gönderilmez (ölçüm + 🧪 sürer)
         self.hidden_twap_chat_id = (os.getenv("HIDDEN_TWAP_CHAT_ID", "") or "").strip()
+        # 🏓 Dar koridor (app/radar/koridor.py, kullanıcı 19.10: "dar bant botunu kuralım") — ENV-ONLY, ayar sayfasına
+        # girmez. Chat boşsa mesaj yok (ana sohbete düşmez); ölçüm ve /koridor sürer. Eşikler araştırmanın F2 süzgeci.
+        self.range_chat_id = (os.getenv("RANGE_CHAT_ID", "") or "").strip()
+        self.range_enabled = convert_value("bool", os.getenv("RANGE_ENABLED", "1"))
+        self.range_min_vol_usd = float(os.getenv("RANGE_MIN_VOL_USD", "5000000"))
+        self.range_min_width_pct = float(os.getenv("RANGE_MIN_WIDTH_PCT", "0.7"))
+        self.range_max_width_pct = float(os.getenv("RANGE_MAX_WIDTH_PCT", "2.0"))
+        self.range_min_touches = int(os.getenv("RANGE_MIN_TOUCHES", "4"))
+        self.range_min_minutes = int(os.getenv("RANGE_MIN_MINUTES", "60"))
+        self.range_break_note = convert_value("bool", os.getenv("RANGE_BREAK_NOTE", "1"))
         # 🔸 TWAP yan kanalı (app/radar/twaploose.py, env-only — kullanıcı 14.10): eşikleri biraz gevşetilmiş TWAP
         # bildirimleri. Boş = kapalı. Kanal = ana kanalın kopyaları + ana eşikten kalıp gevşek eşiği geçenler (🔸).
         # Eşikler isteğe bağlı; her biri ana eşikten büyük olamaz (yan kanal ⊇ ana kanal).

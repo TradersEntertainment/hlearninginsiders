@@ -64,7 +64,8 @@ ALLOW = [
 SOURCES = ["app/telegram/format.py", "app/telegram/public.py", "app/telegram/fanout.py", "app/telegram/bot.py",
            "app/radar/liqchart.py", "app/radar/patterns.py",
            "app/radar/cascade.py", "app/radar/scorer.py", "app/radar/anomaly.py", "app/radar/forensics.py",
-           "app/radar/liqattack.py", "app/radar/hourstats.py", "app/earnings/evaluator.py", "app/propr.py"]
+           "app/radar/liqattack.py", "app/radar/hourstats.py", "app/earnings/evaluator.py", "app/propr.py",
+           "app/radar/koridor.py"]
 WEB_SKIP = {"olabilir", "olasılık", "kesin"}            # web sayfalarında bayatlık/kapsam uyarıları çok
 
 

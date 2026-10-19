@@ -523,6 +523,8 @@ class TelegramBot:
             await self._cmd_strat(args, chat_id)          # 🧪 salt okunur: kurallar + kâğıt üstü ölçüm
         elif cmd in ("acilis", "açılış", "acılıs"):
             await self._cmd_open_movers(chat_id)
+        elif cmd in ("koridor", "koridorlar", "bant", "dar"):
+            await self._cmd_koridor(chat_id)
         elif cmd in ("alarm", "alarmlar", "alarm_test", "alarmtest", "uyandim", "uyandım"):
             await self._cmd_alarm(cmd, args, chat_id)   # 🚨 yalnız sahip: gece telefonu çaldırır
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
@@ -853,6 +855,8 @@ class TelegramBot:
             await self._cmd_strat(args, chat_id)          # 🧪 salt okunur: kurallar + kâğıt üstü ölçüm
         elif cmd in ("acilis", "açılış", "acılıs"):
             await self._cmd_open_movers(chat_id)
+        elif cmd in ("koridor", "koridorlar", "bant", "dar"):
+            await self._cmd_koridor(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -887,7 +891,7 @@ class TelegramBot:
             getattr(self.cfg, "sim_chat_id", ""), getattr(self.cfg, "account_chat_id", ""),
             getattr(self.cfg, "twap_mirror_chat_id", ""), getattr(self.cfg, "hidden_twap_chat_id", ""),
             getattr(self.cfg, "twap_loose_chat_id", ""), getattr(self.cfg, "twap_big_chat_id", ""),
-            getattr(self.cfg, "strat_chat_id", ""))
+            getattr(self.cfg, "strat_chat_id", ""), getattr(self.cfg, "range_chat_id", ""))
             if v and str(v).strip()}
 
     def _owner_user_id(self) -> str:
@@ -1503,6 +1507,17 @@ class TelegramBot:
         sctx = self._slice_ctx()
         for sn in slices:
             await self.send(fmt.slice_status(sn, sctx), chat_id)
+
+    async def _cmd_koridor(self, chat_id: str) -> None:
+        """/koridor — 🏓 şu an açık dar koridorlar (bellekten, HL'ye istek yok) + izlenen coin sayısı."""
+        from ..radar import koridor
+        try:
+            await self.send(fmt.koridor_list(koridor.active_rows(), koridor.STATS, len(koridor.ELIGIBLE),
+                                             koridor.ready_count(koridor.params(self.cfg)),
+                                             bool((getattr(self.cfg, "range_chat_id", "") or "").strip())), chat_id)
+        except Exception as e:
+            log.exception("/koridor")
+            await self.send(f"❌ koridor listesi okunamadı: {fmt.esc(e)}", chat_id)
 
     async def _cmd_open_movers(self, chat_id: str) -> None:
         """/acilis — 🔔 açılış penceresindeyse anlık sıralama (canlı akıştan, HL'ye istek yok),
