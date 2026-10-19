@@ -2984,7 +2984,7 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
         ("/koridor", "🏓 şu an açık dar koridorlar (PROPR, kenarlar · genişlik · temas · yaş; ölçüm, sinyal değil)"
          " · eş: /koridorlar /bant /dar", False),
         ("/bosaltma", "🧯 şu an süren sert satış / pozisyon boşaltma bölümleri (cüzdan, kapattıkları, hâlâ açık)"
-         " · eş: /boşaltma /sertsatis", False),
+         " · eş: /boşaltma /sertsatis /sertsatış /unwind", False),
         ("/5dk · /15dk", "⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu"
          " · eş: /5 · /5 dk · /10dakika", False),
         ("/5dk 15:30", "⏱ ölçümü haber saatine kur (TSİ; 3 dk geriye de gider)", False),

@@ -204,11 +204,11 @@ def test_wiring():
             assert v in env, v
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "uw2.db"))
         txt = "\n".join(await diag._subsystems(cfg))
-        assert "🧯 sert satış: UNWIND_CHAT_ID TANIMSIZ" in txt
+        assert "🧯 boşaltma radarı: UNWIND_CHAT_ID TANIMSIZ" in txt
         cfg.unwind_chat_id = "-1"
         await dbm.kv_set(u.STATS_KV, {"coins_vol": 300, "candidates": 4, "probes": 4, "sent_day": 1, "updates": 2,
                                       "done": 1, "active": 0, "rejected": {"pozisyon coine göre küçük": 3}})
-        line = [x for x in "\n".join(await diag._subsystems(cfg)).split("\n") if "sert satış:" in x][0]
+        line = [x for x in "\n".join(await diag._subsystems(cfg)).split("\n") if "boşaltma radarı:" in x][0]
         assert "aday 4" in line and "elenen: pozisyon coine göre küçük 3" in line, line
     asyncio.run(run())
     print("✅ kablolama) env-only, KINDS, spawn, kanca (replay hariç), sağlık, /bosaltma, _own_chats, README, .env, /tani")

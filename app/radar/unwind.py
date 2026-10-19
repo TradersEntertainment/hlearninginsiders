@@ -355,14 +355,14 @@ async def loop(cfg, client, notifier) -> None:
 
 async def diag_line(cfg) -> str:
     if not getattr(cfg, "unwind_enabled", True):
-        return "🧯 sert satış: KAPALI (UNWIND_ENABLED=0)"
+        return "🧯 boşaltma radarı: KAPALI (UNWIND_ENABLED=0)"
     if not (getattr(cfg, "unwind_chat_id", "") or "").strip():
-        return "🧯 sert satış: UNWIND_CHAT_ID TANIMSIZ — izleme yok (HL'ye sorgu da yok)"
+        return "🧯 boşaltma radarı: UNWIND_CHAT_ID TANIMSIZ — izleme yok (HL'ye sorgu da yok)"
     s = await kv_get(STATS_KV) or {}
     if not s:
-        return "🧯 sert satış: henüz tur yok"
+        return "🧯 boşaltma radarı: henüz tur yok"
     rej = s.get("rejected") or {}
-    return (f"🧯 sert satış: {s.get('coins_vol', 0)} coinin hacmi biliniyor · aday {s.get('candidates', 0)}"
+    return (f"🧯 boşaltma radarı: {s.get('coins_vol', 0)} coinin hacmi biliniyor · aday {s.get('candidates', 0)}"
             f" · doğrulanan {s.get('probes', 0)} · bugün gönderilen {s.get('sent_day', 0)}"
             f" · devam {s.get('updates', 0)} · boşalan {s.get('done', 0)} · açık bölüm {s.get('active', 0)}"
             + (f" · elenen: " + ", ".join(f"{k} {v}" for k, v in sorted(rej.items(), key=lambda kv: -kv[1])[:4])
