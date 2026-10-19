@@ -58,6 +58,8 @@ _DEPTH_WHY: dict[str, tuple[float, str]] = {}   # coin → (an, neden): son baş
 
 def fail_reason(e: BaseException, timeout: float = DEPTH_TIMEOUT) -> str:
     """HL isteğinin neden düştüğü, ölçüldüğü kadarıyla (sayfada ve /tani'de yazar)."""
+    if type(e).__name__ == "BudgetBusy":               # istek HL'ye hiç gitmedi: botun kendi kotası dolu
+        return "botun HL istek kotası dolu (çok sayfa açık)"
     if isinstance(e, asyncio.TimeoutError):
         return f"HL'den {timeout:g} sn'de cevap gelmedi"
     if "HTTP 429" in str(e):

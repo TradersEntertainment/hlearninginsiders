@@ -9,9 +9,10 @@ Pinlenenler:
   • stats: 429 çağıranın sözlüğüne yazılır (kendi 429'u), küresel n_429 ve last_429 da güncellenir
   • ağırlık: belge tablosu (clearinghouseState 2, candleSnapshot 20…), usage() son dakikayı toplar
   • /tani "HL bütçesi" satırı
-  • "user" şeridi (ekrandaki canlı defter, 19.10): kendi kotası USER_RPM (etkin tavana, AIMD inişine, 429
-    duraklamasına bakmaz; ortak pencereye yine yazılır) ve kendi kapısı USER_CONC (429 fırtınasında ortak kapıda uyuyan
-    arka plan istekleri defteri bekletmez); normal şerit tavanda beklemeye devam eder
+  • "user" şeridi (ekrandaki canlı defter, 19.10): ortak pencerede yer varsa (tavan + USER_EXTRA) geçer, yoksa ayrılmış
+    kotası USER_RPM ile (AIMD inişine, 429 duraklamasına bakmaz; ortak pencereye yine yazılır); ikisi de doluysa hemen
+    BudgetBusy ("botun HL istek kotası dolu"); kendi kapısı USER_CONC (429 fırtınasında ortak kapıda uyuyan arka plan
+    istekleri defteri bekletmez); normal şerit tavanda beklemeye devam eder; /tani satırı şeridi yazar
 """
 import asyncio
 import os
@@ -190,6 +191,9 @@ def test_diag_budget_line():
     St.client.n_429 = 3
     line = diag._budget_line(St())
     assert "429 toplam 3, son 0sn önce" in line and "DURAKLI" in line, line
+    assert "canlı defter şeridi 0/dk (ayrılmış 60)" in line and "gönderilmedi" not in line, line
+    St.client.user_busy = 4
+    assert "⚠️ kota dolu diye 4 istek gönderilmedi" in diag._budget_line(St())
     assert diag._budget_line(None) is None and diag._budget_line(object()) is None
     print("✅ tani) HL bütçesi satırı: istek/ağırlık/429/düşük şerit durumu")
 
@@ -211,9 +215,23 @@ def test_user_lane():
         cli._cap = 8.0                                             # AIMD indi: pencere (10) eski tavanla dolu
         assert cli.low_paused() > 0 and not await _passes(cli._acquire_budget("low", 2))
         for _ in range(hlc.USER_RPM):
-            assert await _passes(cli._acquire_budget("user", 2)), "user şeridi kendi kotasıyla geçer (tavan/pencereye bakmaz)"
-        assert not await _passes(cli._acquire_budget("user", 2)), "kendi kotası dolunca bekler"
-        assert cli.usage()["rpm"] == 10 + hlc.USER_RPM, "ortak pencereye de yazılır (normal/düşük görsün)"
+            assert await _passes(cli._acquire_budget("user", 2)), "user şeridi ayrılmış kotasıyla geçer (tavan/pencereye bakmaz)"
+        # ikisi de dolu: uyuyup 4 sn'lik süreye takılmaz, hemen BudgetBusy ("HL cevap vermedi" diye yazılmasın)
+        t0 = _t.monotonic()
+        try:
+            await cli._acquire_budget("user", 2)
+            raise AssertionError("BudgetBusy bekleniyordu")
+        except hlc.BudgetBusy as e:
+            assert "yerel istek kotası dolu" in str(e) and _t.monotonic() - t0 < 0.5
+        u = cli.usage()
+        assert u["rpm"] == 10 + hlc.USER_RPM and u["user"] == hlc.USER_RPM and u["user_busy"] == 1, u
+        from app.radar import livefeed as lf
+        assert lf.fail_reason(hlc.BudgetBusy("x")) == "botun HL istek kotası dolu (çok sayfa açık)"
+        # ortak pencerede yer varken ayrılmış kota TAVAN değil: 6+ açık coin sayfası (coin başına ~10/dk) eskimesin
+        roomy = HLClient(Sess(), "https://x/", "https://lb", min_interval=0, max_rpm=550)
+        for _ in range(hlc.USER_RPM * 3):
+            assert await _passes(roomy._acquire_budget("user", 2))
+        assert roomy.usage()["user"] == hlc.USER_RPM * 3
         # l2_book priority'yi geçirir
         seen = {}
 

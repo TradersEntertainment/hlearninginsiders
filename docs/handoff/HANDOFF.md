@@ -341,7 +341,7 @@ Bu bölümde yalnız depo dosyalarında görülenler var (`ca2f3bc`).
   - Satış: paywatch, billing, fanout, public_digest
 - **Bekçi** (app/health.py): her döngü `health.beat(name)` atar. `limits()` görev başına izin verilen en uzun sessizliği tutar;
   aşılırsa `_respawn`. **Yeni döngü eklenirse `limits()`'e de satır eklenmeli.**
-- **HL istek bütçesi** (app/hl/client.py): üç şerit var: normal (radarlar, kullanıcı sorguları), düşük (sayım, yetişme partisi, mum arşivi; pencere %70'in altındayken ilerler, 429'dan sonra 60 sn susar) ve "user" (açık sayfadaki canlı defter ve /defter'in l2Book'u; kendi kotası `USER_RPM`=60/dk ve kendi kapısı `USER_CONC`=2, 429 duraklamasına bakmaz; 19.10). Tavan AIMD ile uyarlanır; üst sınır `HL_MAX_RPM`
+- **HL istek bütçesi** (app/hl/client.py): üç şerit var: normal (radarlar, kullanıcı sorguları), düşük (sayım, yetişme partisi, mum arşivi; pencere %70'in altındayken ilerler, 429'dan sonra 60 sn susar) ve "user" (açık sayfadaki canlı defter ve /defter'in l2Book'u; ortak pencerede yer varsa tavan + `USER_EXTRA`=30, yoksa ayrılmış kota `USER_RPM`=60/dk; kendi kapısı `USER_CONC`=4; 429 duraklamasına bakmaz; ikisi de doluysa `BudgetBusy`; 19.10). Tavan AIMD ile uyarlanır; üst sınır `HL_MAX_RPM`
   (varsayılan 550).
 - **İkinci rol, census worker:** `ROLE=census-worker` ise `python -m app.worker` çalışır (app/worker.py, README.md:2419).
   - DB'siz sayım worker'ıdır: ana uygulamadan `GET /api/census/lease` ile hesap kiralar, sonucu `POST /api/census/ingest` ile yollar.

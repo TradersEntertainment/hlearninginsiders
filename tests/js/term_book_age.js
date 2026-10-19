@@ -9,7 +9,10 @@ class CL { constructor(e){ this.e = e; this.s = new Set(); }
   contains(c){ return this.s.has(c); } }
 class El {
   constructor(tag){ this.tag = tag; this.children = []; this._t = ''; this.dataset = {}; this.style = { setProperty(){} };
-    this.classList = new CL(this); this.title = ''; this.clientHeight = 440; this.scrollTop = 0; this.scrollHeight = 0; this.id = ''; }
+    this.classList = new CL(this); this.title = ''; this.clientHeight = 440; this.scrollTop = 0; this.scrollHeight = 0; this.id = '';
+    this.attrs = {}; }
+  setAttribute(k, v){ this.attrs[k] = String(v); } removeAttribute(k){ delete this.attrs[k]; if(k === 'title') this.title = ''; }
+  getAttribute(k){ return k in this.attrs ? this.attrs[k] : null; } hasAttribute(k){ return k in this.attrs; }
   _cn(){ }
   set className(v){ this.classList.s = new Set(String(v).split(/\s+/).filter(Boolean)); }
   get className(){ return [...this.classList.s].join(' '); }
@@ -60,7 +63,8 @@ module.exports = { fire, show, tick: s => { for(let i=0;i<s;i+=2){ NOW += 2000; 
 const sec = () => Math.floor(NOW / 1000);
 const lv = [[0.2638, 1000, 3]], la = [[0.2639, 900, 2]];
 const H = module.exports, out = [];
-const snap = (k) => out.push(k + '|' + byId.tbookts.textContent + '|' + byId.tbookts.classList.contains('warn') + '|' + byId.tladder.classList.contains('stale'));
+const snap = (k) => out.push(k + '|' + byId.tbookts.textContent + '|' + byId.tbookts.classList.contains('warn') + '|' + byId.tladder.classList.contains('stale')
+                           + '|tip=' + (byId.tbookts.getAttribute('data-tip') || '') + '|title=' + (byId.tbookts.title || ''));
 fire('bw', {why: 'HL istek sınırı (429)', now: sec()}); out.push('nobook|' + byId.tladder.textContent + '|' + byId.tbookts.textContent);
 let ts0 = sec();
 fire('b', {bids: lv, asks: la, ts: ts0, now: ts0, why: ''}); snap('fresh');

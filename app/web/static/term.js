@@ -243,6 +243,13 @@
   // 2 + olay aralığı + tamsayı yuvarlama) — 12 sn sağlıklı defteri ara ara "⚠️" gösteriyordu (inceleme 19.10).
   var BOOK_STALE = 20;
   function ago(s){ s = Math.max(0, Math.round(s)); return s < 90 ? s + ' sn' : Math.round(s / 60) + ' dk'; }
+  // açıklama title'a değil doğrudan data-tip'e: base.html initTips title'ı data-tip'e dondurup bir daha bakmıyordu —
+  // defter düzelince de "yeniden okunamadı" ipucu kalıyordu (inceleme 19.10)
+  function tip(e, t){
+    e.removeAttribute('title');
+    if(t){ e.setAttribute('data-tip', t); e.setAttribute('aria-label', t); }
+    else { e.removeAttribute('data-tip'); e.removeAttribute('aria-label'); }
+  }
   function bookAge(){
     var b = T && T.book, ts = $('#tbookts'), box = $('#tladder');
     if(!b || !ts) return;
@@ -251,14 +258,14 @@
     if(box) box.classList.toggle('stale', stale);
     ts.classList.toggle('warn', stale);
     ts.textContent = 'defter ' + hhmmss(b.ts * 1000) + (stale ? ' · ⚠️ ' + ago(age) + ' önce — ' + (b.why || 'yenilenmedi') : '');
-    ts.title = stale ? 'Defter bu süredir yeniden okunamadı; gösterilen son okunan defter' + (b.why ? ' · neden: ' + b.why : '') : '';
+    tip(ts, stale ? 'Defter bu süredir yenilenmedi; gösterilen son okunan defter' + (b.why ? ' · neden: ' + b.why : '') : '');
   }
   // gösterilecek defter yok ('bw'): eski defter ekrandaysa onu tutup nedeni ekle (yaşı kendi b.at'iyle sürer), yoksa yaz
   function bookFail(d){
     if(T.book){ T.book.why = d.why || T.book.why; bookAge(); return; }
     var box = $('#tladder'), ts = $('#tbookts');
     if(box){ box.textContent = ''; box.appendChild(el('div', 'dim', 'Defter okunamadı' + (d.why ? ' — ' + d.why : '') + ' · birazdan yeniden denenir')); }
-    if(ts){ ts.textContent = '⚠️ defter okunamadı'; ts.classList.add('warn'); ts.title = d.why || ''; }
+    if(ts){ ts.textContent = '⚠️ defter okunamadı'; ts.classList.add('warn'); tip(ts, d.why || ''); }
   }
 
   function ladder(){

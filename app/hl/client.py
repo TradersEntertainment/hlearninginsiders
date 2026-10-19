@@ -4,13 +4,17 @@
 kullanır; "low" (sayım, süpürücü yetişme modu) yalnız pencere kullanımı
 LOW_SHARE'in altındayken ilerler ve HL'den herhangi bir 429 gelince
 LOW_PAUSE_SEC susar — arka plan işi artan kapasiteyi kullanır, fırtınada çekilir.
-"user" (sayfayı açık tutan kişinin canlı defteri, ağırlık 2): KENDİ kotası (USER_RPM
-istek/dk) ve KENDİ eşzamanlılık kapısı (USER_CONC) var; etkin tavana, 429 duraklamasına
-ve arka plan isteklerinin 429 geri-çekilmesinde tuttuğu ortak kapıya bakmaz — arka plan
-yükü ekrandaki defteri dondurmasın (kullanıcı 19.10: "canlı defter canlı değil?").
-İnceleme (19.10, yeniden üretildi): "tavan + 30" yetmiyordu — 429'da tavan ×0,8 inince
-pencere eski tavanla dolu kalıyor (~8 sn bekleme), ortak kapıda (8 yer) 429 tekrarı uyuyan
-arka plan istekleri defteri 4 sn'lik süresine kadar bekletiyordu.
+"user" (sayfayı açık tutan kişinin canlı defteri, ağırlık 2): ortak pencerede yer varsa
+(tavan + USER_EXTRA) geçer; yoksa KENDİ kotasıyla (USER_RPM istek/dk — taban, tavan değil)
+geçer; KENDİ eşzamanlılık kapısı (USER_CONC) var, 429 duraklamasına ve arka plan
+isteklerinin 429 geri-çekilmesinde tuttuğu ortak kapıya bakmaz — arka plan yükü ekrandaki
+defteri dondurmasın (kullanıcı 19.10: "canlı defter canlı değil?"). İkisi de doluysa
+USER_MAX_WAIT'ten uzun beklemez: BudgetBusy yükseltir (sayfa "HL cevap vermedi" değil
+"botun istek kotası dolu" yazar).
+İnceleme (19.10, yeniden üretildi): yalnız "tavan + 30" 429'da tavan ×0,8 inince ~8 sn
+bekletiyordu (pencere eski tavanla dolu); ortak kapıda 429 tekrarı uyuyan arka plan
+istekleri defteri 4 sn'lik süresine kadar bekletiyordu; yalnız sabit 60/dk kota ise
+6+ açık coin sayfasında (coin başına ~10 istek/dk) defteri yeniden eskitiyordu.
 Öncelik ya çağrıda (`priority=`) ya da görev bağlamında (`PRIORITY` contextvar,
 süpürücü partisi) verilir.
 
@@ -38,8 +42,14 @@ DEFAULT_WEIGHT = 20
 HL_WEIGHT_LIMIT = 1200      # HL: dakikada IP başına toplam ağırlık (belge)
 LOW_SHARE = 0.70            # düşük şerit: pencere kullanımı bunun üstündeyse bekler
 LOW_PAUSE_SEC = 60.0        # herhangi bir 429'dan sonra düşük şerit bu kadar susar
-USER_RPM = 60               # "user" şeridinin kendi kotası (istek/dk; l2Book ağırlığı 2 → ≤120 ağırlık/dk)
-USER_CONC = 2               # "user" şeridinin kendi eşzamanlılık kapısı (ortak kapıdan ayrı)
+USER_EXTRA = 30             # "user" şeridi: ortak pencerede etkin tavanın bu kadar üstüne kadar yer kullanır
+USER_RPM = 60               # "user" şeridinin ayrılmış kotası (taban; istek/dk, l2Book ağırlığı 2 → 120 ağırlık/dk)
+USER_CONC = 4               # "user" şeridinin kendi eşzamanlılık kapısı (ortak kapıdan ayrı; 24 açık sayfada 2 yetmedi)
+USER_MAX_WAIT = 1.5         # "user" şeridi bundan uzun beklemez (çağıranın süresi 4 sn) → BudgetBusy
+
+
+class BudgetBusy(RuntimeError):
+    """"user" şeridi: hem ortak pencere hem ayrılmış kota dolu — istek HL'ye HİÇ gitmedi (yerel kota)."""
 # Uyarlanır tavan (AIMD): HL'nin gerçek hesabını 429 öğretir. Her 429'da etkin tavan
 # CAP_DOWN ile iner (fırtınada 10 sn'de en çok bir adım), CAP_UP_EVERY sn 429'suz her
 # dakika CAP_UP_STEP çıkar; hl_max_rpm üst sınır, CAP_FLOOR alt sınır.
@@ -85,6 +95,7 @@ class HLClient:
         self._sem = asyncio.Semaphore(concurrency)
         self._user_sem = asyncio.Semaphore(USER_CONC)      # "user" şeridi ortak kapıda beklemez
         self._user_times: deque[float] = deque()           # "user" şeridinin kendi kotası
+        self.user_busy = 0                                 # kota dolu diye HL'ye gönderilmeyen "user" isteği (/tani)
         self._min_interval = min_interval
         # Küresel bütçe: TÜM görevlerin paylaştığı istek/dakika tavanı.
         # 429 fırtınası + exponential backoff cezası yerine kibarca kuyruk.
@@ -149,13 +160,18 @@ class HLClient:
                     else:
                         wait = (self._req_times[0] + self._rpm_window - t) if self._req_times else 0.25
                 elif priority == "user":
-                    # kendi kotası; yine de ortak pencereye yazılır (normal/düşük şerit onu görsün)
-                    if len(self._user_times) < USER_RPM:
+                    # önce ortak pencerede boş yer, yoksa ayrılmış kota; ikisi de ortak pencereye yazılır (normal/düşük
+                    # şerit onu görsün)
+                    if used < self._cap + USER_EXTRA or len(self._user_times) < USER_RPM:
                         self._user_times.append(t)
                         self._req_times.append(t)
                         self._w_times.append((t, int(weight)))
                         return
-                    wait = self._user_times[0] + self._rpm_window - t
+                    wait = min(self._user_times[0], self._req_times[0]) + self._rpm_window - t
+                    if wait > USER_MAX_WAIT:
+                        self.user_busy += 1
+                        raise BudgetBusy(f"yerel istek kotası dolu ({len(self._user_times)}/{USER_RPM} canlı defter, "
+                                         f"{used}/{int(round(self._cap))} ortak)")
                 elif used < self._cap:
                     self._req_times.append(t)
                     self._w_times.append((t, int(weight)))
@@ -181,6 +197,7 @@ class HLClient:
                 "window": self._rpm_window,
                 "weight": sum(w for _, w in self._w_times), "weight_max": HL_WEIGHT_LIMIT,
                 "low_share": LOW_SHARE, "low_paused": round(self.low_paused(t), 1),
+                "user": len(self._user_times), "user_max": USER_RPM, "user_busy": self.user_busy,
                 "n_429": self.n_429,
                 "last_429_ago": (round(t - self._last_429) if self._last_429 else None)}
 

@@ -279,7 +279,10 @@ def _budget_line(state) -> str | None:
             f" · ~{_num(u.get('weight', 0))} ağırlık/dk (tahmini; HL sınırı {u.get('weight_max', 1200)})"
             f" · 429 toplam {u.get('n_429', 0)}" + (f", son {_dur(ago)} önce" if ago is not None else ", hiç")
             + " · düşük şerit (sayım/yetişme): "
-            + (f"DURAKLI {int(paused)} sn" if paused > 0 else f"açık (kullanım %{int(LOW_SHARE * 100)} üstünde bekler)"))
+            + (f"DURAKLI {int(paused)} sn" if paused > 0 else f"açık (kullanım %{int(LOW_SHARE * 100)} üstünde bekler)")
+            + (f" · canlı defter şeridi {u['user']}/dk (ayrılmış {u.get('user_max', '?')})"
+               + (f", ⚠️ kota dolu diye {u['user_busy']} istek gönderilmedi" if u.get("user_busy") else "")
+               if "user" in u else ""))
 
 
 # 🧪 Strateji laboratuvarı planlaması (08.10): her olay tablosunda kaç kayıt var ve en eskisi ne
