@@ -288,13 +288,14 @@ def _reach(levels: list[dict], mid: float | None) -> float | None:
 
 
 async def _book(client, coin: str, sig: int | None):
-    return await asyncio.wait_for(client.l2_book(coin, sig, retries=1), BOOK_TIMEOUT)
+    # "user" şeridi: sayfadaki / /defter'deki kişi bekliyor; arka plan yükü defteri dondurmasın (kullanıcı 19.10)
+    return await asyncio.wait_for(client.l2_book(coin, sig, retries=1, priority="user"), BOOK_TIMEOUT)
 
 
 def _empty(coin: str, err: list[str]) -> dict:
     return {"coin": coin, "ts": now(), "err": err, "raw": {"bid": [], "ask": []}, "grouped": {"bid": [], "ask": []},
             "orders": [], "cands": 0, "asked": 0, "failed": 0, "partial": 0, "unverified": 0, "mid": None, "unit": 0.0,
-            "unit_txt": "", "depth": {}, "orders_ts": None, "deferred": False, "owners_unknown": False}
+            "unit_txt": "", "depth": {}, "orders_ts": None, "deferred": False, "owners_unknown": False, "why": ""}
 
 
 async def build(client, coin: str) -> dict:
@@ -311,6 +312,11 @@ async def build(client, coin: str) -> dict:
         out["err"].append("tam fiyat defteri okunamadı" if (gb or ga) else "defter okunamadı")
     elif not (gb or ga):
         out["err"].append("gruplu defter okunamadı")
+    # neden: sayfa "Defter okunamadı (defter okunamadı)" diye kendini tekrar ediyordu (kullanıcı 19.10 ekranı)
+    bad = next((x for x in (raw, grp) if isinstance(x, BaseException)), None)
+    if out["err"] and bad is not None:
+        from .livefeed import fail_reason
+        out["why"] = fail_reason(bad, BOOK_TIMEOUT)
     mid = (rb[0]["px"] + ra[0]["px"]) / 2 if rb and ra else None
     out["mid"] = mid
     unit = group_unit(mid or (gb[0]["px"] if gb else 0))
@@ -438,11 +444,21 @@ def kick(client, coin: str) -> bool:
     return True
 
 
+def err_text(res: dict | None) -> str:
+    """"Defter okunamadı (…)" parantezinin içi: neden + diğer eksikler. Yalnız "defter okunamadı" varsa ve neden
+    bilinmiyorsa boş — sayfa "Defter okunamadı (defter okunamadı)" diye tekrar etmesin."""
+    res = res or {}
+    parts = [e for e in (res.get("err") or []) if e != "defter okunamadı"]
+    if res.get("why"):
+        parts.append(res["why"])
+    return ", ".join(parts)
+
+
 def cached(coin: str) -> dict | None:
     hit = RESULTS.get(coin)
     if not hit or now() - hit[0] > SHOW_MAX_AGE:
         return None
-    return {**hit[1], "age": now() - hit[0]}
+    return {**hit[1], "age": now() - hit[0], "err_txt": err_text(hit[1])}
 
 
 async def get(client, coin: str, wait: float = 0.0) -> dict | None:

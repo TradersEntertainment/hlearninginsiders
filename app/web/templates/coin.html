@@ -89,7 +89,7 @@
           {%- for a, u in (lv.owners or [])[:2] %} ✅<a class="ad" href="/whale/{{ a }}{{ k }}">{{ a[:6] }}…{{ a[-4:] }}</a> <span class="dim">{{ u|usd }}</span>{% endfor %}
           {%- if not lv.owners %} <span class="dim">{{ 'sahip bilinmiyor (açık emirler sorulamadı)' if book.owners_unknown else 'sahip bulunamadı' }}</span>{% endif %}</div>
         {%- endfor %}
-        {%- elif book and book.err %}<div class="dim">Defter okunamadı ({{ book.err|join(', ') }}) — birazdan yeniden denenir</div>
+        {%- elif book and book.err %}<div class="dim">Defter okunamadı{% if book.err_txt %} ({{ book.err_txt }}){% endif %} — birazdan yeniden denenir</div>
         {%- else %}<div class="dim">en kalın kademeler ve sahipleri hazırlanıyor</div>{% endif %}
       </div>
       <div class="tb mono" id="tladder" data-sid="tbook"><div class="dim">defter canlı akışla gelir…</div></div>
@@ -103,7 +103,7 @@
         <div class="tr {{ 'b' if r[4] == 'B' else 's' }}" data-usd="{{ r[3] }}" title="{{ 'Piyasadan ALIŞ' if r[4] == 'B' else 'Piyasadan SATIŞ' }}">
           <span class="tm">{{ (r[1] // 1000)|hms }}</span><span class="sd">{{ 'ALIŞ' if r[4] == 'B' else 'SATIŞ' }}</span>
           <span class="us">{{ r[3]|usd }}{% if r[7] %} 🔹{% endif %}</span><span class="pr">{{ r[2]|px5 }}</span>
-          <span class="wh">{% if r[5] %}<a class="ad" href="/whale/{{ r[5] }}{{ k }}">{{ r[5][:6] }}…{{ r[5][-4:] }}</a>{% endif %}{% if r[6] %}<span class="dim"> → </span><a class="ad mk" href="/whale/{{ r[6] }}{{ k }}">{{ r[6][:6] }}…{{ r[6][-4:] }}</a>{% endif %}</span></div>
+          <span class="wh">{% if r[5] %}<a class="ad" href="https://hypurrscan.io/address/{{ r[5] }}" target="_blank" rel="noopener" title="{{ r[5] }} · hypurrscan ↗">{{ r[5][:6] }}…{{ r[5][-4:] }}</a>{% endif %}{% if r[6] %}<span class="dim"> → </span><a class="ad mk" href="https://hypurrscan.io/address/{{ r[6] }}" target="_blank" rel="noopener" title="{{ r[6] }} · hypurrscan ↗">{{ r[6][:6] }}…{{ r[6][-4:] }}</a>{% endif %}</span></div>
         {%- else %}
         <div class="dim">{% if listened is false %}{{ symbol }} canlı akışta dinlenmiyor — işlem akışı yok.{% else %}işlemler geldikçe burada akar…{% endif %}</div>
         {%- endfor %}
@@ -311,7 +311,7 @@
     {%- if book.unverified %} · {{ book.unverified }} emir doğrulanamadı (sayılmadı){% endif %}
     {%- if book.err %} · ⚠️ {{ book.err|join(', ') }}{% endif %} · gruplu kademe birden çok emrin toplamıdır (HL arayüzündeki satır gibi).</p>
   {% elif book and book.err %}
-  {{ m.empty(["Defter okunamadı (" ~ book.err|join(', ') ~ ") — sayfa birazdan yeniden dener."]) }}
+  {{ m.empty(["Defter okunamadı" ~ (" (" ~ book.err_txt ~ ")" if book.err_txt else "") ~ " — sayfa birazdan yeniden dener."]) }}
   {% elif book_pending %}
   {{ m.empty(["Defter ve sahipler hazırlanıyor — yukarıdaki 🧱 canlı defter birkaç saniyede dolar, bu panel sayfa yenilenince."]) }}
   {% else %}

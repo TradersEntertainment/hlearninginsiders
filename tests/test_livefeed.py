@@ -10,7 +10,8 @@ tavanlı; canlı paneller yumuşak yenilemede nakledilir, panel içi kaydırma k
 Pinlenenler:
   • livefeed: izlenmeyen coinde yalnız son fiyat; izlenende halka + sıra; since/row; WATCH_TTL sonra budanır
   • tape.observe sayıldıysa True; kollektör yalnız sayılan işlemi yayar (yeniden yollanan gitmez — gerçek _handle)
-  • stats coin başına önbellek; depth hemen döner, arka planda tek istek (düşük şerit), duraklı şeritte sormaz
+  • stats coin başına önbellek; depth hemen döner, arka planda tek istek ("user" şeridi — 19.10'dan beri düşük şerit
+    susarken de sorar); okunamazsa eski defter yaşı (`now`) ve nedeniyle (`why`) döner, hiç yoksa boş + neden
   • owners: bookowners sonucu kısa hâl (✅ / dolan / emri yok, bilinmiyor bayrağı)
   • SSE: hello → t (init) → s → b → x; tavan dolunca 503; seq ile yeniden bağlanınca eski işlem yeniden gelmez
   • sayfa: body.termpage, #term (path/seq/prev/px), 7 panel, canlı paneller data-keep, kayan listeler data-sid, term.js,
@@ -110,7 +111,7 @@ class _Cli:
         return self.paused
 
     async def info(self, p, retries=4, priority=None, stats=None):
-        assert p == {"type": "l2Book", "coin": "PUMP"} and retries == 1 and priority == "low", p
+        assert p == {"type": "l2Book", "coin": "PUMP"} and retries == 1 and priority == "user", p
         self.calls.append(p)
         if self.fail:
             raise RuntimeError("429")
@@ -139,16 +140,34 @@ def test_stats_depth_owners():
             await asyncio.sleep(0.02)
             d = lf.depth(cli, "PUMP")
             assert len(cli.calls) == 1 and len(d["bids"]) == lf.DEPTH_LEVELS and d["asks"][0] == [0.0042, 1e6, 2], d
-            # duraklı düşük şerit: sormaz
+            assert d["why"] == "" and abs(d["now"] - time.time()) < 2 and d["ts"] > 0
+            # 429 sonrası düşük şerit susarken de SORAR ("user" şeridi — 19.10 PONS: defter 7 dk donmuştu)
             lf._DEPTH.clear()
             p = _Cli(paused=30)
-            assert lf.depth(p, "PUMP") is None and not lf._DEPTH_TASK and not p.calls
-            # okunamazsa sayılır, patlamaz
+            assert lf.depth(p, "PUMP") is None
+            await asyncio.sleep(0.02)
+            assert len(p.calls) == 1 and lf.depth(p, "PUMP")["bids"]
+            # okunamazsa sayılır, patlamaz; eski defter yaşı + NEDENİYLE döner (istemci soluk + "⚠️ … önce" çizer)
+            lf._DEPTH["PUMP"] = (time.time() - 30, {**lf._DEPTH["PUMP"][1], "ts": int(time.time()) - 30})
             f = _Cli(fail=True)
             e0 = lf.STATS["depth_err"]
             lf.depth(f, "PUMP")
             await asyncio.sleep(0.02)
-            assert lf.STATS["depth_err"] == e0 + 1 and lf.depth(None, "PUMP") is None
+            d = lf.depth(None, "PUMP")
+            assert lf.STATS["depth_err"] == e0 + 1 and d["bids"] and d["now"] - d["ts"] >= 29, d
+            assert d["why"] == "HL hatası (RuntimeError)", d
+            assert "son defter hatası: HL hatası (RuntimeError)" in lf.diag_line()
+            # hiç okunmamışsa: boş kademe + neden; 10 dk'dan eski defter gönderilmez
+            lf._DEPTH.clear()
+            d = lf.depth(None, "PUMP")
+            assert d["ts"] == 0 and not d["bids"] and d["why"], d
+            lf._DEPTH_WHY.clear()
+            lf._DEPTH["PUMP"] = (time.time() - lf.DEPTH_SHOW - 1, {"bids": [[1, 1, 1]], "asks": [], "ts": 1})
+            assert lf.depth(None, "PUMP") is None
+            lf._DEPTH.clear()
+            # neden metni: süre / 429 / diğer
+            assert lf.fail_reason(asyncio.TimeoutError()) == "HL'den 4 sn'de cevap gelmedi"
+            assert lf.fail_reason(RuntimeError("HL info l2Book HTTP 429: x")) == "HL istek sınırı (429)"
         finally:
             tape.STARTED = old
             tape.REG.clear()

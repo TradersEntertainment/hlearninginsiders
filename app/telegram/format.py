@@ -3568,8 +3568,9 @@ def book_owners(coin: str, book: dict | None, summ: dict | None, listened: bool 
     elif book is None:
         lines.append(f"🧱 <b>{sym} defteri</b> hazırlanamadı (HL'ye ulaşılamadı ya da sürdü) — birazdan yeniden dene")
     else:
-        lines.append(f"🧱 <b>{sym} defteri</b> okunamadı" + (f" ({esc(', '.join(book.get('err') or []))})"
-                                                              if book.get("err") else ""))
+        from ..radar.bookowners import err_text
+        why = err_text(book)                            # "okunamadı (defter okunamadı)" tekrarı yok, neden yazar
+        lines.append(f"🧱 <b>{sym} defteri</b> okunamadı" + (f" ({esc(why)})" if why else ""))
     cv = _tape.cover(summ)
     warn = f" · ⚠️ {cv['warn']}" if cv["warn"] else ""
     if summ and summ.get("n"):

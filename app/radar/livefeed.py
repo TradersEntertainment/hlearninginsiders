@@ -9,7 +9,7 @@ Kararlar (ölçümler: sayfa haritası 18.10):
   • Bellek: işlem halkası yalnız İZLENEN coinde (sayfa son WATCH_TTL içinde açıldı) tutulur; her dinlenen coin için
     yalnız son fiyat. İzleyici yokken kanca tek dict bakışı.
   • 15 dk toplamları (tape.summary 25–88 ms CPU, olay döngüsünü bloklar) izleyici başına değil coin başına STATS_TTL
-    önbellekle; defter (l2Book, ağırlık 2) coin başına DEPTH_TTL önbellek + tek süren istek (düşük şerit); defter
+    önbellekle; defter (l2Book, ağırlık 2) coin başına DEPTH_TTL önbellek + tek süren istek ("user" şeridi); defter
     sahipleri bookowners'ın kendi 30 sn önbelleğiyle (pahalı: aday başına ağırlık 20).
   • SSE bağlantısı en çok STREAM_LIFE yaşar (EventSource kendiliğinden yeniden bağlanır, `seq` ile kaldığı yerden).
     Açık akış uvicorn'un kapanışını en çok STREAM_LIFE bekletir (yerelde `--timeout-graceful-shutdown 5`); Railway
@@ -17,6 +17,11 @@ Kararlar (ölçümler: sayfa haritası 18.10):
     Telegram aynı döngüde). Sunucu yeniden başlarsa istemcinin `seq`'i yeni sayaçtan büyük kalır → sıfırlanır (rota).
   • Canlı fiyat yalnız TAZE son işlemden (`fresh_px`, PX_MAX_AGE): dinlenmeyen ya da akışı kopuk coinde LAST donar,
     bayat fiyat taze mark'ın önüne geçip son muma sahte fitil çiziyordu (inceleme 18.10).
+  • Defter "user" şeridinden sorulur ve bayatlığı SÖYLENİR. Kullanıcı (19.10): "canlı defter canlı değil? sadece
+    işlemler canlı geliyor" — PONS'ta defter 12:29:35'te kalmış, işlemler 12:36'yı gösteriyordu. Kök neden: defter
+    düşük şeritteydi; yeniden başlatma sonrası arka plan yükü (429 → düşük şerit 60 sn susar, pencere %70 dolu)
+    onu hiç sıraya sokmadı, sayfa da 7 dk'lık defteri uyarısız gösterdi. Şimdi: arka plan yükü ekrandaki defteri
+    bekletmez; okunamazsa son okumanın yaşı ve nedeni (`why`) gider, istemci eski defteri soluk + "⚠️ … önce" çizer.
 """
 from __future__ import annotations
 
@@ -35,6 +40,7 @@ TICK = 0.3                   # akış döngüsü (sn) — işlemler en çok bu g
 STATS_TTL = 5                # 15 dk toplamları (coin başına önbellek)
 DEPTH_TTL = 4                # canlı defter (coin başına önbellek)
 DEPTH_TIMEOUT = 4.0
+DEPTH_SHOW = 600             # bundan eski defter gönderilmez (istemci zaten "⚠️ … önce" diye soluk çizer)
 HEARTBEAT = 15               # veri yokken yorum satırı (proxy bağlantıyı kesmesin)
 DEPTH_LEVELS = 12            # yön başına gönderilen defter kademesi
 PX_MAX_AGE = 120             # son işlem fiyatı bundan eskiyse canlı fiyat sayılmaz (sayfa mark'a düşer)
@@ -47,6 +53,16 @@ STATS: dict = {"streams": 0, "opened": 0, "rejected": 0, "pushed": 0, "depth_req
 _SUMM: dict[str, tuple[float, dict]] = {}
 _DEPTH: dict[str, tuple[float, dict]] = {}
 _DEPTH_TASK: dict[str, asyncio.Task] = {}
+_DEPTH_WHY: dict[str, tuple[float, str]] = {}   # coin → (an, neden): son başarısız defter okuması
+
+
+def fail_reason(e: BaseException, timeout: float = DEPTH_TIMEOUT) -> str:
+    """HL isteğinin neden düştüğü, ölçüldüğü kadarıyla (sayfada ve /tani'de yazar)."""
+    if isinstance(e, asyncio.TimeoutError):
+        return f"HL'den {timeout:g} sn'de cevap gelmedi"
+    if "HTTP 429" in str(e):
+        return "HL istek sınırı (429)"
+    return f"HL hatası ({type(e).__name__})"
 
 
 def watch(coin: str) -> None:
@@ -66,6 +82,7 @@ def prune(t: float | None = None) -> None:
         BUF.pop(c, None)
         _SUMM.pop(c, None)
         _DEPTH.pop(c, None)
+        _DEPTH_WHY.pop(c, None)
 
 
 def push(coin: str, ts_ms: int, px: float, sz: float, aggr: str, buyer: str, seller: str, twap: bool) -> None:
@@ -147,28 +164,39 @@ def _levels(book) -> tuple[list, list]:
 async def _fetch_depth(client, coin: str) -> None:
     STATS["depth_req"] += 1
     try:
-        book = await asyncio.wait_for(client.info({"type": "l2Book", "coin": coin}, retries=1, priority="low"),
+        book = await asyncio.wait_for(client.info({"type": "l2Book", "coin": coin}, retries=1, priority="user"),
                                       DEPTH_TIMEOUT)
         bids, asks = _levels(book)
         if bids or asks:
             _DEPTH[coin] = (time.time(), {"bids": bids, "asks": asks, "ts": int(time.time())})
+            _DEPTH_WHY.pop(coin, None)
         else:
             STATS["depth_err"] += 1
+            _DEPTH_WHY[coin] = (time.time(), "HL boş defter döndü")
     except Exception as e:                              # noqa: BLE001
         STATS["depth_err"] += 1
+        _DEPTH_WHY[coin] = (time.time(), fail_reason(e))
         log.debug("canlı defter %s: %s", coin, e)
     finally:
         _DEPTH_TASK.pop(coin, None)
 
 
 def depth(client, coin: str) -> dict | None:
-    """Önbellekteki defter (hemen döner); bayatsa arka planda tek istek başlatır. Akış döngüsü HL'yi beklemez."""
+    """Önbellekteki defter (hemen döner); bayatsa arka planda tek istek başlatır. Akış döngüsü HL'yi beklemez.
+
+    Dönüş `{bids, asks, ts, now, why}`: `now` sunucu saati (istemci yaşı kendi saatiyle değil bununla ölçer), `why`
+    son okumadan SONRA düşen isteğin nedeni (yoksa ""). Hiç okunamadıysa kademeler boş, ts 0, why dolu; henüz ne
+    okuma ne hata varsa None (rota kısa süre sonra yeniden bakar)."""
     hit = _DEPTH.get(coin)
     t = time.time()
     if client is not None and (not hit or t - hit[0] >= DEPTH_TTL) and coin not in _DEPTH_TASK:
-        if float(getattr(client, "low_paused", lambda: 0.0)() or 0) <= 0:
-            _DEPTH_TASK[coin] = asyncio.ensure_future(_fetch_depth(client, coin))
-    return hit[1] if hit and t - hit[0] < 60 else None
+        _DEPTH_TASK[coin] = asyncio.ensure_future(_fetch_depth(client, coin))
+    bad = _DEPTH_WHY.get(coin)
+    if hit and t - hit[0] < DEPTH_SHOW:
+        return {**hit[1], "now": int(t), "why": bad[1] if bad and bad[0] >= hit[0] else ""}
+    if bad:
+        return {"bids": [], "asks": [], "ts": 0, "now": int(t), "why": bad[1]}
+    return None
 
 
 def owners(book: dict | None) -> dict | None:
@@ -186,7 +214,13 @@ def owners(book: dict | None) -> dict | None:
                            "gone": [[a, round(u)] for a, u in (x.get("makers_gone") or [])[:3]],
                            "unk": round(x.get("unknown_usd") or 0)})
     return {"ts": book.get("ts"), "lv": lv, "unknown": bool(book.get("owners_unknown")), "cands": book.get("cands", 0),
-            "failed": book.get("failed", 0), "unit": book.get("unit_txt") or "", "err": book.get("err") or []}
+            "failed": book.get("failed", 0), "unit": book.get("unit_txt") or "", "err": book.get("err") or [],
+            "why": book.get("err_txt") or ""}
+
+
+def _last_why() -> str:
+    t, why = max(_DEPTH_WHY.values())
+    return f"{why} ({int(time.time() - t)} sn önce)"
 
 
 def diag_line() -> str:
@@ -195,4 +229,5 @@ def diag_line() -> str:
             + (f" · ⚠️ {s['rejected']} reddedildi (tavan {MAX_STREAMS})" if s["rejected"] else "")
             + f" · {len(WATCH)} coin izleniyor · {s['pushed']:,} işlem yayıldı"
             + f" · defter {s['depth_req']} istek" + (f" ({s['depth_err']} okunamadı)" if s["depth_err"] else "")
+            + (f" · son defter hatası: {_last_why()}" if _DEPTH_WHY else "")
             + (f" · ⚠️ {s['errors']} hata" if s["errors"] else ""))

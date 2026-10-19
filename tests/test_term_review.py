@@ -164,7 +164,7 @@ def test_templates_and_client():
     coin = open(os.path.join(ROOT, "app/web/templates/coin.html"), encoding="utf-8").read()
     for frag in ('class="termpage"', 'data-tpre=', 'data-tsuf=', '(~)', 'sabah açıklanmış olabilir',
                  'data-sid="ttape"', 'data-sid="tflow"', 'data-sid="tbook"', "ölç.", "Güncel fiyat yok",
-                 "Defter okunamadı ({{ book.err|join(', ') }})", "dinlenmiyor — bilinmiyor"):
+                 "Defter okunamadı{% if book.err_txt %} ({{ book.err_txt }}){% endif %}", "dinlenmiyor — bilinmiyor"):
         assert frag in coin, frag
     base = open(os.path.join(ROOT, "app/web/templates/base.html"), encoding="utf-8").read()
     for frag in ("max(440px,", "function pxReload(gap)", "box._loading", "TERM_LIVE_KEEP", "window.termLive",
@@ -173,7 +173,7 @@ def test_templates_and_client():
         assert frag in base, frag
     js = open(os.path.join(ROOT, "app/web/static/term.js"), encoding="utf-8").read()
     for frag in ("$('.t-tape .tb')", "window.termLive", "Math.pow(2, T.fail - 1)", "T.tpre", "d.px_ts",
-                 "rows.forEach(function(r){ pxLive(", "pxReload(false)", "unk ? '—'", "Defter okunamadı ("):
+                 "rows.forEach(function(r){ pxLive(", "pxReload(false)", "unk ? '—'", "'Defter okunamadı' + (o.why ?"):
         assert frag in js, frag
     assert "$('#ttape .tb')" not in js
     routes = open(os.path.join(ROOT, "app/web/routes.py"), encoding="utf-8").read()
@@ -215,6 +215,31 @@ def test_round2_fixes():
           " okuma yeri sabit, paket başına tek çizim")
 
 
+def test_live_book_stale_and_hypurrscan():
+    """Kullanıcı (19.10, PONS ekranı): "canlı defter canlı değil? sadece işlemler canlı geliyor bir de oradan bir adrese
+    basarsak direkt hypurrscane atsın işlem sahibinin bizim sitede analiz etmeye gerek yok".
+
+    Pinlenenler: defter bayatsa (BOOK_STALE sn) başlık "⚠️ … önce — neden" der ve merdiven soluk; yaş sunucu saatiyle
+    (b.now − b.ts) ölçülür, her 's' olayında ilerler; hiç okunamadıysa neden yazar; işlemler panelindeki adresler (JS ve
+    sunucu satırları) hypurrscan'e yeni sekmede gider; diğer paneller bizim karneye gitmeye devam eder."""
+    js = open(os.path.join(ROOT, "app/web/static/term.js"), encoding="utf-8").read()
+    for frag in ("var BOOK_STALE = 12;", "function bookAge()", "b.now - b.ts", "T.bookAt = Date.now()",
+                 "' önce — ' + (b.why || 'güncellenemiyor')", "box.classList.toggle('stale'",
+                 "x.href = 'https://hypurrscan.io/address/' + a;", "x.target = '_blank';",
+                 "who.appendChild(hlink(r[5]));", "who.appendChild(hlink(r[6], 'ad mk'));",
+                 "x.href = '/whale/' + a + (T.k || '');"):
+        assert frag in js, frag
+    i = js.index("function flow(d){")
+    assert "bookAge();" in js[i:i + 120], "yaş her 's' olayında ilerlemeli"
+    coin = open(os.path.join(ROOT, "app/web/templates/coin.html"), encoding="utf-8").read()
+    feed = coin[coin.index('id="tfeed"'):coin.index("{%- else %}", coin.index('id="tfeed"'))]
+    assert feed.count('href="https://hypurrscan.io/address/') == 2 and "/whale/" not in feed, feed
+    assert feed.count('target="_blank" rel="noopener"') == 2
+    base = open(os.path.join(ROOT, "app/web/templates/base.html"), encoding="utf-8").read()
+    assert "#tladder.stale{opacity:.4}" in base and "#tbookts.warn{" in base
+    print("✅ canlı defter bayatlığı söylenir (yaş + neden, soluk); işlemler paneli adresi → hypurrscan (yeni sekme)")
+
+
 if __name__ == "__main__":
     test_seq_reset_after_restart()
     test_fresh_px()
@@ -223,3 +248,4 @@ if __name__ == "__main__":
     test_term_twaps_order()
     test_templates_and_client()
     test_round2_fixes()
+    test_live_book_stale_and_hypurrscan()

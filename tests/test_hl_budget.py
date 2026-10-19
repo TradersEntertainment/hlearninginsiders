@@ -9,6 +9,8 @@ Pinlenenler:
   • stats: 429 çağıranın sözlüğüne yazılır (kendi 429'u), küresel n_429 ve last_429 da güncellenir
   • ağırlık: belge tablosu (clearinghouseState 2, candleSnapshot 20…), usage() son dakikayı toplar
   • /tani "HL bütçesi" satırı
+  • "user" şeridi (ekrandaki canlı defter, 19.10): tavanın USER_EXTRA üstüne kadar geçer, 429 duraklamasına bakmaz,
+    o da dolunca bekler; normal şerit tavanda beklemeye devam eder
 """
 import asyncio
 import os
@@ -189,3 +191,29 @@ def test_diag_budget_line():
     assert "429 toplam 3, son 0sn önce" in line and "DURAKLI" in line, line
     assert diag._budget_line(None) is None and diag._budget_line(object()) is None
     print("✅ tani) HL bütçesi satırı: istek/ağırlık/429/düşük şerit durumu")
+
+
+def test_user_lane():
+    """Kullanıcı (19.10): "canlı defter canlı değil? sadece işlemler canlı geliyor" — defter düşük şeritteydi, arka plan
+    yükünde hiç sıraya giremedi. "user" şeridi: tavanın USER_EXTRA üstüne kadar, 429 sonrası da."""
+    async def run():
+        cli = HLClient(Sess(), "https://x/", "https://lb", min_interval=0, max_rpm=10)
+        for _ in range(10):
+            await cli._acquire_budget("normal", 20)
+        assert not await _passes(cli._acquire_budget("normal", 2)), "tavan: normal bekler"
+        cli._last_429 = __import__("time").monotonic()            # 429 az önce: düşük şerit susuyor
+        assert cli.low_paused() > 0 and not await _passes(cli._acquire_budget("low", 2))
+        for _ in range(hlc.USER_EXTRA):
+            assert await _passes(cli._acquire_budget("user", 2)), "user şeridi tavan + USER_EXTRA'ya kadar geçer"
+        assert not await _passes(cli._acquire_budget("user", 2)), "USER_EXTRA da dolunca bekler"
+        # l2_book priority'yi geçirir
+        seen = {}
+
+        async def info(p, retries=4, priority=None, stats=None):
+            seen.update(p=p, priority=priority, retries=retries)
+            return {"levels": [[], []]}
+        cli.info = info
+        await cli.l2_book("PUMP", 3, retries=1, priority="user")
+        assert seen == {"p": {"type": "l2Book", "coin": "PUMP", "nSigFigs": 3}, "priority": "user", "retries": 1}, seen
+    asyncio.run(run())
+    print("✅ user şeridi) tavan + USER_EXTRA, 429 duraklamasında da geçer; l2_book önceliği geçirir")

@@ -222,8 +222,9 @@ class _Cli:
     def low_paused(self):
         return self.paused
 
-    async def l2_book(self, coin, n_sig_figs=None, retries=4):
+    async def l2_book(self, coin, n_sig_figs=None, retries=4, priority=None):
         assert retries == 1, "kullanıcı bekleyen yol: 429 tekrarları süreyi aşmasın"
+        assert priority == "user", "ekrandaki defter: arka plan yükünde donmasın (19.10)"
         if not n_sig_figs and self.raw_fails:
             raise RuntimeError("429")
         if n_sig_figs:
@@ -310,11 +311,20 @@ def test_book_owners_measured():
         # defter okunamazsa: hata, sahip yok, aday sorulmaz, patlamaz
         down = _Cli(orders)
 
-        async def nobook(coin, n_sig_figs=None, retries=4):
+        async def nobook(coin, n_sig_figs=None, retries=4, priority=None):
             raise RuntimeError("ağ yok")
         down.l2_book = nobook
         rd = await bo.build(down, "PUMP")
         assert rd["err"] == ["defter okunamadı"] and rd["mid"] is None and rd["raw"]["bid"] == [] and not down.calls
+        # neden yazılır, "defter okunamadı (defter okunamadı)" tekrarı yok (19.10 ekranı)
+        assert rd["why"] == "HL hatası (RuntimeError)" and bo.err_text(rd) == "HL hatası (RuntimeError)"
+        assert bo.err_text({"err": ["defter okunamadı"]}) == ""
+        assert "(defter okunamadı)" not in fmt.book_owners("PUMP", {**rd, "age": 1}, None, listened=True)
+
+        async def b429(coin, n_sig_figs=None, retries=4, priority=None):
+            raise RuntimeError("HL info l2Book HTTP 429: {}")
+        down.l2_book = b429
+        assert (await bo.build(down, "PUMP"))["why"] == "HL istek sınırı (429)"
         assert "🧱 defter sahipleri" in bo.diag_line()
         return r
     with _Clean():

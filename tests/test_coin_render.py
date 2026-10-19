@@ -198,7 +198,14 @@ def test_top_panels_with_data():
                "unit": 0.0, "unit_txt": "", "depth": {}, "orders_ts": None}
         html4 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=summ, tape_cover=tp.cover(summ), book=bad,
                              book_pending=False, listened=True))
-        assert "Defter okunamadı (defter okunamadı)" in html4 and " adım" not in html4
+        # 19.10: "Defter okunamadı (defter okunamadı)" tekrarı yok; neden biliniyorsa o yazar
+        assert "Defter okunamadı — sayfa birazdan yeniden dener" in html4 and "(defter okunamadı)" not in html4
+        assert " adım" not in html4
+        from app.radar import bookowners as _bo
+        html4b = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=summ, tape_cover=tp.cover(summ),
+                              book={**bad, "why": "HL istek sınırı (429)", "err_txt": _bo.err_text({**bad, "why": "HL istek sınırı (429)"})},
+                              book_pending=False, listened=True))
+        assert "Defter okunamadı (HL istek sınırı (429)) — sayfa birazdan yeniden dener" in html4b
         assert 'data-refresh="60"' in html4 and "Alış (fiyatın altı)" not in html4
         # bant hatası: uyarı var, "işlem görülmedi" çelişkisi yok
         html5 = render(**ctx(V2, **base, rows=[], liq_rows=[], tape=None, tape_cover=tp.cover(None), book=None,

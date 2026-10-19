@@ -49,6 +49,17 @@
     x.title = a + ' · cüzdan karnesi (🐋)';
     return x;
   }
+  // 📜 işlemler paneli: adres doğrudan hypurrscan'e (yeni sekme). Kullanıcı (19.10): "oradan bir adrese basarsak
+  // direkt hypurrscane atsın işlem sahibinin bizim sitede analiz etmeye gerek yok"
+  function hlink(a, cls){
+    if(!a) return el('span', 'dim', '—');
+    var x = el('a', cls || 'ad', short(a));
+    x.href = 'https://hypurrscan.io/address/' + a;
+    x.target = '_blank';
+    x.rel = 'noopener';
+    x.title = a + ' · hypurrscan ↗';
+    return x;
+  }
 
   // ---- durum / bağlantı ----
   function status(kind, text){
@@ -77,7 +88,7 @@
     });
     es.addEventListener('t', function(e){ trades(JSON.parse(e.data)); });
     es.addEventListener('s', function(e){ flow(JSON.parse(e.data)); });
-    es.addEventListener('b', function(e){ T.book = JSON.parse(e.data); ladder(); });
+    es.addEventListener('b', function(e){ T.book = JSON.parse(e.data); T.bookAt = Date.now(); ladder(); });
     es.addEventListener('o', function(e){ T.own = JSON.parse(e.data); ladder(); owners(); });
     es.addEventListener('x', function(){
       es.close(); T.es = null;
@@ -165,8 +176,8 @@
     tr.appendChild(el('span', 'us', usd(r[3]) + (r[7] ? ' 🔹' : '')));
     tr.appendChild(el('span', 'pr', px(r[2])));
     var who = el('span', 'wh');
-    who.appendChild(alink(r[5]));
-    if(r[6]){ who.appendChild(el('span', 'dim', ' → ')); who.appendChild(alink(r[6], 'ad mk')); }
+    who.appendChild(hlink(r[5]));
+    if(r[6]){ who.appendChild(el('span', 'dim', ' → ')); who.appendChild(hlink(r[6], 'ad mk')); }
     tr.appendChild(who);
     tr.title = (buy ? 'Piyasadan ALIŞ' : 'Piyasadan SATIŞ') + ' ' + usd(r[3]) + ' @ ' + px(r[2]) +
                (r[7] ? ' · HL TWAP alt emri' : '') + ' · sol: piyasadan alan/satan, sağ: defterdeki emri dolan';
@@ -176,6 +187,7 @@
   // ---- 15 dk akış ----
   function flow(d){
     T.flowSeen = true;
+    bookAge();                                         // defter olayı gelmese de yaş/uyarı ilerlesin
     if(d.listened != null) T.listened = d.listened;
     if(d.px) price(d.px, d.px_ts || 0, true, !d.px_ts);
     if(d.live === false) status('off', '○ HL akışı şu an kopuk — veri bilinmiyor');
@@ -223,10 +235,34 @@
     return hit;
   }
 
+  // Defter bayatsa SÖYLE: eski defter "canlı" gibi durmasın (kullanıcı 19.10: defter 12:29:35'te kalmış, işlemler
+  // 12:36'yı gösteriyordu). Yaş sunucu saatiyle (b.now − b.ts) + alındığından beri geçen; her 's' olayında tazelenir.
+  var BOOK_STALE = 12;
+  function ago(s){ s = Math.max(0, Math.round(s)); return s < 90 ? s + ' sn' : Math.round(s / 60) + ' dk'; }
+  function bookAge(){
+    var b = T.book, ts = $('#tbookts'), box = $('#tladder');
+    if(!b || !ts) return;
+    var age = b.ts ? (b.now ? b.now - b.ts : 0) + (Date.now() - (T.bookAt || Date.now())) / 1000 : null;
+    var stale = !b.ts || age > BOOK_STALE;
+    if(box) box.classList.toggle('stale', !!(stale && b.ts));
+    ts.classList.toggle('warn', stale);
+    ts.textContent = !b.ts ? '⚠️ defter okunamadı'
+      : 'defter ' + hhmmss(b.ts * 1000) + (stale ? ' · ⚠️ ' + ago(age) + ' önce — ' + (b.why || 'güncellenemiyor') : '');
+    ts.title = stale ? 'Defter bu süredir yeniden okunamadı; gösterilen son okunan defter' + (b.why ? ' · neden: ' + b.why : '') : '';
+  }
+
   function ladder(){
     var box = $('#tladder');
     var b = T.book;
     if(!box || !b) return;
+    if(!b.ts && !(b.bids || []).length && !(b.asks || []).length){
+      // hiç okunamadı: eski bir defter varsa onu (soluk) bırak, yoksa nedeni yaz
+      if(!box.querySelector('.lr')){ box.textContent = ''; box.appendChild(el('div', 'dim', 'Defter okunamadı' + (b.why ? ' — ' + b.why : '') + ' · birazdan yeniden denenir')); }
+      else if(T.bookPrev){ T.bookPrev.why = b.why; T.book = T.bookPrev; }
+      bookAge();
+      return;
+    }
+    T.bookPrev = b;
     // kademe sayısı panele göre: orta fiyat satırı hep görünür kalsın (dar ekranda alışlar aşağı kaçmasın)
     var fitN = Math.floor(((box.clientHeight || 440) - 26) / 18 / 2);
     var N = Math.max(4, Math.min(12, fitN || 12));
@@ -263,8 +299,7 @@
     bids.forEach(function(l){ frag.appendChild(row(l, 'bid')); });
     box.textContent = '';
     box.appendChild(frag);
-    var ts = $('#tbookts');
-    if(ts) ts.textContent = 'defter ' + hhmmss((b.ts || 0) * 1000);
+    bookAge();
   }
 
   // en kalın kademeler + sahipler (gruplu görünüm, yön başına en kalın)
@@ -273,7 +308,7 @@
     if(!box || !o || !o.lv) return;
     box.textContent = '';
     if(!o.lv.length){
-      box.appendChild(el('div', 'dim', o.err && o.err.length ? 'Defter okunamadı (' + o.err.join(', ') + ') — birazdan yeniden denenir'
+      box.appendChild(el('div', 'dim', o.err && o.err.length ? 'Defter okunamadı' + (o.why ? ' (' + o.why + ')' : '') + ' — birazdan yeniden denenir'
                                                           : 'defterde kademe yok'));
       return;
     }

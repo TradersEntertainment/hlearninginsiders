@@ -1594,9 +1594,13 @@ panel; masaüstünde (≥1200 px) **ekrana sığar**, her panel kendi içinde ka
 1366×657 — 1366×768 ekranın araç çubukları düşülmüş hâli; ızgara en az 440 px):
 - **📈 Fiyat:** 1 sa mumlar + liq duvarı / giriş çizgileri + liq blokları; **son mum canlı işlemlerle büyür**.
 - **🧱 Canlı defter:** HL defteri (her yönde en yakın kademeler, panele sığdığı kadar) birkaç saniyede bir, derinlik
-  çubuklu; ✅ = doğrulanmış açık emir sahibi (bookowners), üstte en kalın gruplu kademeler ve sahipleri.
+  çubuklu; ✅ = doğrulanmış açık emir sahibi (bookowners), üstte en kalın gruplu kademeler ve sahipleri. Defter 12 sn'den
+  uzun süredir yeniden okunamadıysa **söylenir**: başlıkta "⚠️ N sn/dk önce — neden" (ör. "HL istek sınırı (429)"),
+  merdiven soluk. Kullanıcı (19.10, PONS): "canlı defter canlı değil? sadece işlemler canlı geliyor" — defter 12:29:35'te
+  kalmış, işlemler 12:36'yı gösteriyordu; defter düşük şeritteydi, yeniden başlatma sonrası yükte sıraya giremedi.
 - **⏱ İşlemler:** bütün işlemler geldiği anda akar — saat, yön (piyasadan), $, fiyat, piyasadan alan/satan → defterdeki
-  emri dolan; 🔹 TWAP alt emri; son işlemlerin en büyük %10'u vurgulu.
+  emri dolan; 🔹 TWAP alt emri; son işlemlerin en büyük %10'u vurgulu. Adrese basınca **hypurrscan** yeni sekmede açılır
+  (kullanıcı 19.10: "işlem sahibinin bizim sitede analiz etmeye gerek yok"); diğer paneller bizim karneye gider.
 - **💥 Likidasyon:** %2/%5/%10 kademe özeti + likidasyona en yakınlar; **mesafe canlı fiyatla** yeniden hesaplanır.
 - **📊 Akış:** son 15 dk alış / satış / net, işlem / adres, en çok net alan / satan (5 sn'de bir); kapsama uyarısı.
 - **📋 TWAP:** HL emirleri önde (sürenler üstte, plana göre), HL emri bilinmeyen diziler en çok 4 satır ("ölç." = plan
@@ -1608,7 +1612,7 @@ Dar masaüstünde (1200–1599 px) ikincil sütunlar ipucuna geçer; telefonda p
 **Canlı akış** (`app/radar/livefeed.py`, uç `GET /t/{coin}/live`, istemci `static/term.js`): SSE. İşlemler kollektörün
 zaten aldığı WS akışından — **ek HL isteği yok**; yalnız bantta sayılan işlem yayılır (yeniden yollanan / açılış
 öncesi gitmez). Halka yalnız sayfası son 15 dk'da açılmış coinde tutulur (bellek). 15 dk toplamları coin başına 5 sn,
-defter (l2Book, ağırlık 2, düşük şerit) coin başına 4 sn önbellek — izleyici sayısından bağımsız; defter sahipleri
+defter (l2Book, ağırlık 2, "user" şeridi) coin başına 4 sn önbellek — izleyici sayısından bağımsız; defter sahipleri
 bookowners'tan, akış açıkken en çok 45 sn'de bir yeniden kurulur (eski sayfa düzeniyle aynı yük). Akış 4 dk yaşar,
 istemci kaldığı yerden (`seq`) yeniden bağlanır (tekrar yok); sunucu yeniden başladıysa (deploy) **iki taraf da**
 sırayı sıfırlar — eskiden bant ~4 dk donuyordu. Gizli sekmede yeniden bağlanmaz; geri gelince arada bir saat atlandıysa
@@ -2507,11 +2511,12 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   en başta, aralarında son işlem yapan önce); uğranan `probed_ts` alıp arkaya düşer —
   imleç yok, yeni trader tur sarmasını beklemez. İsteği patlayan adres 1 saat
   yeniden denenmez (başta takılı kalmasın).
-- **HL istek bütçesi, iki şerit + uyarlanır tavan** (`app/hl/client.py`): "normal"
+- **HL istek bütçesi, üç şerit + uyarlanır tavan** (`app/hl/client.py`): "normal"
   (radarlar, kullanıcı sorguları) etkin tavana kadar geçer; "düşük" (sayım toplu
   taraması, yetişme modunun taban üstü partisi, mum arşivi, saat istatistiği) yalnız
   pencere kullanımı tavanın %70'inin altındayken ilerler ve HL'den herhangi bir 429
-  gelince 60 sn susar. **Etkin tavan (AIMD):** her 429'da ×0,8 (10 sn'de en çok bir
+  gelince 60 sn susar; "user" (açık sayfadaki canlı defter ve /defter'in l2Book'u,
+  ağırlık 2) tavanın 30 istek/dk üstüne kadar geçer, 429 duraklamasına bakmaz. **Etkin tavan (AIMD):** her 429'da ×0,8 (10 sn'de en çok bir
   adım, taban 120), 60 sn 429'suz her dakika +25, üst sınır `HL_MAX_RPM` — HL'nin
   gerçek hesabını 429 öğretir, biz tahmin etmeyiz. Yetişme modu düşük şerit duraklıyken
   ya da son 60 sn'de 429 varken taban partiye iner. Sayım kendi hızını yalnız KENDİ

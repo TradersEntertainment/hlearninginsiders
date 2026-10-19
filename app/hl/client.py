@@ -1,9 +1,12 @@
 """Hyperliquid info API istemcisi — pacing + retry + küresel istek bütçesi.
 
-İki öncelik şeridi: "normal" (radarlar, kullanıcı sorguları) bütçeyi bugünkü gibi
+Üç öncelik şeridi: "normal" (radarlar, kullanıcı sorguları) bütçeyi bugünkü gibi
 kullanır; "low" (sayım, süpürücü yetişme modu) yalnız pencere kullanımı
 LOW_SHARE'in altındayken ilerler ve HL'den herhangi bir 429 gelince
 LOW_PAUSE_SEC susar — arka plan işi artan kapasiteyi kullanır, fırtınada çekilir.
+"user" (sayfayı açık tutan kişinin canlı defteri, ağırlık 2): tavanın USER_EXTRA
+üstüne kadar ilerler, 429 duraklamasına bakmaz — arka plan yükü ekrandaki defteri
+dondurmasın (kullanıcı 19.10: "canlı defter canlı değil?").
 Öncelik ya çağrıda (`priority=`) ya da görev bağlamında (`PRIORITY` contextvar,
 süpürücü partisi) verilir.
 
@@ -31,6 +34,7 @@ DEFAULT_WEIGHT = 20
 HL_WEIGHT_LIMIT = 1200      # HL: dakikada IP başına toplam ağırlık (belge)
 LOW_SHARE = 0.70            # düşük şerit: pencere kullanımı bunun üstündeyse bekler
 LOW_PAUSE_SEC = 60.0        # herhangi bir 429'dan sonra düşük şerit bu kadar susar
+USER_EXTRA = 30             # "user" şeridi: etkin tavanın bu kadar istek/dk üstüne çıkabilir (l2Book ağırlığı 2)
 # Uyarlanır tavan (AIMD): HL'nin gerçek hesabını 429 öğretir. Her 429'da etkin tavan
 # CAP_DOWN ile iner (fırtınada 10 sn'de en çok bir adım), CAP_UP_EVERY sn 429'suz her
 # dakika CAP_UP_STEP çıkar; hl_max_rpm üst sınır, CAP_FLOOR alt sınır.
@@ -135,7 +139,7 @@ class HLClient:
                         return
                     else:
                         wait = (self._req_times[0] + self._rpm_window - t) if self._req_times else 0.25
-                elif used < self._cap:
+                elif used < self._cap + (USER_EXTRA if priority == "user" else 0):
                     self._req_times.append(t)
                     self._w_times.append((t, int(weight)))
                     return
@@ -165,7 +169,7 @@ class HLClient:
 
     async def info(self, payload: dict, retries: int = 4, priority: str | None = None,
                    stats: dict | None = None):
-        """`priority`: "normal" | "low" (verilmezse görev bağlamındaki PRIORITY).
+        """`priority`: "normal" | "low" | "user" (verilmezse görev bağlamındaki PRIORITY).
         `stats`: çağıranın sözlüğü — her 429'da stats["429"] += 1 (kendi 429'unu
         bilsin; küresel sayaç başkalarının fırtınasını ona yüklüyordu)."""
         url = f"{self.base}/info"
@@ -307,17 +311,19 @@ class HLClient:
                                 "req": {"coin": coin, "interval": interval,
                                         "startTime": start_ms, "endTime": end_ms}})
 
-    async def l2_book(self, coin: str, n_sig_figs: int | None = None, retries: int = 4):
+    async def l2_book(self, coin: str, n_sig_figs: int | None = None, retries: int = 4,
+                      priority: str | None = None):
         """Emir defteri (anonim toplam derinlik) — levels: [bids, asks].
 
         `n_sig_figs` (2–5): fiyat bu kadar anlamlı haneye TOPLULAŞTIRILIR; 20
         seviye daha geniş bir aralığı kapsar (zincir simülasyonu 3 kullanır).
         Duvar radarı hassas seviye ister, varsayılanı (None) kullanır. `retries`:
-        kullanıcı bekleyen yollar (/defter) 429 tekrarlarında süreyi aşmasın diye 1."""
+        kullanıcı bekleyen yollar (/defter) 429 tekrarlarında süreyi aşmasın diye 1. `priority`: "user" = ekrandaki
+        defter (arka plan yükünde donmasın)."""
         p: dict = {"type": "l2Book", "coin": coin}
         if n_sig_figs:
             p["nSigFigs"] = int(n_sig_figs)
-        return await self.info(p, retries=retries)
+        return await self.info(p, retries=retries, priority=priority)
 
     async def frontend_open_orders(self, user: str, dex: str = ""):
         """Adresin açık (bekleyen) emirleri — duvar sahipliğini bulmak için."""
