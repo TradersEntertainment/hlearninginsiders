@@ -484,7 +484,7 @@ bildirilmez.
   ("⛔ İptal notu" kapatılırsa hiçbiri gitmez). Bildirilmiş tur 10 dk'da bir yeniden sorgulanır. Sekmede
   📡 satırlar; Emir / Doldu / Kalan kolonları.
 - **Kapsam:** yalnız WS'in dinlediği coinler — hisseler + hacme göre ilk
-  `crypto_watch_top` kripto; sekme ve `/tani` sayıyı yazar.
+  `crypto_watch_top` kripto + PROPR'da listeli her ana dex coini; sekme ve `/tani` sayıyı yazar.
 - **Emir başına EN SON kayıt (12.10 canlı hata):** HL emir geçmişi her durum değişimi için ayrı kayıt tutar —
   'activated' kaydı bitişte/iptalde silinmez, yanına 'finished'/'terminated' eklenir. Ayrıştırıcı önce eski
   'activated' kaydını seçiyordu: iptal edilen emir sürüyor görünüyordu (FIL 25 dk $1M, 83 sn'de iptal, ⛔ gelmedi;
@@ -590,7 +590,7 @@ HL'nin kendi davranışı (doküman + canlı kontrol): TWAP alt emri ~30 sn'de b
   İlk dilim kararı ayrı aile: **LOG-TWAPF** (ilk dilim anı; geçen + kalan). İlk dilim yolunun kendi 6 sa beklemesi
   (aynı adres+coin+yön) yalnız ilk dilim yoluu susturur.
 - **Kapsam:** eski yolla aynı (WS'in dinlediği coinler: hisseler + hacimce ilk `crypto_watch_top`
-  kripto). Dilimi `twap_fast_min_slice_usd`'nin altındaki TWAP'lar eski yoldan gelir. Taban 14.10'da $1.000 → **$250**
+  kripto + PROPR'da listeli her ana dex coini). Dilimi `twap_fast_min_slice_usd`'nin altındaki TWAP'lar eski yoldan gelir. Taban 14.10'da $1.000 → **$250**
   (kullanıcı: TRX 6,5 sa $564K emir, ~$721 dilim, yan kanala 36 dk geç geldi — ilk dilim yolu sormamış, eski yol gözlenen
   $50K'yı beklemişti). Canlı ölçüm (7 dk): $250–1.000 arası yeni akış ~11, ön süzgeci geçen 1 — yük ihmal edilir.
 - **Eski yol gözlenen toplamı beklemez:** HL TWAP dizisi 10 dilim / 5 dk olunca, ortalama dilimi ≤ 24 sa'lik bir emirde

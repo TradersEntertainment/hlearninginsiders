@@ -262,6 +262,10 @@ async def top_crypto_coins(client: HLClient, top_n: int,
             # [] dönmek ana dex tetiğini tamamen kapatıp sebebini yutuyordu:
             # çağıran "kripto yok" ile "bakamadım"ı ayırt edemiyordu.
             raise
+        if also is not None and not every:
+            # 'all'suz eski önbellek (deploy sonrası ilk tur) + istek düştü: hangi PROPR
+            # coininin HL'de olduğunu bilemiyoruz → bu tur yalnız ilk N; sonraki yenilemede düzelir.
+            log.warning("kripto evreni: tam sıralama yok, PROPR eklemesi bu tur yapılamadı")
         return _with_also(coins[:top_n], every, also)
     ranked: list[tuple[float, str]] = []
     for asset, ctx in zip((meta or {}).get("universe") or [], ctxs or []):

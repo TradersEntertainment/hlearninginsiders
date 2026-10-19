@@ -2036,6 +2036,23 @@ async def diag_address(cfg, collector, addr: str) -> str:
     return "\n".join(lines)
 
 
+def _unheard_why(coin: str, spot: bool, top: int, ws: dict) -> str:
+    """Dinlenmeyen coinin GEREKÇESİ — yalnız bildiğimizi yaz. Eski metin sabitti ve PROPR'da listeli
+    coine "PROPR'da da listeli değil" diyordu (19.10 incelemesi)."""
+    if ":" in coin:
+        return "HIP-3 coini; dex'i izlenmiyor ya da henüz abone olunmadı"
+    if spot:
+        return f"spot, hacimce ilk {top} çift listesinde değil" if top > 0 else "spot dinleme kapalı (SPOT_WATCH_TOP=0)"
+    if top <= 0:
+        return "kripto dinleme kapalı (CRYPTO_WATCH_TOP=0)"
+    if not ws.get("crypto"):
+        return "kripto dinleme listesi şu an boş — alınamadı, sebep bilinmiyor (/tani)"
+    from .. import propr
+    if propr.is_listed(coin):
+        return "PROPR'da listeli ama dinleme listesine henüz girmedi (liste ~10 dk'da bir yenilenir)"
+    return f"ana dex ilk {top} listesinde değil, PROPR'da da listeli değil"
+
+
 async def diag_coin(cfg, coin: str) -> str:
     """/twap COIN: dinleniyor mu, 24s hacim, bildirim için gereken emir, coindeki diziler, son kararlar."""
     from ..telegram.format import esc, usd
@@ -2049,7 +2066,7 @@ async def diag_coin(cfg, coin: str) -> str:
     top = int(getattr(cfg, "spot_watch_top" if spot else "crypto_watch_top", 120) or 0)
     where = f"spot, hacimce ilk {top}" if spot else f"ana dex, hacimce ilk {top} + PROPR'da listeliler"
     lines = [f"📡 <b>{esc(assets.label(coin))}</b> · " + (f"dinleniyor ✓ ({where})" if listened
-                                           else f"dinlenMİyor ✗ (ana dex ilk {top} listesinde değil, PROPR'da da listeli değil; ya da hisse dex'i)")]
+                                           else f"dinlenMİyor ✗ ({_unheard_why(coin, spot, top, ws)})")]
     vols = await volumes()
     vol = vols.get(coin)
     pct = vol_pct_for(cfg, coin)

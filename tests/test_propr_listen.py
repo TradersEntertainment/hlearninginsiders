@@ -13,7 +13,8 @@ Pinlenenler:
     silinmiş / HL'de olmayan eklenmez; kv önbelleği tüm sıralamayı ("all") tutar, TTL içinde istek yok;
     "all"suz eski önbellek yeniden çekilir; istek düşerse bayat listeyle yine eklenir; also hata atarsa yok sayılır
   • collector._crypto_coins propr.is_listed'i geçirir; top=0 → []
-  • /twap COIN satırı ve README/.env/ayar metni PROPR'ı anar
+  • /twap COIN satırı ve README/.env/ayar metni PROPR'ı anar; "dinlenMİyor" gerekçesi ölçüme göre (kapalı /
+    liste boş → bilinmiyor / PROPR'da ama henüz girmedi / ikisinde de yok / spot / HIP-3)
 """
 import asyncio
 import os
@@ -69,6 +70,12 @@ def test_top_plus_propr():
         await dbm.kv_set(uni.CRYPTO_KV, {"coins": ["C000", "C001", "C002"], "want": 50, "ts": dbm.now()})
         n0 = c.calls
         assert await uni.top_crypto_coins(c, 3, also=f) == out and c.calls == n0 + 1
+        # 'all'suz eski önbellek + istek düştü: bu tur yalnız ilk N (sessiz değil, log), sonraki turda düzelir
+        await dbm.kv_set(uni.CRYPTO_KV, {"coins": ["C000", "C001", "C002"], "want": 50, "ts": dbm.now()})
+        c.fail = True
+        assert await uni.top_crypto_coins(c, 3, also=f) == ["C000", "C001", "C002"]
+        c.fail = False
+        assert await uni.top_crypto_coins(c, 3, also=f) == out
         # also hata atarsa dinleme kesilmez
         def boom(n):
             raise ValueError("x")
@@ -99,6 +106,25 @@ def test_collector_uses_propr():
     asyncio.run(run())
 
 
+def test_twap_coin_unheard_reason():
+    """/twap COIN dinlenmiyor gerekçesi ölçüme göre: PROPR'da listeli coine 'PROPR'da da listeli değil' denmez."""
+    from app.radar.twaplive import _unheard_why
+    propr.set_live([])
+    try:
+        propr.set_live(set(propr.DEFAULT_PROPR) | {"SUSHI"})
+        assert "CRYPTO_WATCH_TOP=0" in _unheard_why("SUSHI", False, 0, {"crypto": []})
+        assert "bilinmiyor" in _unheard_why("SUSHI", False, 120, {"crypto": []})
+        w = _unheard_why("SUSHI", False, 120, {"crypto": ["BTC"]})
+        assert "PROPR'da listeli ama" in w and "listeli değil" not in w, w
+        assert "PROPR'da da listeli değil" in _unheard_why("ZZZQ", False, 120, {"crypto": ["BTC"]})
+        sp = _unheard_why("@107", True, 40, {"spot": []})
+        assert "spot" in sp and "PROPR" not in sp and "ana dex" not in sp, sp
+        assert "HIP-3" in _unheard_why("abc:MEME", False, 120, {"crypto": ["BTC"]})
+    finally:
+        propr.set_live([])
+    print("✅ /twap COIN dinlenmiyor gerekçesi: kapalı / liste boş / PROPR'da ama henüz yok / değil / spot / HIP-3")
+
+
 def test_wiring_texts():
     rd = lambda *p: open(os.path.join(ROOT, *p), encoding="utf-8").read()  # noqa: E731
     assert "also=propr.is_listed" in rd("app", "hl", "collector.py")
@@ -113,4 +139,5 @@ def test_wiring_texts():
 if __name__ == "__main__":
     test_top_plus_propr()
     test_collector_uses_propr()
+    test_twap_coin_unheard_reason()
     test_wiring_texts()
