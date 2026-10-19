@@ -250,7 +250,7 @@
   {% elif panel_err.tape %}
   {% elif listened is false %}
   {{ m.empty([symbol ~ " canlı akışta dinlenmiyor — son 15 dk'nın işlemleri bu yüzden yok.",
-              "Kripto için dinlenen coinler hacme göre ilk N (Ayarlar → CRYPTO_WATCH_TOP); spot için SPOT_WATCH_TOP."]) }}
+              "Kripto için dinlenen coinler hacme göre ilk N (Ayarlar → CRYPTO_WATCH_TOP) + PROPR'da listeli olanlar; spot için SPOT_WATCH_TOP."]) }}
   {% elif tape_cover.unknown %}
   {{ m.empty(["Son 15 dk bilinmiyor: " ~ tape_cover.warn ~ "."]) }}
   {% else %}

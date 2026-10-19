@@ -280,7 +280,7 @@ EDITABLE_FIELDS: dict[str, dict] = {
                          "desc": "BTC ve ETH'te bu boyutun altındaki pozisyonlar kaydedilmez — en likit iki markette çıta daha yüksek"},
     "crypto_watch_top": {"type": "int", "label": "Canlı dinlenen kripto coin",
                          "group": "Tarama & performans",
-                         "desc": "Ana dex'te 24h hacme göre ilk kaç coin canlı dinlensin. 'Kripto hacim evren tavanı' ile EŞİT tutulmalı: alarm çıkan ama dinlenmeyen bir coinde 'kim ne aldı' kırılımı boş gelir. 0 = kripto dinleme kapalı"},
+                         "desc": "Ana dex'te 24h hacme göre ilk kaç coin canlı dinlensin. 'Kripto hacim evren tavanı' ile EŞİT tutulmalı: alarm çıkan ama dinlenmeyen bir coinde 'kim ne aldı' kırılımı boş gelir. PROPR'da listeli ana dex coinleri sıradan bağımsız ayrıca dinlenir. 0 = kripto dinleme kapalı"},
     "liq_attack_min_usd": {"type": "float", "label": "Liq attack: hedef küme tabanı ($)",
                            "group": "Liq attack",
                            "desc": "Şimdiye yakın likidasyon kümesi en az bu kadar $ olmalı ki sayfada aday sayılsın"},

@@ -607,7 +607,7 @@ async def listening(coin: str) -> bool | None:
     bildiğimiz, bilmediğimiz.
 
     İzlenen HIP-3 dex'lerinin (xyz, para…) hepsine abone olunuyor. Ana dex
-    kriptoda hacimce ilk CRYPTO_WATCH_TOP, spotta ilk SPOT_WATCH_TOP çift
+    kriptoda hacimce ilk CRYPTO_WATCH_TOP + PROPR'da listeli olanlar, spotta ilk SPOT_WATCH_TOP çift
     dinleniyor (`ws_universe`, 600 sn'de bir yenilenir) — cevap ŞU ANIN cevabı.
     """
     from ..db import kv_get

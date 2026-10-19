@@ -225,7 +225,7 @@ async def main_dex_volumes(client: HLClient, ttl: int = MAIN_VOL_TTL) -> dict:
 
 
 async def top_crypto_coins(client: HLClient, top_n: int,
-                           ttl: int = CRYPTO_TTL) -> list[str]:
+                           ttl: int = CRYPTO_TTL, also=None) -> list[str]:
     """Ana dex'in (kripto) günlük hacimce en büyük ilk N coin'i.
 
     Bu liste `tickers`'a YAZILMAZ: kripto coin'leri earnings/hisse hattının
@@ -235,16 +235,23 @@ async def top_crypto_coins(client: HLClient, top_n: int,
 
     İstek düşerse önceki liste (bayat da olsa) döner — dinlemeyi kesmek,
     listeyi bir saat eski kullanmaktan daha kötü.
+
+    `also(name) -> bool`: hacim sırası ne olursa olsun listeye EKLENECEK coinler
+    (PROPR'da listeli olanlar). Kullanıcı (19.10): "proprda listeli her coini
+    dinleyebiliyor olmalıyız". Yalnız HL'de işlem gören (silinmemiş) adlar eklenir;
+    bunun için önbellek tüm sıralamayı ("all") tutar.
     """
     top_n = int(top_n or 0)
     if top_n <= 0:
         return []
     cached = await kv_get(CRYPTO_KV) or {}
     coins = [c for c in (cached.get("coins") or []) if isinstance(c, str)]
+    every = [c for c in (cached.get("all") or []) if isinstance(c, str)]
     fresh = (coins and now() - int(cached.get("ts") or 0) < ttl
-             and int(cached.get("want") or 0) >= top_n)
+             and int(cached.get("want") or 0) >= top_n
+             and (also is None or "all" in cached))
     if fresh:
-        return coins[:top_n]
+        return _with_also(coins[:top_n], every, also)
     try:
         data = await client.meta_and_ctxs("")
         meta, ctxs = data[0], data[1]
@@ -255,7 +262,7 @@ async def top_crypto_coins(client: HLClient, top_n: int,
             # [] dönmek ana dex tetiğini tamamen kapatıp sebebini yutuyordu:
             # çağıran "kripto yok" ile "bakamadım"ı ayırt edemiyordu.
             raise
-        return coins[:top_n]
+        return _with_also(coins[:top_n], every, also)
     ranked: list[tuple[float, str]] = []
     for asset, ctx in zip((meta or {}).get("universe") or [], ctxs or []):
         name = asset.get("name") or ""
@@ -268,14 +275,36 @@ async def top_crypto_coins(client: HLClient, top_n: int,
             continue
         ranked.append((vol, name))
     if not ranked:
-        return coins[:top_n]
+        return _with_also(coins[:top_n], every, also)
     ranked.sort(key=lambda r: (-r[0], r[1]))
     want = max(top_n, CRYPTO_CACHE_MIN)
     out = [n for _, n in ranked[:want]]
-    await kv_set(CRYPTO_KV, {"coins": out, "want": want, "ts": now()})
-    log.info("kripto dinleme listesi: %d coin (%s)", min(top_n, len(out)),
+    every = [n for _, n in ranked]
+    await kv_set(CRYPTO_KV, {"coins": out, "all": every, "want": want, "ts": now()})
+    res = _with_also(out[:top_n], every, also)
+    log.info("kripto dinleme listesi: %d coin (ilk %d + %d PROPR) (%s)", len(res),
+             min(top_n, len(out)), len(res) - min(top_n, len(out)),
              ", ".join(out[:6]) + ("…" if len(out) > 6 else ""))
-    return out[:top_n]
+    return res
+
+
+def _with_also(top: list[str], every: list[str], also) -> list[str]:
+    """İlk N'in sonuna, sıralamada geride kalan ama `also` diyen coinleri ekle (hacim sırasıyla)."""
+    if also is None:
+        return top
+    have = set(top)
+    extra = []
+    for n in every:
+        if n in have:
+            continue
+        try:
+            ok = also(n)
+        except Exception:                       # noqa: BLE001 — liste sorgusu dinlemeyi kesmesin
+            ok = False
+        if ok:
+            extra.append(n)
+            have.add(n)
+    return top + extra
 
 
 async def top_spot_coins(client: HLClient, top_n: int,

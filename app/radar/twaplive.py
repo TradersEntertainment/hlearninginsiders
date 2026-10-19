@@ -2047,9 +2047,9 @@ async def diag_coin(cfg, coin: str) -> str:
     spot = assets.is_spot(coin)
     listened = coin in set(ws.get("spot" if spot else "crypto") or [])
     top = int(getattr(cfg, "spot_watch_top" if spot else "crypto_watch_top", 120) or 0)
-    where = "spot, hacimce ilk" if spot else "ana dex, hacimce ilk"
-    lines = [f"📡 <b>{esc(assets.label(coin))}</b> · " + (f"dinleniyor ✓ ({where} {top})" if listened
-                                           else f"dinlenMİyor ✗ (ana dex ilk {top} listesinde değil ya da hisse dex'i)")]
+    where = f"spot, hacimce ilk {top}" if spot else f"ana dex, hacimce ilk {top} + PROPR'da listeliler"
+    lines = [f"📡 <b>{esc(assets.label(coin))}</b> · " + (f"dinleniyor ✓ ({where})" if listened
+                                           else f"dinlenMİyor ✗ (ana dex ilk {top} listesinde değil, PROPR'da da listeli değil; ya da hisse dex'i)")]
     vols = await volumes()
     vol = vols.get(coin)
     pct = vol_pct_for(cfg, coin)

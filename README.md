@@ -170,7 +170,8 @@ varsayılandır; gizli anahtarlar (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`,
    Yalnız kayıt tabanıdır; bildirim eşikleri ($1M+) değişmez.
 2. Yahoo'dan (yfinance) evrendeki sembollerin earnings tarihleri çekilir; `FINNHUB_API_KEY` verilirse çapraz doğrulanır.
 3. WebSocket `trades` kanalı 7/24 dinlenir — her trade'de alıcı+satıcı adresi gelir; $5K üstü fill'ler ve adresleri DB'ye yazılır.
-   Ana dex'in hacimce ilk 30 kripto coin'i de dinlenir ama YALNIZ tetikleyici olarak:
+   Ana dex'in hacimce ilk `CRYPTO_WATCH_TOP` kripto coin'i **ve PROPR'da listeli her ana dex coini** (hacim sırası
+   ne olursa olsun; kullanıcı 19.10: "proprda listeli her coini dinleyebiliyor olmalıyız") de dinlenir ama YALNIZ tetikleyici olarak:
    oradan gelen işlemler `fills`'e yazılmaz ve alarm üretmez — sadece $2M+ süpüren
    adresin profiline hemen bakılır (`CRYPTO_WATCH_TOP=0` ile kapatılır).
 4. Earnings'e 1 saat kala (AMC→15:00 ET, BMO→önceki akşam 20:00 ET + sabah 06:00 ET):
@@ -1616,8 +1617,8 @@ Eşzamanlı akış en çok 24. Sayfanın geri kalanı 60 sn'de bir yumuşak yeni
 paneller (grafik; defter, işlemler, toplamlar yalnız akış akıyorsa) nakledilir, panel içi kaydırma korunur. Canlı
 fiyat yalnız 2 dk'dan taze son işlemden; dinlenmeyen coinde akış paneli "—" ve nedenini yazar ($0 değil).
 
-**Kör nokta, açıkça:** canlı akış yalnız WS'in dinlediği coinlerde (kripto ilk `CRYPTO_WATCH_TOP`, spot ilk
-`SPOT_WATCH_TOP`, hisseler) — değilse gösterge "dinlenmiyor" der. Canlı fiyat = son işlem (mark değil); funding / OI /
+**Kör nokta, açıkça:** canlı akış yalnız WS'in dinlediği coinlerde (kripto ilk `CRYPTO_WATCH_TOP` + PROPR'da listeli
+her ana dex coini, spot ilk `SPOT_WATCH_TOP`, hisseler) — değilse gösterge "dinlenmiyor" der. Canlı fiyat = son işlem (mark değil); funding / OI /
 24 sa hacim sayfa yenilemesiyle (metrik turu 1–5 dk). Mumlar 1 saatlik; yalnız son mum canlı, geçmiş mumlar ancak
 arada bir saat atlanınca yeniden çekilir (en çok 3 kez). Liq fiyatları ve pozisyonlar süpürmeden (dakikalar–saatler); canlı olan yalnız mesafe. Bu deneme Railway'de
 SSE'nin tamponlanmadığını varsayar (`X-Accel-Buffering: no`); akmıyorsa gösterge "bağlanıyor"da kalır.
@@ -1640,7 +1641,7 @@ sorarak olmalı". Her coin sayfasında (`/t/PUMP`, hisse ve kripto) 📟 termina
   süzülür, hiçbiri iki kez sayılmaz. Kapsama ölçülür: restart bandı sıfırlar ("bot N dk önce yeniden başladı";
   açılıştan önceki işlemler sayılmaz), canlı akışın kopuk kaldığı süre yazılır ("o süre eksik olabilir"; kopukluk son
   mesajdan başlar), akış şu an kopuksa ya da bağlı görünüp 60 sn'dir mesaj almıyorsa "işlem görülmedi" değil
-  **bilinmiyor** yazılır. Coin canlı akışta dinlenmiyorsa (kripto: hacimce ilk `CRYPTO_WATCH_TOP`, spot:
+  **bilinmiyor** yazılır. Coin canlı akışta dinlenmiyorsa (kripto: hacimce ilk `CRYPTO_WATCH_TOP` + PROPR'da listeliler, spot:
   `SPOT_WATCH_TOP`) bunu söyler.
 - **🧱 En kalın emirler ve sahipleri** (`app/radar/bookowners.py`): iki görünüm — **HL arayüzü gibi gruplu**
   (3 anlamlı basamak; PUMP'ta 0.00001 adım) ve **tam fiyat** (HL'nin verdiği ilk 20 kademe). Ölçüm (18.10): arayüzde

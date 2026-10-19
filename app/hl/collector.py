@@ -182,7 +182,9 @@ class Collector:
             return []
         try:
             from .universe import top_crypto_coins
-            out = await top_crypto_coins(self.client, top)
+            from .. import propr
+            # PROPR'da listeli her ana dex coini hacim sırasından bağımsız dinlenir (19.10)
+            out = await top_crypto_coins(self.client, top, also=propr.is_listed)
             self.crypto_err = "" if out else "liste boş döndü"
             return out
         except Exception as e:
