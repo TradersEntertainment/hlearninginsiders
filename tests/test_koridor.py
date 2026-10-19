@@ -169,6 +169,72 @@ def test_scan_send_once_and_break():
     print("✅ tarama) chat yoksa mesaj yok; bir kez; restart'ta ikinci kez yok; tek kırılış notu; ölçülü dil")
 
 
+def test_review_fixes():
+    """İnceleme (19.10, yeniden üretildi): kırılış yalnız son mumda aranıyordu; evren restart'ta 10 dk boş kalıyordu;
+    okunamayan geri doldurma eski mumları düz mumla birleştiriyordu; RANGE_ENABLED=0 bekçiyi alarma geçiriyordu."""
+    async def run():
+        import collections
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "kor3.db"))
+        _reset()
+        P = k.params(Config())
+        cfg = Config()
+        cfg.range_chat_id = "-1"
+        n = _Notifier()
+        # 1) toplu gelen mumlarda aradaki kırılış (+18 dışarıda, +19..+20 içeride) yakalanır, doğru mumla yazılır
+        cor = {"t0": T0, "start_ts": T0 - 3600, "u0": math.log(101), "l0": math.log(99), "W": math.log(101 / 99),
+               "slope": 0.0, "sent": True, "checked": T0, "nU": 4, "nL": 4, "lower": 99, "upper": 101}
+        k.ELIGIBLE.add("X")
+        k.ACTIVE["X"] = dict(cor)
+        bars = [[T0 + 60 * i, 100, 100, 100, 100, 3] for i in range(1, 21)]
+        bars[17] = [T0 + 60 * 18, 110, 110, 110, 110, 3]
+        k.BARS["X"] = collections.deque(bars, maxlen=k.KEEP)
+        out = await k.scan(cfg, n, t=T0 + 60 * 21 + 5)
+        assert len(out) == 1 and "kırıldı (yukarı)" in out[0] and fmt.tr_time(T0 + 60 * 18) in out[0], out
+        assert "X" not in k.ACTIVE
+        # 2) evren: kollektör henüz abone değilken boş → her turda yeniden bakılır (10 dk beklenmez)
+        _reset()
+
+        class Col:
+            connected, connected_since, valid_coins = False, None, set()
+        from app.radar import twaplive
+        twaplive.VOL_CACHE.update(ts=dbm.now(), v={"PONS": (13e6, dbm.now())})
+        assert await k._refresh_universe(cfg, Col()) == set() and not k.ELIGIBLE
+        Col.valid_coins = {"PONS"}
+        await k._refresh_universe(cfg, Col())
+        assert k.ELIGIBLE == {"PONS"}
+        src = open(os.path.join(ROOT, "app/radar/koridor.py"), encoding="utf-8").read()
+        assert "if tm - last_uni >= UNIVERSE_SEC or not ELIGIBLE:" in src and "filled -= gone" in src
+        # 3) geri doldurma okunamazsa eski mumlar atılır, başarılı sayılmaz; okunursa WS kuyruğu korunur
+        k.BARS["PONS"] = collections.deque([[T0, 1, 1, 1, 1, 1]], maxlen=k.KEEP)
+
+        class Bad:
+            async def candles(self, *a):
+                raise TimeoutError("x")
+        old = k.BACKFILL_GAP_SEC
+        k.BACKFILL_GAP_SEC = 0
+        try:
+            assert await k._backfill(Bad(), ["PONS"], cfg) == set() and "PONS" not in k.BARS
+            end = int(__import__("time").time()) // 60 * 60
+            k.BARS["PONS"] = collections.deque([[end, 2, 2, 2, 2, 7]], maxlen=k.KEEP)     # WS'ten gelen yeni dakika
+
+            class Good:
+                async def candles(self, coin, iv, s, e):
+                    return [{"t": (end - 60 * i) * 1000, "o": 1, "h": 1, "l": 1, "c": 1, "n": 2} for i in range(3, 0, -1)]
+            assert await k._backfill(Good(), ["PONS"], cfg) == {"PONS"}
+            assert [b[0] for b in k.BARS["PONS"]] == [end - 180, end - 120, end - 60, end] and k.BARS["PONS"][-1][5] == 7
+        finally:
+            k.BACKFILL_GAP_SEC = old
+        # 4) kapalıyken de nabız
+        assert "while True:                                     # kapalıyken de nabız" in src
+        # 5) metin: "%100'inde" ek hatası yok; geçmiş satırı rastgele karşılaştırmasını ve örneklemi söyler
+        assert "işlemli dakika %" in fmt.koridor_alert("PONS", {**cor, "age_min": 60, "close": 100, "act_pct": 100}, 1e7)
+        assert "rastgele fiyatta %11" in k.HIST_LINE and "küçük örnek" in k.HIST_LINE
+        _reset()
+    asyncio.run(run())
+    print("✅ inceleme) toplu mumda kırılış; boş evren yeniden bakılır; okunamayan doldurma eski mumu atar, WS kuyruğu"
+          " korunur; kapalıyken nabız; metin")
+
+
 def test_wiring():
     async def run():
         from app import diag, health, notify
@@ -207,4 +273,5 @@ if __name__ == "__main__":
     test_detect_and_break()
     test_bars_from_trades()
     test_scan_send_once_and_break()
+    test_review_fixes()
     test_wiring()

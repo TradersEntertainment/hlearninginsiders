@@ -2292,13 +2292,15 @@ dk'nın medyan mum aralığı)); son ≤ 300 dk'nın tepe ve dip dönüşlerinde
 (4) **sıralı** temas (alt, üst, alt… — genişliğin %15'i içinde), hiçbir kapanış kenarın %25 W dışında değil, çizgiler
 paralel, dakikaların ≥ %70'inde işlem, ilk temastan ≥ `RANGE_MIN_MINUTES` (60) dk, genişlik %0,7–2
 (`RANGE_MIN/MAX_WIDTH_PCT`). Mumlar botun zaten aldığı WS işlemlerinden (ek HL isteği yok); açılışta ve WS kopukluğundan
-sonra son 600 dk bir kez HL'den (düşük şerit, coin başına ~31 ağırlık). Açık koridorlar kv'de: yeniden başlatmada aynı
-koridor ikinci kez gelmez.
+sonra son 600 dk bir kez HL'den (düşük şerit, coin başına ~30 ağırlık, 4 sn arayla ≈ 450 ağırlık/dk — 80 coin ~5 dk;
+tarama beklemez, dolan coin hemen taranır; okunamayan coin sonraki turda yeniden). Kırılış son kontrolden sonraki her
+mumda aranır. Açık koridorlar kv'de: yeniden başlatmada aynı koridor ikinci kez gelmez.
 
 **Araştırma (19.10, ölçülen — tahmin değil):** 131 PROPR coini, 1 dk mum 3,4 gün + 5 dk mum 17 gün, üç bağımsız
 dedektör, her biri ayrıca doğrulandı ve rastgele-yürüyüş kopyalarıyla karşılaştırıldı:
 - Bu tür koridorlar rastgele fiyatta da aynı sıklıkta çıkıyor (gerçek / rastgele ≈ 0,9–1,2).
-- Gerçek zamanlı fark edildikten sonra ortanca ömür ~25 dk; 60 dk sonra %18–31'i sağlam.
+- Gerçek zamanlı fark edildikten sonra ortanca ömür ~25 dk; 60 dk sonra %18–31'i sağlam (tüm tespitler; bu kuralda
+  ~28 koridorda %32, rastgele fiyatta %11 — küçük örnek, büyük örnekte fark oynaklık kümelenmesine iniyor).
 - Kenardan alım-satımın (alt kenarda al, üstte sat; stop %30 W dışarıda) komisyon öncesi ortalaması ≈ 0, rastgele
   fiyatla aynı; %0,06–0,09 komisyonla −%0,05…−%0,10. Hiçbir genişlik / hacim / saat dilimi bunu tutarlı biçimde aşmadı.
 - Bu kuralla (≥ 4 temas, ≥ $5M, ≥ %0,7) günde ~8–11 bildirim, ~20 coinden; aynı kural rastgele kopyalarda günde ~14.
@@ -2307,7 +2309,7 @@ dedektör, her biri ayrıca doğrulandı ve rastgele-yürüyüş kopyalarıyla k
 Bu yüzden mesaj bir **gözlemdir**: "fırsat", yön ya da giriş / çıkış yazmaz; geçmiş ölçümü tek satırla söyler.
 
 **Kör nokta, açıkça:** yalnız WS'te dinlenen coinler; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
-bot yeniden başladıktan sonra ilk geri doldurma bitene kadar (~1 dk) koridor aranmaz; xyz hisselerinin seans dışı
+bot yeniden başladıktan sonra coin, geri doldurma sırası ona gelene kadar (en çok ~5 dk) taranmaz; xyz hisselerinin seans dışı
 saatleri seyrek işlemli (%70 işlem şartı çoğunu eler); kenar / temas mum (işlem fiyatı) üzerinden, emir defteri değil.
 
 ## 🔔 Açılışın En Hareketlileri (hisse kanalı)

@@ -3941,7 +3941,7 @@ def koridor_alert(coin: str, c: dict, vol: float | None) -> str:
     lines.append(f"alt {px5(c['lower'])} ({c['nL']} temas) · üst {px5(c['upper'])} ({c['nU']} temas)"
                  f" · son kapanış {px5(c['close'])}")
     lines.append(f"{_slope_txt(c['slope'], c['W'])} · 24s hacim {usd(vol) if vol else 'bilinmiyor'}"
-                 f" · dakikaların %{c.get('act_pct', 0)}'inde işlem")
+                 f" · işlemli dakika %{c.get('act_pct', 0)}")
     lines.append(f"başlangıç {tr_time(int(c['start_ts']))} TSİ · bildirim {tr_time(int(c['t0']) + 60)} TSİ")
     from ..radar.koridor import HIST_LINE
     lines.append(HIST_LINE)

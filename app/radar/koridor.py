@@ -47,8 +47,9 @@ BACKFILL_MIN = 600            # açılışta / kopukluktan sonra HL'den çekilen
 UNIVERSE_SEC = 600            # evren (PROPR ∩ hacim) tazeleme
 MAX_GAP_FILL = 30             # bundan uzun işlemsiz boşluk doldurulmaz (WS kopukluğu sayılır → yeniden doldurma)
 ACTIVE_MAX_SEC = 12 * 3600    # kırılmadan bu kadar süren koridor sessizce düşer
-HIST_LINE = ("📏 Geçmiş ölçüm (16–19.10, bu kural): koridorların %32'si 60 dk sonra sağlamdı; kenardan alım-satımın"
-             " komisyon öncesi ortalaması ≈ 0 (rastgele fiyatla aynı).")
+HIST_LINE = ("📏 Geçmiş ölçüm (16–19.10, bu kural, ~28 koridor — küçük örnek): 60 dk sonra sağlam %32 (rastgele"
+             " fiyatta %11); kenardan alım-satımın komisyon öncesi ortalaması ≈ 0 (rastgele fiyatla aynı).")
+BACKFILL_GAP_SEC = 4.0        # geri doldurma: coin başına bekleme (~30 ağırlık / 4 sn ≈ 450/dk; HL sınırı 1200/dk)
 
 P_BASE = dict(zz_floor=0.0025, zz_tr_mult=3.0, tr_win=300, max_window=300, touch_tol=0.15, parallel_tol=0.30,
               act_min=0.70, brk=0.25)
@@ -331,24 +332,31 @@ def broke(cor: dict, bar: list, P) -> str | None:
 
 # ---------------- döngü ----------------
 
-async def _refresh_universe(cfg, collector) -> None:
+async def _refresh_universe(cfg, collector) -> set[str]:
+    """Evreni tazele; evrenden çıkan coinleri döndür (geri gelirse yeniden doldurulsun)."""
     from .. import propr
     from .twaplive import volumes_cached
     vols = await volumes_cached(None)
     vmin = float(getattr(cfg, "range_min_vol_usd", 5e6) or 0)
     listened = set(getattr(collector, "valid_coins", None) or [])
     new = {c for c in listened if propr.is_listed(c) and (vols.get(c) or (0,))[0] >= vmin}
-    for c in ELIGIBLE - new:
+    gone = ELIGIBLE - new
+    for c in gone:
         BARS.pop(c, None)
         CUR.pop(c, None)
     ELIGIBLE.clear()
     ELIGIBLE.update(new)
+    return gone
 
 
-async def _backfill(client, coins, cfg) -> None:
-    """Son BACKFILL_MIN dakikayı HL'den çek (düşük şerit, sırayla). WS'ten gelen açık dakika korunur."""
+async def _backfill(client, coins, cfg, done: set[str] | None = None) -> set[str]:
+    """Son BACKFILL_MIN dakikayı HL'den çek (düşük şerit, sırayla, ağırlığa göre aralıklı). Dönüş: başarılı coinler.
+
+    İstek sürerken WS'ten eklenen mumlar (ts ≥ end) korunur. Okunamayan coinin eski mumları atılır (kopukluk boşluğu
+    düz mumla doldurulmasın) ve başarılı sayılmaz → sonraki turda yeniden denenir (inceleme 19.10)."""
     from ..hl.client import PRIORITY
     PRIORITY.set("low")
+    ok: set[str] = set() if done is None else done
     for coin in coins:
         if coin not in ELIGIBLE:
             continue
@@ -360,15 +368,18 @@ async def _backfill(client, coins, cfg) -> None:
                 rows.append([int(k["t"]) // 1000, float(k["o"]), float(k["h"]), float(k["l"]), float(k["c"]),
                              int(k.get("n") or 0)])
             rows = [r for r in rows if r[0] < end]
-            dq = deque(maxlen=KEEP)
-            BARS[coin] = dq
-            for r in sorted(rows):
+            tail = [list(b) for b in (BARS.get(coin) or ()) if b[0] >= end]
+            BARS[coin] = deque(maxlen=KEEP)
+            for r in sorted(rows) + tail:
                 _append(coin, r)
             STATS["backfill"] += 1
+            ok.add(coin)
         except Exception as e:                              # noqa: BLE001
             STATS["backfill_err"] += 1
+            BARS.pop(coin, None)
             log.debug("koridor geri doldurma %s: %s", coin, e)
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(BACKFILL_GAP_SEC)
+    return ok
 
 
 async def _save_active() -> None:
@@ -416,9 +427,16 @@ async def scan(cfg, notifier, P=None, t: int | None = None) -> list[str]:
             continue
         cor = ACTIVE.get(coin)
         if cor is not None:
-            last = dq[-1]
-            why = broke(cor, last, P) if last[0] > int(cor.get("checked", cor["t0"])) else None
-            cor["checked"] = int(last[0])
+            # son kontrolden sonraki HER kapanmış mum (restart / kopukluk sonrası toplu gelen mumlarda kırılış kaçmasın)
+            chk = int(cor.get("checked", cor["t0"]))
+            why, last = None, dq[-1]
+            for bar in dq:
+                if bar[0] > chk:
+                    why = broke(cor, bar, P)
+                    if why:
+                        last = bar
+                        break
+            cor["checked"] = int(dq[-1][0])
             changed = True
             if why:
                 ACTIVE.pop(coin, None)
@@ -465,7 +483,9 @@ async def scan(cfg, notifier, P=None, t: int | None = None) -> list[str]:
 async def loop(cfg, client, notifier, collector) -> None:
     from .. import health
     if not getattr(cfg, "range_enabled", True):
-        return
+        while True:                                     # kapalıyken de nabız (bekçi "sessiz" sanıp yeniden başlatmasın)
+            await health.beat("koridor")
+            await asyncio.sleep(TICK)
     try:
         ACTIVE.update(await kv_get(ACTIVE_KV) or {})
     except Exception:                                       # noqa: BLE001
@@ -474,22 +494,28 @@ async def loop(cfg, client, notifier, collector) -> None:
     last_uni = 0.0
     seen_conn = None
     filled: set[str] = set()
+    bf_task: asyncio.Task | None = None
     while True:
         try:
             await health.beat("koridor")
             tm = time.time()
-            if tm - last_uni >= UNIVERSE_SEC:
-                await _refresh_universe(cfg, collector)
-                last_uni = tm
             conn = getattr(collector, "connected_since", None) if getattr(collector, "connected", False) else None
-            if conn != seen_conn:                           # (yeniden) bağlandı: aradaki dakikalar HL'den
+            if conn != seen_conn:                           # (yeniden) bağlandı: evren + aradaki dakikalar HL'den
                 if conn is not None:
                     filled.clear()
+                    last_uni = 0.0
                 seen_conn = conn
-            todo = [c for c in sorted(ELIGIBLE) if c not in filled]
-            if todo and client is not None and conn is not None:
-                await _backfill(client, todo, cfg)
-                filled.update(todo)
+            # evren: kollektör abone olmadan boş gelir — boşken her tur yeniden bak (restart sonrası 10 dk kör kalmasın)
+            if tm - last_uni >= UNIVERSE_SEC or not ELIGIBLE:
+                gone = await _refresh_universe(cfg, collector)
+                filled -= gone                              # evrenden çıkıp dönen coin yeniden doldurulur
+                if ELIGIBLE:
+                    last_uni = tm
+            # geri doldurma arka planda (taramayı bekletmez; ağırlığa göre aralıklı)
+            if (bf_task is None or bf_task.done()) and client is not None and conn is not None:
+                todo = [c for c in sorted(ELIGIBLE) if c not in filled]
+                if todo:
+                    bf_task = asyncio.ensure_future(_backfill(client, todo, cfg, filled))
             if conn is not None:
                 await scan(cfg, notifier, P)
             try:
@@ -498,6 +524,8 @@ async def loop(cfg, client, notifier, collector) -> None:
             except Exception:                               # noqa: BLE001
                 pass
         except asyncio.CancelledError:
+            if bf_task is not None:
+                bf_task.cancel()
             raise
         except Exception:                                   # noqa: BLE001
             STATS["errors"] += 1
