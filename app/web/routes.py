@@ -1035,7 +1035,8 @@ async def coin_chart_json(request: Request, symbol: str):
     mark = summ.get("mark")
 
     rec = await pricechart.get(coin)
-    if not pricechart.fresh(rec):
+    refreshing = not pricechart.fresh(rec)          # cevap bayat önbellekten, arka planda tazeleniyor
+    if refreshing:
         client = getattr(request.app.state, "client", None)
         if client:
             pricechart.kick(cfg, client, coin)
@@ -1080,6 +1081,7 @@ async def coin_chart_json(request: Request, symbol: str):
     last_ts = candles[-1]["t"] if candles else 0
     return JSONResponse({
         "pending": False,
+        "refreshing": refreshing,     # istemci: bu cevapla kapanmayan boşluğu "dolmaz" saymasın (sonra yeniden çeker)
         "candles": candles,
         "mark": mark,
         "kind": kind,

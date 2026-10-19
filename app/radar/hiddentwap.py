@@ -103,8 +103,8 @@ def auto_mm_override(cfg, run, m: dict | None) -> bool:
     pasif kotasyon verir; tahtayı tek yönde süpüren balina değildir (kullanıcı 19.10: "bu adam gizli twap yapıyor ama
     bana bildirim gelmedi" — 0x30af…393e, 74 bin işlemin hepsi piyasadan, etiket yüzünden radar diziyi hiç sormadı).
     'vault' ve elle eleme ('manual') değişmez."""
-    if not m or getattr(run, "nat_n", 0):
-        return False
+    if not enabled(cfg) or not m or getattr(run, "nat_n", 0):
+        return False                               # 🕵️ kapalıyken eski sorgusuz 'mm' elemesi (HL sorgusu harcanmaz)
     tk = m.get("taker_pct")
     if tk is None or float(tk) < float(getattr(cfg, "hidden_twap_mm_taker_min_pct", 90) or 0):
         return False

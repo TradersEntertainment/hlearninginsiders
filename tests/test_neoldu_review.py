@@ -228,16 +228,6 @@ def test_oi_purged_and_recording_off():
     print("✅ OI / kayıt kapalı) 45 günden eski pencerede OI 'silindi'; kayıt kapalı sınıfın alarm satırı doğru")
 
 
-if __name__ == "__main__":
-    test_rest_rows_keep_twap_and_mm()
-    test_tape_outage_and_late_subscribe()
-    test_tape_window_clamp_and_boundary()
-    test_route_default_form_and_spot()
-    test_parse_reversed_and_year()
-    test_oi_purged_and_recording_off()
-    test_round2_neoldu()
-
-
 def test_round2_neoldu():
     """2. tur: 20:00 → 03:00 gece yarısını aşar (ters değil); açılıştan ÖNCE biten pencere 'pencerenin içinde
     yeniden başladı' demez; gelecekteki pencere 'kısa' denmez; bandın başı kesikse 'BÜTÜN' / tam sayılmaz; kayıtta
@@ -297,3 +287,54 @@ def test_round2_neoldu():
     assert "Bu pencerenin işlemleri <b>bilinmiyor</b>" in tpl and "adresler bilinmiyor" in tpl
     print("✅ 2. tur) 20:00→03:00 gece yarısı; açılış öncesi / gelecek pencere doğru neden; baş kesik tam değil;"
           " açılış içeren pencere 'kopuktu'; sonradan dinlenen coin 'sub_late'; künye 0 demez")
+
+
+def test_round3():
+    """3. tur: bant başı tam bir kova kesilse de 'tam' sayılmaz; kayıt yolunda dinlenmeyen coin 'kopuktu' değil
+    'dinlemiyoruz' der; grafik cevabı bayat önbellekten geldiyse istemci boşluğu 'dolmaz' diye kilitlemez."""
+    old = (tape.STARTED, dict(tape.REG), dict(tape.HWM))
+    now = (int(time.time()) // 30) * 30
+    tape.STARTED = now - 5000
+    tape.REG.pop("ZEC", None)
+    tape.HWM.pop("ZEC", None)
+    try:
+        for i in range(40):
+            tape.observe("ZEC", "B", A, B, 10.0, 100, now - 890 + i * 20, tid=f"r{i}")
+        w = tape.window("ZEC", now - 930, now, now)     # politika başı now-900: tam 30 sn kesik
+        assert w and w["head_cut"] == 30 and not w["full"], (w and w["head_cut"], w and w["full"])
+    finally:
+        tape.STARTED = old[0]
+        tape.REG.clear(); tape.REG.update(old[1])
+        tape.HWM.clear(); tape.HWM.update(old[2])
+
+    async def run():
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "r3.db"))
+        from app.hl import collector as colm
+        n = dbm.now()
+        o = (tape.STARTED, colm.LIVE)
+        try:
+            colm.LIVE = _Live(valid_coins={"BTC"}, down_log=[(float(n - 200), float(n - 100))])
+            tape.STARTED = n + 10_000                   # bant yolu kapalı: kayıt yolu
+            br = await fx.window_brief(get_config(), None, "ZRO", n - 300, n, probe=False)
+            assert br["empty_reason"] == "not_listening", br["empty_reason"]
+            br = await fx.window_brief(get_config(), None, "BTC", n - 300, n, probe=False)
+            assert br["empty_reason"] == "stream_gap", br["empty_reason"]
+        finally:
+            tape.STARTED, colm.LIVE = o
+    asyncio.run(run())
+    base = open(os.path.join(ROOT, "app/web/templates/base.html"), encoding="utf-8").read()
+    routes = open(os.path.join(ROOT, "app/web/routes.py"), encoding="utf-8").read()
+    assert "!PXCHART.refreshing" in base and '"refreshing": refreshing' in routes
+    print("✅ 3. tur) 30 sn kesik baş tam değil; kayıt yolunda dinlenmeyen coin 'dinlemiyoruz', kopukluk 'kopuktu';"
+          " bayat grafik cevabı boşluğu kilitlemez")
+
+
+if __name__ == "__main__":
+    test_rest_rows_keep_twap_and_mm()
+    test_tape_outage_and_late_subscribe()
+    test_tape_window_clamp_and_boundary()
+    test_route_default_form_and_spot()
+    test_parse_reversed_and_year()
+    test_oi_purged_and_recording_off()
+    test_round2_neoldu()
+    test_round3()

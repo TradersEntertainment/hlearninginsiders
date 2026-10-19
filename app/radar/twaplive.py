@@ -1967,11 +1967,16 @@ async def diag_address(cfg, collector, addr: str) -> str:
     # Adres etiketi "niye gelmedi"nin ilk cevabı (19.10: otomatik 'mm' etiketi radarı sessizce susturuyordu)
     ent = (await entities([addr])).get(addr) or ""
     if ent:
-        lines.append(esc({"mm": "🤖 Adres etiketi: mm (otomatik — 24 sa'te ≥ 80 işlem + iki yön) → canlı TWAP kanalları"
-                                " dışı; 🕵️ gizli TWAP'a yalnız tek yönlü, ≥ %"
-                                f"{float(getattr(cfg, 'hidden_twap_mm_taker_min_pct', 90) or 0):g} piyasadan dizi gider",
+        # Neden tek kurala bağlanmaz (etiketi iki kural koyar, eşikler ayardan) — ve yazılan, kodun YAPTIĞI olmalı:
+        # /ignore yalnız 🕵️'i keser, HL emri olan TWAP'lar canlı kanallara yine gider (inceleme 19.10).
+        mm_rule = (f"otomatik: ≥ {int(getattr(cfg, 'mm_max_positions', 10) or 0)} açık pozisyon ya da 24 sa'te ≥"
+                   f" {int(getattr(cfg, 'mm_max_fills_24h', 80) or 0)} büyük dolum + iki yön")
+        lines.append(esc({"mm": f"🤖 Adres etiketi: mm ({mm_rule}) → canlı TWAP kanalları dışı; 🕵️ gizli TWAP'a yalnız"
+                                f" tek yönlü, ≥ %{float(getattr(cfg, 'hidden_twap_mm_taker_min_pct', 90) or 0):g}"
+                                " piyasadan dizi gider",
                           "vault": "🏦 Adres etiketi: vault → TWAP radarı dışı",
-                          "manual": "🚫 Adres etiketi: elle elendi (/ignore) → TWAP radarı dışı"}.get(ent, f"Adres etiketi: {ent}")))
+                          "manual": "🚫 Adres etiketi: elle elendi (/ignore) → yalnız 🕵️ gizli TWAP dışı; HL emri olan"
+                                    " TWAP'lar canlı kanallara gider"}.get(ent, f"Adres etiketi: {ent}")))
     runs = _runs_for(lambda r: r.address == addr)
     lines.append("Bellekteki diziler: " + ("\n".join("• " + esc(_run_line(r)) for r in runs[:8]) if runs
                                             else "yok (son 4 saatte bu adresten düzenli akış görmedik)"))

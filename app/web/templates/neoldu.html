@@ -52,7 +52,7 @@
   {% if rep.source == 'tape' %}
   <p class="kunye">📼 <b>Kaynak: canlı bant{% if rep.tape_full %} — bu penceredeki BÜTÜN işlemler{% endif %}</b>
     (taban yok, TWAP dilimleri dahil) · kapsam {{ rep.tape_lo|hms }} → {{ rep.tape_hi|hms }}
-    <span class="hint">(30 sn çözünürlük{% if rep.tape_lo > rep.t0 + 30 %}; pencerenin ilk {{ rep.tape_lo - rep.t0 }} sn'si bandın dışında{% endif %})</span></p>
+    <span class="hint">(30 sn çözünürlük{% if rep.head_cut %}; pencerenin ilk {{ rep.head_cut }} sn'si bandın dışında{% endif %})</span></p>
   {% if rep.sub_since %}
   <p class="alert warn">📡 Bu coin {{ rep.sub_since|hms }}'den beri dinleniyor (hacim listesine pencerenin içinde
     girdi) — öncesindeki işlemler bantta yok.</p>
@@ -114,7 +114,7 @@
     <div><div class="l">Piyasadan satım</div><div class="v short">{{ '—' if noval else rep.sell|usd }}</div><div class="s">satıcının süpürdüğü{% if not noval %} · net
       <b class="{{ 'long' if rep.net > 0 else ('short' if rep.net < 0 else 'dim') }}">{{ '+' if rep.net > 0 else ('-' if rep.net < 0 else '') }}{{ (rep.net|abs)|usd }}</b>{% endif %}</div></div>
     <div><div class="l">Pozisyonu bilinen</div><div class="v">{{ rep.n_known }}</div>
-      <div class="s">{% if rep.n_unseen %}{{ rep.n_unseen }} adrese hiç uğramadık{% elif rep.n_flat %}{{ rep.n_flat }} tanesi pozisyon taşımıyordu{% elif rep.rows %}tüm adreslerin defteri bakılmış{% else %}adres yok{% endif %}</div></div>
+      <div class="s">{% if rep.n_unseen %}{{ rep.n_unseen }} adrese hiç uğramadık{% elif rep.n_flat %}{{ rep.n_flat }} tanesi pozisyon taşımıyordu{% elif rep.rows %}tüm adreslerin defteri bakılmış{% elif noval and rep.source == 'tape' %}adresler bilinmiyor{% else %}adres yok{% endif %}</div></div>
   </div>
   {% if rep.purged %}
   <p class="alert warn">🗑 <b>Bu pencerenin işlem kayıtları silindi</b> — işlem kaydı {{ rep.keep_days }} gün saklanıyor.

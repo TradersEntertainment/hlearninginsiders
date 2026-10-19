@@ -133,7 +133,7 @@ def window(coin: str, t0: int, t1: int, now_ts: int | None = None) -> dict | Non
     gap_sec = sum(b - a for a, b in gaps)
     covered = max(0, hi - lo * BUCKET - gap_sec - sub_gap)
     head = lo * BUCKET - t0                             # bandın başına çekilen kısım (CLAMP_SEC) + kova yuvarlaması
-    head_cut = head if head > BUCKET else 0             # kova yuvarlamasından fazlası: o baştaki işlemler bilinmiyor
+    head_cut = head if head >= BUCKET else 0            # kesilen tam kova (kesimsiz yuvarlama ≤ 29 sn): bilinmiyor
     return {"rows": [{"address": a, "buy": r[0], "sell": r[1], "n": r[4], "tk": r[2], "known": r[0] + r[1],
                       "twap": r[3]} for a, r in addrs.items()],
             "lo": lo * BUCKET, "hi": hi, "gaps": gaps, "gap_sec": gap_sec,

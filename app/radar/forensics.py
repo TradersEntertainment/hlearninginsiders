@@ -694,13 +694,12 @@ async def window_brief(cfg, client, coin: str, t0: int, t1: int, *,
         # boşluğu ölçülmez). Pencere TAMAMEN açılıştan önceyse önceki süreç kaydetti → kopukluk sayılmaz.
         gap = ((rep.get("tape_unknown") or rep.get("gaps")) if tape_src else
                (rep.get("gap_sec") or rep.get("restart_in")))
-        empty = ("stream_gap" if gap else
-                 "sub_late" if tape_src and rep.get("sub_since") else
-                 "head_cut" if tape_src and rep.get("head_cut") else
-                 "no_trades" if listen and tape_src else
-                 "not_listening" if listen is False else
-                 "unknown" if listen is None else
-                 "recording_off" if floor is None else "below_floor")
+        if tape_src:
+            empty = ("stream_gap" if gap else "sub_late" if rep.get("sub_since") else
+                     "head_cut" if rep.get("head_cut") else "no_trades" if listen else "unknown")
+        else:                                   # kayıt yolu: dinlenmiyor / kayıt kapalı kopukluktan önce söylenir
+            empty = ("not_listening" if listen is False else "unknown" if listen is None else
+                     "recording_off" if floor is None else "stream_gap" if gap else "below_floor")
     return {
         "coin": coin, "symbol": rep["symbol"], "t0": t0, "t1": t1,
         "minutes": rep["minutes"],

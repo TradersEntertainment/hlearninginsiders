@@ -184,16 +184,6 @@ def test_templates_and_client():
           " 440 px, yeniden çekme, tek kurulum, canlı nakil; term.js: seçici, geri çekilme, px_ts; README")
 
 
-if __name__ == "__main__":
-    test_seq_reset_after_restart()
-    test_fresh_px()
-    test_close_stale_rest_and_order()
-    test_fill_view_pct_stopped_seen()
-    test_term_twaps_order()
-    test_templates_and_client()
-    test_round2_fixes()
-
-
 def test_round2_fixes():
     """2. inceleme turu (18.10/19.10, yeniden üretildi): terminal TWAP'ta süren/oluşan emirsiz dizi arşivin arkasında
     kalmaz; erken iptal edilen emrin bitişi WS'te yoksa REST'e sorulur (yalnız WS'te bulunamayan satır için);
@@ -223,3 +213,13 @@ def test_round2_fixes():
     assert i_comp < i_trim, "önce telafi, sonra kırpma"
     print("✅ 2. tur) emirsiz süren dizi en üstte; erken iptalde REST; grafik katmanı tek, sahte mum yok, çift satır yok,"
           " okuma yeri sabit, paket başına tek çizim")
+
+
+if __name__ == "__main__":
+    test_seq_reset_after_restart()
+    test_fresh_px()
+    test_close_stale_rest_and_order()
+    test_fill_view_pct_stopped_seen()
+    test_term_twaps_order()
+    test_templates_and_client()
+    test_round2_fixes()

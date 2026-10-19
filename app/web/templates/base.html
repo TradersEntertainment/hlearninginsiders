@@ -1116,7 +1116,9 @@ function pxReload(gap){
   box._reloadAt = Date.now();
   pxDestroy();
   initPriceChart().then(function(){
-    if(gap && lastT && PXCHART && PXCHART.box === box && PXCHART.last.time <= lastT) box._gapT = PXCHART.last.time;
+    // yalnız KESİN cevap "dolmaz" der: bayat önbellekten geldiyse (sunucu tazeliyor) dakikada bir yeniden denenir
+    if(gap && lastT && PXCHART && PXCHART.box === box && PXCHART.last.time <= lastT && !PXCHART.refreshing)
+      box._gapT = PXCHART.last.time;
   });
   return true;
 }
@@ -1343,7 +1345,7 @@ async function _initPriceChart(box){
 
   chart.timeScale().fitContent();
   var lc = d.candles[d.candles.length - 1];
-  PXCHART = {chart: chart, series: s, box: box, ov: ov, ro: ro, ac: ac, redraw: drawLiq,
+  PXCHART = {chart: chart, series: s, box: box, ov: ov, ro: ro, ac: ac, redraw: drawLiq, refreshing: !!d.refreshing,
              last: {time: lc.t, open: lc.o, high: lc.h, low: lc.l, close: lc.c},
              step: d.candles.length > 1 ? (d.candles[d.candles.length - 1].t - d.candles[d.candles.length - 2].t) : 3600};
   return false;

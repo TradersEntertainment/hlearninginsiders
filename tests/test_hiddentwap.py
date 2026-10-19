@@ -585,12 +585,28 @@ def test_auto_mm_label_whale():
         bot, col = Bot(), Col([])
         await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
         assert bot.sent == [], bot.sent
-        # /twap 0xADRES etiketi söyler
+        # /twap 0xADRES etiketi söyler — iki kural, eşikler ayardan (tek nedene bağlanmaz)
+        cfg.mm_max_fills_24h, cfg.mm_max_positions = 300, 12
         txt = await tl.diag_address(cfg, None, A)
-        assert "Adres etiketi: mm (otomatik" in txt
+        assert "Adres etiketi: mm (otomatik: ≥ 12 açık pozisyon ya da 24 sa'te ≥ 300 büyük dolum" in txt, txt
+        # (f) 🕵️ kapalıyken eski sorgusuz 'mm' elemesi
+        await setup("mm")
+        feed("PUMP", A, "buy", 20, 60_000)
+        cfg2 = _cfg()
+        cfg2.hidden_twap_enabled = False
+        bot, col = Bot(), Col([])
+        out = await tl.evaluate(cfg2, Notifier(cfg2, bot), None, col)
+        assert col.calls == [] and out["skipped_mm"] == 1 and bot.sent == []
+        # (g) /ignore: yalnız 🕵️'i keser — HL emri olan TWAP canlı kanala gider ve /twap bunu söyler
+        await setup("manual")
+        feed("PUMP", A, "buy", 20, 60_000, native=True)
+        bot, col = Bot(), Col([order(ntl=2e6)])
+        await tl.evaluate(cfg, Notifier(cfg, bot), None, col)
+        txt = await tl.diag_address(cfg, None, A)
+        assert bot.sent and "yalnız 🕵️ gizli TWAP dışı" in txt, (bot.sent, txt)
     asyncio.run(run())
     print("✅ otomatik mm) %100 piyasadan tek yönlü dizi 🕵️ grubuna gider (etiket satırı yok); %85 / vault / HL emri /"
-          " karşı yön → yok; /twap 0xADRES etiketi yazar")
+          " karşı yön → yok; 🕵️ kapalıyken sorgusuz eleme; /twap 0xADRES etiketi ve /ignore'un yaptığını doğru yazar")
 
 
 def test_wiring():
