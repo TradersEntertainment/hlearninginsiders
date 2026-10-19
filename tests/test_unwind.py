@@ -61,19 +61,31 @@ def test_observe_trigger():
     assert not u.PENDING
     u.observe(cfg, "xyz:CBRS", "B", A, "0xs", 122.0, 1000, T0 + 1)    # alım (başka yön): sayılmaz
     u.observe(cfg, "xyz:CBRS", "A", "0xb", A, 121.5, 200, T0 + 2)     # satış toplamı $146K → aday
-    c = u.PENDING[A]
+    c = u.PENDING[(A, "xyz:CBRS", "S")]
     assert c["coin"] == "xyz:CBRS" and c["side"] == "S" and 140_000 < c["usd"] < 150_000 and c["px0"] == 122.0
+    # tarama emrinin $1K altı parçaları son kovaya eklenir (tetik bir emir geç kalmasın)
+    before = c["usd"]
+    u.observe(cfg, "xyz:CBRS", "A", "0xb", A, 121.4, 5, T0 + 3)
+    assert abs(u.PENDING[(A, "xyz:CBRS", "S")]["usd"] - (before + 607)) < 1
+    # spot çifti tetiklemez
+    u.VOL1M["@107"] = 1
+    u.observe(cfg, "@107", "A", "0xb", "0xspot", 10, 1e6, T0)
+    assert not any(k[0] == "0xspot" for k in u.PENDING)
     # hacmi bilinmeyen coin tetiklemez; $1K altı akışa yazılmaz
     u.observe(cfg, "ABC", "A", "0xb", "0xz", 1, 10_000_000, T0)
     u.observe(cfg, "xyz:CBRS", "A", "0xb", "0xq", 1, 500, T0)
-    assert "0xz" not in u.PENDING and ("0xq", "xyz:CBRS", "S") not in u.FLOW
+    assert not any(k[0] == "0xz" for k in u.PENDING) and ("0xq", "xyz:CBRS", "S") not in u.FLOW
     # pencere dışına düşen akış sayılmaz
     u.PENDING.clear()
     u.observe(cfg, "xyz:CBRS", "A", "0xb", A, 122.0, 1000, T0 + 400)
     assert not u.PENDING
-    # bekleme süresinde aday yok; kapalıyken hiçbir şey tutulmaz
-    u.COOL[(A, "xyz:CBRS")] = __import__("time").time()
+    # bekleme YÖN BAZINDA: reddedilen alım aynı coindeki satışı susturmaz (inceleme 19.10)
+    u.COOL[(A, "xyz:CBRS", "B")] = __import__("time").time() + 900
     u.observe(cfg, "xyz:CBRS", "A", "0xb", A, 122.0, 2000, T0 + 401)
+    assert (A, "xyz:CBRS", "S") in u.PENDING
+    u.PENDING.clear()
+    u.COOL[(A, "xyz:CBRS", "S")] = __import__("time").time() + 900
+    u.observe(cfg, "xyz:CBRS", "A", "0xb", A, 122.0, 2000, T0 + 402)
     assert not u.PENDING
     u.ON[0] = False
     n = len(u.FLOW)
@@ -95,7 +107,22 @@ def test_judge():
     assert v["ok"] and v["before"] == 25000 * 122.0 and v["pos_side"] == "LONG" and v["orders"] == 1
     assert [p["coin"] for p in v["others"]] == ["ZEC", "TAO"] and v["now"] == 2.9e6
     assert not u.judge(cfg, cand, pos, [_fill("xyz:CBRS", 122, 1250, 12500, T0, d="Open Long")])["ok"]
-    assert u.judge(cfg, cand, pos, [_fill("xyz:CBRS", 122, 1250, 25000, T0, liquidation={"x": 1})])["why"] == "likidasyon"
+    own = {"liquidatedUser": A, "method": "market"}
+    assert u.judge(cfg, cand, pos, [_fill("xyz:CBRS", 122, 1250, 25000, T0, liquidation=own)])["why"] == "likidasyon"
+    # başkasının likidasyonuna denk gelen kendi limit satırı satışı elemez (inceleme 19.10)
+    other = {"liquidatedUser": "0xe535", "method": "market"}
+    ok2 = u.judge(cfg, cand, pos, [_fill("xyz:CBRS", 122, 10, 25000, T0, crossed=False, oid=1, liquidation=other),
+                                   _fill("xyz:CBRS", 122, 1250, 24990, T0 + 1, oid=2),
+                                   _fill("xyz:CBRS", 122, 10, 23740, T0 + 2, crossed=False, oid=3)])
+    assert ok2["ok"] and ok2["orders"] == 1 and ok2["closed"] == 1250 * 122, ok2       # yalnız piyasa emirleri
+    # ters yöne dönüş: "şimdi" eski long'un kalanı değil; yeni short ayrıca yazılır
+    flip = [p for p in pos if p["coin"] != "xyz:CBRS"] + [{"coin": "xyz:CBRS", "szi": -5000, "usd": 6.1e5,
+                                                          "side": "SHORT", "upnl": 0}]
+    fv = u.judge(cfg, cand, flip, fills)
+    assert fv["ok"] and fv["now"] == 0.0 and fv["flip"]["side"] == "SHORT"
+    assert "ters yönde yeni SHORT $610K" in fmt.unwind_alert(A, "xyz:CBRS", cand, fv, {})
+    # pozisyon sorgusu olmadan (önce ucuz kapılar): None → yalnız işlem kararı
+    assert u.judge(cfg, cand, None, fills)["ok"] and "others" not in u.judge(cfg, cand, None, fills)
     assert "küçük" in u.judge(cfg, cand, pos, [_fill("xyz:CBRS", 122, 1250, 1500, T0)])["why"]
     many = pos + [{"coin": f"C{i}", "szi": 1, "usd": 1e5, "side": "LONG", "upnl": 0} for i in range(20)]
     assert "sepet" in u.judge(cfg, cand, many, fills)["why"]
@@ -122,6 +149,9 @@ class _Cli:
 
     async def info(self, p, **kw):
         assert p["type"] == "userFillsByTime" and p["aggregateByTime"] is True
+        self.since = p["startTime"]
+        if getattr(self, "fail", False):
+            raise RuntimeError("HTTP 429")
         return self.fills
 
 
@@ -152,6 +182,8 @@ def test_probe_episode_done():
         txt = await u.probe(cfg, cli, n, cand)
         lines = txt.split("\n")
         assert lines[0].startswith("🧯 <b>CBRS</b> LONG'unu piyasaya satıyor · <a href=") and "fiyat -0.41%" in lines[0]
+        assert "1 dk'da $152K (pozisyondan %5)" in lines[0], lines[0]
+        assert cli.since == (T0 - 300) * 1000, "işlemler yalnız judge'ın penceresinden (HL en eski 2000 satırı verir)"
         assert lines[1] == "✅ <b>PROPR'da listeli</b>" or "PROPR" not in lines[1]
         assert any(x.startswith("Pozisyon $3.0M → $2.9M") for x in lines)
         assert any(x.startswith("Hâlâ açık (2): <b>ZEC</b> L $2.8M") and "<b>TAO</b> L $1.3M" in x for x in lines)
@@ -162,14 +194,15 @@ def test_probe_episode_done():
         cli.fills = [_fill("TAO", 266.0, 500, 5000, T0 + 300)]
         t2 = await u.probe(cfg, cli, n, {**cand, "coin": "TAO", "first_ts": T0 + 300, "last_ts": T0 + 320,
                                          "px0": 268, "px1": 266})
-        assert t2.startswith("🧯➕ boşaltmaya devam: <b>TAO</b>") and "Bu bölümde piyasaya sattıkları: CBRS" in t2
+        assert t2.startswith("🧯➕ boşaltmaya devam: <b>TAO</b>") and "Bu bölümde piyasadan kapattıkları: CBRS L" in t2
         assert len(n.sent) == 2 and u.STATS["updates"] == 1
         # defter boşaldı → tek özet
         cli.states = {"main": {"assetPositions": []}, "xyz": {"assetPositions": []}}
         ep = u.STATE["episodes"][A]
         ep["polled"] = 0
         out = await u.poll_episodes(cfg, cli, n, t=int(ep["last"]) + 600)
-        assert len(out) == 1 and out[0].startswith("🧯✅") and "3 pozisyonun hepsini kapattı" in out[0]
+        assert len(out) == 1 and out[0].startswith("🧯✅") and "≥$100K pozisyonlarının (3) hepsini kapattı" in out[0]
+        assert "Yeni açtıkları" not in out[0]
         assert A not in u.STATE["episodes"] and u.STATS["done"] == 1
         from tests.test_wording import hits
         for m in (txt, t2, out[0], fmt.unwind_list(u.active_rows(), True)):
@@ -177,6 +210,83 @@ def test_probe_episode_done():
         _reset()
     asyncio.run(run())
     print("✅ bölüm) ilk mesaj (hâlâ açık listesi), aynı coin tekrar yok, yeni coin devam, defter boşalınca özet")
+
+
+def test_review_fixes():
+    """İnceleme (19.10, yeniden üretildi): kanal yokken gönderim / sorgu yok testi yoktu; susturulan yoklama bölümü
+    uzatıyordu; sorgu hatası adayı 15 dk susturuyordu; '%0.0' yazılabiliyordu; 2000 satır sınırında sayfalama."""
+    async def run():
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "uw3.db"))
+        _reset()
+        from app.radar import twaplive
+        twaplive.VOL_CACHE.update(ts=dbm.now(), v={"xyz:CBRS": (19.4e6, 0), "BTC": (2.5e9, 0)})
+        await u._refresh_vol()
+        cfg = Config()
+        cfg.unwind_chat_id = ""
+        n = _N()
+        states = {"main": {"assetPositions": [_pos("BTC", 10, 1.0e6)]},
+                  "xyz": {"assetPositions": [_pos("xyz:CBRS", 23750, 2.9e6)]}}
+        cli = _Cli(states, [_fill("xyz:CBRS", 122.0, 1250, 25000, T0)])
+        cand = {"addr": A, "coin": "xyz:CBRS", "side": "S", "usd": 152_500, "first_ts": T0, "last_ts": T0 + 30,
+                "px0": 122.0, "px1": 121.5}
+        # 1) kanal yok: metin üretilir ama GÖNDERİLMEZ (ana sohbete düşmez); döngü HL'yi hiç sorgulamaz
+        txt = await u.probe(cfg, cli, n, cand)
+        assert txt and not n.sent
+        assert "(&lt;%0.1)" in txt and "%0.0" not in txt and "(%0)" not in txt, txt     # BTC $1M / $2.5B
+        u.ON[0] = False
+        import app.health as health
+        calls = []
+
+        async def no_sleep(s):
+            calls.append(s)
+            raise asyncio.CancelledError
+        old_sleep, old_beat = asyncio.sleep, health.beat
+
+        async def beat(name):
+            return None
+        asyncio.sleep, health.beat = no_sleep, beat
+        try:
+            try:
+                await u.loop(cfg, cli, n)
+            except asyncio.CancelledError:
+                pass
+        finally:
+            asyncio.sleep, health.beat = old_sleep, old_beat
+        assert calls == [60] and cli.calls == 1 and u.ON[0] is False, (calls, cli.calls)
+        # 2) susturulan yoklama (aynı coin) bölümün 'last'ını ilerletmez
+        cfg.unwind_chat_id = "-1"
+        ep = u.STATE["episodes"][A]
+        last0 = ep["last"]
+        u.COOL.clear()
+        assert await u.probe(cfg, cli, n, {**cand, "first_ts": T0 + 60}) is None and ep["last"] == last0
+        # 3) sorgu düşerse bekleme kısa (yeniden aday olabilsin)
+        cli.fail = True
+        u.COOL.clear()
+        assert await u.probe(cfg, cli, n, {**cand, "coin": "xyz:CBRS"}) is None
+        assert u.COOL[(A, "xyz:CBRS", "S")] - __import__("time").time() <= u.PROBE_RETRY + 1
+        cli.fail = False
+
+        # 4) 2000 satır: son satırdan ileri sayfalanır
+        class Pg:
+            def __init__(self):
+                self.starts = []
+
+            async def info(self, p, **kw):
+                self.starts.append(p["startTime"])
+                if len(self.starts) == 1:
+                    return [{"tid": i, "time": 1000 + i, "coin": "X"} for i in range(2000)]
+                return [{"tid": 5000, "time": 9999, "coin": "X"}]
+        pg = Pg()
+        rows = await u._fills(pg, A, 1000)
+        assert len(rows) == 2001 and pg.starts == [1000, 2999]
+        # 5) _own_chats gerçekten içeriyor (alt dize değil, yöntem çağrısı)
+        from app.telegram.bot import TelegramBot
+        cfg.unwind_chat_id = "-777"
+        assert "-777" in TelegramBot._own_chats(type("B", (), {"cfg": cfg})())
+        _reset()
+    asyncio.run(run())
+    print("✅ inceleme) kanal yokken gönderim / sorgu yok; susturulan yoklama bölümü uzatmaz; sorgu hatası kısa"
+          " bekleme; '%0' yok; 2000 satırda sayfalama; _own_chats")
 
 
 def test_wiring():
@@ -218,4 +328,5 @@ if __name__ == "__main__":
     test_observe_trigger()
     test_judge()
     test_probe_episode_done()
+    test_review_fixes()
     test_wiring()

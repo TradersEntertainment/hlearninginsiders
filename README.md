@@ -2299,15 +2299,21 @@ yazar. Her sert satış kendi başına bir olaydır ("dün başladı, bugün sü
 - **Ölçülü dil:** "kapatacak / muhtemelen" yazılmaz; "hâlâ açık" listesi bakılacak coinleri ölçüyle verir.
 
 **Vaka (19.10, ölçülen):** 0x0871 20:22–20:58'de 7 long'u ($10,47M) 80 elle piyasa emriyle (yarım / çeyrek / sabit dilim)
-kapattı; ilk coin CBRS (24 sa hacmin %14'ü) 3 dk'da 20 emir. 18.10 20:20'de CBRS'nin yarısını piyasaya vurmuştu (−%2,8).
-21 günde 7 kez bütün defteri dakikalar içinde boşaltmış. Tekrar oynatmada (bu kurallarla): 18.10 **20:20:48** ilk CBRS
-emrinde (ZEC $3,0M, TAO $1,4M, NEAR, PUMP, ENA, STRK hâlâ açık) ve 19.10 **20:22:08** ilk CBRS emrinde mesaj; ardından
-STRK 20:25, TAO 20:28, ENA 20:31 devam; 19.10 16:54'teki CBRS geri alımı doğru biçimde elendi (azaltma değil).
+kapattı; ilk coin CBRS (24 sa hacmin %14'ü) 3 dk'da 20 emir. 18.10 20:20'de CBRS'nin %20'sini 1 dk'da piyasaya vurdu
+(−%1,1); 23:16 ve 23:40 dalgalarıyla 3,3 sa'te yarısına indi (−%2,8). 21 günde 7 kez bütün defteri dakikalar içinde
+boşaltmış. Tekrar oynatmada (bu kurallarla, gerçek işlemlerle): 18.10 **20:20:48** ilk CBRS emrinde (ZEC $3,0M, TAO $1,4M,
+NEAR, PUMP, ENA, STRK hâlâ açık) ve 23:16'da (2 sa'ten sonra: yeni ilk mesaj) ve 19.10 **20:22:08** ilk CBRS emrinde
+mesaj; ardından STRK 20:25, TAO 20:28, ENA 20:31 devam; 19.10 16:54'teki CBRS geri alımı doğru biçimde elendi.
 
 **Kör nokta, açıkça:** yalnız WS'te dinlenen coinlerdeki satış tetikler (ana dex ilk 120 + PROPR, xyz, para); boşaltma
 dinlenmeyen bir coinde başlarsa ilk mesaj cüzdan dinlenen bir coinde sert satana kadar gelmez. Limit emirle (maker) yavaş
 boşaltma tetiklemez. Coinin hacmi bilinmiyorsa o coin tetiklemez. "mm" etiketine güvenilmez (bu tür cüzdan 24 sa'te 80+
-fill kuralıyla mm sayılabiliyor); süzgeç pozisyon sayısı. Bekçi yeniden başlatınca bellekteki 5 dk'lık akış sıfırlanır.
+fill kuralıyla mm sayılabiliyor); süzgeç pozisyon sayısı. Bot / görev yeniden başlayınca bellekteki 5 dk'lık akış
+sıfırlanır (açık bölümler kv'de kalır). Spot çiftleri tetiklemez.
+
+**Maliyet:** tetik ek istek yapmaz. Doğrulama önce yalnız pencerenin işlemleri (1 istek; 2000 satır sınırında ileri
+sayfalanır), ancak geçerse bütün dex'lerin pozisyonları (~11 istek). Tur başına en çok 5 doğrulama, en eski aday önce;
+5 dk'dan eski aday atılır. Açık bölümde 2 dk'da bir yalnız defterdeki coinlerin dex'leri yoklanır.
 
 ## 🏓 Dar koridor (`RANGE_CHAT_ID`)
 
