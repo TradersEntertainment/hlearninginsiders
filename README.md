@@ -1594,9 +1594,9 @@ panel; masaüstünde (≥1200 px) **ekrana sığar**, her panel kendi içinde ka
 1366×657 — 1366×768 ekranın araç çubukları düşülmüş hâli; ızgara en az 440 px):
 - **📈 Fiyat:** 1 sa mumlar + liq duvarı / giriş çizgileri + liq blokları; **son mum canlı işlemlerle büyür**.
 - **🧱 Canlı defter:** HL defteri (her yönde en yakın kademeler, panele sığdığı kadar) birkaç saniyede bir, derinlik
-  çubuklu; ✅ = doğrulanmış açık emir sahibi (bookowners), üstte en kalın gruplu kademeler ve sahipleri. Defter 12 sn'den
-  uzun süredir yeniden okunamadıysa **söylenir**: başlıkta "⚠️ N sn/dk önce — neden" (ör. "HL istek sınırı (429)"),
-  merdiven soluk. Kullanıcı (19.10, PONS): "canlı defter canlı değil? sadece işlemler canlı geliyor" — defter 12:29:35'te
+  çubuklu; ✅ = doğrulanmış açık emir sahibi (bookowners), üstte en kalın gruplu kademeler ve sahipleri. Defter 20 sn'den
+  uzun süredir yenilenmediyse **söylenir**: başlıkta "⚠️ N sn/dk önce — neden" (ör. "HL istek sınırı (429)"; neden
+  bilinmiyorsa "yenilenmedi"), merdiven soluk; yaş akış kopukken de ilerler. Kullanıcı (19.10, PONS): "canlı defter canlı değil? sadece işlemler canlı geliyor" — defter 12:29:35'te
   kalmış, işlemler 12:36'yı gösteriyordu; defter düşük şeritteydi, yeniden başlatma sonrası yükte sıraya giremedi.
 - **⏱ İşlemler:** bütün işlemler geldiği anda akar — saat, yön (piyasadan), $, fiyat, piyasadan alan/satan → defterdeki
   emri dolan; 🔹 TWAP alt emri; son işlemlerin en büyük %10'u vurgulu. Adrese basınca **hypurrscan** yeni sekmede açılır
@@ -2516,7 +2516,8 @@ bölümü yalnız `EDITABLE_FIELDS` üzerinde döner, sırlar oraya hiç girmez.
   taraması, yetişme modunun taban üstü partisi, mum arşivi, saat istatistiği) yalnız
   pencere kullanımı tavanın %70'inin altındayken ilerler ve HL'den herhangi bir 429
   gelince 60 sn susar; "user" (açık sayfadaki canlı defter ve /defter'in l2Book'u,
-  ağırlık 2) tavanın 30 istek/dk üstüne kadar geçer, 429 duraklamasına bakmaz. **Etkin tavan (AIMD):** her 429'da ×0,8 (10 sn'de en çok bir
+  ağırlık 2) kendi kotasıyla (60 istek/dk) ve kendi eşzamanlılık kapısıyla (2) geçer:
+  etkin tavana, 429 duraklamasına ve 429 tekrarında uyuyan arka plan isteklerine bakmaz. **Etkin tavan (AIMD):** her 429'da ×0,8 (10 sn'de en çok bir
   adım, taban 120), 60 sn 429'suz her dakika +25, üst sınır `HL_MAX_RPM` — HL'nin
   gerçek hesabını 429 öğretir, biz tahmin etmeyiz. Yetişme modu düşük şerit duraklıyken
   ya da son 60 sn'de 429 varken taban partiye iner. Sayım kendi hızını yalnız KENDİ

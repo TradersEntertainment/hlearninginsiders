@@ -223,8 +223,9 @@ def test_live_book_stale_and_hypurrscan():
     (b.now − b.ts) ölçülür, her 's' olayında ilerler; hiç okunamadıysa neden yazar; işlemler panelindeki adresler (JS ve
     sunucu satırları) hypurrscan'e yeni sekmede gider; diğer paneller bizim karneye gitmeye devam eder."""
     js = open(os.path.join(ROOT, "app/web/static/term.js"), encoding="utf-8").read()
-    for frag in ("var BOOK_STALE = 12;", "function bookAge()", "b.now - b.ts", "T.bookAt = Date.now()",
-                 "' önce — ' + (b.why || 'güncellenemiyor')", "box.classList.toggle('stale'",
+    for frag in ("var BOOK_STALE = 20;", "function bookAge()", "b.now - b.ts", "d.at = Date.now(); T.book = d;",
+                 "' önce — ' + (b.why || 'yenilenmedi')", "box.classList.toggle('stale'",
+                 "es.addEventListener('bw'", "function bookFail(d)", "setInterval(bookAge, 2000)",
                  "x.href = 'https://hypurrscan.io/address/' + a;", "x.target = '_blank';",
                  "who.appendChild(hlink(r[5]));", "who.appendChild(hlink(r[6], 'ad mk'));",
                  "x.href = '/whale/' + a + (T.k || '');"):
@@ -235,9 +236,29 @@ def test_live_book_stale_and_hypurrscan():
     feed = coin[coin.index('id="tfeed"'):coin.index("{%- else %}", coin.index('id="tfeed"'))]
     assert feed.count('href="https://hypurrscan.io/address/') == 2 and "/whale/" not in feed, feed
     assert feed.count('target="_blank" rel="noopener"') == 2
+    assert "adrese tıkla → hypurrscan (yeni sekme)" in coin and "adrese tıkla → cüzdan karnesi" not in coin
+    assert '<script src="/static/term.js?v={{ term_v }}" defer>' in coin, "önbellek kırıcı: deploy sonrası yeni JS"
     base = open(os.path.join(ROOT, "app/web/templates/base.html"), encoding="utf-8").read()
     assert "#tladder.stale{opacity:.4}" in base and "#tbookts.warn{" in base
-    print("✅ canlı defter bayatlığı söylenir (yaş + neden, soluk); işlemler paneli adresi → hypurrscan (yeni sekme)")
+    # gerçek term.js davranışı (node varsa): tests/js/term_book_age.js sahte saatle olayları sürer.
+    # İnceleme (19.10, yeniden üretildi): 'bw'/boş olay eski defterin yaşını sıfırlıyordu; 10 dk'da "10 dk önce"de
+    # donuyordu; akış koparken yaş ilerlemiyordu; 12 sn eşiği sağlıklı defteri ara ara "⚠️" gösteriyordu.
+    import shutil
+    import subprocess
+    if shutil.which("node"):
+        out = subprocess.run(["node", os.path.join(ROOT, "tests", "js", "term_book_age.js")], capture_output=True,
+                             text=True, timeout=60, check=True).stdout.strip().split("\n")
+        got = dict(x.split("|", 1) for x in out)
+        assert got["nobook"].startswith("Defter okunamadı — HL istek sınırı (429)") and "⚠️ defter okunamadı" in got["nobook"]
+        assert got["fresh"].endswith("|false|false") and "⚠️" not in got["fresh"], got
+        assert "⚠️ 26 sn önce — yenilenmedi|true|true" in got["down26"], got      # akış yokken de ilerler
+        assert "⚠️ 26 sn önce — HL istek sınırı (429)|true|true" in got["oldwhy"], got
+        assert "⚠️ 15 dk önce — X|true|true" in got["bw926"], got                # 10 dk'da donmaz, bw yaşı sıfırlamaz
+        assert got["healthy13"].endswith("|false|false"), got                     # sağlıklı 13 sn: uyarı yok
+    else:
+        print("  (node yok: term.js davranış senaryosu atlandı)")
+    print("✅ canlı defter bayatlığı söylenir (yaş + neden, soluk; akış kopukken de; 10 dk'yı geçer); okunamadı ayrı olay;"
+          " işlemler paneli adresi → hypurrscan (yeni sekme)")
 
 
 if __name__ == "__main__":

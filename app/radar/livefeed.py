@@ -184,19 +184,25 @@ async def _fetch_depth(client, coin: str) -> None:
 def depth(client, coin: str) -> dict | None:
     """Önbellekteki defter (hemen döner); bayatsa arka planda tek istek başlatır. Akış döngüsü HL'yi beklemez.
 
-    Dönüş `{bids, asks, ts, now, why}`: `now` sunucu saati (istemci yaşı kendi saatiyle değil bununla ölçer), `why`
-    son okumadan SONRA düşen isteğin nedeni (yoksa ""). Hiç okunamadıysa kademeler boş, ts 0, why dolu; henüz ne
-    okuma ne hata varsa None (rota kısa süre sonra yeniden bakar)."""
+    Dönüş `{bids, asks, ts, now, why}` ya da None (gösterilecek defter yok — neden `depth_fail`'de, ayrı 'bw' olayı:
+    eski sayfa JS'i boş defteri 'b' diye alınca merdiveni silip "defterin bir yönü boş" yazıyordu, inceleme 19.10).
+    `now` sunucu saati (istemci yaşı kendi saatiyle değil bununla ölçer), `why` son okumadan SONRA düşen isteğin
+    nedeni (yoksa ""). Düşen istekten sonra DEPTH_TTL dolmadan yeniden sorulmaz (hata döngüsünde HL'yi dövmesin)."""
     hit = _DEPTH.get(coin)
     t = time.time()
-    if client is not None and (not hit or t - hit[0] >= DEPTH_TTL) and coin not in _DEPTH_TASK:
-        _DEPTH_TASK[coin] = asyncio.ensure_future(_fetch_depth(client, coin))
     bad = _DEPTH_WHY.get(coin)
+    if (client is not None and (not hit or t - hit[0] >= DEPTH_TTL) and coin not in _DEPTH_TASK
+            and not (bad and t - bad[0] < DEPTH_TTL)):
+        _DEPTH_TASK[coin] = asyncio.ensure_future(_fetch_depth(client, coin))
     if hit and t - hit[0] < DEPTH_SHOW:
         return {**hit[1], "now": int(t), "why": bad[1] if bad and bad[0] >= hit[0] else ""}
-    if bad:
-        return {"bids": [], "asks": [], "ts": 0, "now": int(t), "why": bad[1]}
     return None
+
+
+def depth_fail(coin: str) -> dict | None:
+    """Gösterilecek defter yokken son okumanın neden düştüğü ({why, now}); bilinmiyorsa None."""
+    bad = _DEPTH_WHY.get(coin)
+    return {"why": bad[1], "now": int(time.time())} if bad else None
 
 
 def owners(book: dict | None) -> dict | None:

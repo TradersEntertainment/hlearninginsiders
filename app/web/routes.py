@@ -134,6 +134,8 @@ templates.env.globals["stale_acct"] = _stale_acct
 # Spot çiftinin okunur adı ('@107' → 'HYPE/USDC'): tek kaynak assets.SPOT_NAMES,
 # şablonlar da oradan okusun — ham borsa kimliği kullanıcıya hiçbir şey demiyor.
 templates.env.globals["coin_label"] = assets.label
+# term.js önbellek kırıcı: deploy sonrası tam gezinmede yeni JS gelsin (eski JS yeni olay biçimini bilmez — inceleme 19.10)
+templates.env.globals["term_v"] = hashlib.sha1((pathlib.Path(__file__).parent / "static" / "term.js").read_bytes()).hexdigest()[:10]
 templates.env.globals["is_spot"] = assets.is_spot
 # `select('stale_ts')` şablonda bayat ölçümleri saymak için — Jinja testleri
 # filtre zincirinde kullanılabildiği için sayaç tek satırda kalıyor.
@@ -917,7 +919,8 @@ def _sse(event: str, data) -> str:
 async def coin_live(request: Request, symbol: str):
     """📟 Terminal düzeninin canlı akışı (SSE). Kullanıcı (18.10): "terminal gibi akmalı canlı veriler de ben o
     sayfadaysam". Olaylar: `t` işlemler (kollektörün akışından, ek HL isteği yok), `s` 15 dk toplamları + kapsama
-    (STATS_TTL), `b` canlı defter (DEPTH_TTL, coin başına tek istek), `o` defter sahipleri (bookowners 30 sn), `x` akış
+    (STATS_TTL), `b` canlı defter (DEPTH_TTL, coin başına tek istek; `bw` gösterilecek defter yokken okunamama nedeni),
+    `o` defter sahipleri (bookowners 30 sn), `x` akış
     yok / kapandı. Ömür livefeed.STREAM_LIFE; istemci `?seq=` ile kaldığı yerden yeniden bağlanır."""
     import asyncio as _aio
     from ..radar import bookowners as _bo
@@ -944,7 +947,7 @@ async def coin_live(request: Request, symbol: str):
         lf.STATS["opened"] += 1
         t0 = last_beat = _aio.get_running_loop().time()
         last_s = last_b = -999.0
-        last_o = None
+        last_o = last_w = None
         try:
             listened = (coin in col.valid_coins) if col is not None and getattr(col, "valid_coins", None) else None
             live = bool(col is not None and getattr(col, "connected", False))
@@ -987,6 +990,11 @@ async def coin_live(request: Request, symbol: str):
                         sent = True
                     else:                               # henüz yok: 4 sn beklemeden yeniden bak
                         last_b = now_l - lf.DEPTH_TTL + 0.7
+                        w = lf.depth_fail(coin)         # okunamadıysa nedeni ayrı olay (eski JS 'bw'yi yok sayar)
+                        if w and w["why"] != last_w:
+                            last_w = w["why"]
+                            yield _sse("bw", w)
+                            sent = True
                     bk = _bo.cached(coin)
                     if not bk or float(bk.get("age") or 0) >= BOOK_KICK_AGE:
                         _bo.kick(client, coin)          # coin başına önbellek: izleyici sayısından bağımsız

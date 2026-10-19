@@ -4,9 +4,13 @@
 kullanır; "low" (sayım, süpürücü yetişme modu) yalnız pencere kullanımı
 LOW_SHARE'in altındayken ilerler ve HL'den herhangi bir 429 gelince
 LOW_PAUSE_SEC susar — arka plan işi artan kapasiteyi kullanır, fırtınada çekilir.
-"user" (sayfayı açık tutan kişinin canlı defteri, ağırlık 2): tavanın USER_EXTRA
-üstüne kadar ilerler, 429 duraklamasına bakmaz — arka plan yükü ekrandaki defteri
-dondurmasın (kullanıcı 19.10: "canlı defter canlı değil?").
+"user" (sayfayı açık tutan kişinin canlı defteri, ağırlık 2): KENDİ kotası (USER_RPM
+istek/dk) ve KENDİ eşzamanlılık kapısı (USER_CONC) var; etkin tavana, 429 duraklamasına
+ve arka plan isteklerinin 429 geri-çekilmesinde tuttuğu ortak kapıya bakmaz — arka plan
+yükü ekrandaki defteri dondurmasın (kullanıcı 19.10: "canlı defter canlı değil?").
+İnceleme (19.10, yeniden üretildi): "tavan + 30" yetmiyordu — 429'da tavan ×0,8 inince
+pencere eski tavanla dolu kalıyor (~8 sn bekleme), ortak kapıda (8 yer) 429 tekrarı uyuyan
+arka plan istekleri defteri 4 sn'lik süresine kadar bekletiyordu.
 Öncelik ya çağrıda (`priority=`) ya da görev bağlamında (`PRIORITY` contextvar,
 süpürücü partisi) verilir.
 
@@ -34,7 +38,8 @@ DEFAULT_WEIGHT = 20
 HL_WEIGHT_LIMIT = 1200      # HL: dakikada IP başına toplam ağırlık (belge)
 LOW_SHARE = 0.70            # düşük şerit: pencere kullanımı bunun üstündeyse bekler
 LOW_PAUSE_SEC = 60.0        # herhangi bir 429'dan sonra düşük şerit bu kadar susar
-USER_EXTRA = 30             # "user" şeridi: etkin tavanın bu kadar istek/dk üstüne çıkabilir (l2Book ağırlığı 2)
+USER_RPM = 60               # "user" şeridinin kendi kotası (istek/dk; l2Book ağırlığı 2 → ≤120 ağırlık/dk)
+USER_CONC = 2               # "user" şeridinin kendi eşzamanlılık kapısı (ortak kapıdan ayrı)
 # Uyarlanır tavan (AIMD): HL'nin gerçek hesabını 429 öğretir. Her 429'da etkin tavan
 # CAP_DOWN ile iner (fırtınada 10 sn'de en çok bir adım), CAP_UP_EVERY sn 429'suz her
 # dakika CAP_UP_STEP çıkar; hl_max_rpm üst sınır, CAP_FLOOR alt sınır.
@@ -78,6 +83,8 @@ class HLClient:
         self.base = base.rstrip("/")
         self.leaderboard_url = leaderboard_url
         self._sem = asyncio.Semaphore(concurrency)
+        self._user_sem = asyncio.Semaphore(USER_CONC)      # "user" şeridi ortak kapıda beklemez
+        self._user_times: deque[float] = deque()           # "user" şeridinin kendi kotası
         self._min_interval = min_interval
         # Küresel bütçe: TÜM görevlerin paylaştığı istek/dakika tavanı.
         # 429 fırtınası + exponential backoff cezası yerine kibarca kuyruk.
@@ -115,6 +122,8 @@ class HLClient:
             self._req_times.popleft()
         while self._w_times and t - self._w_times[0][0] >= self._rpm_window:
             self._w_times.popleft()
+        while self._user_times and t - self._user_times[0] >= self._rpm_window:
+            self._user_times.popleft()
 
     def low_paused(self, t: float | None = None) -> float:
         """Düşük şeridin 429 sonrası kalan bekleme süresi (sn); 0 = açık."""
@@ -139,7 +148,15 @@ class HLClient:
                         return
                     else:
                         wait = (self._req_times[0] + self._rpm_window - t) if self._req_times else 0.25
-                elif used < self._cap + (USER_EXTRA if priority == "user" else 0):
+                elif priority == "user":
+                    # kendi kotası; yine de ortak pencereye yazılır (normal/düşük şerit onu görsün)
+                    if len(self._user_times) < USER_RPM:
+                        self._user_times.append(t)
+                        self._req_times.append(t)
+                        self._w_times.append((t, int(weight)))
+                        return
+                    wait = self._user_times[0] + self._rpm_window - t
+                elif used < self._cap:
                     self._req_times.append(t)
                     self._w_times.append((t, int(weight)))
                     return
@@ -174,8 +191,9 @@ class HLClient:
         bilsin; küresel sayaç başkalarının fırtınasını ona yüklüyordu)."""
         url = f"{self.base}/info"
         delay = 1.0
-        await self._acquire_budget(priority or PRIORITY.get(), weight_of(payload))
-        async with self._sem:
+        prio = priority or PRIORITY.get()
+        await self._acquire_budget(prio, weight_of(payload))
+        async with (self._user_sem if prio == "user" else self._sem):
             for attempt in range(retries + 1):
                 try:
                     async with self.session.post(url, json=payload,

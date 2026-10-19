@@ -9,8 +9,9 @@ Pinlenenler:
   • stats: 429 çağıranın sözlüğüne yazılır (kendi 429'u), küresel n_429 ve last_429 da güncellenir
   • ağırlık: belge tablosu (clearinghouseState 2, candleSnapshot 20…), usage() son dakikayı toplar
   • /tani "HL bütçesi" satırı
-  • "user" şeridi (ekrandaki canlı defter, 19.10): tavanın USER_EXTRA üstüne kadar geçer, 429 duraklamasına bakmaz,
-    o da dolunca bekler; normal şerit tavanda beklemeye devam eder
+  • "user" şeridi (ekrandaki canlı defter, 19.10): kendi kotası USER_RPM (etkin tavana, AIMD inişine, 429
+    duraklamasına bakmaz; ortak pencereye yine yazılır) ve kendi kapısı USER_CONC (429 fırtınasında ortak kapıda uyuyan
+    arka plan istekleri defteri bekletmez); normal şerit tavanda beklemeye devam eder
 """
 import asyncio
 import os
@@ -195,17 +196,24 @@ def test_diag_budget_line():
 
 def test_user_lane():
     """Kullanıcı (19.10): "canlı defter canlı değil? sadece işlemler canlı geliyor" — defter düşük şeritteydi, arka plan
-    yükünde hiç sıraya giremedi. "user" şeridi: tavanın USER_EXTRA üstüne kadar, 429 sonrası da."""
+    yükünde hiç sıraya giremedi. "user" şeridi: kendi kotası (USER_RPM) + kendi kapısı (USER_CONC).
+
+    İnceleme (19.10, yeniden üretildi): ilk sürüm "tavan + 30" idi — (1) 429'da tavan ×0,8 inince pencere eski tavanla
+    dolu kalıyor, defter ~8 sn bekliyordu; (2) ortak kapıda (8 yer) 429 tekrarında uyuyan arka plan istekleri defteri
+    4 sn'lik süresine kadar bekletiyordu (yalnız mesaj değişmişti)."""
+    import time as _t
     async def run():
         cli = HLClient(Sess(), "https://x/", "https://lb", min_interval=0, max_rpm=10)
         for _ in range(10):
             await cli._acquire_budget("normal", 20)
         assert not await _passes(cli._acquire_budget("normal", 2)), "tavan: normal bekler"
-        cli._last_429 = __import__("time").monotonic()            # 429 az önce: düşük şerit susuyor
+        cli._last_429 = _t.monotonic()                             # 429 az önce: düşük şerit susuyor
+        cli._cap = 8.0                                             # AIMD indi: pencere (10) eski tavanla dolu
         assert cli.low_paused() > 0 and not await _passes(cli._acquire_budget("low", 2))
-        for _ in range(hlc.USER_EXTRA):
-            assert await _passes(cli._acquire_budget("user", 2)), "user şeridi tavan + USER_EXTRA'ya kadar geçer"
-        assert not await _passes(cli._acquire_budget("user", 2)), "USER_EXTRA da dolunca bekler"
+        for _ in range(hlc.USER_RPM):
+            assert await _passes(cli._acquire_budget("user", 2)), "user şeridi kendi kotasıyla geçer (tavan/pencereye bakmaz)"
+        assert not await _passes(cli._acquire_budget("user", 2)), "kendi kotası dolunca bekler"
+        assert cli.usage()["rpm"] == 10 + hlc.USER_RPM, "ortak pencereye de yazılır (normal/düşük görsün)"
         # l2_book priority'yi geçirir
         seen = {}
 
@@ -215,5 +223,33 @@ def test_user_lane():
         cli.info = info
         await cli.l2_book("PUMP", 3, retries=1, priority="user")
         assert seen == {"p": {"type": "l2Book", "coin": "PUMP", "nSigFigs": 3}, "priority": "user", "retries": 1}, seen
+
+        # 429 fırtınası: 8 arka plan isteği 429 alıp ortak kapıda geri-çekilmede uyuyor; defter yine 4 sn'de gelir
+        class Storm:
+            def __init__(self):
+                self.l2 = 0
+
+            def post(self, url, json=None, timeout=None):
+                if (json or {}).get("type") == "l2Book":
+                    self.l2 += 1
+                    return Resp(200, {"levels": [[{"px": "1", "sz": "1", "n": 1}], [{"px": "1.01", "sz": "1", "n": 1}]]})
+                return Resp(429, None)
+        st = Storm()
+        c2 = HLClient(st, "https://x/", "https://lb", concurrency=8, min_interval=0, max_rpm=550)
+        bg = [asyncio.ensure_future(c2.clearinghouse("0x" + "a" * 40)) for _ in range(8)]
+        await asyncio.sleep(0.05)
+        t0 = _t.monotonic()
+        from app.radar import livefeed as lf
+        lf._DEPTH.clear()
+        lf._DEPTH_WHY.clear()
+        await lf._fetch_depth(c2, "PUMP")
+        assert st.l2 == 1 and "PUMP" in lf._DEPTH and _t.monotonic() - t0 < 1.0, (st.l2, lf._DEPTH_WHY)
+        from app.radar import bookowners as bo
+        assert (await bo._book(c2, "PUMP", None))["levels"][0], "bookowners defteri de bekletilmez"
+        for b in bg:
+            b.cancel()
+        await asyncio.gather(*bg, return_exceptions=True)
+        lf._DEPTH.clear()
     asyncio.run(run())
-    print("✅ user şeridi) tavan + USER_EXTRA, 429 duraklamasında da geçer; l2_book önceliği geçirir")
+    print("✅ user şeridi) kendi kotası (tavan/429/pencereden bağımsız), kendi kapısı (429 fırtınasında defter <1 sn);"
+          " l2_book önceliği geçirir")

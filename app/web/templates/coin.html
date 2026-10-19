@@ -2,7 +2,7 @@
 {% import "_macros.html" as m %}
 {% block title %}{% if rows and (rows[0].score or 0) >= 50 %}🚨{% elif ticker %}🐋{% endif %}{{ symbol }}{% if summ and summ.mark %} {{ summ.mark|px }}{% endif %}{% if event and not event.passed %} · 📅{% endif %} · HL Radar{% endblock %}
 {% block bodyattrs %}{% if ticker %} class="termpage"{% endif %} data-refresh="{{ 10 if (scanning or (ticker and not pxchart)) else 60 }}"{% endblock %}
-{% block head %}<script src="/static/lightweight-charts.js" defer></script>{% if ticker %}<script src="/static/term.js" defer></script>{% endif %}{% endblock %}
+{% block head %}<script src="/static/lightweight-charts.js" defer></script>{% if ticker %}<script src="/static/term.js?v={{ term_v }}" defer></script>{% endif %}{% endblock %}
 {% block content %}
 {% if not ticker %}
 <div class="panel">
@@ -97,7 +97,7 @@
 
     {# ⏱ akan işlemler: kollektörün akışı, ek istek yok; büyük işlem = son 400 işlemin en büyük %10'u #}
     <div class="tp t-tape" data-keep="ttape">
-      <div class="th">⏱ İşlemler <span class="st ihit" tabindex="0" data-tip="Bu coindeki bütün alım-satımlar, geldiği anda · yön: piyasadan alan/satan (agresör) · sol adres piyasadan alan/satan, sağdaki (→) defterdeki emri dolan · 🔹 = HL TWAP alt emri · vurgulu = son işlemlerin en büyük %10'u · adrese tıkla → cüzdan karnesi">ⓘ</span><span class="r" id="tcount"></span></div>
+      <div class="th">⏱ İşlemler <span class="st ihit" tabindex="0" data-tip="Bu coindeki bütün alım-satımlar, geldiği anda · yön: piyasadan alan/satan (agresör) · sol adres piyasadan alan/satan, sağdaki (→) defterdeki emri dolan · 🔹 = HL TWAP alt emri · vurgulu = son işlemlerin en büyük %10'u · adrese tıkla → hypurrscan (yeni sekme)">ⓘ</span><span class="r" id="tcount"></span></div>
       <div class="tb" data-sid="ttape"><div id="tfeed" data-srv="1">
         {%- for r in tm.live_rows %}
         <div class="tr {{ 'b' if r[4] == 'B' else 's' }}" data-usd="{{ r[3] }}" title="{{ 'Piyasadan ALIŞ' if r[4] == 'B' else 'Piyasadan SATIŞ' }}">

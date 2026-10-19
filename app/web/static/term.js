@@ -88,7 +88,9 @@
     });
     es.addEventListener('t', function(e){ trades(JSON.parse(e.data)); });
     es.addEventListener('s', function(e){ flow(JSON.parse(e.data)); });
-    es.addEventListener('b', function(e){ T.book = JSON.parse(e.data); T.bookAt = Date.now(); ladder(); });
+    // alındığı an kitabın KENDİSİNDE (d.at): okunamadı olayı eski defteri tutarken yaşı sıfırlamasın (inceleme 19.10)
+    es.addEventListener('b', function(e){ var d = JSON.parse(e.data); d.at = Date.now(); T.book = d; ladder(); });
+    es.addEventListener('bw', function(e){ bookFail(JSON.parse(e.data)); });
     es.addEventListener('o', function(e){ T.own = JSON.parse(e.data); ladder(); owners(); });
     es.addEventListener('x', function(){
       es.close(); T.es = null;
@@ -236,33 +238,33 @@
   }
 
   // Defter bayatsa SÖYLE: eski defter "canlı" gibi durmasın (kullanıcı 19.10: defter 12:29:35'te kalmış, işlemler
-  // 12:36'yı gösteriyordu). Yaş sunucu saatiyle (b.now − b.ts) + alındığından beri geçen; her 's' olayında tazelenir.
-  var BOOK_STALE = 12;
+  // 12:36'yı gösteriyordu). Yaş = sunucu saatiyle (b.now − b.ts) + alındığından beri geçen (b.at); 2 sn'de bir ve her
+  // 's' olayında tazelenir (akış koparsa da ilerler). Eşik: sağlıklı akışta defter en çok ~13 sn eskir (4 sn önbellek ×
+  // 2 + olay aralığı + tamsayı yuvarlama) — 12 sn sağlıklı defteri ara ara "⚠️" gösteriyordu (inceleme 19.10).
+  var BOOK_STALE = 20;
   function ago(s){ s = Math.max(0, Math.round(s)); return s < 90 ? s + ' sn' : Math.round(s / 60) + ' dk'; }
   function bookAge(){
-    var b = T.book, ts = $('#tbookts'), box = $('#tladder');
+    var b = T && T.book, ts = $('#tbookts'), box = $('#tladder');
     if(!b || !ts) return;
-    var age = b.ts ? (b.now ? b.now - b.ts : 0) + (Date.now() - (T.bookAt || Date.now())) / 1000 : null;
-    var stale = !b.ts || age > BOOK_STALE;
-    if(box) box.classList.toggle('stale', !!(stale && b.ts));
+    var age = (b.now ? b.now - b.ts : 0) + (Date.now() - (b.at || Date.now())) / 1000;
+    var stale = age > BOOK_STALE;
+    if(box) box.classList.toggle('stale', stale);
     ts.classList.toggle('warn', stale);
-    ts.textContent = !b.ts ? '⚠️ defter okunamadı'
-      : 'defter ' + hhmmss(b.ts * 1000) + (stale ? ' · ⚠️ ' + ago(age) + ' önce — ' + (b.why || 'güncellenemiyor') : '');
+    ts.textContent = 'defter ' + hhmmss(b.ts * 1000) + (stale ? ' · ⚠️ ' + ago(age) + ' önce — ' + (b.why || 'yenilenmedi') : '');
     ts.title = stale ? 'Defter bu süredir yeniden okunamadı; gösterilen son okunan defter' + (b.why ? ' · neden: ' + b.why : '') : '';
+  }
+  // gösterilecek defter yok ('bw'): eski defter ekrandaysa onu tutup nedeni ekle (yaşı kendi b.at'iyle sürer), yoksa yaz
+  function bookFail(d){
+    if(T.book){ T.book.why = d.why || T.book.why; bookAge(); return; }
+    var box = $('#tladder'), ts = $('#tbookts');
+    if(box){ box.textContent = ''; box.appendChild(el('div', 'dim', 'Defter okunamadı' + (d.why ? ' — ' + d.why : '') + ' · birazdan yeniden denenir')); }
+    if(ts){ ts.textContent = '⚠️ defter okunamadı'; ts.classList.add('warn'); ts.title = d.why || ''; }
   }
 
   function ladder(){
     var box = $('#tladder');
     var b = T.book;
     if(!box || !b) return;
-    if(!b.ts && !(b.bids || []).length && !(b.asks || []).length){
-      // hiç okunamadı: eski bir defter varsa onu (soluk) bırak, yoksa nedeni yaz
-      if(!box.querySelector('.lr')){ box.textContent = ''; box.appendChild(el('div', 'dim', 'Defter okunamadı' + (b.why ? ' — ' + b.why : '') + ' · birazdan yeniden denenir')); }
-      else if(T.bookPrev){ T.bookPrev.why = b.why; T.book = T.bookPrev; }
-      bookAge();
-      return;
-    }
-    T.bookPrev = b;
     // kademe sayısı panele göre: orta fiyat satırı hep görünür kalsın (dar ekranda alışlar aşağı kaçmasın)
     var fitN = Math.floor(((box.clientHeight || 440) - 26) / 18 / 2);
     var N = Math.max(4, Math.min(12, fitN || 12));
@@ -364,6 +366,7 @@
     T.feed = $('#tfeed');
     document.querySelectorAll('#tfeed .tr[data-usd]').forEach(function(r){ T.sizes.push(+r.dataset.usd); });
     connect();
+    if(!window.__termAgeT) window.__termAgeT = setInterval(bookAge, 2000);   // akış kopukken de defter yaşı ilerlesin
   }
 
   // yumuşak yenileme sonrası: üst bant sunucudan yeniden geldi — canlı fiyatı geri yaz

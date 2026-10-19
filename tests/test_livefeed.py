@@ -153,15 +153,17 @@ def test_stats_depth_owners():
             e0 = lf.STATS["depth_err"]
             lf.depth(f, "PUMP")
             await asyncio.sleep(0.02)
-            d = lf.depth(None, "PUMP")
+            d = lf.depth(f, "PUMP")
             assert lf.STATS["depth_err"] == e0 + 1 and d["bids"] and d["now"] - d["ts"] >= 29, d
             assert d["why"] == "HL hatası (RuntimeError)", d
+            assert len(f.calls) == 1 and not lf._DEPTH_TASK, "düşen istekten sonra DEPTH_TTL dolmadan yeniden sorulmaz"
             assert "son defter hatası: HL hatası (RuntimeError)" in lf.diag_line()
-            # hiç okunmamışsa: boş kademe + neden; 10 dk'dan eski defter gönderilmez
+            # gösterilecek defter yoksa (hiç okunmadı / 10 dk'dan eski) depth None, neden depth_fail'de ('bw' olayı —
+            # eski sayfa JS'i boş 'b' alınca merdiveni siliyordu, inceleme 19.10)
             lf._DEPTH.clear()
-            d = lf.depth(None, "PUMP")
-            assert d["ts"] == 0 and not d["bids"] and d["why"], d
+            assert lf.depth(None, "PUMP") is None and lf.depth_fail("PUMP")["why"] == "HL hatası (RuntimeError)"
             lf._DEPTH_WHY.clear()
+            assert lf.depth_fail("PUMP") is None
             lf._DEPTH["PUMP"] = (time.time() - lf.DEPTH_SHOW - 1, {"bids": [[1, 1, 1]], "asks": [], "ts": 1})
             assert lf.depth(None, "PUMP") is None
             lf._DEPTH.clear()
@@ -179,9 +181,20 @@ def test_stats_depth_owners():
                                         "unknown_usd": 8.6e6}], "ask": []},
                    "raw": {"bid": [], "ask": []}})
     assert o["unknown"] and o["lv"][0]["v"] == "g" and o["lv"][0]["own"] == [[A, 1200000]] and o["lv"][0]["unk"] == 8600000
-    assert lf.owners(None) is None
-    print("✅ önbellekler) 15 dk toplamları coin başına; defter hemen döner + tek arka plan isteği; duraklı şeritte"
-          " sormaz; sahipler kısa hâl")
+    assert lf.owners(None) is None and o["why"] == ""
+    # okunamama nedeni sahipler kutusuna gerçek yoldan gider: build → RESULTS → cached (err_txt) → owners (why)
+    from app.radar import bookowners as bo
+    bad = {**bo._empty("PUMP", ["defter okunamadı"]), "why": "HL istek sınırı (429)"}
+    bo.RESULTS["PUMP"] = (bo.now(), bad)
+    try:
+        c = bo.cached("PUMP")
+        assert c["err_txt"] == "HL istek sınırı (429)" and lf.owners(c)["why"] == "HL istek sınırı (429)", c
+        bo.RESULTS["PUMP"] = (bo.now(), {**bad, "why": ""})
+        assert lf.owners(bo.cached("PUMP"))["why"] == "", "neden yoksa '(defter okunamadı)' tekrarı da yok"
+    finally:
+        bo.RESULTS.pop("PUMP", None)
+    print("✅ önbellekler) 15 dk toplamları coin başına; defter hemen döner + tek arka plan isteği (user şeridi, 429"
+          " sonrası da); sahipler kısa hâl + okunamama nedeni")
 
 
 async def _sse(app, path, query=b"", stop_after=3.0):
@@ -285,7 +298,7 @@ def test_terminal_page_and_wiring():
     st, html = asyncio.run(run())
     assert st == 200 and '<body class="termpage"' in html and 'id="term"' in html and 'data-path="HYPE"' in html
     # mum önbelleği yok (taze DB): grafik beklenir → 10 sn (inceleme 18.10)
-    assert '<script src="/static/term.js" defer>' in html and 'data-refresh="10"' in html
+    assert re.search(r'<script src="/static/term\.js\?v=[0-9a-f]{10}" defer>', html) and 'data-refresh="10"' in html
     for sid in ("ttape", "tflow", "tbook"):                 # nakledilen panellerin iç kaydırması da korunur
         assert f'data-sid="{sid}"' in html, sid
     for cls, keep in (("t-chart", "pxchart"), ("t-book", "tbook"), ("t-tape", "ttape"), ("t-flow", "tflow")):
