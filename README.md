@@ -68,6 +68,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/alarm SNDK 480` · `/alarm SNDK %3` · `/alarm 0x…` | 🚨 Uyandırma alarmı: fiyat seviyesine gelince / ±%X oynayınca / hesabın pozisyonu liq'e %2 kalınca ya da kapanınca seni **Telegram'dan arar** (Rahatsız Etme'de bildirim gelmez, arama gelir). `/alarmlar` (🗑 ile kaldır) · `/alarm_test` · `/uyandim` |
 | `/acilis` | 🔔 Açılışın en hareketlileri: açılış penceresindeyse anlık sıralama, değilse son rapor (raporlar ABD açılışından 5 ve 30 dk sonra hisse kanalına) |
 | `/koridor` | 🏓 Şu an açık dar koridorlar (PROPR coinleri): kenarlar, genişlik, temas, başlangıç — ölçüm, sinyal değil |
+| `/bosaltma` | 🧯 Şu an süren sert satış / pozisyon boşaltma bölümleri: cüzdan, piyasaya sattığı coinler, defterdeki pozisyon sayısı |
 | `/5dk` · `/15dk` · `/5dk 15:30` | ⏱ Şimdiden (ya da verilen TSİ saatten) N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu ara durumu gösterir (haber saatleri için) |
 | `/seans` · `/seans NVDA` | 🕰 ABD seans karnesi (XYZ100 + SP500 tek mesaj; ya da tek ABD hissesi): bugün Asya / Londra / New York ne yaptı, Londra Asya tepesini/dibini süpürdü mü, geçmişte bu şekilde NY ne yaptı (taban oran ve z ile), getiri hangi seansta birikti, oynaklık ilişkisi — sayfa `/seans` |
 | `/strat` · `/strat KURAL` | 🧪 Strateji laboratuvarı (salt okunur): kayıtlı kurallar, durum, olay sayısı, kayıttan SONRAKİ kâğıt üstü ölçüm (net, %95 GA, küme sayısı) — betimleme, karar yalnız planlı bakışta · sayfa `/lab` |
@@ -2275,6 +2276,38 @@ karşılaştırmada şansla ~1.3 beklenir). Tutarlı olan **oynaklık**, AMD'nin
 geniş NY (Asya→NY ρ: XYZ100 +0.42 z 3.5, SP500 +0.33 z 2.7, NVDA +0.45 z 3.8 — düzeltme sonrası
 da), Londra→NY ilişki yok. Getiri gece birikmiş (XYZ100 Asya +%3.6, Londra −%0.6, NY −%0.3; SP500
 +%3.9 / +%1.6 / −%1.1) ama |t| < 2 — betimleme, kanıt değil.
+
+## 🧯 Sert satış / pozisyon boşaltma (`UNWIND_CHAT_ID`)
+
+Kullanıcı (19.10, 0x0871…e927 "cbrskapatan"): "bir coinin fiyatını etkileyebilecek kadar büyük pozu varsa ve tüm pozları
+kapamaya başladıysa bildirim istiyorum yeni kanal" · "o yarım saat içinde yakalayıp … diğer coinleri … yakalayacağımız"
+· "dünü ayrı bugünü ayrı yakalamak lazımdı … mantık sert satışçının diğer pozları da kapatabileceği". `app/radar/unwind.py`.
+
+**Ne yapar:** Fiyatı oynatacak büyüklükte pozisyonu olan bir cüzdan o pozisyonu **piyasaya vurarak** kapatmaya başlayınca
+(short'ta piyasadan alarak), aynı cüzdanın **hâlâ açık** öteki pozisyonlarını büyüklük ve coinin 24 sa hacmine oranıyla
+yazar. Her sert satış kendi başına bir olaydır ("dün başladı, bugün sürer" mantığı yok).
+- **Tetik (ek istek yok):** canlı WS akışında TEK adres bir coinde 5 dk içinde piyasadan ≥ max($100K, 10 × coinin
+  ortalama dakika hacmi) satar (`UNWIND_WINDOW_SEC`, `UNWIND_MIN_USD`, `UNWIND_RATE_X`).
+- **Doğrulama (1–3 sn, adresin bütün dex'leri + toplulaştırılmış son işlemleri):** satış kendi pozisyonunu azaltıyor
+  ('Close Long/Short', piyasa emri, likidasyon değil); pozisyon satıştan önce ≥ $250K VE ≥ 30 dk ortalama hacim
+  (`UNWIND_BIG_USD`, `UNWIND_BIG_MIN`); cüzdanda ≤ 15 pozisyon (`UNWIND_MAX_POSITIONS` — sürekli ayar yapan sepet
+  defterleri kanalı boğmasın); ≥ 1 öteki açık pozisyon ≥ $100K (`UNWIND_OTHER_MIN_USD`, `UNWIND_REQUIRE_OTHERS`).
+- **Mesajlar:** ilk mesaj (kim · ne kadar · pozisyondan % · fiyat · önce→şimdi · hacme oranı · **Hâlâ açık**); aynı
+  cüzdan 2 sa içinde başka coini piyasaya vurursa "🧯➕ devam" (en çok `UNWIND_MAX_UPDATES`); defter boşalınca tek
+  "🧯✅" özeti. Mesaj yalnız `UNWIND_CHAT_ID`'ye; boşsa **izleme de HL sorgusu da yok** (ana sohbete düşmez). Ayar
+  sayfası yok — eşikler Railway değişkeni.
+- **Ölçülü dil:** "kapatacak / muhtemelen" yazılmaz; "hâlâ açık" listesi bakılacak coinleri ölçüyle verir.
+
+**Vaka (19.10, ölçülen):** 0x0871 20:22–20:58'de 7 long'u ($10,47M) 80 elle piyasa emriyle (yarım / çeyrek / sabit dilim)
+kapattı; ilk coin CBRS (24 sa hacmin %14'ü) 3 dk'da 20 emir. 18.10 20:20'de CBRS'nin yarısını piyasaya vurmuştu (−%2,8).
+21 günde 7 kez bütün defteri dakikalar içinde boşaltmış. Tekrar oynatmada (bu kurallarla): 18.10 **20:20:48** ilk CBRS
+emrinde (ZEC $3,0M, TAO $1,4M, NEAR, PUMP, ENA, STRK hâlâ açık) ve 19.10 **20:22:08** ilk CBRS emrinde mesaj; ardından
+STRK 20:25, TAO 20:28, ENA 20:31 devam; 19.10 16:54'teki CBRS geri alımı doğru biçimde elendi (azaltma değil).
+
+**Kör nokta, açıkça:** yalnız WS'te dinlenen coinlerdeki satış tetikler (ana dex ilk 120 + PROPR, xyz, para); boşaltma
+dinlenmeyen bir coinde başlarsa ilk mesaj cüzdan dinlenen bir coinde sert satana kadar gelmez. Limit emirle (maker) yavaş
+boşaltma tetiklemez. Coinin hacmi bilinmiyorsa o coin tetiklemez. "mm" etiketine güvenilmez (bu tür cüzdan 24 sa'te 80+
+fill kuralıyla mm sayılabiliyor); süzgeç pozisyon sayısı. Bekçi yeniden başlatınca bellekteki 5 dk'lık akış sıfırlanır.
 
 ## 🏓 Dar koridor (`RANGE_CHAT_ID`)
 

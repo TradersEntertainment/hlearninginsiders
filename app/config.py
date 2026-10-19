@@ -959,6 +959,19 @@ class Config:
         self.range_min_touches = int(os.getenv("RANGE_MIN_TOUCHES", "4"))
         self.range_min_minutes = int(os.getenv("RANGE_MIN_MINUTES", "60"))
         self.range_break_note = convert_value("bool", os.getenv("RANGE_BREAK_NOTE", "1"))
+        # 🧯 Sert satış / pozisyon boşaltma (app/radar/unwind.py, kullanıcı 19.10) — ENV-ONLY. Chat boşsa izleme de
+        # HL sorgusu da yok (mesaj ana sohbete düşmez). Eşikler vaka 0x0871…e927'ye göre (README "🧯").
+        self.unwind_chat_id = (os.getenv("UNWIND_CHAT_ID", "") or "").strip()
+        self.unwind_enabled = convert_value("bool", os.getenv("UNWIND_ENABLED", "1"))
+        self.unwind_window_sec = int(os.getenv("UNWIND_WINDOW_SEC", "300"))
+        self.unwind_min_usd = float(os.getenv("UNWIND_MIN_USD", "100000"))
+        self.unwind_rate_x = float(os.getenv("UNWIND_RATE_X", "10"))
+        self.unwind_big_usd = float(os.getenv("UNWIND_BIG_USD", "250000"))
+        self.unwind_big_min = float(os.getenv("UNWIND_BIG_MIN", "30"))
+        self.unwind_other_min_usd = float(os.getenv("UNWIND_OTHER_MIN_USD", "100000"))
+        self.unwind_max_positions = int(os.getenv("UNWIND_MAX_POSITIONS", "15"))
+        self.unwind_require_others = convert_value("bool", os.getenv("UNWIND_REQUIRE_OTHERS", "1"))
+        self.unwind_max_updates = int(os.getenv("UNWIND_MAX_UPDATES", "5"))
         # 🔸 TWAP yan kanalı (app/radar/twaploose.py, env-only — kullanıcı 14.10): eşikleri biraz gevşetilmiş TWAP
         # bildirimleri. Boş = kapalı. Kanal = ana kanalın kopyaları + ana eşikten kalıp gevşek eşiği geçenler (🔸).
         # Eşikler isteğe bağlı; her biri ana eşikten büyük olamaz (yan kanal ⊇ ana kanal).

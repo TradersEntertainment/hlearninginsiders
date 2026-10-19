@@ -399,6 +399,7 @@ TASK_TR = {
     "seans": "ABD seans karnesi (mum arşivi)", "wake": "uyandırma alarmı",
     "openmove": "açılışın en hareketlileri",
     "koridor": "dar koridor",
+    "unwind": "sert satış / boşaltma",
     "lab": "strateji laboratuvarı",
     "propr": "PROPR listesi (yalnız ekler)",
 }
@@ -2982,6 +2983,8 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
          False),
         ("/koridor", "🏓 şu an açık dar koridorlar (PROPR, kenarlar · genişlik · temas · yaş; ölçüm, sinyal değil)"
          " · eş: /koridorlar /bant /dar", False),
+        ("/bosaltma", "🧯 şu an süren sert satış / pozisyon boşaltma bölümleri (cüzdan, kapattıkları, hâlâ açık)"
+         " · eş: /boşaltma /sertsatis", False),
         ("/5dk · /15dk", "⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu"
          " · eş: /5 · /5 dk · /10dakika", False),
         ("/5dk 15:30", "⏱ ölçümü haber saatine kur (TSİ; 3 dk geriye de gider)", False),
@@ -3092,6 +3095,7 @@ def help_text() -> str:
         "/alarm — 🚨 uyandırma: gece bir şey olursa seni Telegram'dan ARAR (/alarm SNDK 480 · /alarm SNDK %3 · /alarm 0xADRES) · /alarmlar · /alarm_test · /uyandim\n"
         "/acilis — 🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor (rapor 5 dk ve 30 dk'da hisse kanalına)\n"
         "/koridor — 🏓 şu an açık dar koridorlar (PROPR coinleri; ölçüm, sinyal değil)\n"
+        "/bosaltma — 🧯 süren sert satış / pozisyon boşaltma bölümleri\n"
         "/5dk · /15dk — ⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete · /5dk 15:30 haber saatine kur (3 dk geriye de gider) · ölçerken 📊 tuşu\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için bildirimdeki 🛑 tuşu ya da /birak_N; ↩️ geri alınabilir)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
@@ -3972,5 +3976,74 @@ def koridor_list(rows: list, stats: dict, n_coins: int, n_ready: int, has_chat: 
         out.append(f"• <b>{esc(assets.label(coin))}</b> %{c['W'] * 100:.2f} · alt {px5(c['lower'])} / üst {px5(c['upper'])}"
                    f" · {c['nL']}+{c['nU']} temas · başlangıç {tr_time(int(c['start_ts']))}"
                    + ("" if c.get("sent") else " · (bildirilmedi)"))
+    return "\n".join(out) + DISCLAIMER
+
+
+# ---------------- 🧯 sert satış / pozisyon boşaltma (app/radar/unwind.py) ----------------
+
+def _vol_share(usd_: float, vol: float | None) -> str:
+    return f"%{usd_ / vol * 100:.1f}" if vol else "bilinmiyor"
+
+
+def _others_txt(others: list[dict], vol24: dict, limit: int = 8) -> str:
+    from .. import assets
+    parts = [f"<b>{esc(assets.label(p['coin']))}</b> {p['side'][0]} {usd(p['usd'])}"
+             f" ({_vol_share(p['usd'], vol24.get(p['coin']))})" for p in others[:limit]]
+    more = f" · +{len(others) - limit} daha" if len(others) > limit else ""
+    return " · ".join(parts) + more
+
+
+def unwind_alert(addr: str, coin: str, cand: dict, v: dict, vol24: dict, ep: dict | None = None) -> str:
+    """İlk 4 satır: kim neyi piyasaya vuruyor (ne kadar, pozisyondan %, fiyat) · PROPR · pozisyon önce→şimdi + hacme
+    oranı · HÂLÂ AÇIK öteki pozisyonlar. Ölçüm; "kapatacak" tahmini yok."""
+    from .. import assets
+    sym = esc(assets.label(coin))
+    long_ = v["pos_side"] == "LONG"
+    act = "LONG'unu piyasaya satıyor" if long_ else "SHORT'unu piyasadan alarak kapatıyor"
+    mins = max(1, round((int(cand["last_ts"]) - int(cand["first_ts"])) / 60))
+    pct = v["closed"] / v["before"] * 100 if v["before"] else 0
+    move = (cand["px1"] / cand["px0"] - 1) * 100 if cand.get("px0") else None
+    head = "🧯➕ boşaltmaya devam: " if ep else "🧯 "
+    lines = [f"{head}<b>{sym}</b> {act} · {alink(addr)} · son {mins} dk {usd(cand['usd'])}"
+             f" (pozisyondan %{min(pct, 100):.0f})" + (f" · fiyat {move:+.2f}%" if move is not None else "")]
+    if is_listed(coin):
+        lines.append(PROPR_NOTE)
+    lines.append(f"Pozisyon {usd(v['before'])} → {usd(v['now']) if v['now'] else 'kapandı'}"
+                 f" · 24s hacme oranı {_vol_share(v['before'], vol24.get(coin))}")
+    others = v.get("others") or []
+    lines.append(f"Hâlâ açık ({len(others)}): " + (_others_txt(others, vol24) if others else "yok"))
+    if ep:
+        done = [c for c in ep.get("coins", {}) if c != coin]
+        if done:
+            lines.append("Bu bölümde piyasaya sattıkları: " + ", ".join(esc(assets.label(c)) for c in done)
+                         + f" (ilk mesaj {tr_time(int(ep['start']))})")
+    lines.append(f"{v['orders']} piyasa emri · likidasyon değil · {len(v.get('positions') or [])} açık pozisyon")
+    return "\n".join(lines) + DISCLAIMER
+
+
+def unwind_done(addr: str, ep: dict, positions: list[dict], t: int) -> str:
+    from .. import assets
+    book = ep.get("book") or {}
+    left = {p["coin"]: p for p in positions}
+    closed = sorted(((c, b) for c, b in book.items()), key=lambda kv: -kv[1]["before"])
+    parts = [f"{esc(assets.label(c))} {b['side'][0]} {usd(b['before'])}" for c, b in closed[:10]]
+    rest = [p for p in positions if p["coin"] not in book]
+    return (f"🧯✅ {alink(addr)} defterindeki {len(book)} pozisyonun hepsini kapattı · ilk mesajdan {dur_txt(t - int(ep['start']))}"
+            f" sonra\nKapanan (ilk mesajdaki büyüklük): " + " · ".join(parts)
+            + (f"\nYeni açtıkları: " + " · ".join(f"{esc(assets.label(p['coin']))} {p['side'][0]} {usd(p['usd'])}"
+                                                   for p in rest[:5]) if rest else "")
+            + DISCLAIMER)
+
+
+def unwind_list(rows: list, has_chat: bool) -> str:
+    from .. import assets
+    head = "🧯 <b>Sert satış / boşaltma</b>" + ("" if has_chat else " · ⚠️ UNWIND_CHAT_ID tanımsız: izleme kapalı")
+    if not rows:
+        return head + "\nŞu an süren bölüm yok." + DISCLAIMER
+    out = [head]
+    for addr, ep in rows[:10]:
+        coins = ", ".join(esc(assets.label(c)) for c in ep.get("coins", {}))
+        out.append(f"• {alink(addr)} · başlangıç {tr_time(int(ep['start']))} · sattıkları: {coins}"
+                   f" · defterde {len(ep.get('book') or {})} pozisyon vardı")
     return "\n".join(out) + DISCLAIMER
 

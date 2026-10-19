@@ -14,7 +14,7 @@ import aiohttp
 
 from ..config import Config
 from ..db import alert_log, alert_recent, db, now
-from ..radar import koridor, livefeed, openmove, stickywall, tape, twapfast, twaplive, twaploose
+from ..radar import koridor, livefeed, openmove, stickywall, tape, twapfast, twaplive, twaploose, unwind
 from ..telegram import format as fmt
 
 log = logging.getLogger("hl.collector")
@@ -447,6 +447,12 @@ class Collector:
                 replay = tape.seen(coin, ts, tid)
             except Exception:
                 replay = False
+            # 🧯 sert satış: adres+coin başına taker akışı (yeniden yollanan hariç). Sıcak yol: senkron, I/O yok.
+            if not replay:
+                try:
+                    unwind.observe(self.cfg, coin, aggr, buyer, seller, px, sz, ts)
+                except Exception:
+                    unwind.STATS["errors"] += 1
             # 📼 15 dk bant (coin sayfası / /defter): her işlem, taban yok. Sıcak yol: senkron, I/O yok.
             try:
                 if tape.observe(coin, aggr, buyer, seller, px, sz, ts, zero, tid):

@@ -525,6 +525,8 @@ class TelegramBot:
             await self._cmd_open_movers(chat_id)
         elif cmd in ("koridor", "koridorlar", "bant", "dar"):
             await self._cmd_koridor(chat_id)
+        elif cmd in ("bosaltma", "boşaltma", "sertsatis", "sertsatış", "unwind"):
+            await self._cmd_unwind(chat_id)
         elif cmd in ("alarm", "alarmlar", "alarm_test", "alarmtest", "uyandim", "uyandım"):
             await self._cmd_alarm(cmd, args, chat_id)   # 🚨 yalnız sahip: gece telefonu çaldırır
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
@@ -857,6 +859,8 @@ class TelegramBot:
             await self._cmd_open_movers(chat_id)
         elif cmd in ("koridor", "koridorlar", "bant", "dar"):
             await self._cmd_koridor(chat_id)
+        elif cmd in ("bosaltma", "boşaltma", "sertsatis", "sertsatış", "unwind"):
+            await self._cmd_unwind(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -891,7 +895,8 @@ class TelegramBot:
             getattr(self.cfg, "sim_chat_id", ""), getattr(self.cfg, "account_chat_id", ""),
             getattr(self.cfg, "twap_mirror_chat_id", ""), getattr(self.cfg, "hidden_twap_chat_id", ""),
             getattr(self.cfg, "twap_loose_chat_id", ""), getattr(self.cfg, "twap_big_chat_id", ""),
-            getattr(self.cfg, "strat_chat_id", ""), getattr(self.cfg, "range_chat_id", ""))
+            getattr(self.cfg, "strat_chat_id", ""), getattr(self.cfg, "range_chat_id", ""),
+            getattr(self.cfg, "unwind_chat_id", ""))
             if v and str(v).strip()}
 
     def _owner_user_id(self) -> str:
@@ -1507,6 +1512,16 @@ class TelegramBot:
         sctx = self._slice_ctx()
         for sn in slices:
             await self.send(fmt.slice_status(sn, sctx), chat_id)
+
+    async def _cmd_unwind(self, chat_id: str) -> None:
+        """/bosaltma — 🧯 şu an açık sert satış bölümleri (bellekten, HL'ye istek yok)."""
+        from ..radar import unwind
+        try:
+            await self.send(fmt.unwind_list(unwind.active_rows(),
+                                            bool((getattr(self.cfg, "unwind_chat_id", "") or "").strip())), chat_id)
+        except Exception as e:
+            log.exception("/bosaltma")
+            await self.send(f"❌ boşaltma listesi okunamadı: {fmt.esc(e)}", chat_id)
 
     async def _cmd_koridor(self, chat_id: str) -> None:
         """/koridor — 🏓 şu an açık dar koridorlar (bellekten, HL'ye istek yok) + izlenen coin sayısı."""

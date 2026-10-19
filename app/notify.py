@@ -37,6 +37,8 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "htwap":     ("",                 "🕵️ Gizli TWAP (emirsiz dilimleme)",    "high"),
     # 🏓 dar koridor: ölçüm bildirimi, PUBLIC_KINDS'te YOK; ayar alanı yok — yer RANGE_CHAT_ID, kapatmak RANGE_ENABLED=0
     "koridor":   ("",                 "🏓 Dar koridor (RANGE_CHAT_ID)",       "normal"),
+    # 🧯 sert satış / boşaltma: adres bazlı, PUBLIC_KINDS'te YOK; ayar alanı yok — yer UNWIND_CHAT_ID
+    "unwind":    ("",                 "🧯 Sert satış / pozisyon boşaltma (UNWIND_CHAT_ID)", "high"),
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "sticky":    ("notify_sticky",    "🧲 Yapışkan duvar (kripto kanalı)",    "high"),
     "acct":      ("notify_acct",      "👤 İzlenen hesaplar (hesap grubu)",     "high"),
