@@ -18,7 +18,7 @@ Kararlar:
     Her sert satış kendi başına bir olaydır — "dün başladı bugün sürer" mantığı yok. Spot çiftleri tetiklemez.
   • Doğrulama önce UCUZ olandan: adresin yalnız pencere içindeki toplulaştırılmış işlemleri (1 istek). Satış KENDİ
     pozisyonunu azaltıyor olmalı ('Close Long/Short', taker, kendi likidasyonu değil); azaltılan pozisyon satıştan önce
-    "fiyatı etkileyecek" büyüklükte (≥ UNWIND_BIG_USD $250K VE ≥ UNWIND_BIG_MIN (30) dk ortalama hacim). Ancak bunlar
+    "fiyatı etkileyecek" büyüklükte (≥ UNWIND_BIG_USD $1M VE ≥ UNWIND_BIG_MIN (30) dk ortalama hacim). Ancak bunlar
     geçerse bütün dex'lerin pozisyonları: ≤ UNWIND_MAX_POSITIONS (15) pozisyon; ≥1 öteki açık ≥ UNWIND_OTHER_MIN_USD.
   • Mesaj yalnız UNWIND_CHAT_ID (env-only; boşsa hiç sorgu yok, mesaj yok — ana sohbete düşmez). Aynı cüzdan 2 sa
     içinde başka bir coini sert satarsa kısa "devam" mesajı (en çok UNWIND_MAX_UPDATES); defter boşalınca tek kapanış
@@ -29,6 +29,10 @@ Kararlar:
 satışın kendisi kesilebiliyordu; bekleme yönsüzdü — reddedilen bir alım aynı coindeki gerçek satışı 15 dk susturuyordu;
 aday adres başına tekti; susturulan yoklamalar bölümü hiç bitirmiyordu; 11 dex sorgusu ucuz işlem kontrolünden önceydi
 (çöküşte kuyruk tıkanırdı); STATE 2 sn'de bir yazılıyordu.
+
+Kullanıcı (20.10): "adamın poz büyüklüğü 1m yoksa bildirim istemiyorum" → UNWIND_BIG_USD $250K → $1M (ilk mesaj da devam
+da). Etkisi (19.10 tekrar oynatma): CBRS ($3,1M) ilk mesajı ve TAO ($1,3M) devamı kalır; STRK ($0,6M) ve ENA ($0,9M) devamı
+gelmez.
 
 Kör nokta, açıkça: yalnız WS'te dinlenen coinlerdeki satış tetikler (ana dex ilk 120 + PROPR, xyz, para); dinlenmeyen
 bir coinde boşaltma başlarsa ilk mesaj, cüzdan dinlenen bir coinde sert satana kadar gelmez. Limit emirle (maker)
@@ -190,7 +194,7 @@ def judge_fills(cfg, cand: dict, fills: list) -> dict:
     before = abs(float(first.get("startPosition") or 0)) * px0
     closed = sum(abs(float(r.get("sz") or 0)) * float(r.get("px") or 0) for r in taker)
     v1 = VOL1M.get(coin) or 0
-    if before < float(_cfg(cfg, "unwind_big_usd", 250_000)) or (v1 and before < float(_cfg(cfg, "unwind_big_min", 30)) * v1):
+    if before < float(_cfg(cfg, "unwind_big_usd", 1_000_000)) or (v1 and before < float(_cfg(cfg, "unwind_big_min", 30)) * v1):
         return {"ok": False, "why": "pozisyon coine göre küçük", "before": before}
     return {"ok": True, "why": "", "before": before, "closed": closed, "pos_side": "LONG" if side == "S" else "SHORT",
             "orders": len({r.get("oid") for r in taker}), "px_first": px0, "px_last": float(taker[-1].get("px") or 0),

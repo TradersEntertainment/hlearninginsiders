@@ -2289,7 +2289,8 @@ yazar. Her sert satış kendi başına bir olaydır ("dün başladı, bugün sü
 - **Tetik (ek istek yok):** canlı WS akışında TEK adres bir coinde 5 dk içinde piyasadan ≥ max($100K, 10 × coinin
   ortalama dakika hacmi) satar (`UNWIND_WINDOW_SEC`, `UNWIND_MIN_USD`, `UNWIND_RATE_X`).
 - **Doğrulama (1–3 sn, adresin bütün dex'leri + toplulaştırılmış son işlemleri):** satış kendi pozisyonunu azaltıyor
-  ('Close Long/Short', piyasa emri, likidasyon değil); pozisyon satıştan önce ≥ $250K VE ≥ 30 dk ortalama hacim
+  ('Close Long/Short', piyasa emri, likidasyon değil); pozisyon satıştan önce ≥ **$1M** (kullanıcı 20.10: "adamın poz
+  büyüklüğü 1m yoksa bildirim istemiyorum"; ilk mesaj da devam da) VE ≥ 30 dk ortalama hacim
   (`UNWIND_BIG_USD`, `UNWIND_BIG_MIN`); cüzdanda ≤ 15 pozisyon (`UNWIND_MAX_POSITIONS` — sürekli ayar yapan sepet
   defterleri kanalı boğmasın); ≥ 1 öteki açık pozisyon ≥ $100K (`UNWIND_OTHER_MIN_USD`, `UNWIND_REQUIRE_OTHERS`).
 - **Mesajlar:** ilk mesaj (kim · ne kadar · pozisyondan % · fiyat · önce→şimdi · hacme oranı · **Hâlâ açık**); aynı
@@ -2303,7 +2304,8 @@ kapattı; ilk coin CBRS (24 sa hacmin %14'ü) 3 dk'da 20 emir. 18.10 20:20'de CB
 (−%1,1); 23:16 ve 23:40 dalgalarıyla 3,3 sa'te yarısına indi (−%2,8). 21 günde 7 kez bütün defteri dakikalar içinde
 boşaltmış. Tekrar oynatmada (bu kurallarla, gerçek işlemlerle): 18.10 **20:20:48** ilk CBRS emrinde (ZEC $3,0M, TAO $1,4M,
 NEAR, PUMP, ENA, STRK hâlâ açık) ve 23:16'da (2 sa'ten sonra: yeni ilk mesaj) ve 19.10 **20:22:08** ilk CBRS emrinde
-mesaj; ardından STRK 20:25, TAO 20:28, ENA 20:31 devam; 19.10 16:54'teki CBRS geri alımı doğru biçimde elendi.
+mesaj; ardından TAO ($1,3M) 20:28 devam — STRK ($0,6M) ve ENA ($0,9M) $1M tabanının altında kaldığı için devam mesajı
+yok; 19.10 16:54'teki CBRS geri alımı doğru biçimde elendi.
 
 **Kör nokta, açıkça:** yalnız WS'te dinlenen coinlerdeki satış tetikler (ana dex ilk 120 + PROPR, xyz, para); boşaltma
 dinlenmeyen bir coinde başlarsa ilk mesaj cüzdan dinlenen bir coinde sert satana kadar gelmez. Limit emirle (maker) yavaş

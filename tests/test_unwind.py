@@ -299,7 +299,7 @@ def test_wiring():
         assert notify.KINDS["unwind"][0] == "" and "unwind" not in notify.PUBLIC_KINDS
         cfg = Config()
         assert cfg.unwind_enabled and cfg.unwind_chat_id == "" and cfg.unwind_min_usd == 100_000
-        assert cfg.unwind_rate_x == 10 and cfg.unwind_big_usd == 250_000 and cfg.unwind_max_positions == 15
+        assert cfg.unwind_rate_x == 10 and cfg.unwind_big_usd == 1_000_000 and cfg.unwind_max_positions == 15
         assert not any(f.startswith("unwind_") for f in EDITABLE_FIELDS), "env-only"
         assert health.limits(cfg)["unwind"] == 600 and health.periods(cfg)["unwind"] == 2
         assert fmt.TASK_TR["unwind"] and "/bosaltma" in fmt.help_text()
@@ -310,7 +310,7 @@ def test_wiring():
         assert "## 🧯 Sert satış / pozisyon boşaltma (`UNWIND_CHAT_ID`)" in readme and "| `/bosaltma` |" in readme
         assert "**Kör nokta, açıkça:**" in readme.split("## 🧯 Sert satış")[1].split("\n## ")[0]
         for v in ("UNWIND_CHAT_ID=", "UNWIND_ENABLED=1", "UNWIND_MIN_USD=100000", "UNWIND_RATE_X=10",
-                  "UNWIND_BIG_USD=250000", "UNWIND_MAX_POSITIONS=15"):
+                  "UNWIND_BIG_USD=1000000", "UNWIND_MAX_POSITIONS=15"):
             assert v in env, v
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "uw2.db"))
         txt = "\n".join(await diag._subsystems(cfg))

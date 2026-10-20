@@ -966,7 +966,8 @@ class Config:
         self.unwind_window_sec = int(os.getenv("UNWIND_WINDOW_SEC", "300"))
         self.unwind_min_usd = float(os.getenv("UNWIND_MIN_USD", "100000"))
         self.unwind_rate_x = float(os.getenv("UNWIND_RATE_X", "10"))
-        self.unwind_big_usd = float(os.getenv("UNWIND_BIG_USD", "250000"))
+        # kullanıcı (20.10): "adamın poz büyüklüğü 1m yoksa bildirim istemiyorum" — satılan pozisyon satıştan önce ≥ $1M
+        self.unwind_big_usd = float(os.getenv("UNWIND_BIG_USD", "1000000"))
         self.unwind_big_min = float(os.getenv("UNWIND_BIG_MIN", "30"))
         self.unwind_other_min_usd = float(os.getenv("UNWIND_OTHER_MIN_USD", "100000"))
         self.unwind_max_positions = int(os.getenv("UNWIND_MAX_POSITIONS", "15"))
