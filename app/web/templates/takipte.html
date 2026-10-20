@@ -21,16 +21,16 @@
 {%- else -%}{%- set a = v|abs -%}
 {%- if a >= 999950000 -%}${{ '%.2f'|format(v / 1e9) }}B
 {%- elif a >= 999500 -%}${{ '%.1f'|format(v / 1e6) }}M
-{%- elif a >= 1000 -%}${{ '%.0f'|format(v / 1e3) }}K
+{%- elif a >= 999.5 -%}${{ '%.0f'|format(v / 1e3) }}K
 {%- else -%}${{ '%.0f'|format(v) }}{%- endif -%}
 {%- endif -%}
 {%- endmacro -%}
 {%- macro closed(c) -%}
 {%- if c is none -%}bilinmiyor
-{%- elif c <= -0.05 -%}%{{ ('%.0f' if -c >= 10 else '%.1f')|format(-c) }} eklendi
+{%- elif c <= -0.05 -%}%{{ ('%.0f' if -c >= 9.95 else '%.1f')|format(-c) }} eklendi
 {%- elif c < 0.05 -%}kapanış yok
 {%- elif c >= 99.95 -%}tamamı kapandı
-{%- else -%}%{{ ('%.0f' if c >= 10 else '%.1f')|format(c) }} kapandı
+{%- else -%}%{{ ('%.0f' if 9.95 <= c < 99.5 else '%.1f')|format(c) }} kapandı
 {%- endif -%}
 {%- endmacro -%}
 <style>
@@ -43,6 +43,7 @@
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%;color-scheme:dark}
 body{margin:0;min-height:100vh;font-family:var(--sans);color:var(--s100);background-color:var(--bg);overflow-x:hidden;
   background-image:linear-gradient(to right,rgba(255,255,255,.02) 1px,transparent 1px),linear-gradient(to bottom,rgba(255,255,255,.02) 1px,transparent 1px);
@@ -107,16 +108,17 @@ h1{margin:0;font-size:17px;font-weight:800;color:#fff;display:flex;align-items:c
 .side{display:inline-flex;align-items:center;justify-content:center;width:44px;padding:2px 0;border-radius:6px;font:700 9px var(--mono)}
 .side.long{background:rgba(16,185,129,.14);color:var(--em);border:1px solid rgba(16,185,129,.4)}
 .side.short{background:rgba(244,63,94,.14);color:var(--rose);border:1px solid rgba(244,63,94,.4)}
+.side.na{background:rgba(100,116,139,.12);color:var(--s400);border:1px solid rgba(100,116,139,.3)}
 .lbl{font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lbl small{font:500 10px var(--mono);color:var(--s500);margin-left:6px}
-.st{font:600 10px var(--mono);white-space:nowrap;text-align:right}
+.st{font:600 10px var(--mono);white-space:nowrap;text-align:right;max-width:19em;overflow:hidden;text-overflow:ellipsis}
 .st.a{color:var(--p3)}.st.e{color:var(--s500)}.st.add{color:var(--a4)}
 .pg{grid-column:2/4;height:4px;border-radius:999px;background:var(--s900);overflow:hidden}
 .pg i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--pur),var(--c4))}
 .pg i.add{background:linear-gradient(90deg,var(--amb),var(--a4))}
 .pg i.done{background:var(--s600)}
-.more{font:500 11px var(--mono);color:var(--s500);padding-left:52px}
-.ft{display:flex;justify-content:space-between;gap:8px;padding-top:9px;border-top:1px solid var(--soft);font:500 10px var(--mono);color:var(--s500)}
+.coins li.more{display:block;font:500 11px var(--mono);color:var(--s500);padding-left:52px}
+.ft{margin-top:auto;display:flex;justify-content:space-between;gap:8px;padding-top:9px;border-top:1px solid var(--soft);font:500 10px var(--mono);color:var(--s500)}
 .ft b{color:var(--s300);font-weight:600}
 .empty{padding:36px 16px;text-align:center;font-size:13px;line-height:1.7;color:var(--s400)}
 .empty .big{font-size:30px;display:block;margin-bottom:6px}
@@ -177,11 +179,13 @@ h1{margin:0;font-size:17px;font-weight:800;color:#fff;display:flex;align-items:c
         {% for c in coins[:6] %}
         {% set cp = c.closed_pct %}
         <li class="{{ 'act' if c.active else 'end' }}">
-          <span class="side {{ 'long' if c.side == 'long' else 'short' }}">{{ 'LONG' if c.side == 'long' else 'SHORT' }}</span>
+          {%- set sd = c.side if c.side in ('long', 'short') else '' %}
+          <span class="side {{ sd or 'na' }}">{{ sd|upper or '—' }}</span>
           <span class="lbl">{{ c.label }}<small>{{ usd(c.base_ntl) }}</small></span>
-          <span class="st {{ 'add' if (cp is not none and cp <= -0.05) else ('a' if c.active else 'e') }}">
+          {%- set st_txt -%}
             {%- if c.active %}{{ closed(cp) }}{% else %}{{ c.end_note or 'bitti' }}{% if cp is not none and c.end_note != 'kapandı' %} · {{ closed(cp) }}{% endif %}{% endif -%}
-          </span>
+          {%- endset %}
+          <span class="st {{ 'add' if (cp is not none and cp <= -0.05) else ('a' if c.active else 'e') }}" title="{{ st_txt }}">{{ st_txt }}</span>
           <span></span>
           <span class="pg"><i class="{{ 'add' if (cp is not none and cp < 0) else ('' if c.active else 'done') }}"
             style="width:{{ 0 if cp is none else ([cp|abs, 100]|min)|round(1) }}%"></i></span>

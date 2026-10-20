@@ -27,6 +27,7 @@
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%;color-scheme:dark}
 body{margin:0;min-height:100vh;font-family:var(--sans);color:var(--s100);background-color:var(--bg);overflow-x:hidden;
   background-image:linear-gradient(to right,rgba(255,255,255,.02) 1px,transparent 1px),linear-gradient(to bottom,rgba(255,255,255,.02) 1px,transparent 1px);
@@ -143,7 +144,9 @@ h1{margin:0;font-family:var(--mono);font-size:20px;font-weight:800;letter-spacin
 .rc .hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .rc .px{display:flex;justify-content:space-between;gap:6px;font:500 10px var(--mono);color:var(--s400)}
 .rbar{height:6px;border-radius:999px;background:var(--s900);overflow:hidden}.rbar i{display:block;height:100%}
-.empty{padding:22px 12px;text-align:center;font-size:12px;color:var(--s500)}
+.empty{padding:22px 12px;text-align:center;font:400 12px var(--sans);color:var(--s500);white-space:normal}
+tr.er td{padding:0}.er .empty{position:sticky;left:0;width:calc(100vw - 34px);max-width:100%}
+tbody tr.er:hover{background:none}tbody tr.er:hover td:first-child{box-shadow:none}
 .more{margin-top:10px;width:100%;justify-content:center}
 /* coin */
 .cn{display:flex;align-items:center;gap:9px;min-width:0}
@@ -172,9 +175,12 @@ h1{margin:0;font-family:var(--mono);font-size:20px;font-weight:800;letter-spacin
 .tab.on{background:rgba(6,182,212,.1);color:var(--c4);border-color:rgba(6,182,212,.3);font-weight:700}
 .tab .n{padding:0 6px;border-radius:999px;background:rgba(30,41,59,.9);font:600 10px/16px var(--mono)}
 .tab.on .n{background:rgba(6,182,212,.2)}
-.tab .xs{display:none}
-@media (max-width:480px){.tabs{gap:4px}.tab{flex:1;justify-content:center;padding:8px 5px;gap:5px;font-size:11.5px}.tab .ic,.tab .lg{display:none}.tab .xs{display:inline}}
+.xs{display:none}
+@media (max-width:480px){.tabs{gap:4px}.tab{flex:1;justify-content:center;padding:8px 5px;gap:5px;font-size:11.5px}.tab .ic,.lg{display:none}.xs{display:inline}
+  td,thead th{padding:10px 9px}.tw .cb{display:none}.tw .cn .nm{font-size:12px}}
 .pane{display:none}.pane.on{display:block}
+.hint{display:none;margin:0 0 7px;text-align:right;font:500 10px var(--mono);color:var(--s500)}
+@media (max-width:900px){.hint{display:block}}
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:16px}
 table{width:100%;border-collapse:collapse;font-size:12px;text-align:left}
 thead th{background:rgba(2,6,23,.8);color:var(--s400);text-transform:uppercase;font:700 10px var(--sans);letter-spacing:.06em;padding:11px 12px;
@@ -184,8 +190,9 @@ tbody tr:first-child td{border-top:0}
 tbody tr{transition:background .2s}
 tbody tr:hover{background:rgba(255,255,255,.035)}
 tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
+tbody tr:hover td.stk1{box-shadow:inset 3px 0 0 var(--cyan),inset -1px 0 0 rgba(255,255,255,.08)}
 th.r,td.r{text-align:right}
-.stk1{position:sticky;left:0;z-index:2;background:var(--solid)}
+.stk1{position:sticky;left:0;z-index:2;background:var(--solid);box-shadow:inset -1px 0 0 rgba(255,255,255,.08)}
 thead .stk1{z-index:3;background:#03060f}
 tbody tr:hover .stk1{background:#0e1424}
 .b{font-weight:700;color:#fff}.sm{font-size:10px;color:var(--s400)}
@@ -218,7 +225,9 @@ tbody tr:hover .stk1{background:#0e1424}
 .tc:hover{transform:translateY(-2px);border-color:rgba(0,242,254,.35);box-shadow:0 12px 30px -8px rgba(0,242,254,.18)}
 .tc.act{border-color:rgba(168,85,247,.35);background:linear-gradient(160deg,rgba(168,85,247,.08),rgba(2,6,23,.5) 60%)}
 .tc.end{opacity:.78}
-.tc .hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tc .hd{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.tc .hd .cn{flex-wrap:wrap;gap:6px 9px}.tc .hd .nm{overflow-wrap:anywhere}
+.tc .hd>.pill{max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .tc .kv{display:flex;justify-content:space-between;gap:8px;font:500 11px var(--mono);color:var(--s400)}
 .tc .kv b{color:#fff;font-weight:700}
 .pg{height:6px;border-radius:999px;background:var(--s900);overflow:hidden}.pg i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--pur),var(--c4))}
@@ -243,7 +252,7 @@ tbody tr:hover .stk1{background:#0e1424}
     </div>
     <div class="topr">
       <span class="live wait" id="live" title="Veri durumu"><span class="pulse"></span><span id="liveTxt">YÜKLENİYOR</span><span class="t" id="liveT"></span></span>
-      {% if list_url %}<a class="btn" href="{{ list_url }}"><svg class="ic sm" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>Takip listesi</a>{% endif %}
+      {% if list_url %}<a class="btn" href="{{ list_url }}"><svg class="ic sm" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg><span class="lg">Takip listesi</span><span class="xs">Liste</span></a>{% endif %}
     </div>
   </div>
   <div class="tick" id="tick" style="--rs:{{ (refresh_sec or 20)|int }}s"></div>
@@ -262,7 +271,7 @@ tbody tr:hover .stk1{background:#0e1424}
           <span class="pill pu" id="pTrk" hidden>👣 TAKİPTE</span>
           <span class="pill cy" id="pN">— pozisyon</span>
           <span class="pill sl" id="pLev" hidden></span>
-          <span class="pill am" id="pPart" hidden title="Bazı dex sorguları yanıt vermedi">⚠️ liste eksik olabilir</span>
+          <span class="pill am" id="pPart" hidden title="Bazı Hyperliquid sorguları (dex defteri ya da işlem geçmişi) yanıt vermedi">⚠️ liste eksik olabilir</span>
         </div>
         <div class="addr">
           <code id="addr">{{ address }}</code>
@@ -294,7 +303,7 @@ tbody tr:hover .stk1{background:#0e1424}
     <div class="radar">
       <div class="sh">
         <div class="t"><svg class="ic" viewBox="0 0 24 24" style="color:var(--a4)"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-          Likidasyon radarı <span class="pill em" id="rPill">—</span></div>
+          Likidasyon radarı <span class="pill sl" id="rPill">—</span></div>
         <span class="r">mark → liq mesafesi · en yakın önce</span>
       </div>
       <div class="rgrid" id="rGrid"><div class="empty" style="grid-column:1/-1">Yükleniyor…</div></div>
@@ -312,22 +321,24 @@ tbody tr:hover .stk1{background:#0e1424}
 
   <section>
     <div class="tabs" role="tablist">
-      <button class="tab on" type="button" data-p="pos"><svg class="ic" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg><span class="lg">Aktif pozisyonlar</span><span class="xs">Pozisyonlar</span><span class="n" id="nPos">0</span></button>
-      <button class="tab" type="button" data-p="fil"><svg class="ic" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span class="lg">Son işlemler</span><span class="xs">İşlemler</span><span class="n" id="nFil">0</span></button>
-      <button class="tab" type="button" data-p="alr"><svg class="ic" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="lg">Bildirim akışı</span><span class="xs">Bildirimler</span><span class="n" id="nAlr">0</span></button>
+      <button class="tab on" type="button" data-p="pos"><svg class="ic" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg><span class="lg">Aktif pozisyonlar</span><span class="xs">Pozisyonlar</span><span class="n" id="nPos">—</span></button>
+      <button class="tab" type="button" data-p="fil"><svg class="ic" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span class="lg">Son işlemler</span><span class="xs">İşlemler</span><span class="n" id="nFil">—</span></button>
+      <button class="tab" type="button" data-p="alr"><svg class="ic" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="lg">Bildirim akışı</span><span class="xs">Bildirimler</span><span class="n" id="nAlr">—</span></button>
     </div>
     <div class="pane on" id="pane-pos" style="margin-top:14px">
+      <div class="hint" id="hPos" hidden>yana kaydır: fiyat kanalı · K/Z · kaldıraç · funding ↔</div>
       <div class="glass"><div class="tw"><table>
         <thead><tr><th class="stk1">Parite</th><th>Yön</th><th class="r">Büyüklük</th><th>Fiyat kanalı (Giriş ➔ Mark ➔ Liq)</th>
           <th class="r">Kâr / Zarar</th><th class="r">Kaldıraç &amp; teminat</th><th class="r">Funding (açılıştan)</th></tr></thead>
-        <tbody id="posBody"><tr><td colspan="7" class="empty">Pozisyon verisi yükleniyor…</td></tr></tbody>
+        <tbody id="posBody"><tr class="er"><td colspan="7"><div class="empty">Pozisyon verisi yükleniyor…</div></td></tr></tbody>
       </table></div></div>
     </div>
     <div class="pane" id="pane-fil" style="margin-top:14px">
+      <div class="hint" id="hFil" hidden>yana kaydır: fiyat · tutar · K/Z · ücret ↔</div>
       <div class="glass"><div class="tw"><table>
         <thead><tr><th>Zaman (TSİ)</th><th>Coin</th><th>İşlem</th><th class="r">Fiyat</th><th class="r">Miktar</th><th class="r">Tutar</th>
           <th class="r">Gerçekleşen K/Z</th><th class="r">Ücret</th><th>Tür</th></tr></thead>
-        <tbody id="filBody"><tr><td colspan="9" class="empty">İşlem geçmişi yükleniyor…</td></tr></tbody>
+        <tbody id="filBody"><tr class="er"><td colspan="9"><div class="empty">İşlem geçmişi yükleniyor…</div></td></tr></tbody>
       </table></div></div>
       <div class="foot" style="padding:8px 0 0">Son 24 saat · en yeni önce · en çok 40 işlem</div>
     </div>
@@ -352,7 +363,7 @@ var DATA_URL = {{ data_url|tojson }};
 var REFRESH = Math.max(5, {{ (refresh_sec or 20)|int }});
 var INITIAL = {{ initial|tojson }};
 var PROPR_TXT = "✅ PROPR'da listeli";
-var last = null, lastOk = 0, inflight = false, radarAll = false, firstDone = false;
+var last = null, lastOk = 0, inflight = false, radarAll = false, firstDone = false, stopped = false;
 var $ = function(id){ return document.getElementById(id); };
 
 /* ---- güvenli DOM kurucu: veri yalnız textContent ile yazılır ---- */
@@ -371,7 +382,10 @@ function add(e, kids){
 }
 function clear(e){ while (e.firstChild) e.removeChild(e.firstChild); return e; }
 function setTxt(id, t, cls){ var e = $(id); if (!e) return; e.textContent = t; if (cls !== undefined) e.className = cls; }
+function emptyRow(t, n){ return h('tr', 'er', h('td', null, h('div', 'empty', t), {colspan: n})); }
 function num(v){ return (typeof v === 'number' && isFinite(v)) ? v : null; }
+/* sözlük araması yalnız kendi anahtarlarında ("constructor" / "__proto__" gibi veri değerleri prototipe düşmesin) */
+function own(o, k){ return Object.prototype.hasOwnProperty.call(o, k) ? o[k] : null; }
 
 /* ---- biçim ---- */
 function usd(n){
@@ -379,7 +393,7 @@ function usd(n){
   var a = Math.abs(n), s = n < 0 ? '-' : '';
   if (a >= 999.95e6) return s + '$' + (a / 1e9).toFixed(2) + 'B';
   if (a >= 999.5e3) return s + '$' + (a / 1e6).toFixed(1) + 'M';
-  if (a >= 1e3) return s + '$' + (a / 1e3).toFixed(0) + 'K';
+  if (a >= 999.5) return s + '$' + (a / 1e3).toFixed(0) + 'K';   // 999.6 → "$1K" ("$1000" değil)
   if (a >= 10 || a === 0) return s + '$' + a.toFixed(0);
   return s + '$' + a.toFixed(2);
 }
@@ -390,6 +404,7 @@ function pct(v, d, signed){
   d = d == null ? 1 : d;
   var t = Math.abs(v).toFixed(d);
   if (parseFloat(t) === 0) return '<%' + Math.pow(10, -d).toFixed(d);
+  if (Math.abs(v) >= 99.95) t = t.replace(/\.0+$/, '');   // "%100.0" yerine "%100"
   return '%' + (signed ? (v > 0 ? '+' : '-') : (v < 0 ? '-' : '')) + t;
 }
 function px(p){
@@ -421,14 +436,20 @@ function ago(ts, now){
   if (d < 172800) return Math.floor(d / 3600) + ' sa';
   return Math.floor(d / 86400) + ' g';
 }
+/* "dd.mm HH:MM · 5 sa önce"; zaman yoksa "—" (boş "· önce" yazılmaz) */
+function when(ts, now, tz){
+  if (!num(ts)) return '—';
+  return tsi(ts) + (tz ? ' TSİ' : '') + ' · ' + ago(ts, now) + ' önce';
+}
 function closedTxt(c){
   c = num(c); if (c === null) return 'bilinmiyor';
-  if (c <= -0.05) return pct(-c, Math.abs(c) >= 10 ? 0 : 1) + ' eklendi';
+  if (c <= -0.05) return pct(-c, -c >= 9.95 ? 0 : 1) + ' eklendi';
   if (c < 0.05) return 'kapanış yok';
   if (c >= 99.95) return 'tamamı kapandı';
-  return pct(c, c >= 10 ? 0 : 1) + ' kapandı';
+  return pct(c, c >= 9.95 && c < 99.5 ? 0 : 1) + ' kapandı';   // 99.7 → "%99.7" ("%100 kapandı" + açık pozisyon çelişmesin)
 }
 function sideBadge(side){
+  if (side !== 'long' && side !== 'short') return null;   // yön bilinmiyorsa rozet yok (SHORT diye gösterilmez)
   var lg = side === 'long';
   return h('span', 'side ' + (lg ? 'long' : 'short'), [h('i'), lg ? 'LONG' : 'SHORT']);
 }
@@ -445,14 +466,15 @@ var GLYPH = {DOGE: ['Ð', '#fbbf24'], XRP: ['✕RP', '#67e8f9'], AVAX: ['▲', '
 function hexA(hex, a){ var n = parseInt(hex.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
 function coinBadge(label, dex){
   var c = String(label || '').toUpperCase(), b = h('span', 'cb' + (dex ? ' stk' : ''));
-  if (!dex && SVG[c]) {
-    var col = SVG[c][0];
+  var sv = dex ? null : own(SVG, c), gl = dex ? null : own(GLYPH, c);
+  if (sv) {
+    var col = sv[0];
     b.style.cssText = 'color:' + col + ';background:' + hexA(col, .15) + ';border-color:' + hexA(col, .45);
     var tpl = document.createElement('template');
-    tpl.innerHTML = '<svg viewBox="0 0 24 24">' + SVG[c][1] + '</svg>';   // sabit SVG; veri içermez
+    tpl.innerHTML = '<svg viewBox="0 0 24 24">' + sv[1] + '</svg>';   // sabit SVG; veri içermez
     b.appendChild(tpl.content.firstChild);
-  } else if (!dex && GLYPH[c]) {
-    b.style.color = GLYPH[c][1]; b.textContent = GLYPH[c][0];
+  } else if (gl) {
+    b.style.color = gl[1]; b.textContent = gl[0];
   } else {
     b.textContent = c.length <= 4 ? c : c.slice(0, 3);
     if (c.length >= 4) b.style.fontSize = '8.5px';
@@ -479,7 +501,7 @@ function renderHead(d){
   setTxt('mMar', usd(a.margin_used));
   var ratio = (v && num(a.margin_used) !== null) ? a.margin_used / v * 100 : null;
   $('mMarBar').style.width = (ratio === null ? 0 : Math.min(100, Math.max(0, ratio))) + '%';
-  setTxt('mMarS', ratio === null ? 'kullanım bilinmiyor' : pct(ratio) + ' kullanım');
+  setTxt('mMarS', ratio === null ? 'kullanım bilinmiyor' : ratio <= 0 ? 'kullanım yok' : pct(ratio) + ' kullanım');
   setTxt('mWd', usd(a.withdrawable));
   var lev = num(a.lev);
   setTxt('mLev', lev === null ? 'bilinmiyor' : lev.toFixed(2) + 'x');
@@ -511,14 +533,14 @@ function renderRadar(pos){
   if (!ok.length) {
     pill.className = 'pill em'; pill.textContent = pos.length ? 'liq seviyesi yok' : 'açık pozisyon yok';
     g.appendChild(h('div', 'rc safe', [h('div', 'b', '🛡️ ' + (pos.length ? 'Açık pozisyonların hiçbirinde liq seviyesi yok.' : 'Açık pozisyon yok.')),
-      h('div', 'sm', 'HL liq fiyatı vermediğinde mesafe ölçülemez.')], {style: 'grid-column:1/-1'}));
+      pos.length ? h('div', 'sm', 'HL liq fiyatı vermediğinde mesafe ölçülemez.') : null], {style: 'grid-column:1/-1'}));
     more.hidden = true; return;
   }
   var c = ok[0], b0 = band(c.liq_dist);
   pill.className = 'pill ' + (c.liq_dist < 15 ? 'ro' : c.liq_dist < 30 ? 'am' : 'em');
-  pill.textContent = c.liq_dist < 30 ? (c.liq_dist < 15 ? '🚨 ' : '⚠️ ') + 'en yakın ' + pct(c.liq_dist) + ' · ' + c.label
+  pill.textContent = c.liq_dist < 30 ? (c.liq_dist < 15 ? '🚨 ' : '⚠️ ') + 'en yakın ' + pct(c.liq_dist) + ' · ' + (c.label || c.coin || '?')
                                       : 'tümü ≥%30 uzak · en yakın ' + pct(c.liq_dist);
-  var lim = radarAll ? ok.length : Math.min(ok.length, window.innerWidth >= 900 ? 6 : 3);
+  var lim = radarAll ? ok.length : Math.min(ok.length, window.innerWidth >= 900 ? 6 : window.innerWidth >= 640 ? 4 : 3);   // ızgara 3 / 2 / 1 sütun
   ok.slice(0, lim).forEach(function(p){
     var b = band(p.liq_dist);
     g.appendChild(h('div', 'rc ' + b[0], [
@@ -558,7 +580,8 @@ function channel(p){
 function renderPositions(pos, now){
   var tb = clear($('posBody'));
   setTxt('nPos', pos.length);
-  if (!pos.length) { tb.appendChild(h('tr', null, h('td', 'empty', '🛡️ Bu cüzdanda şu an açık pozisyon yok.', {colspan: 7}))); return; }
+  $('hPos').hidden = !pos.length;
+  if (!pos.length) { tb.appendChild(emptyRow('🛡️ Bu cüzdanda şu an açık pozisyon yok.', 7)); return; }
   pos.forEach(function(p){
     var chips = h('div', 'chips');
     if (p.propr) add(chips, h('span', 'chip pr', 'PROPR', {title: PROPR_TXT}));
@@ -592,19 +615,21 @@ var DIRS = {'open long': 'Long açılış', 'close long': 'Long kapanış', 'ope
 function renderFills(fills){
   var tb = clear($('filBody'));
   setTxt('nFil', fills.length);
-  if (!fills.length) { tb.appendChild(h('tr', null, h('td', 'empty', 'Son 24 saatte işlem yok.', {colspan: 9}))); return; }
+  $('hFil').hidden = !fills.length;
+  if (!fills.length) { tb.appendChild(emptyRow('Son 24 saatte işlem yok.', 9)); return; }
   fills.forEach(function(f){
     var d = String(f.dir || ''), dl = d.toLowerCase();
     var buy = /open long|close short|^buy|short > long/.test(dl), sell = /open short|close long|^sell|long > short/.test(dl);
-    var pnl = num(f.pnl), dex = String(f.coin || '').indexOf(':') > 0 ? String(f.coin).split(':')[0] : '';
+    var pnl = num(f.pnl), coin = String(f.coin || ''), dex = coin.indexOf(':') > 0 ? coin.split(':')[0] : '';
+    var spot = f.spot === true || (!dex && (coin.charAt(0) === '@' || coin.indexOf('/') > 0 || /^(buy|sell)$/.test(dl)));   // spot dolumu PERP yazılmaz
     tb.appendChild(h('tr', null, [
       h('td', 'sm', tsi(f.ts, false), {style: 'font-size:11px'}),
-      h('td', null, coinCell(f.label || f.coin, dex, dex || 'PERP')),
-      h('td', buy ? 'up' : sell ? 'dn' : '', DIRS[dl] || d || '—', {style: 'font-weight:700;font-size:11px', title: d}),
+      h('td', null, coinCell(f.label || f.coin, dex, dex || (spot ? 'SPOT' : 'PERP'))),
+      h('td', buy ? 'up' : sell ? 'dn' : '', own(DIRS, dl) || d || '—', {style: 'font-weight:700;font-size:11px', title: d}),
       h('td', 'r b', px(f.px)),
       h('td', 'r', qty(f.sz)),
       h('td', 'r', usd(f.usd)),
-      h('td', 'r b ' + (pnl === null || Math.abs(pnl) < 0.5 ? 'mut' : pnl > 0 ? 'up' : 'dn'), pnl === null || Math.abs(pnl) < 0.5 ? '—' : susd(pnl)),
+      h('td', 'r ' + (pnl === null || Math.abs(pnl) < 0.5 ? 'mut' : (pnl > 0 ? 'b up' : 'b dn')), pnl === null || Math.abs(pnl) < 0.5 ? '—' : susd(pnl)),
       h('td', 'r sm', usd(f.fee)),
       h('td', null, h('span', 'tk', f.taker ? 'taker' : 'maker'))
     ]));
@@ -618,10 +643,10 @@ function renderAlerts(al, now){
   setTxt('nAlr', al.length);
   if (!al.length) { box.appendChild(h('div', 'empty', 'Bu cüzdan için henüz bildirim kaydı yok.')); return; }
   al.forEach(function(a){
-    var k = KIND[a.kind] || ['🔔', String(a.kind || 'bildirim').toLocaleUpperCase('tr-TR')];
+    var k = own(KIND, a.kind) || ['🔔', String(a.kind || 'bildirim').toLocaleUpperCase('tr-TR')];
     box.appendChild(h('div', 'ac', [
       h('div', 'hd', [h('div', 'k', [h('span', null, k[0], {style: 'font-size:15px'}), h('span', 'pill cy', k[1])]),
-        h('span', 'tm', tsi(a.ts) + ' TSİ · ' + ago(a.ts, now) + ' önce')]),
+        h('span', 'tm', when(a.ts, now, true))]),
       h('pre', null, a.text || '')
     ]));
   });
@@ -647,7 +672,7 @@ function renderTracked(tr, pos, now){
         h('span', null, live ? ['şimdi ', h('b', null, usd(live.ntl))] : t.active ? 'pozisyon görünmüyor' : '')]),
       bar,
       h('div', 'kv', [h('span', cp !== null && cp < 0 ? '' : 'b', closedTxt(cp), {style: 'color:' + (cp !== null && cp < 0 ? 'var(--a4)' : 'var(--p3)')}),
-        h('span', null, tsi(t.since) + ' · ' + ago(t.since, now) + ' önce')])
+        h('span', null, when(t.since, now))])
     ]));
   });
 }
@@ -676,7 +701,14 @@ function render(d){
 }
 function fail(msg){
   setLive('warn', last ? 'GECİKMELİ' : 'VERİ YOK');
-  banner('⚠️ ' + msg + (last ? ' — son alınan veri (' + tsi(last.ts, true) + ' TSİ) gösteriliyor.' : ''), !last);
+  if (!last) {
+    $('rPill').className = 'pill sl'; $('rPill').textContent = 'veri yok';
+    clear($('rGrid')).appendChild(h('div', 'empty', 'Veri alınamadı.', {style: 'grid-column:1/-1'}));
+    clear($('posBody')).appendChild(emptyRow('Veri alınamadı.', 7));
+    clear($('filBody')).appendChild(emptyRow('Veri alınamadı.', 9));
+    clear($('alrList')).appendChild(h('div', 'empty', 'Veri alınamadı.'));
+  }
+  banner('⚠️ ' + (last ? String(msg).replace(/\.$/, '') : msg) + (last ? ' — son alınan veri (' + tsi(last.ts, true) + ' TSİ) gösteriliyor.' : ''), !last);
 }
 function accept(d){
   if (!d || typeof d !== 'object' || d.ok === false) { fail((d && d.err) ? String(d.err) : 'Veri alınamadı.'); return false; }
@@ -687,17 +719,23 @@ function accept(d){
 }
 function restartTick(){ var t = $('tick'); t.classList.remove('run'); void t.offsetWidth; t.classList.add('run'); }
 function load(){
-  if (inflight) return;
+  if (inflight || stopped) return;
   inflight = true; restartTick();
-  fetch(DATA_URL, {cache: 'no-store', credentials: 'same-origin'}).then(function(r){
+  /* askıda kalan istek yenilemeyi kilitlemesin: süre aşımında iptal (AbortController yoksa tarayıcı varsayılanı) */
+  var ac = typeof AbortController === 'function' ? new AbortController() : null;
+  var to = ac ? setTimeout(function(){ ac.abort(); }, Math.max(15, REFRESH + 10) * 1000) : 0;
+  fetch(DATA_URL, {cache: 'no-store', credentials: 'same-origin', signal: ac ? ac.signal : undefined}).then(function(r){
     if (!r.ok) {
-      var m = r.status === 401 || r.status === 403 ? 'Bağlantının imzası geçersiz (' + r.status + '). Sayfayı Telegram mesajındaki bağlantıdan yeniden aç.'
-            : r.status === 404 ? 'Cüzdan verisi bulunamadı (404).' : 'Sunucu hatası (' + r.status + ').';
-      throw new Error(m);
+      if (r.status === 401 || r.status === 403) {   // imza düzelmez: boşuna sorgulamayı bırak
+        stopped = true; $('tick').classList.remove('run');
+        throw new Error('Bağlantının imzası geçersiz (' + r.status + '). Sayfayı Telegram mesajındaki bağlantıdan yeniden aç.');
+      }
+      throw new Error(r.status === 404 ? 'Cüzdan verisi bulunamadı (404).' : 'Sunucu hatası (' + r.status + ').');
     }
     return r.json().catch(function(){ throw new Error('Yanıt okunamadı.'); });
-  }).then(accept).catch(function(e){ fail(e && e.message ? e.message : 'Bağlantı hatası.'); })
-    .then(function(){ inflight = false; });
+  }).then(accept).catch(function(e){
+    fail(e && e.name === 'AbortError' ? 'Sunucu yanıt vermedi (zaman aşımı).' : e && e.message ? e.message : 'Bağlantı hatası.');
+  }).then(function(){ clearTimeout(to); inflight = false; });
 }
 
 /* ---- olaylar ---- */
@@ -717,9 +755,9 @@ $('copy').addEventListener('click', function(){
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(a).then(function(){ done(true); }, legacy); else legacy();
 });
 document.addEventListener('visibilitychange', function(){
-  if (!document.hidden && Date.now() - lastOk > REFRESH * 1000) load();
+  if (!document.hidden && !stopped && Date.now() - lastOk > REFRESH * 1000) load();
 });
-setInterval(function(){ if (!document.hidden) load(); }, REFRESH * 1000);
+setInterval(function(){ if (!document.hidden && !stopped) load(); }, REFRESH * 1000);
 
 if (INITIAL && accept(INITIAL)) restartTick(); else load();
 })();

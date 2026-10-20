@@ -81,7 +81,7 @@ async def _fills(client, addr: str) -> tuple[list, bool]:
             coin = str(x.get("coin") or "")
             rows.append({"ts": ts // 1000, "coin": coin, "label": assets.label(coin), "dir": str(x.get("dir") or ""),
                          "px": px, "sz": sz, "usd": px * sz, "pnl": _f(x.get("closedPnl")), "fee": _f(x.get("fee")),
-                         "taker": bool(x.get("crossed", True))})
+                         "taker": bool(x.get("crossed", True)), "spot": bool(assets.is_spot(coin))})
         except (TypeError, ValueError):
             continue
     rows.sort(key=lambda r: -r["ts"])
@@ -179,6 +179,7 @@ async def build(cfg, client, addr: str) -> dict:
                 "mark": mark, "upnl": upnl, "roe": round(roe * 100, 2) if roe is not None else None,
                 "lev": _f(lev.get("value")), "lev_type": str(lev.get("type") or ""), "liq": liq,
                 "liq_dist": round(abs(mark - liq) / mark * 100, 2) if (liq and mark) else None,
+                # cumFunding.sinceOpen > 0 = ÖDENEN (canlı doğrulandı 20.10: long + pozitif oran → userFunding usdc < 0)
                 "margin": _f(p.get("marginUsed")), "funding": _f((p.get("cumFunding") or {}).get("sinceOpen")),
                 "propr": bool(is_listed(coin)),
                 "track": ({"id": int(t["id"]), "base_ntl": _f(t.get("base_notional")),
