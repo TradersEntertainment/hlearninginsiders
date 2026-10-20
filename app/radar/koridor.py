@@ -40,13 +40,14 @@ doğrulandı): erken uyarı işe yaramıyor — 15–30. dakikada bulunan korido
 düşüyor: sonraki 15 dk'da kırılma %70 → 180 dk+ %18). Geç kalan uyarıların izi: koridor son 60 dk'nın oynaklığından dar
 (W/RV < 1: ortanca 15–19 dk) ya da son kapanış kenarda / dışında (ortanca 7–23 dk; ortada ~40) → RANGE_MIN_WIDTH_RV,
 RANGE_EDGE_GAP_PCT.
-Ayrıca bekleme süresinde bulunan koridor "bildirilmedi" diye kaydedilip coini kırılana dek kilitliyordu (80 koridor sessiz)
-→ artık kaydedilmez, bekleme bitince hâlâ varsa yazılır. Tekrar oynatma (kayan $50M evreni): günde ~30 bildirim (aynı),
+Ayrıca bekleme süresinde bulunan koridor "bildirilmedi" diye kaydedilip coini kırılana dek kilitliyordu (80 koridor; 24'ü
+bekleme bittikten sonra da kilitli, ~2850 coin-dk)
+→ artık kaydedilmez (/koridor'da "beklemede" görünür), bekleme bitince hâlâ varsa yazılır. Tekrar oynatma (kayan $50M evreni): günde ~30 bildirim (aynı),
 kalan ömür ortanca 34 → 45 dk, ≥ 30 dk %54 → %67, < 5 dk %3 → %2. Dürüst sınır: bildirimden sonra fiyat yalnız ~%41'inde
 kenardan kenara bir kez daha gidiyor (bildirimden önce saatte 2,35 geçiş, sonra 0,6).
 
-Kör nokta, açıkça: koridor ancak oluştuktan sonra görülür (≥ 6 onaylı dönüş noktası) — 1 saatten kısa koridorlar çoğu
-zaman hiç ya da son dakikalarında yazılır; yalnız WS'te dinlenen coinler; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
+Kör nokta, açıkça: koridor ancak oluştuktan sonra görülür (≥ 6 onaylı dönüş noktası) ve ilk temastan RANGE_MIN_MINUTES
+dk geçmeden yazılmaz: 1 saatten kısa koridorlar hiç yazılmaz, daha uzunları en erken 60. dakikada; yalnız WS'te dinlenen coinler; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
 xyz hisselerinde seans dışı saatler seyrek işlemlidir (%70 işlem şartı çoğunu eler).
 """
 from __future__ import annotations
@@ -69,7 +70,7 @@ BACKFILL_MIN = 600            # açılışta / kopukluktan sonra HL'den çekilen
 UNIVERSE_SEC = 600            # evren (PROPR ∩ hacim) tazeleme
 MAX_GAP_FILL = 30             # bundan uzun işlemsiz boşluk doldurulmaz (WS kopukluğu sayılır → yeniden doldurma)
 ACTIVE_MAX_SEC = 12 * 3600    # kırılmadan bu kadar süren koridor sessizce düşer
-HIST_LINE = ("📏 Geçmiş ölçüm (17–20.10, 72 coin, bu kural): bildirimden sonra koridor ortanca 45 dk sürdü (%67'si"
+HIST_LINE = ("📏 Geçmiş ölçüm (17–20.10, bu kural: 98 bildirim / 19 coin): bildirimden sonra koridor ortanca 45 dk sürdü (%67'si"
              " 30 dk'dan uzun, %2'si 5 dk'dan kısa); fiyat bildirimlerin %41'inde kenardan kenara bir kez daha gitti."
              " Kenardan alım-satımın komisyon öncesi ortalaması ≈ 0 (16–19.10, rastgele fiyatla aynı).")
 BACKFILL_GAP_SEC = 4.0        # geri doldurma: coin başına bekleme (~30 ağırlık / 4 sn ≈ 450/dk; HL sınırı 1200/dk)
@@ -81,6 +82,8 @@ BARS: dict[str, deque] = {}        # coin → deque([dk_ts, o, h, l, c, n])
 CUR: dict[str, list] = {}          # coin → açık dakika
 ELIGIBLE: set[str] = set()
 ACTIVE: dict[str, dict] = {}       # coin → bildirilen koridor
+COOLING: dict[str, dict] = {}      # coin başına bekleme süresinde görülen koridor: yalnız /koridor gösterir, kilitlemez,
+                                   # kv'ye yazılmaz, her tur yeniden kurulur
 STATS: dict = {"errors": 0, "trades": 0, "scans": 0, "found": 0, "sent": 0, "broken": 0, "backfill": 0,
                "backfill_err": 0, "skipped_nochat": 0, "last_scan": 0, "day": "", "sent_day": 0}
 
@@ -415,10 +418,18 @@ async def _backfill(client, coins, cfg, done: set[str] | None = None) -> set[str
                 rows.append([int(k["t"]) // 1000, float(k["o"]), float(k["h"]), float(k["l"]), float(k["c"]),
                              int(k.get("n") or 0)])
             rows = [r for r in rows if r[0] < end]
+            had = {int(b[0]): b[5] for b in (BARS.get(coin) or ())}
             tail = [list(b) for b in (BARS.get(coin) or ()) if b[0] >= end]
             BARS[coin] = deque(maxlen=KEEP)
             for r in sorted(rows) + tail:
                 _append(coin, r)
+            cor = ACTIVE.get(coin)
+            if cor is not None:
+                # açık koridor: tarama bu arada düz dolgu / eksik mumlarla `checked`'i ilerletmiş olabilir — HL'den yeni
+                # gelen gerçek mumlar (önceden yok ya da işlemsiz dolgu) da kırılış için taransın (inceleme 20.10)
+                fresh = [r[0] for r in rows if r[0] > int(cor["t0"]) and (r[0] not in had or (had[r[0]] == 0 and r[5] > 0))]
+                if fresh:
+                    cor["checked"] = min(int(cor.get("checked", cor["t0"])), min(fresh) - 60)
             STATS["backfill"] += 1
             ok.add(coin)
         except Exception as e:                              # noqa: BLE001
@@ -452,6 +463,7 @@ async def scan(cfg, notifier, P=None, t: int | None = None) -> list[str]:
     out: list[str] = []
     changed = False
     vols = None
+    cooling: dict[str, dict] = {}
     # tespit saf CPU (~50 coin × 720 mum): olay döngüsünü tıkamasın diye ayrı iş parçacığında, mumların kopyasıyla
     snap = {c: list(BARS[c]) for c in ELIGIBLE if c not in ACTIVE and BARS.get(c)}
 
@@ -509,7 +521,9 @@ async def scan(cfg, notifier, P=None, t: int | None = None) -> list[str]:
         cool = int(getattr(cfg, "range_coin_cooldown_min", 180) or 0) * 60
         if cool and await alert_recent("koridor_coin", coin, cool):
             # coin başına bekleme: KAYDETME. Eskiden "bildirilmedi" diye ACTIVE'e yazılıyordu ve coin o koridor kırılana
-            # dek kilitleniyordu — bekleme bitince de yazılmıyordu (17–20.10 tekrar oynatma: 80 koridor, 5842 coin-dk sessiz)
+            # dek kilitleniyordu — bekleme bitince de yazılmıyordu (17–20.10 tekrar oynatma: 80 koridor, 5499 coin-dk kilit;
+            # ~2850 coin-dk'sı bekleme bittikten sonra, 24 koridorda). /koridor yine görsün (COOLING, kilitlemez).
+            cooling[coin] = {**found, "sent": False, "cooling": True}
             continue
         STATS["found"] += 1
         if vols is None:
@@ -530,6 +544,8 @@ async def scan(cfg, notifier, P=None, t: int | None = None) -> list[str]:
             await alert_log("koridor_coin", coin, "")
         ACTIVE[coin] = {**found, "sent": bool(sent), "checked": found["t0"]}
         changed = True
+    COOLING.clear()
+    COOLING.update(cooling)
     if changed:
         await _save_active()
     return out
@@ -593,7 +609,8 @@ def ready_count(P) -> int:
 
 
 def active_rows() -> list[tuple[str, dict]]:
-    return sorted(ACTIVE.items(), key=lambda kv: -int(kv[1].get("t0") or 0))
+    rows = {**COOLING, **ACTIVE}                        # bekleme süresinde görülenler de (kilitlemeden) listelenir
+    return sorted(rows.items(), key=lambda kv: -int(kv[1].get("t0") or 0))
 
 
 async def diag_line(cfg) -> str:

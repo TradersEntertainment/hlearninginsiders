@@ -2333,14 +2333,15 @@ dk'nın medyan mum aralığı)); son ≤ 300 dk'nın tepe ve dip dönüşlerinde
 (3) **sıralı** temas (alt, üst, alt… — genişliğin `RANGE_TOUCH_TOL_PCT` %25'i içinde), iki kenarda toplam ≥
 `RANGE_MIN_TOTAL_TOUCHES` (7), temaslar çizgiye ortalama ≤ `RANGE_MAX_FIT_PCT` (%10) W uzakta (gevşek / eğik kanal
 elenir), birden çok aday varsa **en iyi oturan** seçilir, aynı coine bildirimden sonra `RANGE_COIN_COOLDOWN_MIN` (180) dk
-yeni bildirim yok (bekleme sırasında bulunan koridor kaydedilmez; bekleme bitince hâlâ varsa yazılır), hiçbir kapanış
+yeni bildirim yok (bekleme sırasında bulunan koridor kaydedilmez, `/koridor`'da "beklemede, bildirilmedi" diye görünür;
+bekleme bitince hâlâ varsa yazılır), hiçbir kapanış
 kenarın %25 W dışında değil, çizgiler (eğim farkı × süre ≤ `RANGE_PARALLEL_TOL_PCT` %50 W) paralel, dakikaların
 ≥ %70'inde işlem, ilk temastan ≥ `RANGE_MIN_MINUTES` (60) dk, genişlik %0,7–2 (`RANGE_MIN/MAX_WIDTH_PCT`) ve son 60 dk'nın
 oynaklığının ≥ `RANGE_MIN_WIDTH_RV` (1,0) katı, son kapanış iki kenara da genişliğin ≥ `RANGE_EDGE_GAP_PCT` (%10)'u
 kadar uzak (ikisi de 0 = kapalı). Mumlar botun zaten aldığı WS işlemlerinden (ek HL isteği yok); açılışta ve WS kopukluğundan
 sonra son 600 dk bir kez HL'den (düşük şerit, coin başına ~30 ağırlık, 4 sn arayla ≈ 450 ağırlık/dk — 80 coin ~5 dk;
 tarama beklemez, dolan coin hemen taranır; okunamayan coin sonraki turda yeniden). Kırılış son kontrolden sonraki her
-mumda aranır. Açık koridorlar kv'de: yeniden başlatmada aynı koridor ikinci kez gelmez.
+mumda aranır (geri doldurmayla sonradan gelen gerçek mumlar dahil). Açık koridorlar kv'de: yeniden başlatmada aynı koridor ikinci kez gelmez.
 
 **Araştırma (19.10, ölçülen — tahmin değil):** 131 PROPR coini, 1 dk mum 3,4 gün + 5 dk mum 17 gün, üç bağımsız
 dedektör, her biri ayrıca doğrulandı ve rastgele-yürüyüş kopyalarıyla karşılaştırıldı:
@@ -2359,11 +2360,14 @@ dedektör, her biri ayrıca doğrulandı ve rastgele-yürüyüş kopyalarıyla k
     Kırılma riski yaşla düşüyor (sonraki 15 dk'da kırılma: 15–30 dk yaşta %70, 180 dk+ yaşta %18); `RANGE_MIN_MINUTES`
     15'e inince 30 dk'dan uzun yaşayanların payı ~8–11 puan düşüyor, işe yarar bildirim sayısı artmıyor.
   - Geç kalanların izi: koridor son 60 dk'nın oynaklığından dar (W/RV < 1: ortanca 15–19 dk) ya da son kapanış kenarda /
-    dışında (ortanca 7–23 dk; ortadayken ~40 dk). LIT 10:14: W/RV 0,66, kapanış alt kenarda → yeni şartlarla yazılmaz; bunun yerine 09:19'da
-    08:07'den beri süren 3,206–3,258 koridoru yazılırdı (58 dk yaşadı; LIT $50M altında, evrende değil).
+    dışında (ortanca 7–23 dk; ortadayken ~40 dk). LIT 10:14 mesajı da218be öncesi kuraldandı (4+4 temas, %15, ≥ $5M):
+    W/RV 0,66, kapanış alt kenarda → yeni şartlarla yazılmaz. LIT evrende olsaydı (değil: $50M altında) yeni kural
+    06:32'de 04:56'dan beri süren 3,140–3,189 koridorunu yazardı (09:10'da kırıldı, bildirimden 159 dk sonra); 09:18'de
+    bulunan 08:07 koridoru 3 sa coin beklemesine düşer, kaydedilmez; bekleme bitince 09:32'de 08:03'ten beri süren
+    3,206–3,258 koridoru yazılırdı (10:16'da kırıldı, bildirimden 45 dk sonra).
   - Hata: bekleme süresinde bulunan koridor "bildirilmedi" diye kaydediliyor, coin o koridor kırılana dek kilitleniyordu
-    (80 koridor, 5842 coin-dk sessiz) → düzeltildi.
-  - Tekrar oynatma (kayan $50M evreni): günde ~30 bildirim (önce de ~30), bildirimden sonra ortanca 34 → **45 dk**,
+    (80 koridor, 5499 coin-dk kilit; bunun ~2850 coin-dk'sı bekleme bittikten sonra, 24 koridorda) → düzeltildi.
+  - Tekrar oynatma (kayan $50M evreni: 27 coin, yeni kuralla 98 bildirim / 19 coin): günde ~30 bildirim (önce de ~30), bildirimden sonra ortanca 34 → **45 dk**,
     30 dk'dan uzun %54 → **%67**, 5 dk'dan kısa %3 → %2. Şartlar aynı veride seçildi; bir hafta sonra yeniden ölçülmeli.
   - Dürüst sınır: bildirimden sonra fiyat yalnız ~%41'inde kenardan kenara bir kez daha gidiyor; koridorun içindeki
     gidip gelme bildirimden önce saatte ~2,35, sonra ~0,6 geçiş.
@@ -2379,7 +2383,8 @@ dedektör, her biri ayrıca doğrulandı ve rastgele-yürüyüş kopyalarıyla k
 Bu yüzden mesaj bir **gözlemdir**: "fırsat", yön ya da giriş / çıkış yazmaz; geçmiş ölçümü tek satırla söyler.
 
 **Kör nokta, açıkça:** yalnız WS'te dinlenen coinler; koridor ancak oluştuktan sonra görülür (≥ 6 onaylı dönüş
-noktası), 1 saatten kısa koridorlar çoğu zaman hiç ya da son dakikalarında yazılır; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
+noktası) ve ilk temastan `RANGE_MIN_MINUTES` (60) dk geçmeden yazılmaz: 1 saatten kısa koridorlar hiç yazılmaz, daha
+uzunları en erken 60. dakikada yazılır; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
 bot yeniden başladıktan sonra coin, geri doldurma sırası ona gelene kadar (en çok ~5 dk) taranmaz; xyz hisselerinin seans dışı
 saatleri seyrek işlemli (%70 işlem şartı çoğunu eler); kenar / temas mum (işlem fiyatı) üzerinden, emir defteri değil.
 

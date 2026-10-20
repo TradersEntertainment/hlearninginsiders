@@ -3976,7 +3976,8 @@ def koridor_list(rows: list, stats: dict, n_coins: int, n_ready: int, has_chat: 
         from .. import assets
         out.append(f"• <b>{esc(assets.label(coin))}</b> %{c['W'] * 100:.2f} · alt {px5(c['lower'])} / üst {px5(c['upper'])}"
                    f" · {c['nL']}+{c['nU']} temas · başlangıç {tr_time(int(c['start_ts']))}"
-                   + ("" if c.get("sent") else " · (bildirilmedi)"))
+                   + ("" if c.get("sent") else " · (beklemede, bildirilmedi)" if c.get("cooling")
+                      else " · (bildirilmedi)"))
     return "\n".join(out) + DISCLAIMER
 
 

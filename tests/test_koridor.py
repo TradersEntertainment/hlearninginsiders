@@ -47,7 +47,7 @@ def _zigzag_bars(n=400, mid=1.0, amp=0.0045, period=40, drift=0.0, noise=0.0004)
 
 
 def _reset():
-    k.BARS.clear(); k.CUR.clear(); k.ELIGIBLE.clear(); k.ACTIVE.clear()       # noqa: E702
+    k.BARS.clear(); k.CUR.clear(); k.ELIGIBLE.clear(); k.ACTIVE.clear(); k.COOLING.clear()     # noqa: E702
     for x in ("sent", "broken", "found", "skipped_nochat", "sent_day"):
         k.STATS[x] = 0
 
@@ -280,8 +280,10 @@ def test_lit_late_gates():
     Kararlar: RANGE_MIN_WIDTH_RV=1,0 ve RANGE_EDGE_GAP_PCT=10 (0 = kapalı); 60 dk / temas şartları aynı.
 
     Pinlenenler: kapılar kapalıyken 10:13 mumunda canlı mesajın koridoru (09:13, 3,1936–3,2198, 4+4; W/RV 0,66, konum
-    0,01) çıkar; kapılarla çıkmaz. Kapılarla LIT'te ilk koridor 09:18'de (08:07'den, 3,2064–3,2580) ve 10:16'da kırılır
-    (bildirimden 58 dk sonra). Kenar payı / oynaklık kapısı 0'la kapanır."""
+    0,01) çıkar; kapılarla çıkmaz. 05:36'daki 04:36 koridoru (W/RV 0,73, konum 0,46) yalnız oynaklık kapısıyla elenir
+    (da218be 05:37'de yazmıştı, 14 dk sonra kırıldı). Kapılarla 09:03'ten sonraki ilk tespit 09:18'de (08:07'den,
+    3,2064–3,2580), 10:16'da kırılır (tespitten 58 dk sonra; bekleme hesaba katılmadan — bkz. test_lit_scan_with_cooldown).
+    Kenar payı / oynaklık kapısı 0'la kapanır."""
     import json as _json
     import time as _time
     bars = _json.load(open(os.path.join(ROOT, "tests", "fixtures", "lit_20_10_1m.json")))["bars"]
@@ -293,7 +295,14 @@ def test_lit_late_gates():
     assert f and tsi(f["start_ts"]) == "09:13" and abs(f["lower"] - 3.1936) < 1e-3 and abs(f["upper"] - 3.2198) < 1e-3
     assert f["nL"] == 4 and f["nU"] == 4 and f["w_rv"] < 0.8 and f["pos"] < 0.1, f
     assert k.detect(bars[j - 719:j + 1], P) is None
-    # kapılarla: daha geniş ve oynaklığa göre rahat koridor 09:18'de, 58 dk yaşıyor
+    # oynaklık kapısı tek başına: 05:36'da 04:36'dan koridor (W/RV 0,73, konum 0,46 — kenar payı geçer) yalnız
+    # RANGE_MIN_WIDTH_RV ile elenir; da218be 05:37'de yazmıştı, 14 dk sonra kırıldı
+    j0 = next(i for i, b in enumerate(bars) if tsi(b[0]) == "05:36")
+    w0 = bars[max(0, j0 - 719):j0 + 1]                  # j0 < 719: negatif başlangıç dilimi sondan sarardı
+    assert k.detect(w0, P) is None and k.detect(w0, {**P, "edge_gap": 0.0}) is None
+    g0 = k.detect(w0, {**P, "min_w_rv": 0.0})
+    assert g0 and tsi(g0["start_ts"]) == "04:36" and g0["w_rv"] < 1 and 0.1 <= g0["pos"] <= 0.9, g0
+    # kapılarla: 09:03'ten sonraki ilk tespit — daha geniş ve oynaklığa göre rahat koridor 09:18'de, 58 dk yaşıyor
     first = None
     for i in range(j - 70, len(bars)):
         g = k.detect(bars[max(0, i - 719):i + 1], P)
@@ -311,14 +320,66 @@ def test_lit_late_gates():
     cfg = Config()
     cfg.range_min_width_rv, cfg.range_edge_gap_pct = 0.0, 0.0
     assert k.params(cfg)["min_w_rv"] == 0.0 and k.params(cfg)["edge_gap"] == 0.0
-    print("✅ LIT 20.10) 10:14'teki geç uyarı (W/RV 0,66, kenarda) elenir; kapılarla 09:18'de 58 dk yaşayan koridor")
+    print("✅ LIT 20.10) 10:14'teki geç uyarı (W/RV 0,66, kenarda) elenir; 05:36 yalnız oynaklık kapısıyla; 09:18 tespiti 58 dk")
+
+
+def test_lit_scan_with_cooldown():
+    """İnceleme (20.10, yeniden üretildi): README "kapılarla LIT 09:19'da 58 dk" diyordu; scan() coin beklemesiyle başka
+    yazıyor. LIT gerçek mumları, LIT evrende sayılır (60M hacim), saat sabitlenmiş.
+
+    Pinlenenler: 06:31 mumunda (04:56'dan) yazılır, 09:10'da kırılır; 09:18'de bulunan 08:07 koridoru beklemede →
+    kaydedilmez, yazılmaz, /koridor'da "beklemede" görünür; bekleme bitince 09:31 mumunda (08:03'ten) yazılır, 10:16'da
+    kırılır (bildirimden 45 dk sonra). 10:13'teki geç koridor hiç yazılmaz."""
+    import collections
+    import json as _json
+    import time as _time
+    bars = _json.load(open(os.path.join(ROOT, "tests", "fixtures", "lit_20_10_1m.json")))["bars"]
+    tsi = lambda t: _time.strftime("%H:%M", _time.gmtime(t + 3 * 3600))   # noqa: E731
+
+    async def run():
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "kor_lit.db"))
+        from app.radar import twaplive
+        clock = {"t": 0}
+        real_now = dbm.now
+        dbm.now = lambda: clock["t"]                       # alert_recent / alert_log bekleme hesabı sahte saatle
+        try:
+            _reset()
+            cfg = Config()
+            cfg.range_chat_id = "-100777"
+            P = k.params(cfg)
+            n = _Notifier()
+            k.ELIGIBLE.add("LIT")
+            sent, cooled = [], False
+            i0 = next(i for i, b in enumerate(bars) if tsi(b[0]) == "06:25")
+            for i in range(i0, len(bars)):
+                t = bars[i][0] + 63
+                clock["t"] = t
+                twaplive.VOL_CACHE.update(ts=real_now(), v={"LIT": (60e6, real_now())})
+                k.BARS["LIT"] = collections.deque(bars[max(0, i - 719):i + 1], maxlen=k.KEEP)
+                before = len(n.sent)
+                await k.scan(cfg, n, P, t=t)
+                sent += [(kw["key"].split(":")[0], tsi(bars[i][0])) for _, _, kw in n.sent[before:]]
+                if tsi(bars[i][0]) == "09:18":
+                    assert "LIT" not in k.ACTIVE and "LIT" in k.COOLING
+                    lst = fmt.koridor_list(k.active_rows(), k.STATS, 1, 1, True)
+                    cooled = "(beklemede, bildirilmedi)" in lst
+            return sent, cooled
+        finally:
+            dbm.now = real_now
+            _reset()
+    sent, cooled = asyncio.run(run())
+    assert sent == [("koridor", "06:31"), ("koridorx", "09:10"), ("koridor", "09:31"), ("koridorx", "10:16")], sent
+    assert cooled
+    print("✅ LIT tarama) 06:32 yazılır; 09:18 koridoru beklemede (listede görünür); 09:32 yazılır, 45 dk sonra kırılır")
 
 
 def test_cooldown_not_stored():
     """Bekleme süresinde (RANGE_COIN_COOLDOWN_MIN) bulunan koridor eskiden "bildirilmedi" diye ACTIVE'e yazılıyordu:
-    coin o koridor kırılana dek kilitleniyor, bekleme bitince de yazılmıyordu (17–20.10: 80 koridor, 5842 coin-dk sessiz).
+    coin o koridor kırılana dek kilitleniyor, bekleme bitince de yazılmıyordu (17–20.10: 80 koridor, 5499 coin-dk kilit;
+    ~2850 coin-dk'sı bekleme bittikten sonra, 24 koridorda).
 
-    Pinlenenler: bekleme içinde bulunan koridor kaydedilmez ve yazılmaz; bekleme bitince aynı koridor yazılır."""
+    Pinlenenler: bekleme içinde bulunan koridor kaydedilmez ve yazılmaz ama /koridor'da "beklemede, bildirilmedi" diye
+    görünür; bekleme bitince aynı koridor yazılır ve listeden "beklemede" kalkar."""
     async def run():
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "kor3.db"))
         from app.radar import twaplive
@@ -334,14 +395,63 @@ def test_cooldown_not_stored():
         t = bars[-1][0] + 65
         assert await k.scan(cfg, n, t=t) == [] and not n.sent and "PONS" not in k.ACTIVE
         assert k.STATS["found"] == 0
+        lst = fmt.koridor_list(k.active_rows(), k.STATS, 1, 1, True)     # /koridor yine gösterir (kilitlemeden)
+        assert "PONS" in lst and "(beklemede, bildirilmedi)" in lst and "açık koridor yok" not in lst, lst
         async with dbm.db() as conn:                              # bekleme bitti (3 sa önce yazılmış gibi)
             await conn.execute("UPDATE alerts_log SET ts=ts-? WHERE kind='koridor_coin'", (181 * 60,))
             await conn.commit()
         out = await k.scan(cfg, n, t=t + 1)
         assert len(out) == 1 and len(n.sent) == 1 and k.ACTIVE["PONS"]["sent"] is True
+        assert "PONS" not in k.COOLING and "beklemede" not in fmt.koridor_list(k.active_rows(), k.STATS, 1, 1, True)
         _reset()
     asyncio.run(run())
     print("✅ bekleme) bekleme içinde bulunan koridor kilitlemez; bekleme bitince yazılır")
+
+
+def test_backfill_rechecks_outage():
+    """İnceleme (20.10, yeniden üretildi): kopukluk / restart sonrası tarama düz dolgu ya da WS mumlarıyla `checked`'i
+    ilerletiyor; arka plandaki geri doldurma gerçek mumları getirince aradaki kırılışa hiç bakılmıyordu (✂️ notu yok,
+    coin kırılana ya da 12 sa'e dek "açık" kalıyordu).
+
+    Pinlenenler: geri doldurma açık koridorun `checked`'ini yeni gelen ilk gerçek muma geri çeker; sonraki tarama
+    kesinti içindeki kırılışı bulur ve tek not yazar."""
+    async def run():
+        import collections
+        import time as _t
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "kor5.db"))
+        _reset()
+        cfg = Config()
+        cfg.range_chat_id = "-1"
+        n = _Notifier()
+        end = int(_t.time()) // 60 * 60
+        T_d = end - 8 * 60
+        cor = {"t0": T_d - 600, "start_ts": T_d - 4200, "u0": math.log(101), "l0": math.log(99),
+               "W": math.log(101 / 99), "slope": 0.0, "sent": True, "checked": T_d, "nU": 4, "nL": 4,
+               "lower": 99, "upper": 101}
+        k.ELIGIBLE.add("X")
+        k.ACTIVE["X"] = dict(cor)
+        k.BARS["X"] = collections.deque([[T_d - 60 * i, 100, 100, 100, 100, 3] for i in range(100, -1, -1)],
+                                        maxlen=k.KEEP)
+        # kesinti dönüşü: düz dolgu mumlarıyla tarama, kırılış yok, checked ilerler
+        assert await k.scan(cfg, n, t=end + 2) == [] and k.ACTIVE["X"]["checked"] == end - 60
+
+        class C:
+            async def candles(self, coin, iv, s, e):              # gerçek mumlar: kesinti içinde T_d+3 dk 110 kapanış
+                return [{"t": m * 1000, "o": p, "h": p, "l": p, "c": p, "n": 3}
+                        for m in range(s // 60000 * 60, e // 1000 + 1, 60) for p in [110 if m == T_d + 180 else 100]]
+        old = k.BACKFILL_GAP_SEC
+        k.BACKFILL_GAP_SEC = 0
+        try:
+            assert await k._backfill(C(), ["X"], cfg) == {"X"}
+        finally:
+            k.BACKFILL_GAP_SEC = old
+        assert k.ACTIVE["X"]["checked"] < T_d + 180
+        out = await k.scan(cfg, n, t=end + 62)
+        assert len(out) == 1 and "kırıldı (yukarı)" in out[0] and fmt.tr_time(T_d + 180) in out[0], out
+        assert "X" not in k.ACTIVE
+        _reset()
+    asyncio.run(run())
+    print("✅ geri doldurma) kesinti içindeki kırılış geri doldurmadan sonra bulunur, tek not")
 
 
 def test_wiring():
@@ -387,4 +497,8 @@ if __name__ == "__main__":
     test_scan_send_once_and_break()
     test_review_fixes()
     test_skhx_regression()
+    test_lit_late_gates()
+    test_lit_scan_with_cooldown()
+    test_cooldown_not_stored()
+    test_backfill_rechecks_outage()
     test_wiring()
