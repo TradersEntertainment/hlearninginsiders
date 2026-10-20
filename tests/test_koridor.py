@@ -136,7 +136,7 @@ def test_scan_send_once_and_break():
         _reset()
         k.ELIGIBLE.add("PONS")
         cfg.range_chat_id = "-100777"
-        bars2 = _zigzag_bars(mid=0.2635, n=420)
+        bars2 = _zigzag_bars(mid=0.2635, n=430)        # son kapanış bandın ortasında (kenar payı şartı)
         k.BARS["PONS"] = __import__("collections").deque([[b[0] + 86400] + b[1:] for b in bars2], maxlen=k.KEEP)
         t2 = k.BARS["PONS"][-1][0] + 65
         out = await k.scan(cfg, n, t=t2)
@@ -229,7 +229,8 @@ def test_review_fixes():
         assert "while True:                                     # kapalıyken de nabız" in src
         # 5) metin: "%100'inde" ek hatası yok; geçmiş satırı rastgele karşılaştırmasını ve örneklemi söyler
         assert "işlemli dakika %" in fmt.koridor_alert("PONS", {**cor, "age_min": 60, "close": 100, "act_pct": 100}, 1e7)
-        assert "ortanca ömrü ~25 dk" in k.HIST_LINE and "rastgele fiyatla aynı" in k.HIST_LINE
+        assert "ortanca 45 dk" in k.HIST_LINE and "%41'inde kenardan kenara" in k.HIST_LINE
+        assert "rastgele fiyatla aynı" in k.HIST_LINE and "%0" not in k.HIST_LINE
         _reset()
     asyncio.run(run())
     print("✅ inceleme) toplu mumda kırılış; boş evren yeniden bakılır; okunamayan doldurma eski mumu atar, WS kuyruğu"
@@ -238,7 +239,7 @@ def test_review_fixes():
 
 def test_skhx_regression():
     """Kullanıcı (20.10, SKHX ekranı): "bu koridor botu hiç olmadı btw çok kötü neden skhx kaçırdı mesela ? mis gibi
-    kanal". Gerçek HL 1 dk mumları (tests/data): dipler 912,0 / 913,3 / 912,4 / 912,2, tepeler 920,5 / 923,7 / 924,3.
+    kanal". Gerçek HL 1 dk mumları (tests/fixtures): dipler 912,0 / 913,3 / 912,4 / 912,2, tepeler 920,5 / 923,7 / 924,3.
 
     Pinlenenler: yeni kural (3+3, %25 tolerans, toplam ≥7, paralellik %50, uyum ≤%10, en iyi oturan aday) 09:17'de
     GÖRÜLEN kanalı (912,4–926) yakalar; eski kural (4+4, %15, %30) 09:30'a kadar yakalamaz. 08:59'da yalnız 05:22'den
@@ -250,7 +251,7 @@ def test_skhx_regression():
     tsi = lambda t: _time.strftime("%H:%M", _time.gmtime(t + 3 * 3600))   # noqa: E731
     P = k.params(Config())
     assert P["min_touch"] == 3 and P["touch_tol"] == 0.25 and P["min_total"] == 7
-    assert P["parallel_tol"] == 0.5 and P["fit_max"] == 0.1
+    assert P["parallel_tol"] == 0.5 and P["fit_max"] == 0.1 and P["min_w_rv"] == 1.0 and P["edge_gap"] == 0.1
     first = None
     for t in range(300, len(bars)):
         f = k.detect(bars[max(0, t - 719):t + 1], P)
@@ -270,6 +271,79 @@ def test_skhx_regression():
     print("✅ SKHX 20.10) yeni kural 09:17'de görülen kanal (912,4–926, 07:27'den); eski 4+4 / %15 kural yakalamıyordu")
 
 
+def test_lit_late_gates():
+    """Kullanıcı (20.10, LIT ekranı): "bu bildirim niye iş işten geçtikten sonra geliyor bot tamamen kullanışsız".
+    LIT: başlangıç 09:13, bildirim 10:14, kırılış 10:16 (bildirimden sonra 3 dk). Teknik gecikme yok (mum kapanışından
+    ~2–4 sn sonra yazıldı); 60 dk şartı yalnız 8 dk geciktirdi. Ölçüm (72 coin, 17–20.10): erken uyarı işe yaramıyor —
+    15–30. dakikada bulunan koridorların ortanca kalan ömrü 9–10 dk; geç gelen uyarıların ortak izi (1) koridor son 60
+    dk'nın oynaklığından dar (W/RV < 1: ortanca 15–19 dk), (2) son kapanış kenarda ya da dışında (ortanca 7–23 dk).
+    Kararlar: RANGE_MIN_WIDTH_RV=1,0 ve RANGE_EDGE_GAP_PCT=10 (0 = kapalı); 60 dk / temas şartları aynı.
+
+    Pinlenenler: kapılar kapalıyken 10:13 mumunda canlı mesajın koridoru (09:13, 3,1936–3,2198, 4+4; W/RV 0,66, konum
+    0,01) çıkar; kapılarla çıkmaz. Kapılarla LIT'te ilk koridor 09:18'de (08:07'den, 3,2064–3,2580) ve 10:16'da kırılır
+    (bildirimden 58 dk sonra). Kenar payı / oynaklık kapısı 0'la kapanır."""
+    import json as _json
+    import time as _time
+    bars = _json.load(open(os.path.join(ROOT, "tests", "fixtures", "lit_20_10_1m.json")))["bars"]
+    tsi = lambda t: _time.strftime("%H:%M", _time.gmtime(t + 3 * 3600))   # noqa: E731
+    P = k.params(Config())
+    off = {**P, "min_w_rv": 0.0, "edge_gap": 0.0}
+    j = next(i for i, b in enumerate(bars) if tsi(b[0]) == "10:13")
+    f = k.detect(bars[j - 719:j + 1], off)
+    assert f and tsi(f["start_ts"]) == "09:13" and abs(f["lower"] - 3.1936) < 1e-3 and abs(f["upper"] - 3.2198) < 1e-3
+    assert f["nL"] == 4 and f["nU"] == 4 and f["w_rv"] < 0.8 and f["pos"] < 0.1, f
+    assert k.detect(bars[j - 719:j + 1], P) is None
+    # kapılarla: daha geniş ve oynaklığa göre rahat koridor 09:18'de, 58 dk yaşıyor
+    first = None
+    for i in range(j - 70, len(bars)):
+        g = k.detect(bars[max(0, i - 719):i + 1], P)
+        if g:
+            first = g
+            break
+    assert first and tsi(first["t0"]) == "09:18" and tsi(first["start_ts"]) == "08:07", first and tsi(first["t0"])
+    assert abs(first["lower"] - 3.2064) < 1e-3 and abs(first["upper"] - 3.258) < 1e-3
+    assert first["w_rv"] >= 1.0 and 0.1 <= first["pos"] <= 0.9
+    brk = next(b for b in bars if b[0] > first["t0"] and k.broke(first, b, P))
+    assert tsi(brk[0]) == "10:16" and (brk[0] - first["t0"]) // 60 == 58
+    # kenar payı kapısı: zigzag'ın son kapanışı üst kenarda (konum 0,98) → elenir; 0 = kapalı → geçer
+    z = _zigzag_bars(mid=0.2635, n=420)
+    assert k.detect(z, P) is None and k.detect(z, {**P, "edge_gap": 0.0})["pos"] > 0.9
+    cfg = Config()
+    cfg.range_min_width_rv, cfg.range_edge_gap_pct = 0.0, 0.0
+    assert k.params(cfg)["min_w_rv"] == 0.0 and k.params(cfg)["edge_gap"] == 0.0
+    print("✅ LIT 20.10) 10:14'teki geç uyarı (W/RV 0,66, kenarda) elenir; kapılarla 09:18'de 58 dk yaşayan koridor")
+
+
+def test_cooldown_not_stored():
+    """Bekleme süresinde (RANGE_COIN_COOLDOWN_MIN) bulunan koridor eskiden "bildirilmedi" diye ACTIVE'e yazılıyordu:
+    coin o koridor kırılana dek kilitleniyor, bekleme bitince de yazılmıyordu (17–20.10: 80 koridor, 5842 coin-dk sessiz).
+
+    Pinlenenler: bekleme içinde bulunan koridor kaydedilmez ve yazılmaz; bekleme bitince aynı koridor yazılır."""
+    async def run():
+        await dbm.init_db(os.path.join(tempfile.mkdtemp(), "kor3.db"))
+        from app.radar import twaplive
+        twaplive.VOL_CACHE.update(ts=dbm.now(), v={"PONS": (60e6, dbm.now())})
+        _reset()
+        cfg = Config()
+        cfg.range_chat_id = "-100777"
+        n = _Notifier()
+        k.ELIGIBLE.add("PONS")
+        bars = _zigzag_bars(mid=0.2635, n=430)
+        k.BARS["PONS"] = __import__("collections").deque(bars, maxlen=k.KEEP)
+        await dbm.alert_log("koridor_coin", "PONS", "")          # az önce başka bir koridor yazılmış
+        t = bars[-1][0] + 65
+        assert await k.scan(cfg, n, t=t) == [] and not n.sent and "PONS" not in k.ACTIVE
+        assert k.STATS["found"] == 0
+        async with dbm.db() as conn:                              # bekleme bitti (3 sa önce yazılmış gibi)
+            await conn.execute("UPDATE alerts_log SET ts=ts-? WHERE kind='koridor_coin'", (181 * 60,))
+            await conn.commit()
+        out = await k.scan(cfg, n, t=t + 1)
+        assert len(out) == 1 and len(n.sent) == 1 and k.ACTIVE["PONS"]["sent"] is True
+        _reset()
+    asyncio.run(run())
+    print("✅ bekleme) bekleme içinde bulunan koridor kilitlemez; bekleme bitince yazılır")
+
+
 def test_wiring():
     async def run():
         from app import diag, health, notify
@@ -281,6 +355,7 @@ def test_wiring():
         assert cfg.range_enabled and cfg.range_chat_id == "" and cfg.range_min_touches == 3
         assert cfg.range_min_vol_usd == 50e6 and cfg.range_min_width_pct == 0.7 and cfg.range_max_width_pct == 2.0
         assert cfg.range_min_total_touches == 7 and cfg.range_touch_tol_pct == 25 and cfg.range_coin_cooldown_min == 180
+        assert cfg.range_min_width_rv == 1.0 and cfg.range_edge_gap_pct == 10
         assert not any(f.startswith("range_") for f in EDITABLE_FIELDS), "env-only"
         assert health.limits(cfg)["koridor"] == 1200 and health.periods(cfg)["koridor"] == 60
         assert fmt.TASK_TR["koridor"] == "dar koridor" and "/koridor" in fmt.help_text()
@@ -292,7 +367,7 @@ def test_wiring():
         assert "**Kör nokta, açıkça:** yalnız WS'te dinlenen coinler" in readme
         for v in ("RANGE_CHAT_ID=", "RANGE_ENABLED=1", "RANGE_MIN_VOL_USD=50000000", "RANGE_MIN_TOUCHES=3",
                   "RANGE_MIN_TOTAL_TOUCHES=7", "RANGE_TOUCH_TOL_PCT=25", "RANGE_COIN_COOLDOWN_MIN=180",
-                  "RANGE_BREAK_NOTE=1"):
+                  "RANGE_MIN_WIDTH_RV=1.0", "RANGE_EDGE_GAP_PCT=10", "RANGE_BREAK_NOTE=1"):
             assert v in env, v
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "kor2.db"))
         await dbm.kv_set(k.STATS_KV, {"coins": 38, "ready": 36, "active": 2, "sent_day": 5, "found": 9, "broken": 6,

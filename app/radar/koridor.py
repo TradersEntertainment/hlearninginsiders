@@ -33,7 +33,20 @@ coin başına 3 sa bekleme (RANGE_COIN_COOLDOWN_MIN). Yalnız bunlarla 08:59'da 
 906–922) seçiliyordu → paralellik %50 (RANGE_PARALLEL_TOL_PCT), uyum ≤ %10 W (RANGE_MAX_FIT_PCT), en uzun değil en iyi
 oturan aday. Son 12 sa tekrar oynatma (≥$50M, 25 coin): 23 bildirim / 14 coin, ortanca ömür 36 dk; SKHX 09:17 912,4–926,0.
 
-Kör nokta, açıkça: yalnız WS'te dinlenen coinler; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
+Kullanıcı (20.10, LIT ekranı): "bu bildirim niye iş işten geçtikten sonra geliyor bot tamamen kullanışsız". LIT 09:13'te
+başladı, 10:14'te yazıldı, 10:16'da kırıldı. Teknik gecikme yok (mum kapanışından ~2–4 sn); 60 dk şartı yalnız 8 dk tuttu,
+gerisi yapının kendisi: ≥ 6 dönüş noktası gerekir ve her biri 1–13 dk geç onaylanır. Ölçüm (72 coin, 17–20.10, ayrıca
+doğrulandı): erken uyarı işe yaramıyor — 15–30. dakikada bulunan koridorların ortanca kalan ömrü 9–10 dk (kırılma riski yaşla
+düşüyor: sonraki 15 dk'da kırılma %70 → 180 dk+ %18). Geç kalan uyarıların izi: koridor son 60 dk'nın oynaklığından dar
+(W/RV < 1: ortanca 15–19 dk) ya da son kapanış kenarda / dışında (ortanca 7–23 dk; ortada ~40) → RANGE_MIN_WIDTH_RV,
+RANGE_EDGE_GAP_PCT.
+Ayrıca bekleme süresinde bulunan koridor "bildirilmedi" diye kaydedilip coini kırılana dek kilitliyordu (80 koridor sessiz)
+→ artık kaydedilmez, bekleme bitince hâlâ varsa yazılır. Tekrar oynatma (kayan $50M evreni): günde ~30 bildirim (aynı),
+kalan ömür ortanca 34 → 45 dk, ≥ 30 dk %54 → %67, < 5 dk %3 → %2. Dürüst sınır: bildirimden sonra fiyat yalnız ~%41'inde
+kenardan kenara bir kez daha gidiyor (bildirimden önce saatte 2,35 geçiş, sonra 0,6).
+
+Kör nokta, açıkça: koridor ancak oluştuktan sonra görülür (≥ 6 onaylı dönüş noktası) — 1 saatten kısa koridorlar çoğu
+zaman hiç ya da son dakikalarında yazılır; yalnız WS'te dinlenen coinler; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
 xyz hisselerinde seans dışı saatler seyrek işlemlidir (%70 işlem şartı çoğunu eler).
 """
 from __future__ import annotations
@@ -56,8 +69,9 @@ BACKFILL_MIN = 600            # açılışta / kopukluktan sonra HL'den çekilen
 UNIVERSE_SEC = 600            # evren (PROPR ∩ hacim) tazeleme
 MAX_GAP_FILL = 30             # bundan uzun işlemsiz boşluk doldurulmaz (WS kopukluğu sayılır → yeniden doldurma)
 ACTIVE_MAX_SEC = 12 * 3600    # kırılmadan bu kadar süren koridor sessizce düşer
-HIST_LINE = ("📏 Geçmiş ölçüm (16–19.10, 131 PROPR coini): bu tür koridorların ortanca ömrü ~25 dk; kenardan"
-             " alım-satımın komisyon öncesi ortalaması ≈ 0 (rastgele fiyatla aynı).")
+HIST_LINE = ("📏 Geçmiş ölçüm (17–20.10, 72 coin, bu kural): bildirimden sonra koridor ortanca 45 dk sürdü (%67'si"
+             " 30 dk'dan uzun, %2'si 5 dk'dan kısa); fiyat bildirimlerin %41'inde kenardan kenara bir kez daha gitti."
+             " Kenardan alım-satımın komisyon öncesi ortalaması ≈ 0 (16–19.10, rastgele fiyatla aynı).")
 BACKFILL_GAP_SEC = 4.0        # geri doldurma: coin başına bekleme (~30 ağırlık / 4 sn ≈ 450/dk; HL sınırı 1200/dk)
 
 P_BASE = dict(zz_floor=0.0025, zz_tr_mult=3.0, tr_win=300, max_window=300, touch_tol=0.15, parallel_tol=0.30,
@@ -78,6 +92,9 @@ def params(cfg) -> dict:
     p["touch_tol"] = float(getattr(cfg, "range_touch_tol_pct", 25) or 25) / 100
     p["parallel_tol"] = float(getattr(cfg, "range_parallel_tol_pct", 50) or 50) / 100
     p["fit_max"] = float(getattr(cfg, "range_max_fit_pct", 10) or 100) / 100
+    # 0 = kapalı (bu ikisinde "or varsayılan" yok, yoksa 0 yazılamazdı)
+    p["min_w_rv"] = float(getattr(cfg, "range_min_width_rv", 1.0))
+    p["edge_gap"] = float(getattr(cfg, "range_edge_gap_pct", 10)) / 100
     p["min_age"] = int(getattr(cfg, "range_min_minutes", 60) or 60)
     p["wmin"] = float(getattr(cfg, "range_min_width_pct", 0.7) or 0.7) / 100
     p["wmax"] = float(getattr(cfg, "range_max_width_pct", 2.0) or 2.0) / 100
@@ -291,6 +308,9 @@ def detect(bars, P) -> dict | None:
     e = E - 1
     c_e = pconf[e]
     act = [1 if b[5] > 0 else 0 for b in bars]
+    # son 60 dk'nın gerçekleşen oynaklığı (1 dk log getirilerinin kareler toplamının kökü): koridor bundan dar ise
+    # fiyat onu bir saatte doğal olarak taşar — LIT 20.10 10:14 W/RV 0,66 idi, 3 dk sonra kırıldı
+    rv60 = math.sqrt(sum((lc[i] - lc[i - 1]) ** 2 for i in range(max(1, t - 59), t + 1)))
     best = None
     s = e - 5
     while s >= 0 and pidx[s] >= t - P["max_window"]:
@@ -305,6 +325,11 @@ def detect(bars, P) -> dict | None:
         Wt = (cand["au"] - cand["al"]) + (cand["bu"] - cand["bl"]) * dx
         if not (P["wmin"] <= Wt <= P["wmax"]):
             continue
+        if P.get("min_w_rv") and rv60 > 0 and Wt < P["min_w_rv"] * rv60:
+            continue                                    # son saatin oynaklığına göre dar: kısa ömürlü (ölçüm)
+        pos = (lc[t] - (cand["al"] + cand["bl"] * dx)) / Wt
+        if P.get("edge_gap") and not (P["edge_gap"] <= pos <= 1 - P["edge_gap"]):
+            continue                                    # son kapanış kenarda / dışında: çoğu dakikalar içinde kırılıyor
         if abs(cand["bu"] - cand["bl"]) * (t - st) > P["parallel_tol"] * Wt:
             continue
         if sum(act[st:t + 1]) / (t - st + 1) < P["act_min"]:
@@ -322,10 +347,10 @@ def detect(bars, P) -> dict | None:
         # en iyi OTURAN kanal (temasların çizgiye ortalama uzaklığı en az); eşitse daha çok dönüş noktası. Eskiden en
         # uzun aday seçiliyordu — SKHX 20.10 08:59'da 05:22'den başlayan eğik kanalı (906–922) çiziyordu, görülen 912–925
         if best is None or (round(cand["fit"], 3), -cand["npiv"]) < (round(best[0]["fit"], 3), -best[0]["npiv"]):
-            best = (cand, Wt)
+            best = (cand, Wt, pos)
     if best is None:
         return None
-    cand, _ = best
+    cand, _, pos = best
     u0 = cand["au"] + cand["bu"] * (t - c_e)
     l0 = cand["al"] + cand["bl"] * (t - c_e)
     slope = 0.5 * (cand["bu"] + cand["bl"])          # log / dk
@@ -333,7 +358,8 @@ def detect(bars, P) -> dict | None:
     return {"t0": int(bars[t][0]), "start_ts": int(bars[st][0]), "u0": u0, "l0": l0, "W": u0 - l0, "slope": slope,
             "upper": math.exp(u0), "lower": math.exp(l0), "close": c[t], "open": o[t], "nU": cand["nU"],
             "nL": cand["nL"], "age_min": t - st,
-            "act_pct": round(100 * sum(act[st:t + 1]) / (t - st + 1))}
+            "act_pct": round(100 * sum(act[st:t + 1]) / (t - st + 1)),
+            "w_rv": round((u0 - l0) / rv60, 2) if rv60 > 0 else None, "pos": round(pos, 2)}
 
 
 def broke(cor: dict, bar: list, P) -> str | None:
@@ -473,14 +499,19 @@ async def scan(cfg, notifier, P=None, t: int | None = None) -> list[str]:
         found = finds.get(coin)
         if not found:
             continue
-        STATS["found"] += 1
         key = f"{coin}:{found['start_ts']}"
-        cool = int(getattr(cfg, "range_coin_cooldown_min", 180) or 0) * 60
-        if await alert_recent("koridor", key, 6 * 3600) or (cool and await alert_recent("koridor_coin", coin, cool)):
-            found["sent"] = False                   # aynı koridor / coin başına bekleme: kaydet, yazma
+        if await alert_recent("koridor", key, 6 * 3600):
+            STATS["found"] += 1
+            found["sent"] = False                   # aynı koridor zaten yazıldı: kaydet, yazma
             ACTIVE[coin] = {**found, "checked": found["t0"]}
             changed = True
             continue
+        cool = int(getattr(cfg, "range_coin_cooldown_min", 180) or 0) * 60
+        if cool and await alert_recent("koridor_coin", coin, cool):
+            # coin başına bekleme: KAYDETME. Eskiden "bildirilmedi" diye ACTIVE'e yazılıyordu ve coin o koridor kırılana
+            # dek kilitleniyordu — bekleme bitince de yazılmıyordu (17–20.10 tekrar oynatma: 80 koridor, 5842 coin-dk sessiz)
+            continue
+        STATS["found"] += 1
         if vols is None:
             vols = await volumes_cached(None)
         vol = (vols.get(coin) or (None,))[0]

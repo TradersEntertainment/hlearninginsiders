@@ -963,6 +963,10 @@ class Config:
         self.range_parallel_tol_pct = float(os.getenv("RANGE_PARALLEL_TOL_PCT", "50"))
         self.range_max_fit_pct = float(os.getenv("RANGE_MAX_FIT_PCT", "10"))
         self.range_coin_cooldown_min = int(os.getenv("RANGE_COIN_COOLDOWN_MIN", "180"))
+        # kullanıcı (20.10, LIT "iş işten geçtikten sonra geliyor"): geç kalan uyarıların izi — koridor son 60 dk'nın
+        # oynaklığından dar / son kapanış kenarda. 0 = kapalı.
+        self.range_min_width_rv = float(os.getenv("RANGE_MIN_WIDTH_RV", "1.0"))
+        self.range_edge_gap_pct = float(os.getenv("RANGE_EDGE_GAP_PCT", "10"))
         self.range_min_minutes = int(os.getenv("RANGE_MIN_MINUTES", "60"))
         self.range_break_note = convert_value("bool", os.getenv("RANGE_BREAK_NOTE", "1"))
         # 🧯 Sert satış / pozisyon boşaltma (app/radar/unwind.py, kullanıcı 19.10) — ENV-ONLY. Chat boşsa izleme de
