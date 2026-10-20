@@ -322,10 +322,16 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     from ..notify import kind_enabled
     uw = (t.get("src") or "") == "unwind" and kind_enabled(cfg, "track")
 
+    href = ""
+    if uw:
+        from .. import sitelink
+        href = sitelink.wallet_url(cfg, t["address"])     # 👤 bağlantısı 🌐 cüzdan sayfasına (taban adres yoksa hypurrscan)
+
     async def _uw(text: str, closed: bool = False) -> tuple[str, dict | None]:
         from . import unwindtrack
         extra, ukb = await unwindtrack.extras(cfg, client, t, closed=closed)
-        return (text + ("\n" + extra if extra else "")), ukb
+        foot = fmt.unwind_track_footer([int(t["id"])], href, closed=closed)
+        return text + ("\n" + extra if extra else "") + ("\n" + foot if foot else ""), ukb
 
     # NOT: state (active=0 / yön / last_szi) YALNIZ başarılı gönderimden SONRA
     # yazılır. Eskiden önce yazılıp send sonucu yok sayılıyordu: Telegram anlık
@@ -343,7 +349,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
             from .cryptoliq import _closure_kind
             kind, cpx = await _closure_kind(client, t["coin"], t["address"],
                                             {"first_ts": t.get("created_ts")})
-        text, ckb = fmt.track_closed(t, base, last, pnl, kind, cpx), None
+        text, ckb = fmt.track_closed(t, base, last, pnl, kind, cpx, href=href), None
         if uw:
             text, ckb = await _uw(text, closed=True)
         ok = await notifier.send("track", text, priority="critical", key=f"closed:{t['id']}", chat_id=chat,
@@ -364,7 +370,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
 
     # 2) Yön değişimi (long→short / short→long) → kritik, takip yeni yönle sürer
     if live["side"] != t["side"]:
-        text, fkb = fmt.track_flip(t, live), kb
+        text, fkb = fmt.track_flip(t, live, href=href), kb
         if uw:
             text, fkb = await _uw(text)
         ok = await notifier.send("track", text, priority="critical",
@@ -383,7 +389,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     # 3) Anlamlı adım: son bildirimden beri TOPLAM boyutun %X'i kadar değişim.
     #    Spam önleyici — her transaction değil, birikmiş anlamlı fark bildirir.
     if step > 0 and abs(cur_szi - last) >= step:
-        text, skb = fmt.track_step(t, live, base, last, cur_szi), kb
+        text, skb = fmt.track_step(t, live, base, last, cur_szi, href=href), kb
         if uw:
             text, skb = await _uw(text)
         ok = await notifier.send("track", text,

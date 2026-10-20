@@ -1200,6 +1200,66 @@ async def coin_scan(request: Request, symbol: str):
                             status_code=303)
 
 
+# ---------------- 🌐 cüzdan sayfası (Telegram takip mesajlarından imzalı bağlantıyla) ----------------
+
+def _guard_sig(request: Request, scope: str) -> None:
+    """Jeton yoksa açık; panel anahtarı (?key / dbkey çerezi) ya da bu kapsamın imzası (?s=, app/sitelink.py) geçer.
+    İmzalı ziyarette çerez YAZILMAZ: bağlantı panelin geri kalanını açmaz."""
+    from .. import sitelink
+    cfg = request.app.state.cfg
+    tok = cfg.dashboard_token
+    if not tok:
+        return
+    k = request.query_params.get("key") or request.cookies.get("dbkey") or ""
+    if k and hmac.compare_digest(str(k), tok):
+        return
+    if sitelink.check(cfg, scope, request.query_params.get("s")):
+        return
+    raise HTTPException(401, "Bağlantı geçersiz — Telegram takip mesajındaki 🌐 bağlantıyı kullan")
+
+
+def _no_ref(resp):
+    resp.headers["Referrer-Policy"] = "no-referrer"         # ?s= imzası dış sitelere (hypurrscan) sızmasın
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@router.get("/cuzdan/{address}")
+async def cuzdan_page(request: Request, address: str):
+    from .. import sitelink
+    addr = address.lower()
+    if not sitelink.ADDR_RE.match(addr):
+        raise HTTPException(404, "Geçersiz adres")
+    _guard_sig(request, addr)
+    cfg = request.app.state.cfg
+    s = sitelink.sig(cfg, addr)
+    return _no_ref(templates.TemplateResponse(request, "cuzdan.html", {
+        "address": addr, "short": _tgfmt.short(addr),
+        "data_url": f"/cuzdan/{addr}/veri.json" + (f"?s={s}" if s else ""),
+        "list_url": sitelink.list_path(cfg), "refresh_sec": 20,
+        "hypurrscan": f"https://hypurrscan.io/address/{addr}", "initial": None}))
+
+
+@router.get("/cuzdan/{address}/veri.json")
+async def cuzdan_data(request: Request, address: str):
+    from .. import sitelink
+    from . import cuzdan
+    addr = address.lower()
+    if not sitelink.ADDR_RE.match(addr):
+        raise HTTPException(404, "Geçersiz adres")
+    _guard_sig(request, addr)
+    data = await cuzdan.build(request.app.state.cfg, request.app.state.client, addr)
+    return _no_ref(JSONResponse(data))
+
+
+@router.get("/takipte")
+async def takipte_page(request: Request):
+    from . import cuzdan
+    _guard_sig(request, "liste")
+    ctx = await cuzdan.list_rows(request.app.state.cfg)
+    return _no_ref(templates.TemplateResponse(request, "takipte.html", ctx))
+
+
 @router.get("/whale/{address}")
 async def whale_page(request: Request, address: str):
     _guard(request)

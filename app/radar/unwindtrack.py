@@ -42,6 +42,7 @@ CACHE_SEC = 15                 # cüzdan sorgusu önbelleği (adres başına): a
                                # tur bayat liste görmesin (inceleme 20.10)
 EXTRAS_TIMEOUT = 8.0           # takip mesajı liste için en çok bu kadar bekler (kapanış / yön kritik: geç kalmasın)
 _CACHE: dict[str, tuple[float, dict]] = {}
+_LOCKS: dict[str, "asyncio.Lock"] = {}
 
 
 def chat(cfg) -> str:
@@ -58,16 +59,25 @@ def _key(dex: str) -> str:
 
 
 async def wallet(cfg, client, addr: str, fresh: bool = False) -> dict:
-    """Cüzdanın bütün dex defterleri {dex: state}; 60 sn önbellek (tuşta `fresh`)."""
+    """Cüzdanın bütün dex defterleri {dex: state}; CACHE_SEC önbellek (tuşta `fresh`). Adres başına kilit: aynı anda açılan
+    cüzdan sayfaları / takip mesajları aynı sorguyu bir kez yapar (🌐 /cuzdan sayfası da bunu kullanır)."""
+    import asyncio
     from .unwind import _dexes
-    t = time.time()
+    t0 = time.time()
     hit = _CACHE.get(addr)
-    if hit and not fresh and t - hit[0] < CACHE_SEC:
+    if hit and not fresh and t0 - hit[0] < CACHE_SEC:
         return hit[1]
-    states = await client.clearinghouse_all(addr, await _dexes(cfg))
-    _CACHE[addr] = (t, states)
+    lock = _LOCKS.setdefault(addr, asyncio.Lock())
+    async with lock:
+        t = time.time()
+        hit = _CACHE.get(addr)
+        if hit and t - hit[0] < CACHE_SEC and (not fresh or hit[0] >= t0):
+            return hit[1]                               # beklerken başkası tazeledi
+        states = await client.clearinghouse_all(addr, await _dexes(cfg))
+        _CACHE[addr] = (time.time(), states)
     for a in [a for a, (ts, _) in _CACHE.items() if t - ts > 10 * CACHE_SEC]:
         _CACHE.pop(a, None)
+        _LOCKS.pop(a, None)
     return states
 
 
@@ -181,10 +191,15 @@ async def from_offer(cfg, client, offer_id: int, all_: bool) -> dict:
         return {**out, "toast": "👣 Yeni takip yok: " + " · ".join(notes)}
     txt, new = await block(cfg, addr, coin, pos)
     xt = (await tracked(addr)).get(coin)                # "Yalnız X" = mesajdaki coin (önceden takipte olsa da)
+    single = len(started) == 1 and started[0]["id"] == xt
+    n_all = 0 if single else len(await _open_ids(addr))
     if xt:
-        kb = fmt.unwind_track_kb(xt, assets.label(coin), new, single=len(started) == 1 and started[0]["id"] == xt)
+        kb = fmt.unwind_track_kb(xt, assets.label(coin), new, single=single, stop_all=n_all)
     else:                                               # X kapanmış: yalnız "hepsini" (takipte olmayan öteki varsa)
         kb = fmt.unwind_track_kb(started[0]["id"], started[0]["symbol"], new, closed=True)
+        if n_all:
+            kb = {"inline_keyboard": (kb or {}).get("inline_keyboard", []) +
+                  fmt.unwind_bulk_kb(started[0]["id"], n_all)["inline_keyboard"]}
     toast = (f"👣 {started[0]['symbol']} takibe alındı" if len(started) == 1
              else f"👣 {len(started)} pozisyon takibe alındı") + " → takip kanalı"
     return {"toast": toast, "text": fmt.unwind_track_started(addr, started, notes, txt, cfg), "kb": kb,
@@ -217,8 +232,10 @@ async def follow_rest(cfg, client, tid: int) -> dict:
         return {**out, "done": True,
                 "toast": "👣 Yeni takip yok" + (": " + " · ".join(notes) if notes else " (öteki pozisyon kalmadı)")}
     txt, _ = await block(cfg, addr, coin, pos)
+    n_all = len(await _open_ids(addr))
     return {**out, "done": True, "toast": f"👣 {len(started)} pozisyon daha takibe alındı",
-            "text": fmt.unwind_track_started(addr, started, notes, txt, cfg), "ids": [s["id"] for s in started]}
+            "text": fmt.unwind_track_started(addr, started, notes, txt, cfg), "ids": [s["id"] for s in started],
+            "kb": fmt.unwind_bulk_kb(int(tid), n_all) if n_all else None}
 
 
 async def only(tid: int) -> tuple[str, int]:
@@ -238,6 +255,57 @@ async def only(tid: int) -> tuple[str, int]:
         n = int(cur.rowcount or 0)
     return (f"🎯 Yalnız {row['symbol']} takipte" + (f" · {n} takip bırakıldı (geri almak: 👣 Hepsini takip et)"
                                                        if n else "")), n
+
+
+async def _open_ids(addr: str) -> list[int]:
+    async with db() as conn:
+        cur = await conn.execute("SELECT id FROM trackers WHERE active=1 AND address=? AND src='unwind'", (addr,))
+        return [int(r["id"]) for r in await cur.fetchall()]
+
+
+BULK_KV = "unwind_bulk:"
+
+
+async def stop_all(tid: int) -> tuple[str, list[int]]:
+    """[🛑 Hepsini bırak]: cüzdanın açık bütün 🧯 takiplerini elle bırak; geri alma için kimlikler kv'de."""
+    from ..db import kv_set, now
+    from .trackctl import MANUAL
+    async with db() as conn:
+        cur = await conn.execute("SELECT address FROM trackers WHERE id=?", (int(tid),))
+        row = await cur.fetchone()
+    if not row:
+        return f"Takip #{tid} bulunamadı", []
+    ids = await _open_ids(row["address"])
+    if not ids:
+        return "Açık takip yok — hepsi zaten bitmiş", []
+    async with db() as conn:
+        await conn.execute(f"UPDATE trackers SET active=0, end_note=? WHERE id IN ({','.join('?' * len(ids))})",
+                           (MANUAL, *ids))
+    await kv_set(BULK_KV + str(int(tid)), {"ids": ids, "ts": now()})
+    return f"🛑 {len(ids)} takip bırakıldı — yanlışlıkla mı? ↩️ Geri al", ids
+
+
+async def undo_all(tid: int) -> tuple[str, int]:
+    """[↩️ Geri al]: 🛑 Hepsini bırak'la kapananları kaldığı yerden aç (trackctl.resume: yalnız elle bırakılmışlar)."""
+    from ..db import kv_get, kv_set
+    from .trackctl import resume
+    d = await kv_get(BULK_KV + str(int(tid))) or {}
+    n = 0
+    for i in d.get("ids") or []:
+        ok, _ = await resume("pos", int(i))
+        n += bool(ok)
+    await kv_set(BULK_KV + str(int(tid)), {})
+    return (f"↩️ {n} takip yeniden açık — kaldığı yerden sürüyor" if n else "Geri alınacak takip yok"), n
+
+
+async def log_start(res: dict) -> None:
+    """Başlangıç mesajı bot.send'le gider (Notifier'dan değil): 🌐 sayfanın bildirim akışında görünsün diye kayıt."""
+    from ..db import alert_log
+    if res.get("text") and res.get("ids"):
+        try:
+            await alert_log("sent:track", f"start:{int(res['ids'][0])}", res["text"])
+        except Exception:                                   # noqa: BLE001
+            log.debug("başlangıç mesajı kaydı", exc_info=True)
 
 
 async def drop(ids: list[int], why: str) -> None:

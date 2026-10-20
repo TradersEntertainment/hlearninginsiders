@@ -2339,7 +2339,7 @@ başladık cüzdan şu falan diye". `app/radar/unwindtrack.py`.
   10, 24 sa hacme oranıyla; 👣 = takipte) ve soru tuşları: **👣 Hepsini takip et (+k)** (takipte olmayan öteki ilk 10;
   liste okunamadıysa sayısız) · **🎯 Yalnız X** (cüzdanın öteki 🧯 takiplerini bırakır — yalnız X'in takibi açıksa;
   geri almak için "Hepsini takip et") · 🛑 Takibi bırak · ⏰ Kapanırsa beni uyandır. Kapanış mesajında yalnız "Hepsini
-  takip et"; çoklu başlangıç mesajında 🛑 / ⏰ yok (her takibin kendi adım mesajında var). 14 günlük "⏳ Takip sürüyor"
+  takip et"; çoklu başlangıç mesajında tek tek 🛑 / ⏰ yerine **🛑 Hepsini bırak (N)** (↩️ geri alınır). 14 günlük "⏳ Takip sürüyor"
   yoklamasında liste ve soru tuşları yok. Mesaj liste için en çok 8 sn bekler; aşılırsa listesiz gider.
 - Aynı cüzdan + coin zaten takipteyse (hangi yoldan açılmış olursa olsun) yeniden açılmaz; toast "zaten takipte (#N)"
   der — başka yoldan açılmışsa (ör. ana sohbetten `/takip`) X'in haberleri o takibin sohbetine gider. Tuşa sahip,
@@ -2350,6 +2350,36 @@ başladık cüzdan şu falan diye". `app/radar/unwindtrack.py`.
 **Kör nokta, açıkça:** takip 120 sn'de bir bakar — iki bakış arasında %10'dan fazla kapanırsa tek mesajda toplu
 yazılır; öteki pozisyon listesi mesaj anındaki durumdur (adres başına 15 sn önbellek, ~11 istek); tuşa basıldığında
 pozisyon kapanmışsa takip açılmaz.
+
+### 🌐 Cüzdan sayfası (`/cuzdan`, `/takipte`)
+
+Kullanıcı (20.10): "bu kanala eklediklerim için websitesi yapar mısın railwaye push edeyim bu geçen sana sorduğum
+hypepoztakip sitesini kopyalayabilirsin profillere basınca öyle bi websitesi çıksın ve takip bildirimlerinin sonunda takibi
+bırak işareti de olsun". `app/web/cuzdan.py`, `app/sitelink.py`, şablonlar `cuzdan.html` / `takipte.html`.
+
+- **Nereden açılır:** takip kanalındaki her mesajda 👤 cüzdan bağlantısı artık bu sayfaya gider (hypurrscan sayfanın
+  içinde düğme); mesajın son satırı "🌐 Cüzdan sayfası · 🛑 Bırakmak: /birak_N" (başlangıç mesajında "takipteki
+  cüzdanlar" listesi de). Ayrı bir servis değil: botun kendi panelinde, push'la birlikte yayına çıkar.
+- **`/cuzdan/<adres>` (hyptakip görünümü):** hesap özeti (bütün dex'lerin perp teminatı — net worth değil, kullanılan
+  teminat, çekilebilir, toplam büyüklük, uPnL, kaldıraç), açık pozisyonlar (giriş ↔ fiyat, uPnL + ROE, liq fiyatı ve
+  uzaklığı, kaldıraç, teminat, funding, 👣 takipteyse kapanan %), likidasyon radarı, giriş → fiyat → liq kanalı, son
+  24 sa işlemler, bu cüzdanın takip / 🧯 bildirim akışı, 👣 takip edilen pozisyonlar. 20 sn'de bir tazelenir (sekme
+  arkadayken durur). Veri HL'nin herkese açık defteri: bütün dex'ler 15 sn önbellekli (takip mesajlarıyla ortak, adres
+  başına tek sorgu), işlemler 30 sn önbellekli. Bir dex okunamazsa "eksik olabilir" der, okunanları gösterir.
+- **`/takipte`:** 🧯 takip tuşuyla eklenen cüzdanlar (açık + son 14 gün), her biri kendi sayfasına bağlı. Yalnız
+  veritabanı, HL sorgusu yok.
+- **Erişim:** panel `DASHBOARD_TOKEN` ister ama jeton Telegram'a **yazılmaz** (kanal üyeleri görür, bütün paneli açar).
+  Her cüzdan için jetondan türetilen imzalı bağlantı (`?s=`) yalnız o cüzdanın sayfasını açar; liste ayrı imzalı.
+  İmzalı ziyarette çerez yazılmaz, sayfa `Referrer-Policy: no-referrer` (imza hypurrscan'e gitmez). Jeton yoksa panel
+  zaten açıktır. Taban adres `PUBLIC_BASE_URL`, yoksa Railway'in verdiği alan adı (`RAILWAY_PUBLIC_DOMAIN`); ikisi de
+  yoksa mesajlar eskisi gibi hypurrscan'e bağlanır.
+- **🛑 bırak:** adım / yön mesajlarında 🛑 tuşu + son satırda `/birak_N`; çoklu başlangıç mesajında **🛑 Hepsini bırak
+  (N)** (cüzdanın açık 🧯 takipleri; ↩️ Geri al ile kaldığı yerden döner). Kapanış mesajında 🛑 yok (takip bitti).
+
+**Kör nokta, açıkça:** sayfa açıkken adres başına en çok 15 sn'de bir ~11 HL isteği (kaç kişi bakarsa baksın); işlemler
+yalnız son 24 sa (HL'nin son 2000 kaydı içinden); bildirim akışı yalnız gönderilmiş takip / 🧯 mesajları (son 14 gün;
+bu özellikten önceki başlangıç mesajları kayıtta yok); imzalı bağlantıyı alan herkes o cüzdanın sayfasını görür (veri
+zaten herkese açık HL verisi); `DASHBOARD_TOKEN` değişirse eski bağlantılar açılmaz.
 
 ## 🏓 Dar koridor (`RANGE_CHAT_ID`)
 

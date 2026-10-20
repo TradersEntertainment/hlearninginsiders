@@ -658,7 +658,7 @@ class TelegramBot:
             await self._ack(cq_id, "👁 takip başlatılıyor")
             await self._cmd_track_start(f"takip_{int(parts[3])}", str(chat.get("id")))
             return
-        if len(parts) == 3 and parts[1] in ("uw1", "uwa", "uta", "uto") and parts[2].isdigit():
+        if len(parts) == 3 and parts[1] in ("uw1", "uwa", "uta", "uto", "utx", "utr") and parts[2].isdigit():
             await self._unwind_track_callback(cq, parts[1], int(parts[2]))       # 👣 🧯 boşaltma takibi
             return
         if len(parts) != 4 or parts[1] not in ("stop", "undo", "wake", "nowake") \
@@ -744,6 +744,21 @@ class TelegramBot:
             return
         target = unwindtrack.chat(self.cfg)
         res: dict = {"done": True, "text": None}
+        if act in ("utx", "utr"):
+            # 🛑 Hepsini bırak / ↩️ geri al (çoklu başlangıç mesajı): klavye ikisi arasında döner
+            if act == "utx":
+                toast, ids = await unwindtrack.stop_all(xid)
+                kb = fmt.unwind_bulk_kb(xid, len(ids), undo=True) if ids else None
+            else:
+                toast, n = await unwindtrack.undo_all(xid)
+                kb = fmt.unwind_bulk_kb(xid, n) if n else None
+            await self._ack(cq_id, toast[:190])
+            if msg.get("message_id") and chat.get("id") is not None:
+                try:
+                    await self.edit_reply_markup(str(chat["id"]), msg["message_id"], kb)
+                except Exception:
+                    log.debug("takip toplu tuşu güncellenemedi", exc_info=True)
+            return
         if act == "uto":
             toast, _ = await unwindtrack.only(xid)
             await self._ack(cq_id, toast[:190])
@@ -763,7 +778,9 @@ class TelegramBot:
             if not late:
                 await self._ack(cq_id, str(res.get("toast") or "")[:190])
             if res.get("text"):
-                if not await self.send(res["text"], target, reply_markup=res.get("kb")):
+                if await self.send(res["text"], target, reply_markup=res.get("kb")):
+                    await unwindtrack.log_start(res)               # 🌐 sayfanın bildirim akışı
+                else:
                     # takip kanalına yazılamıyor (bot grupta değil / id yanlış): takipler sessizce birikmesin
                     await unwindtrack.drop(res.get("ids") or [], "takip kanalına yazılamadı")
                     if chat.get("id") is not None:
@@ -1786,9 +1803,12 @@ class TelegramBot:
             from ..radar import unwindtrack
             res = await unwindtrack.from_offer(self.cfg, self.client, offer_id, all_=False)
             target = unwindtrack.chat(self.cfg)
-            if res["text"] and target and not await self.send(res["text"], target, reply_markup=res["kb"]):
-                await unwindtrack.drop(res["ids"], "takip kanalına yazılamadı")
-                res["toast"] = "⚠️ Takip kanalına yazılamadı — takip açılmadı (bot grupta admin mi, id doğru mu?)"
+            if res["text"] and target:
+                if await self.send(res["text"], target, reply_markup=res["kb"]):
+                    await unwindtrack.log_start(res)
+                else:
+                    await unwindtrack.drop(res["ids"], "takip kanalına yazılamadı")
+                    res["toast"] = "⚠️ Takip kanalına yazılamadı — takip açılmadı (bot grupta admin mi, id doğru mu?)"
             if not (res["text"] and target == chat_id):
                 await self.send(fmt.esc(res["toast"]), chat_id)
             return

@@ -184,7 +184,10 @@ def test_from_offer_single_all_dup():
         assert text3.split("\n")[0].startswith("👣 <b>TAKİBE BAŞLADIK</b> — 10 pozisyon: <b>BTC</b> L $1.2M (#")
         assert f"Not: GOOGL zaten takipte (#{t['id']})" in text3
         assert "👣 <b>BTC</b>" in text3 and "+1 daha" in text3              # liste: takipteler 👣 ile
-        assert _cbs(kb3) == [f"trk:uto:{t['id']}"], _cbs(kb3)   # ilk 10 takipte; Yalnız = GOOGL; çoklu: 🛑 yok
+        # ilk 10 takipte (Hepsini yok); Yalnız = GOOGL; çoklu: 🛑 Hepsini bırak (cüzdanın 11 takibi)
+        assert _cbs(kb3) == [f"trk:uto:{t['id']}", f"trk:utx:{t['id']}"], _cbs(kb3)
+        assert kb3["inline_keyboard"][1][0]["text"] == "🛑 Hepsini bırak (11)"
+        assert f"🛑 Bırakmak: /birak_{ts[1]['id']}" in text3
         # kapanmış pozisyon: açılmaz
         cli.states = {"main": {"assetPositions": []}, "xyz": {"assetPositions": []}}
         ut._CACHE.clear()
@@ -434,6 +437,45 @@ def test_review_fixes():
           " alınır; 🔁 yolu; liste takılırsa mesaj beklemez")
 
 
+def test_bulk_stop_undo():
+    """Kullanıcı (20.10): "takip bildirimlerinin sonunda takibi bırak işareti de olsun". Çoklu başlangıç mesajında 🛑 yoktu.
+
+    Pinlenenler: [🛑 Hepsini bırak (N)] cüzdanın açık 🧯 takiplerini bırakır, klavye [↩️ Geri al] olur; geri al hepsini
+    kaldığı yerden açar, klavye yeniden [🛑]; başlangıç mesajı 🌐 bildirim akışı için kayda geçer."""
+    async def run():
+        await _fresh()
+        cfg = _cfg()
+        cli = _Cli(_book())
+        bot, calls = _bot(cfg, cli, status={7: "creator"})
+        oid = await _offer()
+        await bot._handle_update(_cq(f"trk:uwa:{oid}", int(UW), "channel", 7))
+        s = [p for m, p in calls if m == "sendMessage"]
+        kb = s[0]["reply_markup"]
+        g = (await _trackers())[0]
+        assert f"trk:utx:{g['id']}" in _cbs(kb) and "🛑 Bırakmak: /birak_" in s[0]["text"]
+        async with dbm.db() as c:
+            row = await (await c.execute("SELECT key FROM alerts_log WHERE kind='sent:track'")).fetchone()
+        assert row and row["key"] == f"start:{g['id']}"
+        calls.clear()
+        await bot._handle_update(_cq(f"trk:utx:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
+        assert not [x for x in await _trackers() if x["active"]]
+        toasts = [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]
+        assert toasts == ["🛑 11 takip bırakıldı — yanlışlıkla mı? ↩️ Geri al"], toasts
+        e = [p for m, p in calls if m == "editMessageReplyMarkup"]
+        assert _cbs(e[0]["reply_markup"]) == [f"trk:utr:{g['id']}"]
+        calls.clear()
+        await bot._handle_update(_cq(f"trk:utr:{g['id']}", int(TRK), "supergroup", 7, kb=e[0]["reply_markup"]))
+        assert len([x for x in await _trackers() if x["active"]]) == 11
+        e = [p for m, p in calls if m == "editMessageReplyMarkup"]
+        assert _cbs(e[0]["reply_markup"]) == [f"trk:utx:{g['id']}"]
+        # ikinci geri al: boş
+        calls.clear()
+        await bot._handle_update(_cq(f"trk:utr:{g['id']}", int(TRK), "supergroup", 7))
+        assert [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"] == ["Geri alınacak takip yok"]
+    asyncio.run(run())
+    print("✅ toplu) 🛑 Hepsini bırak → ↩️ Geri al → hepsi açık; başlangıç mesajı kayıtta")
+
+
 def test_wiring():
     async def run():
         src = lambda p: open(os.path.join(ROOT, p), encoding="utf-8").read()   # noqa: E731
@@ -467,4 +509,5 @@ if __name__ == "__main__":
     test_tracker_step_list_and_no_liq()
     test_callbacks()
     test_review_fixes()
+    test_bulk_stop_undo()
     test_wiring()

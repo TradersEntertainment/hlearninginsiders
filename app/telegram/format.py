@@ -44,8 +44,9 @@ def short(addr: str) -> str:
     return f"{addr[:6]}..{addr[-4:]}" if len(addr) > 12 else addr
 
 
-def alink(addr: str) -> str:
-    return f'<a href="https://hypurrscan.io/address/{addr}">{short(addr)}</a>'
+def alink(addr: str, href: str = "") -> str:
+    """Cüzdan bağlantısı: varsayılan hypurrscan; `href` verilirse (🌐 cüzdan sayfası, app/sitelink.py) oraya."""
+    return f'<a href="{esc(href) if href else f"https://hypurrscan.io/address/{addr}"}">{short(addr)}</a>'
 
 
 def usd(n: float | None) -> str:
@@ -2187,7 +2188,7 @@ def track_liq_move(t: dict, live: dict, prev: float, cur: float) -> str:
     return "\n".join(lines)
 
 
-def track_step(t: dict, live: dict, base: float, last: float, cur: float) -> str:
+def track_step(t: dict, live: dict, base: float, last: float, cur: float, href: str = "") -> str:
     sym = t["symbol"]
     step_pct = (cur - last) / base * 100  # negatif = kapattı
     closed_total = (base - cur) / base * 100
@@ -2202,7 +2203,7 @@ def track_step(t: dict, live: dict, base: float, last: float, cur: float) -> str
     else:
         total_txt = f"poz başlangıca göre <b>%{100 - closed_total:.0f}</b> seviyesinde"
     lines = [head,
-             f"👤 {alink(t['address'])} {_side_badge(t['side'])}",
+             f"👤 {alink(t['address'], href)} {_side_badge(t['side'])}",
              f"{act} · {total_txt}",
              f"Güncel: <b>{usd(live['notional'])}</b>"
              f" (başlangıç {usd(t.get('base_notional'))})"]
@@ -2216,16 +2217,16 @@ def track_step(t: dict, live: dict, base: float, last: float, cur: float) -> str
 
 
 def track_closed(t: dict, base: float, last: float, pnl: dict | None = None,
-                 closed_kind: str | None = None, closed_px: float | None = None) -> str:
+                 closed_kind: str | None = None, closed_px: float | None = None, href: str = "") -> str:
     sym = t["symbol"]
     if closed_kind == "liq":
         lines = [f"💀🚪 <b>BALİNA LİKİDE OLDU</b> — {sym}",
-                 f"👤 {alink(t['address'])} {_side_badge(t['side'])}"
+                 f"👤 {alink(t['address'], href)} {_side_badge(t['side'])}"
                  f" <b>{usd(t.get('base_notional'))}</b> pozisyonu likide oldu"
                  + (f" · gerçekleşen {px(closed_px)}" if closed_px else "") + "."]
     else:
         lines = [f"🚨🚪 <b>BALİNA TAMAMEN KAPATTI</b> — {sym}",
-                 f"👤 {alink(t['address'])} {_side_badge(t['side'])}"
+                 f"👤 {alink(t['address'], href)} {_side_badge(t['side'])}"
                  f" <b>{usd(t.get('base_notional'))}</b> pozisyonunu kapattı"
                  + (" · <i>likidasyon mu kapatma mı doğrulanamadı</i>" if closed_kind == "unknown"
                     else "") + "."]
@@ -2242,10 +2243,10 @@ def track_closed(t: dict, base: float, last: float, pnl: dict | None = None,
     return "\n".join(lines)
 
 
-def track_flip(t: dict, live: dict) -> str:
+def track_flip(t: dict, live: dict, href: str = "") -> str:
     sym = t["symbol"]
     lines = [f"🚨🔁 <b>BALİNA YÖN DEĞİŞTİRDİ</b> — {sym}",
-             f"👤 {alink(t['address'])} {_side_badge(t['side'])} →"
+             f"👤 {alink(t['address'], href)} {_side_badge(t['side'])} →"
              f" {_side_badge(live['side'])} <b>{usd(live['notional'])}</b>"
              f" @ {px(live['entry_px'])}",
              f"Takip yeni yönle devam ediyor (#{t['id']})."]
@@ -4069,7 +4070,7 @@ def unwind_follow_kb(offer_id: int, coin: str, n_others: int, x_open: bool = Tru
 
 
 def unwind_track_kb(tid: int, symbol: str, new: int | None, wake: bool = False, closed: bool = False,
-                    single: bool = True) -> dict | None:
+                    single: bool = True, stop_all: int = 0) -> dict | None:
     """Takip kanalındaki mesajın altı: soru satırı [👣 Hepsini takip et (+k)] · [🎯 Yalnız X], sonra 🛑 / ⏰ (tek
     takipte). Kapanan pozisyonda yalnız "hepsini" (takipte olmayan öteki varsa). `new` None = sayı bilinmiyor (liste
     okunamadı / ↩️ geri al): tuş sayısız."""
@@ -4082,7 +4083,17 @@ def unwind_track_kb(tid: int, symbol: str, new: int | None, wake: bool = False, 
     rows = [q] if q else []
     if single and not closed:
         rows += stop_kb("pos", tid, wake=wake)["inline_keyboard"]
+    elif stop_all > 0:                                  # çoklu başlangıç mesajı: cüzdanın bütün 🧯 takipleri tek dokunuşla
+        rows += unwind_bulk_kb(tid, stop_all)["inline_keyboard"]
     return {"inline_keyboard": rows} if rows else None
+
+
+def unwind_bulk_kb(tid: int, n: int, undo: bool = False) -> dict:
+    """🛑 Hepsini bırak (cüzdanın açık 🧯 takipleri) · ↩️ geri al (tek dokunuş + geri al kuralı, trackctl gibi)."""
+    if undo:
+        return {"inline_keyboard": [[{"text": f"↩️ Geri al — {int(n)} takip bırakıldı",
+                                      "callback_data": f"{TRACK_CB}:utr:{int(tid)}"}]]}
+    return {"inline_keyboard": [[{"text": f"🛑 Hepsini bırak ({int(n)})", "callback_data": f"{TRACK_CB}:utx:{int(tid)}"}]]}
 
 
 def unwind_others_line(others: list[dict], vol24: dict, tracked: set, other_min: float, top: int = 10) -> str:
@@ -4095,6 +4106,19 @@ def unwind_others_line(others: list[dict], vol24: dict, tracked: set, other_min:
     return (f"Öteki açık pozisyonları ({len(others)}, ≥ {usd(other_min)}"
             + ("; 👣 = takipte" if any(p["coin"] in tracked for p in others[:top]) else "") + "): "
             + " · ".join(parts) + more)
+
+
+def unwind_track_footer(ids: list[int], url: str = "", list_url: str = "", closed: bool = False) -> str:
+    """Takip kanalı mesajlarının son satırı: 🌐 cüzdan sayfası (+ takipteki cüzdanlar) · 🛑 /birak_N (kullanıcı 20.10:
+    "takip bildirimlerinin sonunda takibi bırak işareti de olsun")."""
+    parts = []
+    if url:
+        parts.append(f'🌐 <a href="{esc(url)}">Cüzdan sayfası</a>')
+    if list_url:
+        parts.append(f'<a href="{esc(list_url)}">takipteki cüzdanlar</a>')
+    if ids and not closed:
+        parts.append("🛑 Bırakmak: " + " ".join(f"/birak_{int(i)}" for i in ids))
+    return " · ".join(parts)
 
 
 def unwind_track_started(addr: str, started: list[dict], notes: list[str], others_txt: str, cfg) -> str:
@@ -4112,14 +4136,16 @@ def unwind_track_started(addr: str, started: list[dict], notes: list[str], other
     if any(is_listed(s["coin"]) for s in started):
         lines.append(PROPR_NOTE if len(started) == 1 else PROPR_NOTE + ": " + ", ".join(
             esc(s["symbol"]) for s in started if is_listed(s["coin"])))
-    lines.append(f"👤 {alink(addr)} · 🧯 boşaltma mesajındaki tuştan")
+    from .. import sitelink
+    lines.append(f"👤 {alink(addr, sitelink.wallet_url(cfg, addr))} · 🧯 boşaltma mesajındaki tuştan")
     lines.append(f"Toplamın her %{step} kapanışında / eklemesinde, tam kapanışta ve yön değişiminde buraya yazılır"
                  " — pozisyon kapanana kadar.")
     if others_txt:
         lines.append(others_txt)
     if notes:
         lines.append("Not: " + " · ".join(esc(n) for n in notes))
-    lines.append("Bırakmak: " + " ".join(f"/birak_{int(s['id'])}" for s in started))
+    lines.append(unwind_track_footer([int(s["id"]) for s in started], sitelink.wallet_url(cfg, addr),
+                                     sitelink.list_url(cfg)))
     return "\n".join(lines) + DISCLAIMER
 
 
