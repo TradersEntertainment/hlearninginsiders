@@ -13,8 +13,9 @@ geçmiş ölçümü tek satırla söyler; "fırsat", yön ya da giriş/çıkış
 Kararlar:
   • Dedektör araştırmadaki C ("pivot"): zigzag dönüş eşiği max(%0,25, 3 × son 300 dk'nın medyan gerçek aralığı);
     son ≤300 dk'nın tepe/dip pivotlarından en küçük kareler çizgileri; her kenara ≥ RANGE_MIN_TOUCHES SIRALI temas
-    (alt, üst, alt…; genişliğin %15'i içinde), hiçbir pivot çizgiden %15 W taşmaz, hiçbir kapanış kenarın %25 W
-    dışında değil, çizgiler paralel (|eğim farkı| × pencere ≤ %30 W), dakikaların ≥ %70'inde işlem var, yaş ≥
+    (alt, üst, alt…; genişliğin RANGE_TOUCH_TOL_PCT %'si içinde), hiçbir pivot çizgiden o kadar W taşmaz, hiçbir
+    kapanış kenarın %25 W dışında değil, çizgiler paralel (|eğim farkı| × pencere ≤ RANGE_PARALLEL_TOL_PCT W),
+    temaslar çizgiye ortalama ≤ RANGE_MAX_FIT_PCT W uzakta, dakikaların ≥ %70'inde işlem var, yaş ≥
     RANGE_MIN_MINUTES, genişlik RANGE_MIN/MAX_WIDTH_PCT. Kırılış: kapanış kenarın %25 W dışında.
   • Evren: PROPR'da listeli + 24s hacim ≥ RANGE_MIN_VOL_USD (araştırmanın F2 süzgeci: günde ~8–11 bildirim).
   • Mumlar botun zaten aldığı WS işlemlerinden (ek HL isteği yok; kollektör kancası `observe`, senkron, G/Ç yok).
@@ -23,6 +24,14 @@ Kararlar:
   • Bir koridor bir kez bildirilir; kırılınca (RANGE_BREAK_NOTE) tek "kırıldı" notu. Açık koridorlar kv'de: restart'ta
     aynı koridor ikinci kez gelmez.
   • Kanal yalnız env: RANGE_CHAT_ID. Boşsa mesaj yok (ana sohbete düşmez); ölçüm ve /koridor sürer.
+
+Kullanıcı (20.10, SKHX ekranı): "bu koridor botu hiç olmadı btw çok kötü neden skhx kaçırdı mesela ? mis gibi kanal".
+Yeniden üretim: SKHX 07:27–10:18 dipler 912,0 / 913,3 / 912,4 / 912,2, tepeler 920,5 / 923,7 / 924,3 / 925,1 (%1,4) — ilk
+tepe çizgiden genişliğin %30'u uzakta → %15 temas toleransıyla sayılmadı, üstte 3 temas kaldı, 4+4 kuralı hiç geçmedi.
+Kararlar (kullanıcı seçti): 3+3 temas, tolerans %25, toplam ≥ 7 temas (RANGE_MIN_TOTAL_TOUCHES), 24s hacim ≥ $50M,
+coin başına 3 sa bekleme (RANGE_COIN_COOLDOWN_MIN). Yalnız bunlarla 08:59'da eğik ve kötü oturan bir aday (05:22'den,
+906–922) seçiliyordu → paralellik %50 (RANGE_PARALLEL_TOL_PCT), uyum ≤ %10 W (RANGE_MAX_FIT_PCT), en uzun değil en iyi
+oturan aday. Son 12 sa tekrar oynatma (≥$50M, 25 coin): 23 bildirim / 14 coin, ortanca ömür 36 dk; SKHX 09:17 912,4–926,0.
 
 Kör nokta, açıkça: yalnız WS'te dinlenen coinler; WS kopukken mum yok (yeniden bağlanınca HL'den doldurulur);
 xyz hisselerinde seans dışı saatler seyrek işlemlidir (%70 işlem şartı çoğunu eler).
@@ -47,8 +56,8 @@ BACKFILL_MIN = 600            # açılışta / kopukluktan sonra HL'den çekilen
 UNIVERSE_SEC = 600            # evren (PROPR ∩ hacim) tazeleme
 MAX_GAP_FILL = 30             # bundan uzun işlemsiz boşluk doldurulmaz (WS kopukluğu sayılır → yeniden doldurma)
 ACTIVE_MAX_SEC = 12 * 3600    # kırılmadan bu kadar süren koridor sessizce düşer
-HIST_LINE = ("📏 Geçmiş ölçüm (16–19.10, bu kural, ~28 koridor — küçük örnek): 60 dk sonra sağlam %32 (rastgele"
-             " fiyatta %11); kenardan alım-satımın komisyon öncesi ortalaması ≈ 0 (rastgele fiyatla aynı).")
+HIST_LINE = ("📏 Geçmiş ölçüm (16–19.10, 131 PROPR coini): bu tür koridorların ortanca ömrü ~25 dk; kenardan"
+             " alım-satımın komisyon öncesi ortalaması ≈ 0 (rastgele fiyatla aynı).")
 BACKFILL_GAP_SEC = 4.0        # geri doldurma: coin başına bekleme (~30 ağırlık / 4 sn ≈ 450/dk; HL sınırı 1200/dk)
 
 P_BASE = dict(zz_floor=0.0025, zz_tr_mult=3.0, tr_win=300, max_window=300, touch_tol=0.15, parallel_tol=0.30,
@@ -64,7 +73,11 @@ STATS: dict = {"errors": 0, "trades": 0, "scans": 0, "found": 0, "sent": 0, "bro
 
 def params(cfg) -> dict:
     p = dict(P_BASE)
-    p["min_touch"] = int(getattr(cfg, "range_min_touches", 4) or 4)
+    p["min_touch"] = int(getattr(cfg, "range_min_touches", 3) or 3)
+    p["min_total"] = int(getattr(cfg, "range_min_total_touches", 7) or 0)
+    p["touch_tol"] = float(getattr(cfg, "range_touch_tol_pct", 25) or 25) / 100
+    p["parallel_tol"] = float(getattr(cfg, "range_parallel_tol_pct", 50) or 50) / 100
+    p["fit_max"] = float(getattr(cfg, "range_max_fit_pct", 10) or 100) / 100
     p["min_age"] = int(getattr(cfg, "range_min_minutes", 60) or 60)
     p["wmin"] = float(getattr(cfg, "range_min_width_pct", 0.7) or 0.7) / 100
     p["wmax"] = float(getattr(cfg, "range_max_width_pct", 2.0) or 2.0) / 100
@@ -227,6 +240,7 @@ def _fit(pidx, pval, ptyp, s, e, tref, P):
     if W <= 0:
         return None
     seq = []
+    resid: list[float] = []                             # temasların çizgiye uzaklığı (genişliğe oranla) — uyum ölçüsü
     for x, y, q in zip(xs, ys, ty):
         if q == 1:
             r = y - (au + bu * x)
@@ -238,6 +252,8 @@ def _fit(pidx, pval, ptyp, s, e, tref, P):
             if r < -tol * W:
                 return None
             seq.append("L" if r <= tol * W else None)
+        if seq[-1]:
+            resid.append(abs(r) / W)
     if seq[0] is None:
         return None
     runs: list[str] = []
@@ -245,9 +261,12 @@ def _fit(pidx, pval, ptyp, s, e, tref, P):
         if q is not None and (not runs or runs[-1] != q):
             runs.append(q)
     nU, nL = runs.count("U"), runs.count("L")
-    if nU < P["min_touch"] or nL < P["min_touch"]:
+    if nU < P["min_touch"] or nL < P["min_touch"] or nU + nL < P.get("min_total", 0):
         return None
-    return dict(au=au, bu=bu, al=al, bl=bl, nU=nU, nL=nL, start=pidx[s], npiv=e - s + 1)
+    if resid and sum(resid) / len(resid) > P.get("fit_max", 1.0):
+        return None                                     # dönüş noktalarına kötü oturan (gevşek / eğik) kanal
+    return dict(au=au, bu=bu, al=al, bl=bl, nU=nU, nL=nL, start=pidx[s], npiv=e - s + 1,
+                fit=sum(resid) / len(resid) if resid else 1.0)
 
 
 def detect(bars, P) -> dict | None:
@@ -300,7 +319,9 @@ def detect(bars, P) -> dict | None:
                 break
         if bad:
             continue
-        if best is None or cand["npiv"] > best[0]["npiv"]:
+        # en iyi OTURAN kanal (temasların çizgiye ortalama uzaklığı en az); eşitse daha çok dönüş noktası. Eskiden en
+        # uzun aday seçiliyordu — SKHX 20.10 08:59'da 05:22'den başlayan eğik kanalı (906–922) çiziyordu, görülen 912–925
+        if best is None or (round(cand["fit"], 3), -cand["npiv"]) < (round(best[0]["fit"], 3), -best[0]["npiv"]):
             best = (cand, Wt)
     if best is None:
         return None
@@ -454,8 +475,9 @@ async def scan(cfg, notifier, P=None, t: int | None = None) -> list[str]:
             continue
         STATS["found"] += 1
         key = f"{coin}:{found['start_ts']}"
-        if await alert_recent("koridor", key, 6 * 3600):
-            found["sent"] = False
+        cool = int(getattr(cfg, "range_coin_cooldown_min", 180) or 0) * 60
+        if await alert_recent("koridor", key, 6 * 3600) or (cool and await alert_recent("koridor_coin", coin, cool)):
+            found["sent"] = False                   # aynı koridor / coin başına bekleme: kaydet, yazma
             ACTIVE[coin] = {**found, "checked": found["t0"]}
             changed = True
             continue
@@ -473,6 +495,8 @@ async def scan(cfg, notifier, P=None, t: int | None = None) -> list[str]:
         else:
             STATS["skipped_nochat"] += 1
         await alert_log("koridor", key, txt)
+        if sent:
+            await alert_log("koridor_coin", coin, "")
         ACTIVE[coin] = {**found, "sent": bool(sent), "checked": found["t0"]}
         changed = True
     if changed:

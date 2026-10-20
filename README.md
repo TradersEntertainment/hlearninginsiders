@@ -2322,7 +2322,7 @@ sayfalanır), ancak geçerse bütün dex'lerin pozisyonları (~11 istek). Tur ba
 Kullanıcı (19.10, PONS ekranı): "böyle coinlerde bi tık hacimli olanlar … sürekli gitgel yapanlar dar bi alanda …
 bunu tarayıp … bildiren bir bot" → araştırmadan sonra "dar bant botunu kuralım". `app/radar/koridor.py`.
 
-**Ne yapar:** PROPR'da listeli, 24 sa hacmi ≥ `RANGE_MIN_VOL_USD` ($5M) coinlerde fiyat dar bir koridorda kenardan
+**Ne yapar:** PROPR'da listeli, 24 sa hacmi ≥ `RANGE_MIN_VOL_USD` (**$50M**) coinlerde fiyat dar bir koridorda kenardan
 kenara gidip gelince **bir kez** yazar: kenarlar, genişlik, her kenardaki temas sayısı, yaş, eğim (yatay / yükselen /
 düşen), hacim ve tek satır geçmiş ölçüm. Koridor kırılınca (kapanış kenarın genişliğin %25'i dışında) tek "✂️ kırıldı"
 notu (`RANGE_BREAK_NOTE`). Mesaj YALNIZ `RANGE_CHAT_ID`'ye; boşsa hiç gönderilmez (ana sohbete düşmez), ölçüm ve
@@ -2330,7 +2330,11 @@ notu (`RANGE_BREAK_NOTE`). Mesaj YALNIZ `RANGE_CHAT_ID`'ye; boşsa hiç gönderi
 
 **Dedektör** (araştırmanın "pivot" tasarımı — insanın çizdiği gibi): zigzag dönüşleri (eşik: max(%0,25, 3 × son 300
 dk'nın medyan mum aralığı)); son ≤ 300 dk'nın tepe ve dip dönüşlerinden iki çizgi; her kenara ≥ `RANGE_MIN_TOUCHES`
-(4) **sıralı** temas (alt, üst, alt… — genişliğin %15'i içinde), hiçbir kapanış kenarın %25 W dışında değil, çizgiler
+(3) **sıralı** temas (alt, üst, alt… — genişliğin `RANGE_TOUCH_TOL_PCT` %25'i içinde), iki kenarda toplam ≥
+`RANGE_MIN_TOTAL_TOUCHES` (7), temaslar çizgiye ortalama ≤ `RANGE_MAX_FIT_PCT` (%10) W uzakta (gevşek / eğik kanal
+elenir), birden çok aday varsa **en iyi oturan** seçilir, aynı coine bildirimden sonra `RANGE_COIN_COOLDOWN_MIN` (180) dk
+yeni bildirim yok, hiçbir kapanış kenarın %25 W dışında değil, çizgiler (eğim farkı × süre ≤ `RANGE_PARALLEL_TOL_PCT`
+%50 W)
 paralel, dakikaların ≥ %70'inde işlem, ilk temastan ≥ `RANGE_MIN_MINUTES` (60) dk, genişlik %0,7–2
 (`RANGE_MIN/MAX_WIDTH_PCT`). Mumlar botun zaten aldığı WS işlemlerinden (ek HL isteği yok); açılışta ve WS kopukluğundan
 sonra son 600 dk bir kez HL'den (düşük şerit, coin başına ~30 ağırlık, 4 sn arayla ≈ 450 ağırlık/dk — 80 coin ~5 dk;
@@ -2339,12 +2343,20 @@ mumda aranır. Açık koridorlar kv'de: yeniden başlatmada aynı koridor ikinci
 
 **Araştırma (19.10, ölçülen — tahmin değil):** 131 PROPR coini, 1 dk mum 3,4 gün + 5 dk mum 17 gün, üç bağımsız
 dedektör, her biri ayrıca doğrulandı ve rastgele-yürüyüş kopyalarıyla karşılaştırıldı:
+- **Kural değişikliği (kullanıcı 20.10, SKHX):** "bu koridor botu hiç olmadı btw çok kötü neden skhx kaçırdı mesela ?
+  mis gibi kanal". SKHX 07:27–10:18: dipler 912,0 / 913,3 / 912,4 / 912,2, tepeler 920,5 / 923,7 / 924,3 / 925,1 (%1,4);
+  ilk tepe çizgiden genişliğin %30'u uzakta → eski %15 toleransla sayılmadı, 4+4 kuralı hiç geçmedi. Son 12 sa tekrar
+  oynatma (72 coin): eski kural 14 bildirim, SKHX yok. Yalnız 3+3 / %25 gevşetmesi 08:59'da 05:22'den başlayan eğik,
+  kötü oturan bir kanal (906–922) çiziyordu ve süzgeçsiz 217 bildirim veriyordu. Yeni kural (3+3, %25, toplam ≥ 7,
+  paralellik %50, uyum ≤ %10, en iyi oturan, ≥ $50M, coin başına 3 sa): 12 sa'te **23 bildirim / 14 coin** (günde ~46),
+  ortanca ömür 36 dk; **SKHX 09:17, 912,4–926,0** (07:27'den, 4+3 temas — görülen kanal), 10:18'de hâlâ sağlam.
 - Bu tür koridorlar rastgele fiyatta da aynı sıklıkta çıkıyor (gerçek / rastgele ≈ 0,9–1,2).
 - Gerçek zamanlı fark edildikten sonra ortanca ömür ~25 dk; 60 dk sonra %18–31'i sağlam (tüm tespitler; bu kuralda
   ~28 koridorda %32, rastgele fiyatta %11 — küçük örnek, büyük örnekte fark oynaklık kümelenmesine iniyor).
 - Kenardan alım-satımın (alt kenarda al, üstte sat; stop %30 W dışarıda) komisyon öncesi ortalaması ≈ 0, rastgele
   fiyatla aynı; %0,06–0,09 komisyonla −%0,05…−%0,10. Hiçbir genişlik / hacim / saat dilimi bunu tutarlı biçimde aşmadı.
-- Bu kuralla (≥ 4 temas, ≥ $5M, ≥ %0,7) günde ~8–11 bildirim, ~20 coinden; aynı kural rastgele kopyalarda günde ~14.
+- İlk kuralla (≥ 4 temas, ≥ $5M, ≥ %0,7) araştırmada günde ~8–11 bildirim, ~20 coinden; aynı kural rastgele kopyalarda
+  günde ~14 (20.10'dan beri kural yukarıdaki gibi).
 - PONS 19.10: 10:36 (0,2614–0,2644, 4+4 temas) ve 12:15 (0,2621–0,2647) bildirimleri; ikisi de 11:02 / 12:17'de yukarı
   kırıldı. Çizilen yükselen kanal ancak sabahın tamamı geriye dönük çizilince görünüyor.
 Bu yüzden mesaj bir **gözlemdir**: "fırsat", yön ya da giriş / çıkış yazmaz; geçmiş ölçümü tek satırla söyler.

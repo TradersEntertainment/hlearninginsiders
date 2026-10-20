@@ -953,10 +953,16 @@ class Config:
         # girmez. Chat boşsa mesaj yok (ana sohbete düşmez); ölçüm ve /koridor sürer. Eşikler araştırmanın F2 süzgeci.
         self.range_chat_id = (os.getenv("RANGE_CHAT_ID", "") or "").strip()
         self.range_enabled = convert_value("bool", os.getenv("RANGE_ENABLED", "1"))
-        self.range_min_vol_usd = float(os.getenv("RANGE_MIN_VOL_USD", "5000000"))
+        # kullanıcı (20.10, SKHX kaçtı) seçti: $50M + 3+3 temas + %25 tolerans + toplam ≥7 + coin başına 3 sa bekleme
+        self.range_min_vol_usd = float(os.getenv("RANGE_MIN_VOL_USD", "50000000"))
         self.range_min_width_pct = float(os.getenv("RANGE_MIN_WIDTH_PCT", "0.7"))
         self.range_max_width_pct = float(os.getenv("RANGE_MAX_WIDTH_PCT", "2.0"))
-        self.range_min_touches = int(os.getenv("RANGE_MIN_TOUCHES", "4"))
+        self.range_min_touches = int(os.getenv("RANGE_MIN_TOUCHES", "3"))
+        self.range_min_total_touches = int(os.getenv("RANGE_MIN_TOTAL_TOUCHES", "7"))
+        self.range_touch_tol_pct = float(os.getenv("RANGE_TOUCH_TOL_PCT", "25"))
+        self.range_parallel_tol_pct = float(os.getenv("RANGE_PARALLEL_TOL_PCT", "50"))
+        self.range_max_fit_pct = float(os.getenv("RANGE_MAX_FIT_PCT", "10"))
+        self.range_coin_cooldown_min = int(os.getenv("RANGE_COIN_COOLDOWN_MIN", "180"))
         self.range_min_minutes = int(os.getenv("RANGE_MIN_MINUTES", "60"))
         self.range_break_note = convert_value("bool", os.getenv("RANGE_BREAK_NOTE", "1"))
         # 🧯 Sert satış / pozisyon boşaltma (app/radar/unwind.py, kullanıcı 19.10) — ENV-ONLY. Chat boşsa izleme de

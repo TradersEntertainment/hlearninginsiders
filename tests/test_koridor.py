@@ -8,7 +8,7 @@ Kararlar: araştırmanın "pivot" dedektörü, kullanıcının kuralı (her kena
 WS'ten 1 dk mum; tek bildirim + tek kırılış notu; yalnız RANGE_CHAT_ID; ölçülü dil (öneri / yön yok).
 
 Pinlenenler:
-  • detect: gidip gelen seride koridor (kenarlar, ≥4+4 temas, genişlik); tek yönlü yürüyüşte / genişlik dışında /
+  • detect: gidip gelen seride koridor (kenarlar, ≥3+3 (toplam ≥7) temas, genişlik); tek yönlü yürüyüşte / genişlik dışında /
     seyrek işlemde yok; yalnız geçmiş mumlar (son mumdan sonrası eklenince t0 aynı kalır)
   • broke: kapanış kenarın %25 W dışında → yön; içeride → None
   • observe / close_minutes: evren dışı coin yok sayılır; dakika mumu (o/h/l/c/n); işlemsiz dakika düz n=0 mum;
@@ -56,7 +56,8 @@ def test_detect_and_break():
     P = k.params(Config())
     bars = _zigzag_bars()
     f = k.detect(bars, P)
-    assert f and f["nL"] >= 4 and f["nU"] >= 4 and 0.007 <= f["W"] <= 0.02 and f["age_min"] >= 60, f
+    assert f and f["nL"] >= 3 and f["nU"] >= 3 and f["nL"] + f["nU"] >= 7 and 0.007 <= f["W"] <= 0.02 \
+        and f["age_min"] >= 60, f
     assert f["lower"] < bars[-1][4] * 1.01 and f["upper"] > bars[-1][4] * 0.99
     assert "yatay" in fmt._slope_txt(f["slope"], f["W"])
     # yalnız geçmiş: seriyi kesip yeniden sormak aynı son-mum sonucunu verir
@@ -76,7 +77,7 @@ def test_detect_and_break():
     assert k.broke(f, [f["t0"] + 60, dn, dn, dn, dn, 3], P) == "down"
     mid = math.exp((f["u0"] + f["l0"]) / 2)
     assert k.broke(f, [f["t0"] + 60, mid, mid, mid, mid, 3], P) is None
-    print("✅ tespit) gidip gelen seride ≥4+4 temas; trend / dar / geniş / seyrek → yok; kırılış yönü")
+    print("✅ tespit) gidip gelen seride ≥3+3 (toplam ≥7) temas; trend / dar / geniş / seyrek → yok; kırılış yönü")
 
 
 def test_bars_from_trades():
@@ -197,7 +198,7 @@ def test_review_fixes():
         class Col:
             connected, connected_since, valid_coins = False, None, set()
         from app.radar import twaplive
-        twaplive.VOL_CACHE.update(ts=dbm.now(), v={"PONS": (13e6, dbm.now())})
+        twaplive.VOL_CACHE.update(ts=dbm.now(), v={"PONS": (60e6, dbm.now())})
         assert await k._refresh_universe(cfg, Col()) == set() and not k.ELIGIBLE
         Col.valid_coins = {"PONS"}
         await k._refresh_universe(cfg, Col())
@@ -228,11 +229,45 @@ def test_review_fixes():
         assert "while True:                                     # kapalıyken de nabız" in src
         # 5) metin: "%100'inde" ek hatası yok; geçmiş satırı rastgele karşılaştırmasını ve örneklemi söyler
         assert "işlemli dakika %" in fmt.koridor_alert("PONS", {**cor, "age_min": 60, "close": 100, "act_pct": 100}, 1e7)
-        assert "rastgele fiyatta %11" in k.HIST_LINE and "küçük örnek" in k.HIST_LINE
+        assert "ortanca ömrü ~25 dk" in k.HIST_LINE and "rastgele fiyatla aynı" in k.HIST_LINE
         _reset()
     asyncio.run(run())
     print("✅ inceleme) toplu mumda kırılış; boş evren yeniden bakılır; okunamayan doldurma eski mumu atar, WS kuyruğu"
           " korunur; kapalıyken nabız; metin")
+
+
+def test_skhx_regression():
+    """Kullanıcı (20.10, SKHX ekranı): "bu koridor botu hiç olmadı btw çok kötü neden skhx kaçırdı mesela ? mis gibi
+    kanal". Gerçek HL 1 dk mumları (tests/data): dipler 912,0 / 913,3 / 912,4 / 912,2, tepeler 920,5 / 923,7 / 924,3.
+
+    Pinlenenler: yeni kural (3+3, %25 tolerans, toplam ≥7, paralellik %50, uyum ≤%10, en iyi oturan aday) 09:17'de
+    GÖRÜLEN kanalı (912,4–926) yakalar; eski kural (4+4, %15, %30) 09:30'a kadar yakalamaz. 08:59'da yalnız 05:22'den
+    başlayan eğik, kötü oturan aday vardı (906–922) — uyum şartı onu eler (eskiden en uzun aday seçiliyordu)."""
+    import json as _json
+    import time as _time
+    d = _json.load(open(os.path.join(ROOT, "tests", "fixtures", "skhx_20_10_1m.json")))
+    bars = d["bars"]
+    tsi = lambda t: _time.strftime("%H:%M", _time.gmtime(t + 3 * 3600))   # noqa: E731
+    P = k.params(Config())
+    assert P["min_touch"] == 3 and P["touch_tol"] == 0.25 and P["min_total"] == 7
+    assert P["parallel_tol"] == 0.5 and P["fit_max"] == 0.1
+    first = None
+    for t in range(300, len(bars)):
+        f = k.detect(bars[max(0, t - 719):t + 1], P)
+        if f:
+            first = f
+            break
+    assert first and tsi(first["t0"]) == "09:17", (first and tsi(first["t0"]))
+    assert 912 <= first["lower"] <= 913 and 925 <= first["upper"] <= 927 and first["nL"] + first["nU"] >= 7, first
+    assert tsi(first["start_ts"]) == "07:27", tsi(first["start_ts"])
+    # uyum şartı olmasa 08:59'da eğik aday (05:22'den, alt ~906) gönderilirdi
+    i859 = next(i for i, b in enumerate(bars) if tsi(b[0]) == "08:59")
+    loose = k.detect(bars[max(0, i859 - 719):i859 + 1], {**P, "fit_max": 1.0})
+    assert loose and loose["lower"] < 908 and tsi(loose["start_ts"]) == "05:22", loose
+    assert k.detect(bars[max(0, i859 - 719):i859 + 1], P) is None
+    old = {**P, "min_touch": 4, "touch_tol": 0.15, "min_total": 0, "parallel_tol": 0.3, "fit_max": 1.0}
+    assert not any(k.detect(bars[max(0, t - 719):t + 1], old) for t in range(300, len(bars))), "eski kural yakalamazdı"
+    print("✅ SKHX 20.10) yeni kural 09:17'de görülen kanal (912,4–926, 07:27'den); eski 4+4 / %15 kural yakalamıyordu")
 
 
 def test_wiring():
@@ -243,8 +278,9 @@ def test_wiring():
         assert "koridor.observe(coin, px, ts)" in src("app/hl/collector.py")
         assert notify.KINDS["koridor"][0] == "" and "koridor" not in notify.PUBLIC_KINDS
         cfg = Config()
-        assert cfg.range_enabled and cfg.range_chat_id == "" and cfg.range_min_touches == 4
-        assert cfg.range_min_vol_usd == 5e6 and cfg.range_min_width_pct == 0.7 and cfg.range_max_width_pct == 2.0
+        assert cfg.range_enabled and cfg.range_chat_id == "" and cfg.range_min_touches == 3
+        assert cfg.range_min_vol_usd == 50e6 and cfg.range_min_width_pct == 0.7 and cfg.range_max_width_pct == 2.0
+        assert cfg.range_min_total_touches == 7 and cfg.range_touch_tol_pct == 25 and cfg.range_coin_cooldown_min == 180
         assert not any(f.startswith("range_") for f in EDITABLE_FIELDS), "env-only"
         assert health.limits(cfg)["koridor"] == 1200 and health.periods(cfg)["koridor"] == 60
         assert fmt.TASK_TR["koridor"] == "dar koridor" and "/koridor" in fmt.help_text()
@@ -254,7 +290,8 @@ def test_wiring():
         readme, env = src("README.md"), src(".env.example")
         assert "## 🏓 Dar koridor (`RANGE_CHAT_ID`)" in readme and "| `/koridor` |" in readme
         assert "**Kör nokta, açıkça:** yalnız WS'te dinlenen coinler" in readme
-        for v in ("RANGE_CHAT_ID=", "RANGE_ENABLED=1", "RANGE_MIN_VOL_USD=5000000", "RANGE_MIN_TOUCHES=4",
+        for v in ("RANGE_CHAT_ID=", "RANGE_ENABLED=1", "RANGE_MIN_VOL_USD=50000000", "RANGE_MIN_TOUCHES=3",
+                  "RANGE_MIN_TOTAL_TOUCHES=7", "RANGE_TOUCH_TOL_PCT=25", "RANGE_COIN_COOLDOWN_MIN=180",
                   "RANGE_BREAK_NOTE=1"):
             assert v in env, v
         await dbm.init_db(os.path.join(tempfile.mkdtemp(), "kor2.db"))
@@ -274,4 +311,5 @@ if __name__ == "__main__":
     test_bars_from_trades()
     test_scan_send_once_and_break()
     test_review_fixes()
+    test_skhx_regression()
     test_wiring()
