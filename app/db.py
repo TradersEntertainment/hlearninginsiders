@@ -643,6 +643,9 @@ MIGRATIONS = [
     # 🧲 yapışkan duvar: teklif tek sefer + dilim tepesi (ilk sürümde yoktu)
     "ALTER TABLE sticky_walls ADD COLUMN offer_id INTEGER",
     "ALTER TABLE sticky_walls ADD COLUMN seg_peak REAL",
+    # 👣 takibin kaynağı: 'unwind' = 🧯 boşaltma mesajındaki tuş (UNWIND_TRACK_CHAT_ID; öteki pozisyon listesi + soru
+    # tuşları, liq kayması notu yok). Boş/NULL = eski takipler (davranış aynı)
+    "ALTER TABLE trackers ADD COLUMN src TEXT",
 ]
 
 

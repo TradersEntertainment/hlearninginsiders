@@ -70,20 +70,21 @@ def parse_position(state, coin: str) -> dict | None:
 
 
 async def start_tracker(cfg: Config, address: str, coin: str, symbol: str,
-                        live: dict, chat_id: str = "") -> int:
+                        live: dict, chat_id: str = "", src: str = "") -> int:
     """Canlı pozisyonu baz alarak takip kaydı aç, tracker id döner.
     Hem teklif yolu (/takip_N) hem manuel komut (/takip 0xADRES SEMBOL) kullanır.
-    `chat_id`: komut bir kanaldan geldiyse haberler oraya gider (boş = ana sohbet)."""
+    `chat_id`: komut bir kanaldan geldiyse haberler oraya gider (boş = ana sohbet).
+    `src`: 'unwind' = 🧯 boşaltma mesajındaki tuş (unwindtrack.py)."""
     ts = now()
     async with db() as conn:
         cur = await conn.execute(
             """INSERT INTO trackers(address,coin,symbol,side,base_szi,last_szi,
                  base_notional,created_ts,expires_ts,active,last_check_ts,entry_px,
-                 liq_px,leverage,chat_id)
-               VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)""",
+                 liq_px,leverage,chat_id,src)
+               VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?)""",
             (address, coin, symbol, live["side"], abs(live["szi"]), abs(live["szi"]),
              live["notional"], ts, ts + int(cfg.track_expire_days) * 86400, ts,
-             live.get("entry_px"), live.get("liq_px"), live.get("leverage"), chat_id or ""))
+             live.get("entry_px"), live.get("liq_px"), live.get("leverage"), chat_id or "", src or None))
         return cur.lastrowid
 
 
@@ -316,6 +317,13 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     if not still:
         return              # tur başında okundu, bu arada 🛑 tuş / komutla bırakıldı → bayat mesaj yok
     kb = fmt.stop_kb("pos", t["id"], wake=bool(t.get("wake")))
+    # 🧯 boşaltma tuşundan açılan takip (unwindtrack.py): mesajlara cüzdanın öteki pozisyonları + soru tuşları
+    uw = (t.get("src") or "") == "unwind"
+
+    async def _uw(text: str, closed: bool = False) -> tuple[str, dict | None]:
+        from . import unwindtrack
+        extra, ukb = await unwindtrack.extras(cfg, client, t, closed=closed)
+        return (text + ("\n" + extra if extra else "")), ukb
 
     # NOT: state (active=0 / yön / last_szi) YALNIZ başarılı gönderimden SONRA
     # yazılır. Eskiden önce yazılıp send sonucu yok sayılıyordu: Telegram anlık
@@ -333,8 +341,11 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
             from .cryptoliq import _closure_kind
             kind, cpx = await _closure_kind(client, t["coin"], t["address"],
                                             {"first_ts": t.get("created_ts")})
-        ok = await notifier.send("track", fmt.track_closed(t, base, last, pnl, kind, cpx),
-                                 priority="critical", key=f"closed:{t['id']}", chat_id=chat)
+        text, ckb = fmt.track_closed(t, base, last, pnl, kind, cpx), None
+        if uw:
+            text, ckb = await _uw(text, closed=True)
+        ok = await notifier.send("track", text, priority="critical", key=f"closed:{t['id']}", chat_id=chat,
+                                 reply_markup=ckb)
         if ok:
             note = "likide oldu" if kind == "liq" else "kapandı"
             async with db() as conn:
@@ -351,8 +362,11 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
 
     # 2) Yön değişimi (long→short / short→long) → kritik, takip yeni yönle sürer
     if live["side"] != t["side"]:
-        ok = await notifier.send("track", fmt.track_flip(t, live), priority="critical",
-                                 key=f"flip:{t['id']}:{live['side']}", chat_id=chat, reply_markup=kb)
+        text, fkb = fmt.track_flip(t, live), kb
+        if uw:
+            text, fkb = await _uw(text)
+        ok = await notifier.send("track", text, priority="critical",
+                                 key=f"flip:{t['id']}:{live['side']}", chat_id=chat, reply_markup=fkb)
         if ok:
             async with db() as conn:
                 await conn.execute(
@@ -367,8 +381,11 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     # 3) Anlamlı adım: son bildirimden beri TOPLAM boyutun %X'i kadar değişim.
     #    Spam önleyici — her transaction değil, birikmiş anlamlı fark bildirir.
     if step > 0 and abs(cur_szi - last) >= step:
-        ok = await notifier.send("track", fmt.track_step(t, live, base, last, cur_szi),
-                                 key=f"step:{t['id']}:{cur_szi:.4f}", chat_id=chat, reply_markup=kb)
+        text, skb = fmt.track_step(t, live, base, last, cur_szi), kb
+        if uw:
+            text, skb = await _uw(text)
+        ok = await notifier.send("track", text,
+                                 key=f"step:{t['id']}:{cur_szi:.4f}", chat_id=chat, reply_markup=skb)
         if ok:  # last_szi yalnız gönderilince ilerler (kaçan adım tekrar denenir)
             async with db() as conn:
                 await conn.execute(
@@ -380,7 +397,7 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
     #     Kullanıcı kuralı %1; son bildirilene göre ölçülür.
     liq_step = float(getattr(cfg, "track_liq_step_pct", 1.0) or 0)
     prev_liq, cur_liq = t.get("liq_px"), live.get("liq_px")
-    if liq_step > 0 and prev_liq and cur_liq and \
+    if liq_step > 0 and prev_liq and cur_liq and not uw and \
             abs(cur_liq - prev_liq) / prev_liq * 100 >= liq_step:
         ok = await notifier.send("track", fmt.track_liq_move(t, live, prev_liq, cur_liq),
                                  key=f"liq:{t['id']}:{cur_liq:.6g}", chat_id=chat, reply_markup=kb)

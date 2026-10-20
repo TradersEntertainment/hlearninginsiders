@@ -658,6 +658,9 @@ class TelegramBot:
             await self._ack(cq_id, "👁 takip başlatılıyor")
             await self._cmd_track_start(f"takip_{int(parts[3])}", str(chat.get("id")))
             return
+        if len(parts) == 3 and parts[1] in ("uw1", "uwa", "uta", "uto") and parts[2].isdigit():
+            await self._unwind_track_callback(cq, parts[1], int(parts[2]))       # 👣 🧯 boşaltma takibi
+            return
         if len(parts) != 4 or parts[1] not in ("stop", "undo", "wake", "nowake") \
                 or parts[2] not in trackctl.KINDS or not parts[3].isdigit() \
                 or (parts[1] in ("wake", "nowake") and parts[2] != "pos"):
@@ -707,6 +710,11 @@ class TelegramBot:
             note = f"↩️ {label} yeniden açık — kaldığı yerden sürüyor" if ok else f"{label}: {why}"
         if st and st["active"]:
             kb = fmt.stop_kb(kind, fid, wake=bool(st.get("wake")))
+            # 👣 🧯 takip mesajının soru satırı (Hepsini / Yalnız X) 🛑 / ⏰ basılınca kaybolmasın
+            ask = [row for row in ((msg.get("reply_markup") or {}).get("inline_keyboard") or [])
+                   if any(str(b.get("callback_data") or "").startswith(f"{fmt.TRACK_CB}:ut") for b in row)]
+            if ask:
+                kb = {"inline_keyboard": ask + kb["inline_keyboard"]}
         elif st and st.get("end_note") == trackctl.MANUAL:
             kb = fmt.undo_kb(kind, fid)
         else:
@@ -719,6 +727,45 @@ class TelegramBot:
                 await self.edit_reply_markup(str(chat["id"]), msg["message_id"], kb)
             except Exception:
                 log.debug("takip tuşu güncellenemedi", exc_info=True)
+
+    async def _unwind_track_callback(self, cq: dict, act: str, xid: int) -> None:
+        """👣 🧯 boşaltma takibi (unwindtrack.py): uw1 / uwa = 🧯 mesajından (teklif id) X ya da X + öteki ilk 10;
+        uta = takip mesajından öteki ilk 10; uto = yalnız X kalsın. Haber UNWIND_TRACK_CHAT_ID'ye; basılan mesajda toast."""
+        from ..radar import unwindtrack
+        cq_id = cq.get("id")
+        msg = cq.get("message") or {}
+        chat = msg.get("chat") or {}
+        if not await self._may_press(chat, cq.get("from") or {}):
+            await self._ack(cq_id, "Bu tuşu yalnız sahibi ya da kanal yöneticisi kullanabilir")
+            return
+        target = unwindtrack.chat(self.cfg)
+        if act == "uto":
+            toast, _ = await unwindtrack.only(xid)
+            await self._ack(cq_id, toast[:190])
+        else:
+            if not target:
+                await self._ack(cq_id, "UNWIND_TRACK_CHAT_ID tanımsız — takip kanalı yok")
+                return
+            # önce toast (cüzdan sorgusu ~11 istek sürebilir); sonuç — "yeni takip yok" dahil — takip kanalına
+            await self._ack(cq_id, "👣 takip başlatılıyor → takip kanalı")
+            kb = None
+            if act == "uta":
+                toast, text = await unwindtrack.follow_rest(self.cfg, self.client, xid)
+            else:
+                toast, text, kb = await unwindtrack.from_offer(self.cfg, self.client, xid, all_=act == "uwa")
+            await self.send(text or fmt.esc(toast), target, reply_markup=kb if text else None)
+        # basılan takip mesajında soru satırı: "hepsi" bittiyse / "yalnız X" seçildiyse kalkar (🛑 / ⏰ kalır)
+        if act in ("uta", "uto") and msg.get("message_id") and chat.get("id") is not None:
+            rows = (msg.get("reply_markup") or {}).get("inline_keyboard") or []
+            drop = f"{fmt.TRACK_CB}:ut" if act == "uto" else f"{fmt.TRACK_CB}:uta:"
+            keep = [[b for b in row if not str(b.get("callback_data") or "").startswith(drop)] for row in rows]
+            keep = [row for row in keep if row]
+            if keep != rows:
+                try:
+                    await self.edit_reply_markup(str(chat["id"]), msg["message_id"],
+                                                 {"inline_keyboard": keep} if keep else None)
+                except Exception:
+                    log.debug("takip soru tuşu güncellenemedi", exc_info=True)
 
     # ---------- 🚨 uyandırma alarmı ----------
 
@@ -896,7 +943,7 @@ class TelegramBot:
             getattr(self.cfg, "twap_mirror_chat_id", ""), getattr(self.cfg, "hidden_twap_chat_id", ""),
             getattr(self.cfg, "twap_loose_chat_id", ""), getattr(self.cfg, "twap_big_chat_id", ""),
             getattr(self.cfg, "strat_chat_id", ""), getattr(self.cfg, "range_chat_id", ""),
-            getattr(self.cfg, "unwind_chat_id", ""))
+            getattr(self.cfg, "unwind_chat_id", ""), getattr(self.cfg, "unwind_track_chat_id", ""))
             if v and str(v).strip()}
 
     def _owner_user_id(self) -> str:
@@ -1715,6 +1762,16 @@ class TelegramBot:
             return
         if offer.get("kind") == "sticky":
             await self._cmd_sticky_follow(offer, offer_id, chat_id)
+            return
+        if offer.get("kind") == "unwind":
+            # 🧯 boşaltma teklifi elle /takip_N yazıldıysa: tuşla aynı yol (haber UNWIND_TRACK_CHAT_ID'ye)
+            from ..radar import unwindtrack
+            toast, text, kb = await unwindtrack.from_offer(self.cfg, self.client, offer_id, all_=False)
+            target = unwindtrack.chat(self.cfg)
+            if text and target:
+                await self.send(text, target, reply_markup=kb)
+            if not (text and target == chat_id):
+                await self.send(fmt.esc(toast), chat_id)
             return
         async with db() as conn:
             cur = await conn.execute(

@@ -983,6 +983,9 @@ class Config:
         self.unwind_max_positions = int(os.getenv("UNWIND_MAX_POSITIONS", "15"))
         self.unwind_require_others = convert_value("bool", os.getenv("UNWIND_REQUIRE_OTHERS", "1"))
         self.unwind_max_updates = int(os.getenv("UNWIND_MAX_UPDATES", "5"))
+        # 👣 boşaltma takibi (app/radar/unwindtrack.py, kullanıcı 20.10) — ENV-ONLY: 🧯 mesajlarındaki takip tuşunun
+        # haberleri buraya gider ("bu kanala değil, o kanala"). Boşsa tuş yok, takip yok (ana sohbete düşmez).
+        self.unwind_track_chat_id = (os.getenv("UNWIND_TRACK_CHAT_ID", "") or "").strip()
         # 🔸 TWAP yan kanalı (app/radar/twaploose.py, env-only — kullanıcı 14.10): eşikleri biraz gevşetilmiş TWAP
         # bildirimleri. Boş = kapalı. Kanal = ana kanalın kopyaları + ana eşikten kalıp gevşek eşiği geçenler (🔸).
         # Eşikler isteğe bağlı; her biri ana eşikten büyük olamaz (yan kanal ⊇ ana kanal).

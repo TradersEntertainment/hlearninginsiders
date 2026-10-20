@@ -4050,6 +4050,73 @@ def unwind_done(addr: str, ep: dict, positions: list[dict], t: int) -> str:
             + DISCLAIMER)
 
 
+# ---- 👣 boşaltma takibi (app/radar/unwindtrack.py, UNWIND_TRACK_CHAT_ID) — bot._track_callback ----
+# trk:uw1:<teklif> = yalnız X · trk:uwa:<teklif> = X + öteki ilk 10 · trk:uta:<takip> = öteki ilk 10'dan takipte
+# olmayanlar · trk:uto:<takip> = yalnız X kalsın (cüzdanın öteki 🧯 takipleri bırakılır)
+
+def unwind_follow_kb(offer_id: int, coin: str, n_others: int) -> dict:
+    """🧯 mesajının altı: [👣 Takip et: X] · [👣 Hepsini takip et (X + n)]."""
+    sym = assets.label(coin)
+    rows = [[{"text": f"👣 Takip et: {sym}"[:40], "callback_data": f"{TRACK_CB}:uw1:{int(offer_id)}"}]]
+    if n_others > 0:
+        rows.append([{"text": f"👣 Hepsini takip et ({sym} + {int(n_others)})"[:40],
+                      "callback_data": f"{TRACK_CB}:uwa:{int(offer_id)}"}])
+    return {"inline_keyboard": rows}
+
+
+def unwind_track_kb(tid: int, symbol: str, new: int, wake: bool = False, closed: bool = False,
+                    single: bool = True) -> dict | None:
+    """Takip kanalındaki mesajın altı: soru satırı [👣 Hepsini takip et (+k)] · [🎯 Yalnız X], sonra 🛑 / ⏰ (tek
+    takipte). Kapanan pozisyonda yalnız "hepsini" (takipte olmayan öteki varsa)."""
+    q = []
+    if new > 0:
+        q.append({"text": f"👣 Hepsini takip et (+{int(new)})", "callback_data": f"{TRACK_CB}:uta:{int(tid)}"})
+    if not closed:
+        q.append({"text": f"🎯 Yalnız {symbol}"[:30], "callback_data": f"{TRACK_CB}:uto:{int(tid)}"})
+    rows = [q] if q else []
+    if single and not closed:
+        rows += stop_kb("pos", tid, wake=wake)["inline_keyboard"]
+    return {"inline_keyboard": rows} if rows else None
+
+
+def unwind_others_line(others: list[dict], vol24: dict, tracked: set, other_min: float, top: int = 10) -> str:
+    """Cüzdanın öteki açık pozisyonları (büyükten ilk `top`; 👣 = takipte), 24s hacme oranıyla."""
+    if not others:
+        return f"Öteki açık pozisyonu yok (≥ {usd(other_min)})"
+    parts = [("👣 " if p["coin"] in tracked else "") + f"<b>{esc(assets.label(p['coin']))}</b> {p['side'][0]}"
+             f" {usd(p['usd'])} ({_vol_share(p['usd'], vol24.get(p['coin']))})" for p in others[:top]]
+    more = f" · +{len(others) - top} daha" if len(others) > top else ""
+    return (f"Öteki açık pozisyonları ({len(others)}, ≥ {usd(other_min)}"
+            + ("; 👣 = takipte" if any(p["coin"] in tracked for p in others[:top]) else "") + "): "
+            + " · ".join(parts) + more)
+
+
+def unwind_track_started(addr: str, started: list[dict], notes: list[str], others_txt: str, cfg) -> str:
+    """Takip kanalına ilk mesaj. İlk satırlar: ne takipte (coin, yön, büyüklük) · PROPR · kim · ne zaman yazılır."""
+    step = pct_num(getattr(cfg, "track_step_pct", 10) or 10)
+    if len(started) == 1:
+        s = started[0]
+        head = (f"👣 <b>TAKİBE BAŞLADIK</b> — <b>{esc(s['symbol'])}</b> {_side_badge(s['live']['side'])}"
+                f" <b>{usd(s['live']['notional'])}</b> (#{int(s['id'])})")
+    else:
+        head = f"👣 <b>TAKİBE BAŞLADIK</b> — {len(started)} pozisyon: " + " · ".join(
+            f"<b>{esc(s['symbol'])}</b> {s['live']['side'][0].upper()} {usd(s['live']['notional'])} (#{int(s['id'])})"
+            for s in started)
+    lines = [head]
+    if any(is_listed(s["coin"]) for s in started):
+        lines.append(PROPR_NOTE if len(started) == 1 else PROPR_NOTE + ": " + ", ".join(
+            esc(s["symbol"]) for s in started if is_listed(s["coin"])))
+    lines.append(f"👤 {alink(addr)} · 🧯 boşaltma mesajındaki tuştan")
+    lines.append(f"Toplamın her %{step} kapanışında / eklemesinde, tam kapanışta ve yön değişiminde buraya yazılır"
+                 " — pozisyon kapanana kadar.")
+    if others_txt:
+        lines.append(others_txt)
+    if notes:
+        lines.append("Not: " + " · ".join(esc(n) for n in notes))
+    lines.append("Bırakmak: " + " ".join(f"/birak_{int(s['id'])}" for s in started))
+    return "\n".join(lines) + DISCLAIMER
+
+
 def unwind_list(rows: list, has_chat: bool) -> str:
     head = "🧯 <b>Sert satış / boşaltma</b>" + ("" if has_chat else " · ⚠️ UNWIND_CHAT_ID tanımsız: izleme kapalı")
     if not rows:

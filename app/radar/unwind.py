@@ -312,9 +312,32 @@ async def probe(cfg, client, notifier, cand: dict) -> str | None:
         STATS["sent_day"] += 1
     await _save()
     if chat:
-        await notifier.send("unwind", txt, priority="high", key=kind_key, chat_id=chat, coin=coin, public=False)
+        kb = await _follow_kb(cfg, addr, coin, v)
+        await notifier.send("unwind", txt, priority="high", key=kind_key, chat_id=chat, coin=coin, public=False,
+                            reply_markup=kb)
     await alert_log("unwind", kind_key, txt)
     return txt
+
+
+async def _follow_kb(cfg, addr: str, coin: str, v: dict) -> dict | None:
+    """👣 takip tuşları (unwindtrack.py) — yalnız UNWIND_TRACK_CHAT_ID tanımlıysa; teklif satırı tuşun kimliği."""
+    from .. import assets
+    from ..db import db
+    from ..telegram import format as fmt
+    from . import unwindtrack
+    if not unwindtrack.chat(cfg):
+        return None
+    try:
+        async with db() as conn:
+            cur = await conn.execute(
+                "INSERT INTO track_offers(address,coin,symbol,side,notional,created_ts,kind) VALUES(?,?,?,?,?,?,'unwind')",
+                (addr, coin, assets.label(coin), str(v.get("pos_side") or "").lower(),
+                 float(v.get("now") or v.get("before") or 0), now()))
+            oid = int(cur.lastrowid)
+    except Exception:                                   # noqa: BLE001 — tuşsuz da mesaj gitsin
+        log.debug("unwind takip teklifi yazılamadı", exc_info=True)
+        return None
+    return fmt.unwind_follow_kb(oid, coin, min(len(v.get("others") or []), unwindtrack.TOP))
 
 
 def _left(book_entry: dict, pos: dict | None) -> float:
@@ -445,9 +468,15 @@ async def diag_line(cfg) -> str:
         return "🧯 boşaltma radarı: KAPALI (UNWIND_ENABLED=0)"
     if not (getattr(cfg, "unwind_chat_id", "") or "").strip():
         return "🧯 boşaltma radarı: UNWIND_CHAT_ID TANIMSIZ — izleme yok (HL'ye sorgu da yok)"
+    from . import unwindtrack
+    try:
+        trk = (" · 👣 takip tuşu yok (UNWIND_TRACK_CHAT_ID tanımsız)" if not unwindtrack.chat(cfg)
+               else f" · 👣 açık takip {await unwindtrack.open_count()}")
+    except Exception:                                   # noqa: BLE001
+        trk = " · 👣 takip sayısı okunamadı"
     s = await kv_get(STATS_KV) or {}
     if not s:
-        return "🧯 boşaltma radarı: henüz tur yok"
+        return "🧯 boşaltma radarı: henüz tur yok" + trk
     rej = s.get("rejected") or {}
     return (f"🧯 boşaltma radarı: {s.get('coins_vol', 0)} coinin hacmi biliniyor · aday {s.get('candidates', 0)}"
             f" · doğrulanan {s.get('probes', 0)} · bugün gönderilen {s.get('sent_day', 0)}"
@@ -456,7 +485,7 @@ async def diag_line(cfg) -> str:
                if rej else "")
             + (f" · ⚠️ kuyruktan atılan {s['dropped']}" if s.get("dropped") else "")
             + (f" · ⚠️ sorgu hatası {s['probe_err']}" if s.get("probe_err") else "")
-            + (f" · ⚠️ hata {s['errors']}" if s.get("errors") else ""))
+            + (f" · ⚠️ hata {s['errors']}" if s.get("errors") else "") + trk)
 
 
 def active_rows() -> list[tuple[str, dict]]:
