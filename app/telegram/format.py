@@ -4054,23 +4054,29 @@ def unwind_done(addr: str, ep: dict, positions: list[dict], t: int) -> str:
 # trk:uw1:<teklif> = yalnız X · trk:uwa:<teklif> = X + öteki ilk 10 · trk:uta:<takip> = öteki ilk 10'dan takipte
 # olmayanlar · trk:uto:<takip> = yalnız X kalsın (cüzdanın öteki 🧯 takipleri bırakılır)
 
-def unwind_follow_kb(offer_id: int, coin: str, n_others: int) -> dict:
-    """🧯 mesajının altı: [👣 Takip et: X] · [👣 Hepsini takip et (X + n)]."""
+def unwind_follow_kb(offer_id: int, coin: str, n_others: int, x_open: bool = True) -> dict | None:
+    """🧯 mesajının altı: [👣 Takip et: X] · [👣 Hepsini takip et (X + n)]. X bu mesajda tamamen kapandıysa
+    (`x_open` False) X tuşu yok, "hepsi" yalnız ötekiler."""
     sym = assets.label(coin)
-    rows = [[{"text": f"👣 Takip et: {sym}"[:40], "callback_data": f"{TRACK_CB}:uw1:{int(offer_id)}"}]]
+    rows = []
+    if x_open:
+        rows.append([{"text": f"👣 Takip et: {sym}"[:40], "callback_data": f"{TRACK_CB}:uw1:{int(offer_id)}"}])
     if n_others > 0:
-        rows.append([{"text": f"👣 Hepsini takip et ({sym} + {int(n_others)})"[:40],
+        rows.append([{"text": (f"👣 Hepsini takip et ({sym} + {int(n_others)})" if x_open
+                               else f"👣 Öteki {int(n_others)} pozisyonu takip et")[:40],
                       "callback_data": f"{TRACK_CB}:uwa:{int(offer_id)}"}])
-    return {"inline_keyboard": rows}
+    return {"inline_keyboard": rows} if rows else None
 
 
-def unwind_track_kb(tid: int, symbol: str, new: int, wake: bool = False, closed: bool = False,
+def unwind_track_kb(tid: int, symbol: str, new: int | None, wake: bool = False, closed: bool = False,
                     single: bool = True) -> dict | None:
     """Takip kanalındaki mesajın altı: soru satırı [👣 Hepsini takip et (+k)] · [🎯 Yalnız X], sonra 🛑 / ⏰ (tek
-    takipte). Kapanan pozisyonda yalnız "hepsini" (takipte olmayan öteki varsa)."""
+    takipte). Kapanan pozisyonda yalnız "hepsini" (takipte olmayan öteki varsa). `new` None = sayı bilinmiyor (liste
+    okunamadı / ↩️ geri al): tuş sayısız."""
     q = []
-    if new > 0:
-        q.append({"text": f"👣 Hepsini takip et (+{int(new)})", "callback_data": f"{TRACK_CB}:uta:{int(tid)}"})
+    if new is None or new > 0:
+        q.append({"text": "👣 Hepsini takip et" + (f" (+{int(new)})" if new else ""),
+                  "callback_data": f"{TRACK_CB}:uta:{int(tid)}"})
     if not closed:
         q.append({"text": f"🎯 Yalnız {symbol}"[:30], "callback_data": f"{TRACK_CB}:uto:{int(tid)}"})
     rows = [q] if q else []

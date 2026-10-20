@@ -2325,23 +2325,30 @@ bildirim gelen X için şu buton, bunlar için yeni chatid ayarlıcam railwayden
 başladık cüzdan şu falan diye". `app/radar/unwindtrack.py`.
 
 - **Tuşlar (🧯 ilk ve devam mesajının altında):** **👣 Takip et: X** (yalnız mesajdaki coin) · **👣 Hepsini takip et
-  (X + n)** (X + cüzdanın öteki açık pozisyonlarından ≥ $100K olan ilk 10, büyükten). Yalnız `UNWIND_TRACK_CHAT_ID`
-  tanımlıysa görünür; boşsa tuş da takip de yok (ana sohbete düşmez). Basınca toast gelir, haber takip kanalına gider:
-  "👣 TAKİBE BAŞLADIK — X LONG $42.8M (#N)", PROPR rozeti, cüzdan, ne zaman yazılacağı, öteki pozisyonlar, `/birak_N`.
+  (X + n)** (X + cüzdanın öteki açık pozisyonlarından ≥ $100K olan ilk 10, büyükten). X bu mesajda tamamen kapandıysa
+  X tuşu yok, ikinci tuş "👣 Öteki n pozisyonu takip et". Yalnız `UNWIND_TRACK_CHAT_ID` tanımlıysa görünür; boşsa tuş da
+  takip de yok (ana sohbete düşmez). Basınca sonuç toast olarak gelir (ör. "👣 GOOGL takibe alındı → takip kanalı",
+  "Yeni takip yok: GOOGL zaten takipte (#5, ana sohbette)"); açılan takibin haberi takip kanalına gider: "👣 TAKİBE
+  BAŞLADIK — X LONG $42.8M (#N)", PROPR rozeti, cüzdan, ne zaman yazılacağı, öteki pozisyonlar, `/birak_N`. Takip
+  kanalına yazılamazsa (bot grupta değil / id yanlış) takip açılmaz, basılan sohbete uyarı gider.
 - **Takip:** mevcut 👣 pozisyon takibi (adet üzerinden, `TRACK_POLL_SEC` 120 sn'de bir): toplamın her `TRACK_STEP_PCT`
   (%10) kapanışında / eklemesinde ✂️ / ➕, tam kapanışta 🚨🚪 (💀 likidasyon teyidiyle) ve yön değişiminde 🔁 — pozisyon
   kapanana kadar, hepsi takip kanalına. Liq fiyatı kayması notu bu takiplerde **yok** (istenen yalnız kapanış
   adımları; çapraz teminatta liq fiyatı sık oynar).
-- **Her mesajda:** cüzdanın öteki açık pozisyonları (≥ $100K, ilk 10, 24 sa hacme oranıyla; 👣 = takipte) ve soru
-  tuşları: **👣 Hepsini takip et (+k)** (takipte olmayan öteki ilk 10) · **🎯 Yalnız X** (cüzdanın öteki 🧯 takiplerini
-  bırakır, mesajın soru tuşlarını kaldırır) · 🛑 Takibi bırak · ⏰ Kapanırsa beni uyandır. Kapanış mesajında yalnız
-  "Hepsini takip et" (takipte olmayan öteki varsa).
-- Aynı cüzdan + coin zaten takipteyse (hangi yoldan açılmış olursa olsun) yeniden açılmaz; kanala "yeni takip yok:
-  X zaten takipte (#N)" yazılır. Tuşa sahip, kanal yöneticisi ya da botun kendi sohbetlerindeki üyeler basabilir.
+- **Başlangıç, adım (✂️ / ➕), 🔁 yön ve 🚨🚪 kapanış mesajlarında:** cüzdanın öteki açık pozisyonları (≥ $100K, ilk
+  10, 24 sa hacme oranıyla; 👣 = takipte) ve soru tuşları: **👣 Hepsini takip et (+k)** (takipte olmayan öteki ilk 10;
+  liste okunamadıysa sayısız) · **🎯 Yalnız X** (cüzdanın öteki 🧯 takiplerini bırakır — yalnız X'in takibi açıksa;
+  geri almak için "Hepsini takip et") · 🛑 Takibi bırak · ⏰ Kapanırsa beni uyandır. Kapanış mesajında yalnız "Hepsini
+  takip et"; çoklu başlangıç mesajında 🛑 / ⏰ yok (her takibin kendi adım mesajında var). 14 günlük "⏳ Takip sürüyor"
+  yoklamasında liste ve soru tuşları yok. Mesaj liste için en çok 8 sn bekler; aşılırsa listesiz gider.
+- Aynı cüzdan + coin zaten takipteyse (hangi yoldan açılmış olursa olsun) yeniden açılmaz; toast "zaten takipte (#N)"
+  der — başka yoldan açılmışsa (ör. ana sohbetten `/takip`) X'in haberleri o takibin sohbetine gider. Tuşa sahip,
+  kanal yöneticisi ya da botun kendi sohbetlerindeki üyeler basabilir. Takip bildirimleri (ayarlar: takip) kapalıysa
+  tuş takip açmaz.
 - `/takipler` bu takipleri de listeler; `/tani`'deki 🧯 satırında "👣 açık takip N".
 
 **Kör nokta, açıkça:** takip 120 sn'de bir bakar — iki bakış arasında %10'dan fazla kapanırsa tek mesajda toplu
-yazılır; öteki pozisyon listesi mesaj anındaki durumdur (adres başına 60 sn önbellek, ~11 istek); tuşa basıldığında
+yazılır; öteki pozisyon listesi mesaj anındaki durumdur (adres başına 15 sn önbellek, ~11 istek); tuşa basıldığında
 pozisyon kapanmışsa takip açılmaz.
 
 ## 🏓 Dar koridor (`RANGE_CHAT_ID`)

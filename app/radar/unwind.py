@@ -327,6 +327,8 @@ async def _follow_kb(cfg, addr: str, coin: str, v: dict) -> dict | None:
     from . import unwindtrack
     if not unwindtrack.chat(cfg):
         return None
+    if not (v.get("now") or v.get("flip")) and not v.get("others"):
+        return None                                     # X kapandı, öteki yok: takip edilecek bir şey yok
     try:
         async with db() as conn:
             cur = await conn.execute(
@@ -337,7 +339,8 @@ async def _follow_kb(cfg, addr: str, coin: str, v: dict) -> dict | None:
     except Exception:                                   # noqa: BLE001 — tuşsuz da mesaj gitsin
         log.debug("unwind takip teklifi yazılamadı", exc_info=True)
         return None
-    return fmt.unwind_follow_kb(oid, coin, min(len(v.get("others") or []), unwindtrack.TOP))
+    return fmt.unwind_follow_kb(oid, coin, min(len(v.get("others") or []), unwindtrack.TOP),
+                                x_open=bool(v.get("now")) or bool(v.get("flip")))
 
 
 def _left(book_entry: dict, pos: dict | None) -> float:

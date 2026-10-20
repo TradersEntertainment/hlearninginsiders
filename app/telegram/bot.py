@@ -715,6 +715,9 @@ class TelegramBot:
                    if any(str(b.get("callback_data") or "").startswith(f"{fmt.TRACK_CB}:ut") for b in row)]
             if ask:
                 kb = {"inline_keyboard": ask + kb["inline_keyboard"]}
+            elif act == "undo" and kind == "pos" and st.get("src") == "unwind":
+                # ↩️ 🧯 takibi: 🛑 soru satırını kaldırmıştı — geri gelsin (sayı bilinmiyor: "Hepsini" sayısız)
+                kb = fmt.unwind_track_kb(fid, st.get("symbol") or "", None, wake=bool(st.get("wake")))
         elif st and st.get("end_note") == trackctl.MANUAL:
             kb = fmt.undo_kb(kind, fid)
         else:
@@ -730,7 +733,8 @@ class TelegramBot:
 
     async def _unwind_track_callback(self, cq: dict, act: str, xid: int) -> None:
         """👣 🧯 boşaltma takibi (unwindtrack.py): uw1 / uwa = 🧯 mesajından (teklif id) X ya da X + öteki ilk 10;
-        uta = takip mesajından öteki ilk 10; uto = yalnız X kalsın. Haber UNWIND_TRACK_CHAT_ID'ye; basılan mesajda toast."""
+        uta = takip mesajından öteki ilk 10; uto = yalnız X kalsın. Açılan takibin mesajı UNWIND_TRACK_CHAT_ID'ye;
+        sonuç (yeni takip yok / hata dahil) basana toast. Sorgu 8 sn'yi aşarsa önce "başlatılıyor" toast'u, sonuç kanala."""
         from ..radar import unwindtrack
         cq_id = cq.get("id")
         msg = cq.get("message") or {}
@@ -739,6 +743,7 @@ class TelegramBot:
             await self._ack(cq_id, "Bu tuşu yalnız sahibi ya da kanal yöneticisi kullanabilir")
             return
         target = unwindtrack.chat(self.cfg)
+        res: dict = {"done": True, "text": None}
         if act == "uto":
             toast, _ = await unwindtrack.only(xid)
             await self._ack(cq_id, toast[:190])
@@ -746,18 +751,31 @@ class TelegramBot:
             if not target:
                 await self._ack(cq_id, "UNWIND_TRACK_CHAT_ID tanımsız — takip kanalı yok")
                 return
-            # önce toast (cüzdan sorgusu ~11 istek sürebilir); sonuç — "yeni takip yok" dahil — takip kanalına
-            await self._ack(cq_id, "👣 takip başlatılıyor → takip kanalı")
-            kb = None
-            if act == "uta":
-                toast, text = await unwindtrack.follow_rest(self.cfg, self.client, xid)
-            else:
-                toast, text, kb = await unwindtrack.from_offer(self.cfg, self.client, xid, all_=act == "uwa")
-            await self.send(text or fmt.esc(toast), target, reply_markup=kb if text else None)
-        # basılan takip mesajında soru satırı: "hepsi" bittiyse / "yalnız X" seçildiyse kalkar (🛑 / ⏰ kalır)
-        if act in ("uta", "uto") and msg.get("message_id") and chat.get("id") is not None:
+            job = asyncio.ensure_future(unwindtrack.follow_rest(self.cfg, self.client, xid) if act == "uta" else
+                                        unwindtrack.from_offer(self.cfg, self.client, xid, all_=act == "uwa"))
+            late = False
+            try:
+                res = await asyncio.wait_for(asyncio.shield(job), timeout=8)
+            except asyncio.TimeoutError:
+                late = True                                  # cüzdan sorgusu uzun: basan beklemesin
+                await self._ack(cq_id, "👣 takip başlatılıyor → sonuç takip kanalında")
+                res = await job
+            if not late:
+                await self._ack(cq_id, str(res.get("toast") or "")[:190])
+            if res.get("text"):
+                if not await self.send(res["text"], target, reply_markup=res.get("kb")):
+                    # takip kanalına yazılamıyor (bot grupta değil / id yanlış): takipler sessizce birikmesin
+                    await unwindtrack.drop(res.get("ids") or [], "takip kanalına yazılamadı")
+                    if chat.get("id") is not None:
+                        await self.send("⚠️ 👣 Takip kanalına yazılamadı — takip açılmadı. Bot UNWIND_TRACK_CHAT_ID"
+                                        " grubunda admin mi, id doğru mu?", str(chat["id"]))
+                    return
+            elif late and res.get("toast"):
+                await self.send(fmt.esc(res["toast"]), target)       # geç sonuç: toast'u göremedi
+        # basılan takip mesajı: "Hepsini" yalnız başarıyla tamamlanınca kalkar; "Yalnız X" basılınca kendisi kalkar
+        if res.get("done") and act in ("uta", "uto") and msg.get("message_id") and chat.get("id") is not None:
             rows = (msg.get("reply_markup") or {}).get("inline_keyboard") or []
-            drop = f"{fmt.TRACK_CB}:ut" if act == "uto" else f"{fmt.TRACK_CB}:uta:"
+            drop = f"{fmt.TRACK_CB}:{act}:"
             keep = [[b for b in row if not str(b.get("callback_data") or "").startswith(drop)] for row in rows]
             keep = [row for row in keep if row]
             if keep != rows:
@@ -1766,12 +1784,13 @@ class TelegramBot:
         if offer.get("kind") == "unwind":
             # 🧯 boşaltma teklifi elle /takip_N yazıldıysa: tuşla aynı yol (haber UNWIND_TRACK_CHAT_ID'ye)
             from ..radar import unwindtrack
-            toast, text, kb = await unwindtrack.from_offer(self.cfg, self.client, offer_id, all_=False)
+            res = await unwindtrack.from_offer(self.cfg, self.client, offer_id, all_=False)
             target = unwindtrack.chat(self.cfg)
-            if text and target:
-                await self.send(text, target, reply_markup=kb)
-            if not (text and target == chat_id):
-                await self.send(fmt.esc(toast), chat_id)
+            if res["text"] and target and not await self.send(res["text"], target, reply_markup=res["kb"]):
+                await unwindtrack.drop(res["ids"], "takip kanalına yazılamadı")
+                res["toast"] = "⚠️ Takip kanalına yazılamadı — takip açılmadı (bot grupta admin mi, id doğru mu?)"
+            if not (res["text"] and target == chat_id):
+                await self.send(fmt.esc(res["toast"]), chat_id)
             return
         async with db() as conn:
             cur = await conn.execute(

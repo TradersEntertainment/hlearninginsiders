@@ -318,7 +318,9 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
         return              # tur başında okundu, bu arada 🛑 tuş / komutla bırakıldı → bayat mesaj yok
     kb = fmt.stop_kb("pos", t["id"], wake=bool(t.get("wake")))
     # 🧯 boşaltma tuşundan açılan takip (unwindtrack.py): mesajlara cüzdanın öteki pozisyonları + soru tuşları
-    uw = (t.get("src") or "") == "unwind"
+    # (takip bildirimleri kapalıysa liste sorgusu da yok — mesaj zaten gitmez)
+    from ..notify import kind_enabled
+    uw = (t.get("src") or "") == "unwind" and kind_enabled(cfg, "track")
 
     async def _uw(text: str, closed: bool = False) -> tuple[str, dict | None]:
         from . import unwindtrack

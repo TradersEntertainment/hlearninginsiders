@@ -16,10 +16,17 @@ Kararlar:
     10; 👣 = takipte) ve soru tuşları: [👣 Hepsini takip et (+k)] · [🎯 Yalnız X] (cüzdanın öteki 🧯 takiplerini
     bırakır, mesajın soru tuşlarını kaldırır).
   • "Hepsi" = X + öteki ilk 10 (≥ $100K). Aynı cüzdan + coin zaten takipteyse (hangi yoldan olursa olsun) yeniden açılmaz.
-  • Cüzdan sorgusu (bütün dex'ler, ~11 istek) adres başına 60 sn önbellekli: aynı dalgadaki birden çok adım tek sorgu.
+  • Cüzdan sorgusu (bütün dex'ler, ~11 istek) adres başına 15 sn önbellekli: aynı turdaki birden çok adım tek sorgu.
+    Takip mesajı liste için en çok EXTRAS_TIMEOUT (8 sn) bekler; aşılırsa liste olmadan gider (kapanış geç kalmasın).
+  • Takip bildirimleri (notify_track) kapalıysa tuş takip açmaz (yoksa ilk mesajdan sonra kanal sessiz kalırdı).
+
+İnceleme (20.10, yeniden üretildi): sorgu düşünce "Hepsini" tuşu yine kalkıyordu ("tekrar dene" denip tuş yok);
+"Yalnız X", X kapanmış / bırakılmışken öteki takipleri bırakıp "X takipte" diyordu; X tamamen satılmışken de "Takip et: X"
+çıkıyordu; ↩️ geri alınca soru satırı dönmüyordu; takip kanalına yazılamazsa takipler sessizce birikiyordu.
 
 Kör nokta, açıkça: takip TRACK_POLL_SEC'de (120 sn) bir bakar — iki bakış arasında %10'dan fazla kapanırsa tek mesajda
-toplu yazılır; öteki pozisyon listesi mesaj anındaki durumdur (60 sn önbellek).
+toplu yazılır; öteki pozisyon listesi mesaj anındaki durumdur (15 sn önbellek); X zaten başka yoldan takipteyse (ör. ana
+sohbetten /takip) haberleri o takibin sohbetine gider.
 """
 from __future__ import annotations
 
@@ -31,7 +38,9 @@ from ..db import db
 log = logging.getLogger("radar.unwindtrack")
 
 TOP = 10                       # listelenen / "hepsi"ne giren öteki pozisyon sayısı
-CACHE_SEC = 60                 # cüzdan sorgusu önbelleği (adres başına)
+CACHE_SEC = 15                 # cüzdan sorgusu önbelleği (adres başına): aynı turdaki adımlar tek sorgu; tuştan sonraki
+                               # tur bayat liste görmesin (inceleme 20.10)
+EXTRAS_TIMEOUT = 8.0           # takip mesajı liste için en çok bu kadar bekler (kapanış / yön kritik: geç kalmasın)
 _CACHE: dict[str, tuple[float, dict]] = {}
 
 
@@ -79,30 +88,34 @@ def live_of(states: dict, coin: str) -> dict | None:
     return parse_position(states.get(_key(_dex_of(coin))), coin)
 
 
-async def tracked(addr: str) -> dict[str, int]:
-    """Cüzdanın AÇIK takipleri (her kaynaktan): coin → takip id."""
+async def tracked(addr: str, full: bool = False) -> dict:
+    """Cüzdanın AÇIK takipleri (her kaynaktan): coin → takip id (`full`: coin → satır)."""
     async with db() as conn:
-        cur = await conn.execute("SELECT id, coin FROM trackers WHERE active=1 AND address=?", (addr,))
-        return {r["coin"]: int(r["id"]) for r in await cur.fetchall()}
+        cur = await conn.execute("SELECT id, coin, chat_id FROM trackers WHERE active=1 AND address=?", (addr,))
+        rows = [dict(r) for r in await cur.fetchall()]
+    return {r["coin"]: r for r in rows} if full else {r["coin"]: int(r["id"]) for r in rows}
 
 
 async def follow(cfg, addr: str, coins: list[str], states: dict) -> tuple[list[dict], list[str]]:
     """Sırayla: canlı pozisyon varsa ve takipte değilse 👣 takip aç (kanal UNWIND_TRACK_CHAT_ID, src='unwind')."""
     from .. import assets
     from .tracker import start_tracker
-    have = await tracked(addr)
+    have = await tracked(addr, full=True)
     started, notes = [], []
+    tchat = chat(cfg)
     for c in coins:
         sym = assets.label(c)
         if c in have:
-            notes.append(f"{sym} zaten takipte (#{have[c]})")
+            hc = (have[c].get("chat_id") or "").strip()
+            where = "" if hc == tchat else (", ana sohbette" if not hc else ", başka kanalda")
+            notes.append(f"{sym} zaten takipte (#{have[c]['id']}{where})")
             continue
         live = live_of(states, c)
         if not live:
             notes.append(f"{sym} kapanmış")
             continue
-        tid = await start_tracker(cfg, addr, c, sym, live, chat_id=chat(cfg), src="unwind")
-        have[c] = tid
+        tid = await start_tracker(cfg, addr, c, sym, live, chat_id=tchat, src="unwind")
+        have[c] = {"id": tid, "chat_id": tchat}
         started.append({"id": tid, "coin": c, "symbol": sym, "live": live})
     return started, notes
 
@@ -130,39 +143,43 @@ async def extras(cfg, client, t: dict, closed: bool = False) -> tuple[str, dict 
     """Takip mesajının eki (tracker._check_one, src='unwind'): öteki pozisyonlar + tuşlar. Sorgu düşerse liste yok,
     yalnız takip tuşları (mesaj gecikmez)."""
     from ..telegram import format as fmt
+    import asyncio
     try:
-        pos = positions(await wallet(cfg, client, t["address"]))
+        pos = positions(await asyncio.wait_for(wallet(cfg, client, t["address"]), EXTRAS_TIMEOUT))
         txt, new = await block(cfg, t["address"], t["coin"], pos)
-    except Exception:                                       # noqa: BLE001
+    except Exception:                                       # noqa: BLE001 — zaman aşımı dahil: liste yok, mesaj gider
         log.debug("boşaltma takibi: öteki pozisyonlar okunamadı %s", t.get("address"), exc_info=True)
-        txt, new = "", 0
+        txt, new = "", None                                 # sayı bilinmiyor: "Hepsini takip et" sayısız
     kb = fmt.unwind_track_kb(int(t["id"]), t.get("symbol") or "", new, wake=bool(t.get("wake")), closed=closed)
     return txt, kb
 
 
-async def from_offer(cfg, client, offer_id: int, all_: bool) -> tuple[str, str | None, dict | None]:
-    """🧯 mesajındaki tuş. Dönüş: (toast, takip kanalına metin | None, klavye)."""
+async def from_offer(cfg, client, offer_id: int, all_: bool) -> dict:
+    """🧯 mesajındaki tuş. Dönüş: {toast, text (takip kanalına | None), kb, ids (açılan takipler)}."""
+    from .. import assets
+    from ..notify import kind_enabled
     from ..telegram import format as fmt
+    out = {"toast": "", "text": None, "kb": None, "ids": []}
     if not chat(cfg):
-        return "UNWIND_TRACK_CHAT_ID tanımsız — takip kanalı yok", None, None
+        return {**out, "toast": "UNWIND_TRACK_CHAT_ID tanımsız — takip kanalı yok"}
+    if not kind_enabled(cfg, "track"):
+        return {**out, "toast": "👣 Takip bildirimleri kapalı (ayarlar: takip) — takip açılmadı"}
     async with db() as conn:
         cur = await conn.execute("SELECT * FROM track_offers WHERE id=? AND kind='unwind'", (int(offer_id),))
         row = await cur.fetchone()
     if not row:
-        return "Takip teklifi bulunamadı (14 günden eskiyse silinir)", None, None
+        return {**out, "toast": "Takip teklifi bulunamadı (14 günden eskiyse silinir)"}
     addr, coin = row["address"], row["coin"]
     try:
         states = await wallet(cfg, client, addr, fresh=True)
     except Exception as e:                                  # noqa: BLE001
-        return f"Pozisyon okunamadı, tekrar dene ({type(e).__name__})", None, None
+        return {**out, "toast": f"Pozisyon okunamadı, tekrar dene ({type(e).__name__})"}
     pos = positions(states)
     coins = [coin] + ([p["coin"] for p in others(cfg, pos, coin)[:TOP]] if all_ else [])
     started, notes = await follow(cfg, addr, coins, states)
     if not started:
-        return "👣 Yeni takip yok: " + " · ".join(notes), None, None
-    from .. import assets
+        return {**out, "toast": "👣 Yeni takip yok: " + " · ".join(notes)}
     txt, new = await block(cfg, addr, coin, pos)
-    text = fmt.unwind_track_started(addr, started, notes, txt, cfg)
     xt = (await tracked(addr)).get(coin)                # "Yalnız X" = mesajdaki coin (önceden takipte olsa da)
     if xt:
         kb = fmt.unwind_track_kb(xt, assets.label(coin), new, single=len(started) == 1 and started[0]["id"] == xt)
@@ -170,44 +187,66 @@ async def from_offer(cfg, client, offer_id: int, all_: bool) -> tuple[str, str |
         kb = fmt.unwind_track_kb(started[0]["id"], started[0]["symbol"], new, closed=True)
     toast = (f"👣 {started[0]['symbol']} takibe alındı" if len(started) == 1
              else f"👣 {len(started)} pozisyon takibe alındı") + " → takip kanalı"
-    return toast, text, kb
+    return {"toast": toast, "text": fmt.unwind_track_started(addr, started, notes, txt, cfg), "kb": kb,
+            "ids": [s["id"] for s in started]}
 
 
-async def follow_rest(cfg, client, tid: int) -> tuple[str, str | None]:
-    """[👣 Hepsini takip et] (takip mesajında): aynı cüzdanın öteki ilk 10'undan takipte olmayanlar."""
+async def follow_rest(cfg, client, tid: int) -> dict:
+    """[👣 Hepsini takip et] (takip mesajında): aynı cüzdanın öteki ilk 10'undan takipte olmayanlar.
+    Dönüş: {toast, text, ids, done}; cüzdan sorgusu düşerse done=False → tuş kalır, yeniden basılır."""
+    from ..notify import kind_enabled
     from ..telegram import format as fmt
+    out = {"toast": "", "text": None, "kb": None, "ids": [], "done": False}
     if not chat(cfg):
-        return "UNWIND_TRACK_CHAT_ID tanımsız — takip kanalı yok", None
+        return {**out, "toast": "UNWIND_TRACK_CHAT_ID tanımsız — takip kanalı yok"}
+    if not kind_enabled(cfg, "track"):
+        return {**out, "toast": "👣 Takip bildirimleri kapalı (ayarlar: takip) — takip açılmadı"}
     async with db() as conn:
         cur = await conn.execute("SELECT * FROM trackers WHERE id=?", (int(tid),))
         row = await cur.fetchone()
     if not row:
-        return f"Takip #{tid} bulunamadı", None
+        return {**out, "toast": f"Takip #{tid} bulunamadı", "done": True}
     addr, coin = row["address"], row["coin"]
     try:
         states = await wallet(cfg, client, addr, fresh=True)
     except Exception as e:                                  # noqa: BLE001
-        return f"Pozisyon okunamadı, tekrar dene ({type(e).__name__})", None
+        return {**out, "toast": f"Pozisyon okunamadı, tekrar dene ({type(e).__name__})"}
     pos = positions(states)
     started, notes = await follow(cfg, addr, [p["coin"] for p in others(cfg, pos, coin)[:TOP]], states)
     if not started:
-        return "👣 Yeni takip yok" + (": " + " · ".join(notes) if notes else " (öteki pozisyon kalmadı)"), None
+        return {**out, "done": True,
+                "toast": "👣 Yeni takip yok" + (": " + " · ".join(notes) if notes else " (öteki pozisyon kalmadı)")}
     txt, _ = await block(cfg, addr, coin, pos)
-    return f"👣 {len(started)} pozisyon daha takibe alındı", fmt.unwind_track_started(addr, started, notes, txt, cfg)
+    return {**out, "done": True, "toast": f"👣 {len(started)} pozisyon daha takibe alındı",
+            "text": fmt.unwind_track_started(addr, started, notes, txt, cfg), "ids": [s["id"] for s in started]}
 
 
 async def only(tid: int) -> tuple[str, int]:
-    """[🎯 Yalnız X]: aynı cüzdanın öteki AÇIK 🧯 takiplerini elle bırak. Dönüş: (toast, bırakılan sayı)."""
+    """[🎯 Yalnız X]: aynı cüzdanın öteki AÇIK 🧯 takiplerini elle bırak — yalnız X'in takibi hâlâ açıksa (X kapanmış /
+    bırakılmışken öteki takipleri bırakmak cüzdanı tümden takipsiz bırakırdı). Dönüş: (toast, bırakılan sayı)."""
     from .trackctl import MANUAL
     async with db() as conn:
-        cur = await conn.execute("SELECT address, symbol FROM trackers WHERE id=?", (int(tid),))
+        cur = await conn.execute("SELECT address, symbol, active, end_note FROM trackers WHERE id=?", (int(tid),))
         row = await cur.fetchone()
         if not row:
             return f"Takip #{tid} bulunamadı", 0
+        if not row["active"]:
+            return (f"{row['symbol']} takibi açık değil ({row['end_note'] or 'bitti'}) — öteki takipler"
+                    " bırakılmadı"), 0
         cur = await conn.execute("UPDATE trackers SET active=0, end_note=? WHERE active=1 AND address=? AND id!=?"
                                  " AND src='unwind'", (MANUAL, row["address"], int(tid)))
         n = int(cur.rowcount or 0)
-    return (f"🎯 Yalnız {row['symbol']} takipte" + (f" · {n} takip bırakıldı (/takipler)" if n else "")), n
+    return (f"🎯 Yalnız {row['symbol']} takipte" + (f" · {n} takip bırakıldı (geri almak: 👣 Hepsini takip et)"
+                                                       if n else "")), n
+
+
+async def drop(ids: list[int], why: str) -> None:
+    """Takip kanalına yazılamadı: az önce açılan takipleri kapat (yoksa her turda boşa sorgu + gönderim)."""
+    if not ids:
+        return
+    async with db() as conn:
+        await conn.execute(f"UPDATE trackers SET active=0, end_note=? WHERE id IN ({','.join('?' * len(ids))})",
+                           (why, *[int(i) for i in ids]))
 
 
 async def open_count() -> int:

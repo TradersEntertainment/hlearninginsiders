@@ -15,8 +15,8 @@ Pinlenenler:
     basış yeni takip açmaz; kapanmış pozisyon açılmaz; başlangıç mesajının ilk satırları (ne · PROPR · kim · ne zaman)
   • takip turu: %10 adımda mesaj takip kanalına + öteki pozisyon listesi (👣 = takipte) + soru tuşları + 🛑; liq kayması
     notu yok; kapanışta yalnız "hepsini takip et"; sıradan takip değişmedi (liste yok, liq notu var)
-  • callback: uwa (🧯 kanalında) → toast + takip kanalına mesaj; uto → öteki 🧯 takipleri bırakır, soru satırı kalkar;
-    uta → kalanlar; ⏰ basılınca soru satırı korunur (🛑'de yalnız ↩️); yetkisiz ret; kanal tanımsızsa ret
+  • callback: uwa (🧯 kanalında) → sonuç toast'u + takip kanalına mesaj; uto → öteki 🧯 takipleri bırakır, yalnız "Yalnız"
+    tuşu kalkar; uta → kalanlar ("yeni takip yok" yalnız toast); ⏰ / ↩️'de soru satırı; yetkisiz ret; kanal tanımsızsa ret
   • kablolama: env-only, _own_chats, README + .env, /tani satırı, /takip_N ile aynı yol, ölçülü dil
 """
 import asyncio
@@ -153,7 +153,8 @@ def test_from_offer_single_all_dup():
         cfg = _cfg()
         cli = _Cli(_book())
         oid = await _offer()
-        toast, text, kb = await ut.from_offer(cfg, cli, oid, all_=False)
+        r = await ut.from_offer(cfg, cli, oid, all_=False)
+        toast, text, kb = r["toast"], r["text"], r["kb"]
         ts = await _trackers()
         assert toast == "👣 GOOGL takibe alındı → takip kanalı" and len(ts) == 1
         t = ts[0]
@@ -170,10 +171,12 @@ def test_from_offer_single_all_dup():
                             f"trk:wake:pos:{t['id']}"], _cbs(kb)
         assert kb["inline_keyboard"][0][0]["text"] == "👣 Hepsini takip et (+10)"
         # ikinci basış: yeni takip yok
-        toast2, text2, _ = await ut.from_offer(cfg, cli, oid, all_=False)
+        r2 = await ut.from_offer(cfg, cli, oid, all_=False)
+        toast2, text2 = r2["toast"], r2["text"]
         assert text2 is None and toast2 == f"👣 Yeni takip yok: GOOGL zaten takipte (#{t['id']})"
         # hepsi: X zaten takipte → öteki ilk 10 (küçük DOGE ve 11. sıradaki yok)
-        toast3, text3, kb3 = await ut.from_offer(cfg, cli, oid, all_=True)
+        r3 = await ut.from_offer(cfg, cli, oid, all_=True)
+        toast3, text3, kb3 = r3["toast"], r3["text"], r3["kb"]
         ts = await _trackers()
         assert len(ts) == 11 and toast3 == "👣 10 pozisyon takibe alındı → takip kanalı", toast3
         coins = {x["coin"] for x in ts}
@@ -188,11 +191,15 @@ def test_from_offer_single_all_dup():
         oid2 = await _offer("xyz:AMZN")
         async with dbm.db() as c:
             await c.execute("UPDATE trackers SET active=0 WHERE coin='xyz:AMZN'")
-        toast4, text4, _ = await ut.from_offer(cfg, cli, oid2, all_=False)
+        r4 = await ut.from_offer(cfg, cli, oid2, all_=False)
+        toast4, text4 = r4["toast"], r4["text"]
         assert text4 is None and toast4 == "👣 Yeni takip yok: AMZN kapanmış"
         # kanal tanımsız
         cfg.unwind_track_chat_id = ""
-        assert (await ut.from_offer(cfg, cli, oid, all_=False))[0].startswith("UNWIND_TRACK_CHAT_ID tanımsız")
+        assert (await ut.from_offer(cfg, cli, oid, all_=False))["toast"].startswith("UNWIND_TRACK_CHAT_ID tanımsız")
+        # takip bildirimleri kapalı: takip açılmaz (ilk mesajdan sonra kanal sessiz kalırdı)
+        cfg.unwind_track_chat_id, cfg.notify_track = TRK, False
+        assert (await ut.from_offer(cfg, cli, oid, all_=True))["toast"].startswith("👣 Takip bildirimleri kapalı")
         from tests.test_wording import hits
         for m in (text, text3):
             assert not hits(m), hits(m)
@@ -205,7 +212,7 @@ def test_tracker_step_list_and_no_liq():
         await _fresh()
         cfg = _cfg()
         cli = _Cli(_book())
-        _, _, _ = await ut.from_offer(cfg, cli, await _offer(), all_=False)
+        await ut.from_offer(cfg, cli, await _offer(), all_=False)
         t = (await _trackers())[0]
         live = await tr.live_position(cli, A, "BTC")
         plain = await tr.start_tracker(cfg, A, "BTC", "BTC", live, chat_id="")          # sıradan takip
@@ -293,7 +300,7 @@ def test_callbacks():
         calls.clear()
         await bot._handle_update(_cq(f"trk:uwa:{oid}", int(UW), "channel", 7))
         ts = await _trackers()
-        assert toasts() == ["👣 takip başlatılıyor → takip kanalı"] and len(ts) == 11
+        assert toasts() == ["👣 11 pozisyon takibe alındı → takip kanalı"] and len(ts) == 11
         s = sends()
         assert len(s) == 1 and str(s[0]["chat_id"]) == TRK and "TAKİBE BAŞLADIK</b> — 11 pozisyon" in s[0]["text"]
         g = ts[0]
@@ -306,30 +313,125 @@ def test_callbacks():
                                                     f"trk:stop:pos:{g['id']}", f"trk:nowake:pos:{g['id']}"], e
         calls.clear()
         await bot._handle_update(_cq(f"trk:stop:pos:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
-        assert _cbs(edits()[0]["reply_markup"]) == [f"trk:undo:pos:{g['id']}"]
-        await bot._handle_update(_cq(f"trk:undo:pos:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
-        # 🎯 yalnız GOOGL: öteki 10 🧯 takibi bırakılır, soru satırı kalkar, 🛑 kalır
+        ukb = edits()[0]["reply_markup"]
+        assert _cbs(ukb) == [f"trk:undo:pos:{g['id']}"]
+        # ↩️ (Telegram o anki klavyeyi yollar: yalnız geri al) → soru satırı geri gelir, "Hepsini" sayısız
+        calls.clear()
+        await bot._handle_update(_cq(f"trk:undo:pos:{g['id']}", int(TRK), "supergroup", 7, kb=ukb))
+        rk = edits()[0]["reply_markup"]
+        assert _cbs(rk) == [f"trk:uta:{g['id']}", f"trk:uto:{g['id']}", f"trk:stop:pos:{g['id']}",
+                            f"trk:nowake:pos:{g['id']}"] and rk["inline_keyboard"][0][0]["text"] == "👣 Hepsini takip et"
+        # 🎯 yalnız GOOGL: öteki 10 🧯 takibi bırakılır, yalnız "Yalnız" tuşu kalkar ("Hepsini" geri alma yolu)
         calls.clear()
         await bot._handle_update(_cq(f"trk:uto:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
         act = [x for x in await _trackers() if x["active"]]
         assert [x["id"] for x in act] == [g["id"]], act
-        assert toasts() == ["🎯 Yalnız GOOGL takipte · 10 takip bırakıldı (/takipler)"]
-        assert _cbs(edits()[0]["reply_markup"]) == [f"trk:stop:pos:{g['id']}", f"trk:wake:pos:{g['id']}"]
-        # 👣 hepsini (takip mesajından): kalanlar yeniden açılır, "hepsi" tuşu kalkar
+        assert toasts() == ["🎯 Yalnız GOOGL takipte · 10 takip bırakıldı (geri almak: 👣 Hepsini takip et)"]
+        assert _cbs(edits()[0]["reply_markup"]) == [f"trk:uta:{g['id']}", f"trk:stop:pos:{g['id']}",
+                                                    f"trk:wake:pos:{g['id']}"]
+        # 👣 hepsini (takip mesajından): kalanlar yeniden açılır, "hepsi" tuşu kalkar; toast sonucu söyler
         calls.clear()
         await bot._handle_update(_cq(f"trk:uta:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
         assert len([x for x in await _trackers() if x["active"]]) == 11
+        assert toasts() == ["👣 10 pozisyon daha takibe alındı"]
         assert "10 pozisyon" in sends()[0]["text"] and _cbs(edits()[0]["reply_markup"])[0] == f"trk:uto:{g['id']}"
+        # ikinci basış: "yeni takip yok" yalnız toast (kanala gürültü yok)
         calls.clear()
         await bot._handle_update(_cq(f"trk:uta:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
-        assert sends()[0]["text"].startswith("👣 Yeni takip yok")
+        assert toasts()[0].startswith("👣 Yeni takip yok") and not sends()
         # takip kanalı tanımsız: ret
         cfg.unwind_track_chat_id = ""
         calls.clear()
         await bot._handle_update(_cq(f"trk:uw1:{oid}", int(UW), "channel", 7))
         assert toasts() == ["UNWIND_TRACK_CHAT_ID tanımsız — takip kanalı yok"] and not sends()
     asyncio.run(run())
-    print("✅ callback) hepsi → takip kanalı; 🛑'de soru satırı korunur; yalnız X öteki 🧯 takipleri bırakır; yetki")
+    print("✅ callback) hepsi → takip kanalı; ⏰ / ↩️'de soru satırı; yalnız X öteki 🧯 takipleri bırakır; yetki")
+
+
+def test_review_fixes():
+    """İnceleme (20.10, yeniden üretildi): (1) sorgu düşünce "Hepsini" tuşu kalkıyordu; (2) "Yalnız X", X kapanmış /
+    bırakılmışken öteki takipleri bırakıyordu; (3) X tamamen satılmışken "Takip et: X" çıkıyordu; (4) takip kanalına
+    yazılamazsa takipler sessizce birikiyordu; (5) 🔁 yön değişimi yolu sınanmamıştı; (6) liste sorgusu takılırsa
+    kritik kapanış mesajı bekliyordu."""
+    async def run():
+        await _fresh()
+        cfg = _cfg()
+
+        class Flaky(_Cli):
+            fail = False
+
+            async def clearinghouse_all(self, user, dexes):
+                if self.fail:
+                    raise RuntimeError("HL info clearinghouseState HTTP 429")
+                return await super().clearinghouse_all(user, dexes)
+        cli = Flaky(_book())
+        bot, calls = _bot(cfg, cli, status={7: "creator"})
+        toasts = lambda: [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]       # noqa: E731
+        edits = lambda: [p for m, p in calls if m == "editMessageReplyMarkup"]                     # noqa: E731
+        g = (await ut.follow(cfg, A, ["xyz:GOOGL"], _book()))[0][0]
+        kb = fmt.unwind_track_kb(g["id"], "GOOGL", 10)
+        # (1) sorgu düştü: toast "tekrar dene", tuş yerinde; düzelince ikinci basış açar
+        cli.fail = True
+        await bot._handle_update(_cq(f"trk:uta:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
+        assert toasts() == ["Pozisyon okunamadı, tekrar dene (RuntimeError)"] and not edits()
+        calls.clear()
+        cli.fail = False
+        await bot._handle_update(_cq(f"trk:uta:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
+        assert len([x for x in await _trackers() if x["active"]]) == 11
+        assert edits() and not any(c.startswith("trk:uta:") for c in _cbs(edits()[0]["reply_markup"]))
+        # (2) X kapanmış: "Yalnız X" öteki takipleri BIRAKMAZ
+        async with dbm.db() as c:
+            await c.execute("UPDATE trackers SET active=0, end_note='kapandı' WHERE id=?", (g["id"],))
+        calls.clear()
+        await bot._handle_update(_cq(f"trk:uto:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
+        assert toasts() == ["GOOGL takibi açık değil (kapandı) — öteki takipler bırakılmadı"]
+        assert len([x for x in await _trackers() if x["active"]]) == 10
+        # (3) 🧯 mesajında X kapandıysa X tuşu yok, "hepsi" yalnız ötekiler; öteki de yoksa tuş yok
+        k3 = fmt.unwind_follow_kb(5, "xyz:GOOGL", 4, x_open=False)
+        assert _cbs(k3) == ["trk:uwa:5"] and k3["inline_keyboard"][0][0]["text"] == "👣 Öteki 4 pozisyonu takip et"
+        assert fmt.unwind_follow_kb(5, "xyz:GOOGL", 0, x_open=False) is None
+        assert await u._follow_kb(cfg, A, "xyz:GOOGL", {"now": 0, "flip": None, "others": []}) is None
+        # (4) takip kanalına yazılamıyor: açılan takipler kapanır, basılan sohbete uyarı
+        await _fresh()
+        bot, calls = _bot(cfg, _Cli(_book()), status={7: "creator"})
+
+        async def bad_send(text, chat_id=None, reply_markup=None):
+            calls.append(("sendMessage", {"chat_id": chat_id, "text": text}))
+            return str(chat_id) != TRK
+        bot.send = bad_send
+        await bot._handle_update(_cq(f"trk:uwa:{await _offer()}", int(UW), "channel", 7))
+        assert not [x for x in await _trackers() if x["active"]]
+        assert {x["end_note"] for x in await _trackers()} == {"takip kanalına yazılamadı"}
+        warn = [p for m, p in calls if m == "sendMessage" and str(p["chat_id"]) == UW]
+        assert warn and warn[0]["text"].startswith("⚠️ 👣 Takip kanalına yazılamadı")
+        # (5) 🔁 yön değişimi: takip kanalına, öteki liste + soru tuşları
+        await _fresh()
+        cli = _Cli(_book())
+        r = await ut.from_offer(cfg, cli, await _offer(), all_=False)
+        t = (await _trackers())[0]
+        cli.states = _book(googl=-9000)
+        ut._CACHE.clear()
+        n = _N()
+        await tr._check_one(cfg, cli, n, t, dbm.now())
+        assert len(n.sent) == 1 and n.sent[0][1].startswith("🚨🔁 <b>BALİNA YÖN DEĞİŞTİRDİ</b> — GOOGL")
+        assert n.sent[0][2]["chat_id"] == TRK and "Öteki açık pozisyonları (11" in n.sent[0][1]
+        assert _cbs(n.sent[0][2]["reply_markup"])[:2] == [f"trk:uta:{t['id']}", f"trk:uto:{t['id']}"] and r["ids"]
+        # (6) liste sorgusu takılırsa mesaj beklemeden (listesiz, "Hepsini" sayısız) gider
+        class Slow(_Cli):
+            async def clearinghouse_all(self, user, dexes):
+                await asyncio.sleep(5)
+                return self.states
+        old = ut.EXTRAS_TIMEOUT
+        ut.EXTRAS_TIMEOUT = 0.2
+        try:
+            ut._CACHE.clear()
+            txt, k6 = await ut.extras(cfg, Slow(_book()), t)
+        finally:
+            ut.EXTRAS_TIMEOUT = old
+        assert txt == "" and k6["inline_keyboard"][0][0]["text"] == "👣 Hepsini takip et"
+    asyncio.run(run())
+    print("✅ inceleme) sorgu düşünce tuş kalır; kapanmış X'te 'yalnız' bırakmaz; kapanmış X tuşsuz; kanal yoksa geri"
+          " alınır; 🔁 yolu; liste takılırsa mesaj beklemez")
 
 
 def test_wiring():
@@ -364,4 +466,5 @@ if __name__ == "__main__":
     test_from_offer_single_all_dup()
     test_tracker_step_list_and_no_liq()
     test_callbacks()
+    test_review_fixes()
     test_wiring()

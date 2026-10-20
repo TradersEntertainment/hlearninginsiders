@@ -28,7 +28,7 @@ async def state(kind: str, fid: int) -> dict | None:
         return None
     async with db() as conn:
         if kind == "pos":
-            cur = await conn.execute("SELECT id, active, end_note, symbol, coin, address, wake FROM trackers"
+            cur = await conn.execute("SELECT id, active, end_note, symbol, coin, address, wake, src FROM trackers"
                                      " WHERE id=?", (int(fid),))
         elif kind == "wall":
             cur = await conn.execute(
