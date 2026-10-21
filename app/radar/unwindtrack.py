@@ -266,36 +266,65 @@ async def _open_ids(addr: str) -> list[int]:
 BULK_KV = "unwind_bulk:"
 
 
-async def stop_all(tid: int) -> tuple[str, list[int]]:
-    """[🛑 Hepsini bırak]: cüzdanın açık bütün 🧯 takiplerini elle bırak; geri alma için kimlikler kv'de."""
-    from ..db import kv_set, now
-    from .trackctl import MANUAL
+def _bulk_key(tid: int, where: str = "") -> str:
+    """Geri al listesi MESAJ başına (sohbet:mesaj): aynı takip id'li iki mesajın (başlangıç + 👣 Hepsini takip et)
+    🛑'leri birbirinin listesini ezmesin (inceleme 20.10)."""
+    return BULK_KV + (f"{where}:" if where else "") + str(int(tid))
+
+
+async def _addr_of(tid: int) -> str | None:
     async with db() as conn:
         cur = await conn.execute("SELECT address FROM trackers WHERE id=?", (int(tid),))
         row = await cur.fetchone()
-    if not row:
+    return row["address"] if row else None
+
+
+async def stop_all(tid: int, where: str = "", ask: list | None = None) -> tuple[str, list[int]]:
+    """[🛑 Hepsini bırak]: cüzdanın açık bütün 🧯 takiplerini elle bırak; geri alma için kimlikler (+ mesajın soru satırı)
+    kv'de. Tek koşullu UPDATE (active=1): bu arada kapanan takip "elle bırakıldı" olup ↩️'de yeniden açılmasın."""
+    from ..db import kv_set, now
+    from .trackctl import MANUAL
+    addr = await _addr_of(tid)
+    if not addr:
         return f"Takip #{tid} bulunamadı", []
-    ids = await _open_ids(row["address"])
+    async with db() as conn:
+        cur = await conn.execute("UPDATE trackers SET active=0, end_note=? WHERE active=1 AND address=? AND src='unwind'"
+                                 " RETURNING id", (MANUAL, addr))
+        ids = [int(r[0]) for r in await cur.fetchall()]
     if not ids:
         return "Açık takip yok — hepsi zaten bitmiş", []
-    async with db() as conn:
-        await conn.execute(f"UPDATE trackers SET active=0, end_note=? WHERE id IN ({','.join('?' * len(ids))})",
-                           (MANUAL, *ids))
-    await kv_set(BULK_KV + str(int(tid)), {"ids": ids, "ts": now()})
+    await kv_set(_bulk_key(tid, where), {"ids": ids, "ts": now(), "ask": ask or []})
     return f"🛑 {len(ids)} takip bırakıldı — yanlışlıkla mı? ↩️ Geri al", ids
 
 
-async def undo_all(tid: int) -> tuple[str, int]:
-    """[↩️ Geri al]: 🛑 Hepsini bırak'la kapananları kaldığı yerden aç (trackctl.resume: yalnız elle bırakılmışlar)."""
+async def undo_all(tid: int, where: str = "") -> tuple[str, int, list]:
+    """[↩️ Geri al]: 🛑 Hepsini bırak'la kapananları kaldığı yerden aç (trackctl.resume: yalnız elle bırakılmışlar).
+    Dönüş: (toast, açılan sayı, geri gelecek soru satırı)."""
     from ..db import kv_get, kv_set
     from .trackctl import resume
-    d = await kv_get(BULK_KV + str(int(tid))) or {}
+    d = await kv_get(_bulk_key(tid, where)) or {}
     n = 0
     for i in d.get("ids") or []:
         ok, _ = await resume("pos", int(i))
         n += bool(ok)
-    await kv_set(BULK_KV + str(int(tid)), {})
-    return (f"↩️ {n} takip yeniden açık — kaldığı yerden sürüyor" if n else "Geri alınacak takip yok"), n
+    await kv_set(_bulk_key(tid, where), {})
+    return ((f"↩️ {n} takip yeniden açık — kaldığı yerden sürüyor" if n else "Geri alınacak takip yok"), n,
+            (d.get("ask") or []) if n else [])
+
+
+async def bulk_kb(tid: int, where: str = "", ask: list | None = None) -> dict | None:
+    """Çoklu başlangıç mesajının klavyesi DURUMDAN (çift dokunuş / iki yönetici ↩️'yi silmesin): açık 🧯 takip varsa
+    soru satırı + [🛑 Hepsini bırak (n)]; yoksa geri alınabilir liste kaldıysa [↩️ Geri al]; ikisi de yoksa tuş yok."""
+    from ..db import kv_get
+    from ..telegram import format as fmt
+    addr = await _addr_of(tid)
+    if not addr:
+        return None
+    n_open = len(await _open_ids(addr))
+    if n_open:
+        return {"inline_keyboard": list(ask or []) + fmt.unwind_bulk_kb(int(tid), n_open)["inline_keyboard"]}
+    ids = (await kv_get(_bulk_key(tid, where)) or {}).get("ids") or []
+    return fmt.unwind_bulk_kb(int(tid), len(ids), undo=True) if ids else None
 
 
 async def log_start(res: dict) -> None:

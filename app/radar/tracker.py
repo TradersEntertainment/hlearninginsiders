@@ -437,7 +437,11 @@ async def _check_one(cfg: Config, client: HLClient, notifier, t: dict, ts: int) 
         async with db() as conn:
             await conn.execute("UPDATE trackers SET expires_ts=? WHERE id=?",
                                (new_exp, t["id"]))
-        await notifier.send("track", fmt.track_checkin(t, live, base),
+        text = fmt.track_checkin(t, live, base, href=href)
+        if uw:                      # 🌐 satırı (🛑 /birak_N metnin içinde zaten var); liste / soru tuşu yok
+            foot = fmt.unwind_track_footer([], href)
+            text += ("\n" + foot) if foot else ""
+        await notifier.send("track", text,
                             priority="normal",
                             key=f"checkin:{t['id']}:{t['expires_ts']}", chat_id=chat, reply_markup=kb)
 

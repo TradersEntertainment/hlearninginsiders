@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -57,6 +58,7 @@ def _states():
 class _Cli:
     def __init__(self, states=None):
         self.states, self.calls, self.fail_all, self.fail_dex = states or _states(), 0, False, set()
+        self.dex_calls, self.mode, self.pf = [], "default", None
 
     async def clearinghouse_all(self, user, dexes):
         self.calls += 1
@@ -64,12 +66,19 @@ class _Cli:
             raise RuntimeError("HTTP 429")
         return self.states
 
-    async def clearinghouse(self, user, dex=""):
+    async def clearinghouse(self, user, dex="", retries=4, **kw):
+        self.dex_calls.append(dex)
         if (dex or "main") in self.fail_dex:
             raise RuntimeError("HTTP 500")
         return self.states.get(dex or "main") or {"assetPositions": []}
 
     async def info(self, p, **kw):
+        if p["type"] == "userAbstraction":
+            if self.mode is None:
+                raise RuntimeError("HTTP 429")
+            return self.mode
+        if p["type"] == "portfolio":
+            return [["day", {"accountValueHistory": [[dbm.now() * 1000, str(self.pf)]]}]] if self.pf else []
         assert p["type"] == "userFills" and p["user"] == A
         t = dbm.now() * 1000
         return [{"coin": "xyz:GOOGL", "px": "2517.2", "sz": "170", "time": t - 60_000, "dir": "Close Long",
@@ -78,6 +87,13 @@ class _Cli:
                  "closedPnl": "0", "fee": "5", "crossed": False},
                 {"coin": "ETH", "px": "4000", "sz": "1", "time": t - 2 * 86400_000, "dir": "Open Short",
                  "closedPnl": "0", "fee": "1", "crossed": True}]
+
+
+async def _set_dexes(cfg, names):
+    """unwind._dexes = [""] + HIP3_KV dex'leri + izlenen dex'ler — testte yalnız `names`."""
+    from app.hl.universe import HIP3_KV
+    cfg.equity_dexes, cfg.crypto_dexes = list(names), []
+    await dbm.kv_set(HIP3_KV, {"dexes": [{"name": n} for n in names]})
 
 
 def _cfg(token="sekret", base="https://radar.example.app"):
@@ -92,7 +108,9 @@ def _cfg(token="sekret", base="https://radar.example.app"):
 async def _fresh(cfg, client):
     await dbm.init_db(os.path.join(tempfile.mkdtemp(), "cz.db"))
     ut._CACHE.clear()
-    cuzdan._FILLS.clear()
+    for x in (cuzdan._FILLS, cuzdan._PAGE, cuzdan._MODES, cuzdan._POOL, cuzdan._REFRESH):
+        x.clear()
+    await _set_dexes(cfg, ["xyz"])                          # canlıdaki ~11 dex yerine main + xyz (yama yok: kv + ayar)
     from app.main import app
     app.state.cfg, app.state.client, app.state.session = cfg, client, None
     app.state.bot, app.state.notifier = None, None
@@ -202,25 +220,98 @@ def test_json_data():
         assert d["tracked"] == [{"id": tid, "coin": "xyz:GOOGL", "label": "GOOGL", "side": "long",
                                  "base_ntl": 17000 * 2517.6, "since": d["tracked"][0]["since"], "active": True,
                                  "end_note": "", "closed_pct": 20.0}]
-        # toplu sorgu düştü: dex dex, biri de düştü → eksik işareti, okunanlar gösterilir
-        ut._CACHE.clear()
-        cli.fail_all, cli.fail_dex = True, {"xyz"}
+        # bir dex düştü → eksik işareti, okunanlar gösterilir
+        cuzdan._PAGE.clear()
+        cli.fail_dex = {"xyz"}
         d = await cuzdan.build(cfg, cli, A)
         assert d["ok"] and d["partial"] and [p["coin"] for p in d["positions"]] == ["BTC", "ETH"]
+        cuzdan._PAGE.clear()
         cli.fail_dex = {"main", "xyz"}
-        from app.radar import unwind as u
-        old = u._dexes
-
-        async def two(cfg):
-            return ["", "xyz"]
-        u._dexes = two
-        try:
-            d = await cuzdan.build(cfg, cli, A)
-        finally:
-            u._dexes = old
+        d = await cuzdan.build(cfg, cli, A)
         assert not d["ok"] and d["err"].startswith("Hyperliquid'e ulaşılamadı") and d["account"] is None
     asyncio.run(run())
     print("✅ JSON) hesap toplamı bütün dex'ler; pozisyon alanları; 24 sa işlemler; yalnız bu cüzdanın bildirimleri; eksik")
+
+
+def test_review_fixes():
+    """İnceleme (20.10, yeniden üretildi): (1) sayfa başına ~35 HL isteği/dk radarlarla aynı şeritte, sınırsız; (2) ana
+    sohbetteki /takip mesajları imzalı sayfada görünüyordu; (3) birleşik hesapta hesap değeri yalnız ayrılan teminattı
+    (sayfa 20x, gerçek ~1,3x); (4) ASCII dışı imza / anahtar 500 veriyordu; (5) /takipte ile sayfa bitmiş takipte farklı
+    kapanış yüzdesi gösteriyordu.
+
+    Pinlenenler: adres başına 30 sn önbellek; tam tarama 5 dk'da bir, arada yalnız hesabı olan dex'ler; toplam tazeleme
+    payı ve kota kapısı dolunca HL'ye gidilmez, son veri "gecikmeli"; yalnız src='unwind' takipleri; birleşik / portföy
+    teminatında değer = portfolio, çekilebilir bilinmiyor; kip okunamazsa kaldıraç yok + eksik."""
+    async def run():
+        cfg = _cfg()
+        st = _states()
+        st["para"] = {"marginSummary": {"accountValue": "0"}, "assetPositions": []}
+        cli = _Cli(st)
+        app = await _fresh(cfg, cli)
+        await _set_dexes(cfg, ["xyz", "para"])
+        # (1) önbellek + yalnız hesabı olan dex'ler + pay
+        await cuzdan.build(cfg, cli, A)
+        assert cli.dex_calls == ["", "xyz", "para"]
+        await cuzdan.build(cfg, cli, A)
+        assert len(cli.dex_calls) == 3                       # 30 sn önbellek: HL yok
+        cuzdan._PAGE[A]["ts"] -= 31
+        await cuzdan.build(cfg, cli, A)
+        assert cli.dex_calls[3:] == ["", "xyz"]              # para'da hesap yok: tam taramaya kadar sorulmaz
+        cuzdan._PAGE[A]["ts"] -= 31
+        cuzdan._PAGE[A]["full_ts"] -= 301
+        await cuzdan.build(cfg, cli, A)
+        assert cli.dex_calls[5:] == ["", "xyz", "para"]
+        cuzdan._REFRESH.extend([time.time()] * cuzdan.PAGE_REFRESH_MAX)
+        cuzdan._PAGE[A]["ts"] -= 31
+        n = len(cli.dex_calls)
+        d = await cuzdan.build(cfg, cli, A)
+        assert len(cli.dex_calls) == n and d["ok"] and d["err"].startswith("Gecikmeli veri") and d["positions"]
+        cuzdan._PAGE.clear()
+        d = await cuzdan.build(cfg, cli, A)
+        assert not d["ok"] and "kotası şu an dolu" in d["err"] and len(cli.dex_calls) == n
+        cuzdan._REFRESH.clear()
+
+        class Tight(_Cli):
+            def usage(self):
+                return {"free": 5}
+        tc = Tight(_states())
+        d = await cuzdan.build(cfg, tc, B)
+        assert not d["ok"] and not tc.dex_calls                # kota sıkışık: radarlar önce
+        # (2) yalnız 🧯 takipleri
+        live = ut.live_of(cli.states, "BTC")
+        own = await tr.start_tracker(cfg, A, "BTC", "BTC", live, chat_id="", src="")
+        await dbm.alert_log("sent:track", f"step:{own}:1.0000", "ana sohbetteki özel takip")
+        cuzdan._PAGE.clear()
+        d = await cuzdan.build(cfg, cli, A)
+        assert not d["alerts"] and all(p["track"] is None for p in d["positions"]) and not d["tracked"]
+        # (3) birleşik hesap
+        for mode in ("unifiedAccount", "portfolioMargin"):
+            cuzdan._PAGE.clear(); cuzdan._MODES.clear(); cuzdan._POOL.clear()     # noqa: E702
+            cli.mode, cli.pf = mode, 173375.10
+            d = await cuzdan.build(cfg, cli, A)
+            acc = d["account"]
+            assert acc["value"] == 173375.10 and acc["withdrawable"] is None and acc["mode"] == mode
+            assert abs(acc["lev"] - round(acc["ntl"] / 173375.10, 2)) < 1e-9
+        cuzdan._PAGE.clear(); cuzdan._MODES.clear(); cuzdan._POOL.clear()         # noqa: E702
+        cli.mode, cli.pf = None, None
+        d = await cuzdan.build(cfg, cli, A)
+        assert d["account"]["lev"] is None and d["partial"]
+        cli.mode = "default"
+        # (4) ASCII dışı imza / anahtar / çerez → 401 (500 değil)
+        for q in ("s=%C3%BC".encode(), "key=%C3%BC".encode()):
+            assert (await get(app, f"/cuzdan/{A}/veri.json", q))[0] == 401
+        assert (await get(app, f"/cuzdan/{A}", cookie="dbkey=ü"))[0] == 401
+        # (5) elle bırakılmış takipte kapanış yüzdesi /takipte ile aynı (son bildirimdeki boyut)
+        tid = await _track(cfg, cli, "ETH")
+        async with dbm.db() as c:
+            await c.execute("UPDATE trackers SET active=0, end_note='elle bırakıldı', last_szi=80 WHERE id=?", (tid,))
+        cuzdan._PAGE.clear()
+        d = await cuzdan.build(cfg, cli, A)
+        row = next(x for x in d["tracked"] if x["id"] == tid)
+        lst = next(c for w in (await cuzdan.list_rows(cfg))["wallets"] for c in w["coins"] if c["id"] == tid)
+        assert row["closed_pct"] == lst["closed_pct"] == 20.0
+    asyncio.run(run())
+    print("✅ inceleme) önbellek / bilinen dex / pay / kota kapısı; yalnız 🧯 takipleri; birleşik hesap; ASCII dışı imza 401")
 
 
 def test_list_page():
@@ -272,6 +363,14 @@ def test_telegram_links():
         assert "key=" not in txt and "sekret" not in txt
         from tests.test_tg_html import tg_html_errors
         assert not tg_html_errors(txt)
+        # 14 günlük "⏳ Takip sürüyor" yoklaması da sayfaya bağlanır (inceleme 20.10)
+        n.clear()
+        async with dbm.db() as c:
+            await c.execute("UPDATE trackers SET expires_ts=0 WHERE id=?", (tid,))
+            row = dict(await (await c.execute("SELECT * FROM trackers WHERE id=?", (tid,))).fetchone())
+        await tr._check_one(cfg, cli, N(), row, dbm.now())
+        assert n and n[0][0].startswith("⏳ <b>Takip sürüyor</b>") and f'<a href="{url}">0x30af..393e</a>' in n[0][0]
+        assert n[0][0].split("\n")[-1] == f'🌐 <a href="{url}">Cüzdan sayfası</a>' and f"/birak_{tid}" in n[0][0]
         # kapanış: 🌐 var, 🛑 yok
         n.clear()
         cli.states["xyz"]["assetPositions"] = []
@@ -306,6 +405,7 @@ if __name__ == "__main__":
     test_sitelink()
     test_routes_guard_and_headers()
     test_json_data()
+    test_review_fixes()
     test_list_page()
     test_telegram_links()
     test_wiring()

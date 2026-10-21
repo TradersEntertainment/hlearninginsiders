@@ -4,18 +4,27 @@ Kullanıcı (20.10): "bu kanala eklediklerim için websitesi yapar mısın railw
 hypepoztakip sitesini kopyalayabilirsin profillere basınca öyle bi websitesi çıksın".
 
 Kararlar:
-  • Görünüm hyptakip'ten (cuzdan.html / takipte.html); veri HL'nin herkese açık defteri: bütün dex'ler
-    (unwindtrack.wallet — 15 sn önbellek + adres kilidi, takip mesajlarıyla ortak), son 24 sa işlemler (userFills, 30 sn
-    önbellek), bu cüzdanın 👣 takipleri ve gönderilmiş takip / 🧯 mesajları (alerts_log).
-  • Bir dex sorgusu düşerse sayfa boş kalmaz: dex'ler tek tek denenir, okunanlar gösterilir, "eksik olabilir" işareti.
+  • Görünüm hyptakip'ten (cuzdan.html / takipte.html); veri HL'nin herkese açık defteri, son 24 sa işlemler, bu cüzdanın
+    🧯 takipleri ve gönderilmiş takip / 🧯 mesajları (alerts_log). Yalnız 🧯 takipleri (src='unwind'): ana sohbetteki /
+    başka kanaldaki /takip mesajları imzalı bağlantıyı alan kanal üyelerine açılmaz.
+  • HL yükü radarları geciktirmesin (inceleme 20.10, ölçüldü: sayfa başına ~35 istek/dk, 2–3 açık sekme sıkışık kotada
+    radar isteklerini saniyelerce bekletiyordu): adres başına 30 sn önbellek; bütün dex'ler 5 dk'da bir, arada yalnız
+    hesabı olan dex'ler; bütün sayfalar toplamı 60 sn'de en çok PAGE_REFRESH_MAX tazeleme ve botun kotasında
+    PAGE_MIN_FREE'den az boş varsa tazeleme yok (son veri "gecikmeli" işaretiyle). Dex başına 1 deneme, tazeleme en çok
+    STATES_BUDGET sn (tarayıcı 30 sn'de keser). Okunamayan dex → okunanlar + "eksik olabilir".
+  • Birleşik hesap / portföy teminatı (userAbstraction): dex'lerin accountValue'su yalnız ayrılan teminattır — hesap
+    değeri HL portfolio "day" (twaplive ile aynı kaynak), çekilebilir bilinmiyor (canlı 20.10: 0x05c7…3987 sayfada 20x,
+    gerçek ~1,3x).
   • Liste sayfası yalnız veritabanından (HL sorgusu yok): 🧯 takipleri (açık + son 14 gün).
 """
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import re
 import time
+from collections import deque
 
 from .. import assets, sitelink
 from ..db import db, now
@@ -23,12 +32,25 @@ from ..propr import is_listed
 
 log = logging.getLogger("web.cuzdan")
 
-FILL_CACHE_SEC = 30
+FILL_CACHE_SEC = 60
+PAGE_CACHE_SEC = 30            # adres başına sayfa verisi (20 sn'lik tazelemenin yarısı önbellekten)
+FULL_SCAN_SEC = 300            # bütün dex'ler en çok bu kadar sn'de bir; arada yalnız hesabı olanlar
+PAGE_REFRESH_MAX = 6           # bütün sayfalar toplamı: PAGE_WINDOW_SEC'te en çok bu kadar HL tazelemesi
+PAGE_WINDOW_SEC = 60
+PAGE_MIN_FREE = 40             # botun HL kotasında bundan az boş istek varsa sayfa tazelemez (radarlar önce)
+STATES_BUDGET = 12.0           # bir tazeleme en çok bu kadar sn (tarayıcı veri.json'u 30 sn'de keser)
+POOLED = ("unifiedAccount", "portfolioMargin")
+MODE_CACHE_SEC = 3600
 FILL_HOURS = 24
 FILL_MAX = 40
 ALERT_MAX = 30
 KEEP_DAYS = 14
 _FILLS: dict[str, tuple[float, list]] = {}
+_PAGE: dict[str, dict] = {}    # adres → {ts, states, partial, dexes, full_ts}
+_LOCKS: dict[str, asyncio.Lock] = {}
+_REFRESH: deque = deque()
+_MODES: dict[str, tuple[float, str]] = {}
+_POOL: dict[str, tuple[float, float]] = {}
 _TRK_KEY = re.compile(r"^(step|flip|closed|checkin|liq|expire|start):(\d+)")
 
 
@@ -40,24 +62,101 @@ def _f(x) -> float | None:
     return v
 
 
-async def _states(cfg, client, addr: str) -> tuple[dict, bool]:
-    """Bütün dex defterleri; toplu sorgu düşerse dex dex (okunanlar + eksik işareti)."""
-    from ..radar import unwindtrack
-    from ..radar.unwind import _dexes
+class PageBusy(RuntimeError):
+    """Sayfa tazeleme payı ya da botun HL kotası dolu — HL'ye hiç gidilmedi."""
+
+
+def _may_refresh(client) -> bool:
+    t = time.time()
+    while _REFRESH and t - _REFRESH[0] >= PAGE_WINDOW_SEC:
+        _REFRESH.popleft()
+    if len(_REFRESH) >= PAGE_REFRESH_MAX:
+        return False
     try:
-        return await unwindtrack.wallet(cfg, client, addr), False
+        if int(client.usage()["free"]) < PAGE_MIN_FREE:
+            return False
+    except Exception:                                       # noqa: BLE001 — sahte istemci: kota bilinmiyor
+        pass
+    _REFRESH.append(t)
+    return True
+
+
+def _has_account(st) -> bool:
+    st = st or {}
+    return bool(st.get("assetPositions")) or (_f((st.get("marginSummary") or {}).get("accountValue")) or 0) > 0
+
+
+async def _states(cfg, client, addr: str) -> tuple[dict, bool, bool]:
+    """Dex defterleri {dex: state} → (defterler, eksik mi, gecikmeli mi). Önbellek / pay / kota kapıları modül
+    açıklamasında. Hiçbir dex okunamazsa ve önbellek yoksa hata."""
+    from ..radar.unwind import _dexes
+    lock = _LOCKS.setdefault(addr, asyncio.Lock())
+    async with lock:
+        t = time.time()
+        e = _PAGE.get(addr)
+        if e and t - e["ts"] < PAGE_CACHE_SEC:
+            return e["states"], e["partial"], False
+        if not _may_refresh(client):
+            if e:
+                return e["states"], e["partial"], True
+            raise PageBusy("HL kotası şu an dolu")
+        full = not e or e["partial"] or t - e.get("full_ts", 0) >= FULL_SCAN_SEC
+        dexes = await _dexes(cfg) if full else e["dexes"]
+        states: dict = {}
+        fail = 0
+        for d in dexes:
+            left = STATES_BUDGET - (time.time() - t)
+            if left <= 0.5:
+                fail += 1
+                continue
+            try:
+                states[d or "main"] = await asyncio.wait_for(client.clearinghouse(addr, d, retries=1), left)
+            except Exception:                               # noqa: BLE001
+                fail += 1
+        if not states:
+            if e:
+                return e["states"], e["partial"], True
+            raise RuntimeError("hiçbir dex okunamadı")
+        keep = [d for d in dexes if not d or _has_account(states.get(d or "main"))] if full else e["dexes"]
+        _PAGE[addr] = {"ts": time.time(), "states": states, "partial": fail > 0, "dexes": keep,
+                       "full_ts": t if full else e.get("full_ts", t)}
+    for a in [a for a, x in _PAGE.items() if time.time() - x["ts"] > 3600]:
+        _PAGE.pop(a, None)
+    return states, fail > 0, False
+
+
+async def _mode(client, addr: str) -> str | None:
+    """HL hesap kipi (userAbstraction: default / disabled / unifiedAccount / portfolioMargin); okunamazsa None."""
+    t = time.time()
+    hit = _MODES.get(addr)
+    if hit and t - hit[0] < MODE_CACHE_SEC:
+        return hit[1]
+    try:
+        m = await asyncio.wait_for(client.info({"type": "userAbstraction", "user": addr}, retries=1), 6)
     except Exception:                                       # noqa: BLE001
-        log.debug("cüzdan sayfası toplu sorgu düştü %s", addr, exc_info=True)
-    out: dict = {}
-    fail = 0
-    for d in await _dexes(cfg):
-        try:
-            out[d or "main"] = await client.clearinghouse(addr, d)
-        except Exception:                                   # noqa: BLE001
-            fail += 1
-    if not out:
-        raise RuntimeError("hiçbir dex okunamadı")
-    return out, fail > 0
+        log.debug("cüzdan sayfası hesap kipi düştü %s", addr, exc_info=True)
+        m = None
+    if isinstance(m, str) and m:
+        _MODES[addr] = (t, m)
+        return m
+    return hit[1] if hit else None
+
+
+async def _pooled_value(client, addr: str) -> float | None:
+    """Birleşik / portföy teminatlı hesabın değeri: HL portfolio "day" son noktası (twaplive ile aynı kaynak)."""
+    from ..radar.twaplive import parse_portfolio_value
+    t = time.time()
+    hit = _POOL.get(addr)
+    if hit and t - hit[0] < PAGE_CACHE_SEC:
+        return hit[1]
+    try:
+        v = parse_portfolio_value(await asyncio.wait_for(client.info({"type": "portfolio", "user": addr}, retries=1), 6))
+    except Exception:                                       # noqa: BLE001
+        log.debug("cüzdan sayfası portfolio düştü %s", addr, exc_info=True)
+        v = None
+    if v is not None:
+        _POOL[addr] = (t, v)
+    return v
 
 
 async def _fills(client, addr: str) -> tuple[list, bool]:
@@ -66,7 +165,8 @@ async def _fills(client, addr: str) -> tuple[list, bool]:
     if hit and t - hit[0] < FILL_CACHE_SEC:
         return hit[1], False
     try:
-        raw = await client.info({"type": "userFills", "user": addr, "aggregateByTime": True})
+        raw = await asyncio.wait_for(client.info({"type": "userFills", "user": addr, "aggregateByTime": True},
+                                                 retries=1), 8)
     except Exception:                                       # noqa: BLE001
         log.debug("cüzdan sayfası işlemler düştü %s", addr, exc_info=True)
         return (hit[1] if hit else []), True
@@ -93,11 +193,18 @@ async def _fills(client, addr: str) -> tuple[list, bool]:
 
 
 async def _trackers(addr: str) -> list[dict]:
+    """Yalnız 🧯 takip tuşuyla açılanlar (src='unwind'): sayfa takip kanalının; ana sohbetteki / başka kanaldaki /takip
+    mesajları imzalı bağlantıyı alan kanal üyelerine açılmaz (inceleme 20.10)."""
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT * FROM trackers WHERE address=? AND (active=1 OR created_ts>=?) ORDER BY created_ts DESC",
-            (addr, now() - KEEP_DAYS * 86400))
+            "SELECT * FROM trackers WHERE address=? AND src='unwind' AND (active=1 OR created_ts>=?)"
+            " ORDER BY created_ts DESC", (addr, now() - KEEP_DAYS * 86400))
         return [dict(r) for r in await cur.fetchall()]
+
+
+def _cached_mode(addr: str) -> str | None:
+    hit = _MODES.get(addr)
+    return hit[1] if hit else None
 
 
 def _chat_label(cfg, chat_id: str) -> str:
@@ -145,11 +252,17 @@ async def build(cfg, client, addr: str) -> dict:
            "positions": [], "fills": [], "alerts": [], "tracked": []}
     trk = await _trackers(addr)
     active = {t["coin"]: t for t in trk if t.get("active")}
+    stale = False
     try:
-        states, partial = await _states(cfg, client, addr)
+        states, partial, stale = await _states(cfg, client, addr)
+    except PageBusy:
+        states, partial = {}, True
+        out.update(ok=False, err="Botun Hyperliquid kotası şu an dolu (radarlar önce) — birazdan yeniden denenecek")
     except Exception as e:                                  # noqa: BLE001
         states, partial = {}, True
         out.update(ok=False, err=f"Hyperliquid'e ulaşılamadı ({type(e).__name__}) — birazdan yeniden denenecek")
+    if stale and states:
+        out["err"] = "Gecikmeli veri: botun Hyperliquid kotası dolu, son okunan defter gösteriliyor"
     acc = {"value": 0.0, "margin_used": 0.0, "withdrawable": None, "ntl": 0.0, "upnl": 0.0, "lev": None, "n": 0}
     live_szi: dict[str, float] = {}
     for key, st in (states or {}).items():
@@ -189,19 +302,31 @@ async def build(cfg, client, addr: str) -> dict:
             acc["upnl"] += upnl
     out["positions"].sort(key=lambda p: -p["ntl"])
     acc["n"] = len(out["positions"])
-    acc["lev"] = round(acc["ntl"] / acc["value"], 2) if acc["value"] > 0 else None
+    mode = await _mode(client, addr) if (client is not None and states and not stale) else _cached_mode(addr)
+    acc["mode"] = mode
+    if mode in POOLED:
+        acc["value"] = await _pooled_value(client, addr) if not stale else (_POOL.get(addr) or (0, None))[1]
+        acc["withdrawable"] = None                          # birleşik teminatta açık bir "çekilebilir" sayısı yok
+    v = acc["value"]
+    acc["lev"] = round(acc["ntl"] / v, 2) if (mode is not None and v and v > 0) else None
     out["account"] = acc if states else None
-    out["partial"] = bool(partial)
-    if client is not None:
-        out["fills"], fills_err = await _fills(client, addr)
-        out["partial"] = out["partial"] or fills_err
+    out["partial"] = bool(partial) or bool(states and mode is None)
+    if client is not None and states:
+        if stale:
+            out["fills"] = (_FILLS.get(addr) or (0, []))[1]
+        else:
+            out["fills"], fills_err = await _fills(client, addr)
+            out["partial"] = out["partial"] or fills_err
     for t in trk:
         if (t.get("src") or "") != "unwind":
             continue
-        cur = live_szi.get(t["coin"]) if t.get("active") else None
-        cp = _closed_pct(float(t.get("base_szi") or 0), cur) if t.get("active") and states else None
-        if not t.get("active") and t.get("end_note") in ("kapandı", "likide oldu"):
+        base = float(t.get("base_szi") or 0)
+        if t.get("active"):                                 # açık: canlı boyut (HL okunamadıysa bilinmiyor)
+            cp = _closed_pct(base, live_szi.get(t["coin"])) if states else None
+        elif t.get("end_note") in ("kapandı", "likide oldu"):
             cp = 100.0
+        else:                                               # elle bırakıldı / süre doldu: son bildirimdeki boyut (/takipte gibi)
+            cp = _closed_pct(base, float(t["last_szi"]) if t.get("last_szi") is not None else None)
         out["tracked"].append({"id": int(t["id"]), "coin": t["coin"], "label": assets.label(t["coin"]),
                                "side": t.get("side") or "", "base_ntl": _f(t.get("base_notional")),
                                "since": int(t.get("created_ts") or 0), "active": bool(t.get("active")),

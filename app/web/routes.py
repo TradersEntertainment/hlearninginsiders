@@ -1211,7 +1211,7 @@ def _guard_sig(request: Request, scope: str) -> None:
     if not tok:
         return
     k = request.query_params.get("key") or request.cookies.get("dbkey") or ""
-    if k and hmac.compare_digest(str(k), tok):
+    if k and hmac.compare_digest(str(k).encode(), tok.encode()):
         return
     if sitelink.check(cfg, scope, request.query_params.get("s")):
         return

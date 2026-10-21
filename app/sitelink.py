@@ -32,7 +32,8 @@ def sig(cfg, scope: str) -> str:
 def check(cfg, scope: str, s: str | None) -> bool:
     """İmza doğru mu (jeton yoksa her zaman evet)."""
     want = sig(cfg, scope)
-    return not want or (bool(s) and hmac.compare_digest(str(s), want))
+    # bayt karşılaştırması: ASCII dışı ?s= (ör. %C3%BC) str'de TypeError → 500 veriyordu (inceleme 20.10)
+    return not want or (bool(s) and hmac.compare_digest(str(s).encode(), want.encode()))
 
 
 def _base(cfg) -> str:

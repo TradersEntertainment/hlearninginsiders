@@ -2255,13 +2255,13 @@ def track_flip(t: dict, live: dict, href: str = "") -> str:
     return "\n".join(lines)
 
 
-def track_checkin(t: dict, live: dict, base: float) -> str:
+def track_checkin(t: dict, live: dict, base: float, href: str = "") -> str:
     """Süre doldu ama poz açık: takip SÜRÜYOR, yalnız haber veriyoruz."""
     closed_total = (base - abs(live["szi"])) / base * 100 if base > 0 else 0
     prog = (f" · başlangıçtan beri %{closed_total:.0f} kapanmış"
             if closed_total > 1 else "")
     return (f"⏳ <b>Takip sürüyor</b> — {t['symbol']} (#{t['id']})\n"
-            f"👤 {alink(t['address'])} pozu hâlâ açık:"
+            f"👤 {alink(t['address'], href)} pozu hâlâ açık:"
             f" {_side_badge(live['side'])} <b>{usd(live['notional'])}</b>{prog}\n"
             f"Kapanana kadar izlemeye devam ediyorum."
             f" Bırakmak istersen: /birak_{t['id']}")

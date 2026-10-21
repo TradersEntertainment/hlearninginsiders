@@ -259,11 +259,11 @@ class HLClient:
         return await self.info({"type": "spotMetaAndAssetCtxs"})
 
     async def clearinghouse(self, user: str, dex: str = "", priority: str | None = None,
-                            stats: dict | None = None):
+                            stats: dict | None = None, retries: int = 4):
         p = {"type": "clearinghouseState", "user": user}
         if dex:
             p["dex"] = dex
-        return await self.info(p, priority=priority, stats=stats)
+        return await self.info(p, retries=retries, priority=priority, stats=stats)
 
     async def portfolio(self, user: str, priority: str | None = None, retries: int = 4, stats: dict | None = None):
         """HL'nin cüzdan değeri geçmişi (arayüzdeki "Portfolio"): [["day", {"accountValueHistory": [[ms, "$"], …],

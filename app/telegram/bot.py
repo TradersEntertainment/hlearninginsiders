@@ -745,13 +745,19 @@ class TelegramBot:
         target = unwindtrack.chat(self.cfg)
         res: dict = {"done": True, "text": None}
         if act in ("utx", "utr"):
-            # 🛑 Hepsini bırak / ↩️ geri al (çoklu başlangıç mesajı): klavye ikisi arasında döner
+            # 🛑 Hepsini bırak / ↩️ geri al (çoklu başlangıç mesajı): geri al listesi MESAJ başına, klavye DURUMDAN;
+            # 🛑'de mesajın soru satırı saklanır, ↩️'de geri gelir
+            where = f"{chat.get('id')}:{msg.get('message_id')}" if msg.get("message_id") else ""
             if act == "utx":
-                toast, ids = await unwindtrack.stop_all(xid)
-                kb = fmt.unwind_bulk_kb(xid, len(ids), undo=True) if ids else None
+                rows = (msg.get("reply_markup") or {}).get("inline_keyboard") or []
+                ask = [r for r in rows if any(str(b.get("callback_data") or "").startswith((f"{fmt.TRACK_CB}:uta:",
+                                                                                            f"{fmt.TRACK_CB}:uto:"))
+                                              for b in r)]
+                toast, ids = await unwindtrack.stop_all(xid, where, ask)
+                kb = fmt.unwind_bulk_kb(xid, len(ids), undo=True) if ids else await unwindtrack.bulk_kb(xid, where)
             else:
-                toast, n = await unwindtrack.undo_all(xid)
-                kb = fmt.unwind_bulk_kb(xid, n) if n else None
+                toast, n, ask = await unwindtrack.undo_all(xid, where)
+                kb = await unwindtrack.bulk_kb(xid, where, ask)
             await self._ack(cq_id, toast[:190])
             if msg.get("message_id") and chat.get("id") is not None:
                 try:

@@ -467,11 +467,34 @@ def test_bulk_stop_undo():
         await bot._handle_update(_cq(f"trk:utr:{g['id']}", int(TRK), "supergroup", 7, kb=e[0]["reply_markup"]))
         assert len([x for x in await _trackers() if x["active"]]) == 11
         e = [p for m, p in calls if m == "editMessageReplyMarkup"]
-        assert _cbs(e[0]["reply_markup"]) == [f"trk:utx:{g['id']}"]
-        # ikinci geri al: boş
+        assert _cbs(e[0]["reply_markup"]) == [f"trk:uto:{g['id']}", f"trk:utx:{g['id']}"]     # soru satırı geri geldi
+        # ikinci geri al: boş (açık takip var → klavye durumdan: 🛑)
         calls.clear()
         await bot._handle_update(_cq(f"trk:utr:{g['id']}", int(TRK), "supergroup", 7))
         assert [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"] == ["Geri alınacak takip yok"]
+        # inceleme: çift dokunuş 🛑 → ikincisi ↩️'yi silmez (klavye durumdan)
+        calls.clear()
+        await bot._handle_update(_cq(f"trk:utx:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
+        await bot._handle_update(_cq(f"trk:utx:{g['id']}", int(TRK), "supergroup", 7, kb=kb))
+        e = [p for m, p in calls if m == "editMessageReplyMarkup"]
+        assert len(e) == 2 and all(_cbs(x["reply_markup"]) == [f"trk:utr:{g['id']}"] for x in e), e
+        # inceleme: geri al listesi mesaj başına — başka mesajın 🛑'u bu mesajın listesini ezmez
+        calls.clear()
+        await bot._handle_update(_cq(f"trk:utr:{g['id']}", int(TRK), "supergroup", 7, mid=55))
+        assert len([x for x in await _trackers() if x["active"]]) == 11
+        await bot._handle_update(_cq(f"trk:utx:{g['id']}", int(TRK), "supergroup", 7, mid=55))
+        b_only = await _trackers()
+        async with dbm.db() as c:
+            await c.execute("UPDATE trackers SET active=1, end_note=NULL WHERE id=?", (b_only[1]["id"],))
+        await bot._handle_update(_cq(f"trk:utx:{g['id']}", int(TRK), "supergroup", 7, mid=66))   # yalnız 1 takip
+        await bot._handle_update(_cq(f"trk:utr:{g['id']}", int(TRK), "supergroup", 7, mid=55))
+        assert len([x for x in await _trackers() if x["active"]]) == 11                     # 55'in 11'i geri
+        # inceleme: bırakma anında kapanmış takip "elle bırakıldı" olmaz (tek koşullu UPDATE)
+        async with dbm.db() as c:
+            await c.execute("UPDATE trackers SET active=0, end_note='kapandı' WHERE id=?", (g["id"],))
+        toast, ids = await ut.stop_all(g["id"], "x:1")
+        assert g["id"] not in ids and len(ids) == 10
+        assert next(x for x in await _trackers() if x["id"] == g["id"])["end_note"] == "kapandı"
     asyncio.run(run())
     print("✅ toplu) 🛑 Hepsini bırak → ↩️ Geri al → hepsi açık; başlangıç mesajı kayıtta")
 

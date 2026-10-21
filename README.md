@@ -2363,9 +2363,13 @@ bırak işareti de olsun". `app/web/cuzdan.py`, `app/sitelink.py`, şablonlar `c
 - **`/cuzdan/<adres>` (hyptakip görünümü):** hesap özeti (bütün dex'lerin perp teminatı — net worth değil, kullanılan
   teminat, çekilebilir, toplam büyüklük, uPnL, kaldıraç), açık pozisyonlar (giriş ↔ fiyat, uPnL + ROE, liq fiyatı ve
   uzaklığı, kaldıraç, teminat, funding, 👣 takipteyse kapanan %), likidasyon radarı, giriş → fiyat → liq kanalı, son
-  24 sa işlemler, bu cüzdanın takip / 🧯 bildirim akışı, 👣 takip edilen pozisyonlar. 20 sn'de bir tazelenir (sekme
-  arkadayken durur). Veri HL'nin herkese açık defteri: bütün dex'ler 15 sn önbellekli (takip mesajlarıyla ortak, adres
-  başına tek sorgu), işlemler 30 sn önbellekli. Bir dex okunamazsa "eksik olabilir" der, okunanları gösterir.
+  24 sa işlemler, bu cüzdanın 🧯 takip / boşaltma bildirim akışı (ana sohbetteki `/takip` mesajları burada **yok**),
+  👣 takip edilen pozisyonlar. 20 sn'de bir tazelenir (sekme arkadayken durur). Birleşik hesap / portföy teminatlı
+  cüzdanda hesap değeri HL `portfolio`'dan (dex'lerdeki değer yalnız ayrılan teminattır), çekilebilir bilinmiyor.
+- **HL yükü (radarlar önce):** adres başına 30 sn önbellek; bütün dex'ler 5 dk'da bir, arada yalnız hesabı olan
+  dex'ler (~2–3 istek); bütün sayfalar toplamı dakikada en çok 6 tazeleme; botun HL kotasında 40'tan az boş varsa
+  sayfa tazelemez, son veriyi "gecikmeli" diye gösterir. Dex başına tek deneme, tazeleme en çok 12 sn. Bir dex
+  okunamazsa "eksik olabilir" der, okunanları gösterir.
 - **`/takipte`:** 🧯 takip tuşuyla eklenen cüzdanlar (açık + son 14 gün), her biri kendi sayfasına bağlı. Yalnız
   veritabanı, HL sorgusu yok.
 - **Erişim:** panel `DASHBOARD_TOKEN` ister ama jeton Telegram'a **yazılmaz** (kanal üyeleri görür, bütün paneli açar).
@@ -2374,10 +2378,11 @@ bırak işareti de olsun". `app/web/cuzdan.py`, `app/sitelink.py`, şablonlar `c
   zaten açıktır. Taban adres `PUBLIC_BASE_URL`, yoksa Railway'in verdiği alan adı (`RAILWAY_PUBLIC_DOMAIN`); ikisi de
   yoksa mesajlar eskisi gibi hypurrscan'e bağlanır.
 - **🛑 bırak:** adım / yön mesajlarında 🛑 tuşu + son satırda `/birak_N`; çoklu başlangıç mesajında **🛑 Hepsini bırak
-  (N)** (cüzdanın açık 🧯 takipleri; ↩️ Geri al ile kaldığı yerden döner). Kapanış mesajında 🛑 yok (takip bitti).
+  (N)** (cüzdanın açık 🧯 takipleri; ↩️ Geri al ile kaldığı yerden döner — geri al listesi mesaj başına, çift dokunuş
+  ↩️'yi silmez, soru satırı geri gelir). Kapanış mesajında 🛑 yok (takip bitti); 14 günlük yoklamada da 🌐 satırı var.
 
-**Kör nokta, açıkça:** sayfa açıkken adres başına en çok 15 sn'de bir ~11 HL isteği (kaç kişi bakarsa baksın); işlemler
-yalnız son 24 sa (HL'nin son 2000 kaydı içinden); bildirim akışı yalnız gönderilmiş takip / 🧯 mesajları (son 14 gün;
+**Kör nokta, açıkça:** yeni bir dex'te açılan pozisyon tam taramaya kadar (en çok 5 dk) sayfada görünmez; kota dolu
+anlarda sayfa gecikmeli kalır (radarlar önce); işlemler yalnız son 24 sa (HL'nin son 2000 kaydı içinden); bildirim akışı yalnız gönderilmiş takip / 🧯 mesajları (son 14 gün;
 bu özellikten önceki başlangıç mesajları kayıtta yok); imzalı bağlantıyı alan herkes o cüzdanın sayfasını görür (veri
 zaten herkese açık HL verisi); `DASHBOARD_TOKEN` değişirse eski bağlantılar açılmaz.
 
