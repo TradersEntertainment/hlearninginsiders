@@ -1222,10 +1222,15 @@ async def housekeeping(cfg: Config) -> None:
     if now() - int(await kv_get("spec_last") or 0) >= SPEC_INTERVAL:
         try:
             await compute_specialists(cfg)
-            await refresh_fills_count()
             await kv_set("spec_last", now())
         except Exception:
             log.exception("uzman önbelleği hesaplanamadı")
+    if now() - int(await kv_get("fills_count_last") or 0) >= SPEC_INTERVAL:
+        try:                                # ayrı: uzman hesabı patlasa da /twap arşiv kapsamı tazelensin (inceleme 22.10)
+            await refresh_fills_count()
+        except Exception:
+            log.exception("fills sayımı / kapsamı hesaplanamadı")
+        await kv_set("fills_count_last", now())     # düşse de 10 dk bekle (her süpürme turunda tam tarama olmasın)
     today = datetime.now(TR).date().isoformat()
     if await kv_get("maint_last_day") != today:
         try:
