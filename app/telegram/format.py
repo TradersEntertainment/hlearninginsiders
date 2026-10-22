@@ -4085,7 +4085,6 @@ def onehand_alert(cand: dict, v: dict, pos: dict | None, vol24: float | None, se
              + (f", liq {px(pos['liq'])}" if pos.get("liq") else "") + ")")) if pos else " → pozisyon yok / okunamadı"
     lines.append(f"{alink(cand['addr'])} {act} · {v.get('orders', 0)} piyasa emri{p_txt}")
     lines.append(f"Fiyat {px(cand['ref'])} → {px(cand['px'])} (pencereden önceki son işlemden)")
-    lines.append("30 dk sonra ölçüm notu gelecek (fiyat, tepe/dip, cüzdanın sonraki işlemleri).")
     return "\n".join(lines) + DISCLAIMER
 
 

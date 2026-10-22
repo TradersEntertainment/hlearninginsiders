@@ -188,6 +188,8 @@ def test_probe_message_follow():
         later = [_fill(usd=1_900_000, t=f["t"] + 60), _fill(side="A", d="Close Long", usd=100_000, t=f["t"] + 90)]
         n = Notifier()
         out = await oh.follow_up(cfg, Client([], bars=bars, later=later), n, t=f["due"] + 5)
+        # Kullanıcı (22.10): "şunun bildirimi gereksiz oluyor" → ölçüm yapılır, kanala gitmez (ONEHAND_FOLLOW_SEND=0)
+        assert n.sent == [] and not cfg.onehand_follow_send
         assert out and "30 dk sonra: fiyat 243.9" in out[0] and "tepe 246.4" in out[0] and "dip 241.1" in out[0], out
         assert "$1.90M daha aldı" in out[0] or "$1,9M daha aldı" in out[0] or "daha aldı" in out[0], out[0]
         assert "sattı" in out[0] and not oh.STATE["follow"] and len(oh.STATE["log"]) == 1

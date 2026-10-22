@@ -2438,12 +2438,14 @@ emriyle almaya başladı ve 16:23'te hacmin %94'ünü, 16:25'te %82'sini yaptı.
   dex'teki pozisyonu.
 - **Mesajın ilk 4 satırı:** ne (coin, yön, hareket, tek cüzdanın payı) · hacme göre ne kadar · ne zamandan beri ve ABD
   seansına göre an (açık / açılışa N dk / kapalı) · kim, ne yapıyor, pozisyonu ve liq'i.
-- **30 dk sonra ölçüm notu:** fiyat (bildirim fiyatına ve tetik öncesine göre), aradaki tepe/dip, cüzdanın bildirimden
-  sonra aynı ve ters yönde piyasadan yaptıkları. Tahmin yazılmaz; `/tani` kaç olayda fiyatın tetik öncesine döndüğünü sayar.
+- **30 dk sonra ölçüm (kanala gitmez):** fiyat (bildirim fiyatına ve tetik öncesine göre), aradaki tepe/dip, cüzdanın
+  bildirimden sonra piyasadan yaptıkları. Kullanıcı (22.10): "şunun bildirimi gereksiz oluyor" → yalnız kayda geçer;
+  `/tekel` son ölçümleri, `/tani` kaç olayda fiyatın tetik öncesine döndüğünü gösterir. `ONEHAND_FOLLOW_SEND=1` notu
+  kanala da yollar.
 - Aynı coin + cüzdan + yön 2 sa içinde bir kez. Kanal boşsa izleme de sorgu da yok; ana sohbete düşmez.
 - `/tekel`: son olaylar ve ölçümler. Env: `ONEHAND_ENABLED`, `ONEHAND_CHAT_ID`, `ONEHAND_WINDOW_SEC` (180),
   `ONEHAND_MIN_USD` (250000), `ONEHAND_RATE_X` (10), `ONEHAND_WHALE_MIN_USD` (200000), `ONEHAND_SHARE_PCT` (60),
-  `ONEHAND_MOVE_PCT` (0.5), `ONEHAND_COOLDOWN` (7200), `ONEHAND_FOLLOW_MIN` (30).
+  `ONEHAND_MOVE_PCT` (0.5), `ONEHAND_COOLDOWN` (7200), `ONEHAND_FOLLOW_MIN` (30), `ONEHAND_FOLLOW_SEND` (0).
 
 **Kör nokta, açıkça:** yalnız canlı akışta dinlenen hisse perp'leri. Limit emirle (maker) yapılan birikim tetiklemez.
 Aynı kişinin iki cüzdanı iki ayrı el sayılır. Hacmi bilinmeyen (yeni listelenen) coin tetiklemez.

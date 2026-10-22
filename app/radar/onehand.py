@@ -321,7 +321,9 @@ async def follow_up(cfg, client, notifier, t: int | None = None) -> list[str]:
         lg.append({"coin": f["coin"], "side": f["side"], "t": f["t"], "px": f["px"], "ref": f["ref"], "last": last})
         del lg[:-LOG_MAX]
         c = chat(cfg)
-        if c and txt:
+        # Kullanıcı (22.10, EBAY/MU notları): "şunun bildirimi gereksiz oluyor" → ölçüm yalnız kayda (/tekel, /tani);
+        # kanala ancak ONEHAND_FOLLOW_SEND=1 ise gider.
+        if c and txt and getattr(cfg, "onehand_follow_send", False):
             await notifier.send("onehand", txt, key=f"onehand=:{f['coin']}:{f['addr']}:{f['t']}", chat_id=c,
                                 coin=f["coin"], public=False)
         out.append(txt)

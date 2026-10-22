@@ -991,6 +991,8 @@ class Config:
         self.onehand_move_pct = float(os.getenv("ONEHAND_MOVE_PCT", "0.5"))
         self.onehand_cooldown = int(os.getenv("ONEHAND_COOLDOWN", "7200"))
         self.onehand_follow_min = int(os.getenv("ONEHAND_FOLLOW_MIN", "30"))
+        # Kullanıcı 22.10: "şunun bildirimi gereksiz oluyor" — 30 dk notu kanala gitmez, yalnız ölçülür (/tekel, /tani)
+        self.onehand_follow_send = convert_value("bool", os.getenv("ONEHAND_FOLLOW_SEND", "0"))
         self.unwind_enabled = convert_value("bool", os.getenv("UNWIND_ENABLED", "1"))
         self.unwind_window_sec = int(os.getenv("UNWIND_WINDOW_SEC", "300"))
         self.unwind_min_usd = float(os.getenv("UNWIND_MIN_USD", "100000"))
