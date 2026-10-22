@@ -1582,8 +1582,18 @@ async def forensics_page(request: Request):
     # son 15 dk'nın saatiyle dolu gelir; `oto` o doldurulan değerleri taşır. Kutulara dokunulmadan gönderilirse pencere
     # CANLI "son 15 dk" kalır (yuvarlanmış saatle pencere geriye kaymasın — 18.10 inceleme dersi).
     t0_raw, t1_raw = (qp.get("t0") or "").strip(), (qp.get("t1") or "").strip()
-    deflt = not (t0_raw or t1_raw) or (qp.get("oto") or "") == f"{t0_raw}|{t1_raw}"
-    t0, t1, note = _parse_window(type("Q", (), {"query_params": {}})() if deflt else request)
+    oto = qp.get("oto") or ""
+    deflt = not (t0_raw or t1_raw) or oto == f"{t0_raw}|{t1_raw}"
+    if oto and not deflt:
+        # Yalnız bir kutu değiştiyse öbürü otomatik doldurulmuş eski saattir, kullanıcının yazdığı değil: boş say
+        # (yalnız başlangıç yazılınca pencere başlangıç + 15 dk olur, eskisi gibi — inceleme 22.10).
+        o0, _, o1 = oto.partition("|")
+        if t1_raw == o1 and t0_raw != o0:
+            t1_raw = ""
+        elif t0_raw == o0 and t1_raw != o1:
+            t0_raw = ""
+    win = {k: v for k, v in (("t0", t0_raw), ("t1", t1_raw)) if v and not deflt}
+    t0, t1, note = _parse_window(type("Q", (), {"query_params": win})())
     rep = None
     spot_alts: list[tuple[str, str]] = []
     if sym:

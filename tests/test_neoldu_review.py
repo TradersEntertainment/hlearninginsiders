@@ -189,6 +189,11 @@ def test_route_default_form_and_spot():
             assert "Kaynak: canlı bant" in body, "yeniden gönderilen form da bant"
             st, body = await get(app, "/neoldu", ("sym=PUMP&t0=" + _q("dün 10:00") + "&t1=" + _q("dün 10:15") + f"&oto={v0}%7C{v1}").encode())
             assert "son 15 dakika (varsayılan)" not in body and 'name="oto"' not in body, "elle girilen saat geçerli"
+            # yalnız başlangıç değişti: dolu bitiş kutusu pencereyi ele geçirmez → başlangıç + 15 dk (inceleme 22.10)
+            st, body = await get(app, "/neoldu", ("sym=PUMP&t0=" + _q("dün 10:00") + f"&t1={v1}&oto={v0}%7C{v1}").encode())
+            s0 = _re.search(r'name="t0"[^>]*value="([^"]*)"', body).group(1)
+            s1 = _re.search(r'name="t1"[^>]*value="([^"]*)"', body).group(1)
+            assert s0.endswith("10:00") and s1.endswith("10:15") and s0.split()[0] == s1.split()[0], (s0, s1)
             st, body = await get(app, "/neoldu", b"sym=PURR%2FUSDC")
             assert st == 200 and "bulunamadı" not in body and "· spot" in body and "dinlemiyoruz" not in body, \
                 body[body.find("<h2>"):][:500]
