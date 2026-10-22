@@ -174,9 +174,21 @@ def test_route_default_form_and_spot():
             for i in range(20):
                 tape.observe("PUMP", "B", tn._addr(i + 1), C, 0.004, 10_000, now - 600 + i * 20, tid=f"p{i}")
             st, body = await get(app, "/neoldu", b"sym=PUMP")
-            assert st == 200 and "Kaynak: canlı bant" in body and 'name="t0" class="sq" size="11" placeholder="18:25" value=""' in body
+            assert st == 200 and "Kaynak: canlı bant" in body
+            # Kullanıcı (22.10): "eskiden burada son 15dk otomatik giriyordu" → kutular son 15 dk'nın saatiyle dolu,
+            # `oto` aynı değeri taşır; dokunulmadan gönderilince pencere yine canlı (bant), elle değişirse o saat.
+            import re as _re
+            from urllib.parse import quote as _q
+            v0 = _re.search(r'name="t0"[^>]*value="([^"]*)"', body).group(1)
+            v1 = _re.search(r'name="t1"[^>]*value="([^"]*)"', body).group(1)
+            oto = _re.search(r'name="oto" value="([^"]*)"', body).group(1)
+            assert _re.fullmatch(r"\d\d:\d\d", v0) and _re.fullmatch(r"\d\d:\d\d", v1) and oto == f"{v0}|{v1}", (v0, v1, oto)
+            st, body = await get(app, "/neoldu", f"sym=PUMP&t0={v0}&t1={v1}&oto={v0}%7C{v1}".encode())
+            assert "Kaynak: canlı bant" in body and "son 15 dakika (varsayılan)" in body, "dokunulmamış form canlı kalır"
             st, body = await get(app, "/neoldu", b"sym=PUMP&t0=&t1=")       # boş formu yeniden gönder
             assert "Kaynak: canlı bant" in body, "yeniden gönderilen form da bant"
+            st, body = await get(app, "/neoldu", ("sym=PUMP&t0=" + _q("dün 10:00") + "&t1=" + _q("dün 10:15") + f"&oto={v0}%7C{v1}").encode())
+            assert "son 15 dakika (varsayılan)" not in body and 'name="oto"' not in body, "elle girilen saat geçerli"
             st, body = await get(app, "/neoldu", b"sym=PURR%2FUSDC")
             assert st == 200 and "bulunamadı" not in body and "· spot" in body and "dinlemiyoruz" not in body, \
                 body[body.find("<h2>"):][:500]
@@ -187,7 +199,7 @@ def test_route_default_form_and_spot():
             tape.REG.clear(); tape.REG.update(old[1])
             tape.HWM.clear(); tape.HWM.update(old[2])
     asyncio.run(run())
-    print("✅ rota) varsayılan pencerede form boş, yeniden gönderilince de bant; PURR/USDC spot ve dinleniyor;"
+    print("✅ rota) varsayılan pencerede form son 15 dk saatiyle dolu (dokunulmazsa canlı), yeniden gönderilince de bant; PURR/USDC spot ve dinleniyor;"
           " önbellek dışı spot çifti 'yazım hatası' denmeden söylenir")
 
 

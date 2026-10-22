@@ -1577,7 +1577,13 @@ async def forensics_page(request: Request):
     _guard(request)
     cfg = request.app.state.cfg
     sym = (request.query_params.get("sym") or "").strip()
-    t0, t1, note = _parse_window(request)
+    qp = request.query_params
+    # Kullanıcı (22.10): "eskiden burada son 15dk otomatik giriyordu şimdi illa elle girmem gerekiyor". Kutular yine
+    # son 15 dk'nın saatiyle dolu gelir; `oto` o doldurulan değerleri taşır. Kutulara dokunulmadan gönderilirse pencere
+    # CANLI "son 15 dk" kalır (yuvarlanmış saatle pencere geriye kaymasın — 18.10 inceleme dersi).
+    t0_raw, t1_raw = (qp.get("t0") or "").strip(), (qp.get("t1") or "").strip()
+    deflt = not (t0_raw or t1_raw) or (qp.get("oto") or "") == f"{t0_raw}|{t1_raw}"
+    t0, t1, note = _parse_window(type("Q", (), {"query_params": {}})() if deflt else request)
     rep = None
     spot_alts: list[tuple[str, str]] = []
     if sym:
@@ -1593,13 +1599,12 @@ async def forensics_page(request: Request):
         base = rep["symbol"].split("/")[0].upper()
         spot_alts = [(c, lb) for c, lb in sorted(assets.SPOT_NAMES.items(), key=lambda kv: kv[1])
                      if str(lb).split("/")[0].upper() == base and c != coin][:6]
-    # Varsayılan pencere ("son 15 dk") formda BOŞ kalır: dakikaya yuvarlanmış saatle yeniden gönderilince pencere
-    # bandın önüne taşıp işlem kaydına düşüyordu (inceleme 18.10). Spot çifti linkleri de saatsiz gider.
-    deflt = not (request.query_params.get("t0") or request.query_params.get("t1"))
+    # Varsayılan pencerede kutular SS:DD ile dolu gelir, `oto` aynı değeri taşır (yukarıda); spot çifti linkleri saatsiz.
+    t0_s = datetime.fromtimestamp(t0, TR).strftime("%H:%M" if deflt else "%d.%m %H:%M")
+    t1_s = datetime.fromtimestamp(t1, TR).strftime("%H:%M" if deflt else "%d.%m %H:%M")
     return _render(request, "neoldu.html", {
         "rep": rep, "sym": sym, "t0": t0, "t1": t1, "note": note, "spot_alts": spot_alts, "deflt": deflt,
-        "t0_s": "" if deflt else datetime.fromtimestamp(t0, TR).strftime("%d.%m %H:%M"),
-        "t1_s": "" if deflt else datetime.fromtimestamp(t1, TR).strftime("%d.%m %H:%M"),
+        "t0_s": t0_s, "t1_s": t1_s, "oto": f"{t0_s}|{t1_s}" if deflt else "",
         "now_ts": int(time.time()),
         "probe_max": getattr(cfg, "forensics_probe_max", 15),
         "crypto_floor": getattr(cfg, "crypto_fill_min_notional", 0),
