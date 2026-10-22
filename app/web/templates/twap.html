@@ -91,7 +91,7 @@
   </div></div>
   {% else %}
   {{ m.empty(["Eşiği (" ~ min_usd|usd ~ ") geçen TWAP turu görmedik.",
-              ("Kripto işlem arşivi henüz boş — kayıt yeni açıldı, birikmesi gerekiyor." if not cov.crypto.n else "Bu \"TWAP yok\" demek değil: eşiğin altındaki dilimlerle çalışan turlar görünmez.")]) }}
+              ("Kripto işlem arşivi henüz boş — kayıt yeni açıldı, birikmesi gerekiyor." if cov.crypto.n == 0 else "Bu \"TWAP yok\" demek değil: eşiğin altındaki dilimlerle çalışan turlar görünmez.")]) }}
   {% endif %}
   <p class="kunye">🧾 {{ st.groups or 0 }} adres-coin dizisi tarandı · <b>{{ st.detected or 0 }}</b> düzenli
     · <b>{{ st.big or 0 }}</b> tanesi eşiği geçti
@@ -119,9 +119,12 @@
   dilimleri görüyoruz — hisse <b>{{ eq_floor|usd }}</b>, kripto
   <b>{{ crypto_floor|usd }}</b>. Bunun altına inen çok sabırlı bir TWAP
   <b>tamamen görünmez</b>dir ve kaçırdığımızı bile bilemeyiz.
-  {% if cov.crypto.n %}Kripto işlem arşivi {{ '{:,}'.format(cov.crypto.n)|replace(',','.') }} satır
-    ({{ cov.crypto.a|dt }}'den beri){% else %}<span class="bad">Kripto işlem arşivi HENÜZ BOŞ</span>{% endif %}
-  · hisse {{ '{:,}'.format(cov.equity.n or 0)|replace(',','.') }} satır.</p>
+  {% if cov.pending %}Arşiv sayımı arka planda hesaplanıyor (açılıştan sonra en geç 10 dk).
+  {% elif cov.crypto.n %}Kripto işlem arşivi {{ '{:,}'.format(cov.crypto.n)|replace(',','.') }} satır
+    ({{ cov.crypto.a|dt }}'den beri)
+  · hisse {{ '{:,}'.format(cov.equity.n or 0)|replace(',','.') }} satır.{% else %}<span class="bad">Kripto işlem arşivi HENÜZ BOŞ</span>
+  · hisse {{ '{:,}'.format(cov.equity.n or 0)|replace(',','.') }} satır.{% endif %}
+  {% if cov.ts %}<span class="dim">(sayım {{ cov.ts|age }} önce)</span>{% endif %}</p>
 </div>
 
 <div class="panel">

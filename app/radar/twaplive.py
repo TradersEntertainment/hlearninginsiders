@@ -38,7 +38,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .. import assets
-from ..db import alert_log, alert_recent, db, kv_get, kv_set, now
+from ..db import LATEST_METRICS_TS, alert_log, alert_recent, db, kv_get, kv_set, now
 from ..notify import in_quiet_hours
 from . import twap as twapmod
 
@@ -664,7 +664,7 @@ async def volumes(client=None) -> dict[str, tuple[float, int]]:
         async with db() as conn:
             cur = await conn.execute(
                 """SELECT m.coin, m.day_volume, m.ts FROM asset_metrics m
-                   JOIN (SELECT coin, MAX(ts) mts FROM asset_metrics GROUP BY coin) x
+                   JOIN """ + LATEST_METRICS_TS + """ x
                      ON x.coin = m.coin AND x.mts = m.ts
                    WHERE m.coin LIKE '%:%' AND m.day_volume IS NOT NULL""")
             for r in await cur.fetchall():

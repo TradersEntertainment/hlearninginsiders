@@ -64,15 +64,21 @@ async def ranking(cfg=None, top: int = TOP_PAYERS) -> dict:
     from ..propr import is_listed as propr_listed
     rows, n_nodata = [], 0
     rate: dict[str, float] = {}
+    # Tek bağlantı: coin başına iki çağrı her biri yeni bağlantı açıyordu (150 coin → 301 bağlantı, ≈0,6 sn; 22.10)
+    last_m, prev_m = {}, {}
+    async with db() as conn:
+        for t in tickers:
+            last_m[t["coin"]] = await metrics.latest_metric(t["coin"], conn)
+            prev_m[t["coin"]] = await metrics.metric_at(t["coin"], ts - LOOKBACK, conn)
     for t in tickers:
         coin = t["coin"]
-        m = await metrics.latest_metric(coin)
+        m = last_m.get(coin)
         if not m or m.get("funding") is None:
             n_nodata += 1
             continue
         f = float(m["funding"])
         rate[coin] = f
-        prev = await metrics.metric_at(coin, ts - LOOKBACK)
+        prev = prev_m.get(coin)
         pf = float(prev["funding"]) if prev and prev.get("funding") is not None else None
         # İşaret dönüşü, oranın kendisinden daha çok şey söyler: kalabalık taraf
         # değişmiş demektir. Sıfır "dönüş" sayılmaz (yön yok, geçiş var).

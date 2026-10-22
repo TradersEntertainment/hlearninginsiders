@@ -1023,6 +1023,11 @@ async def refresh_fills_count() -> int:
         cur = await conn.execute("SELECT COUNT(*) c FROM fills")
         n = (await cur.fetchone())["c"]
     await kv_set("fills_count", n)
+    try:                                    # /twap "arşiv kapsamı" satırı da istekte değil burada (22.10)
+        from .twap import compute_coverage
+        await compute_coverage()
+    except Exception:                       # noqa: BLE001
+        log.debug("fills kapsamı hesaplanamadı", exc_info=True)
     return n
 
 

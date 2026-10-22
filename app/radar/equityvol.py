@@ -22,7 +22,7 @@ import asyncio
 import logging
 
 from .. import assets
-from ..db import alert_log, alert_recent, db, kv_set, now
+from ..db import LATEST_METRICS_TS, alert_log, alert_recent, db, kv_set, now
 from .cryptovol import (INTERVAL, LOOKBACK_SEC, MIN_BUCKETS, find_record, lab_record, last_bucket,
                         n_closed, note_miss, parse_vol_candles, prefilter_skip, save_movers,
                         unit_sane)
@@ -52,7 +52,7 @@ async def _day_volumes() -> dict[str, float]:
     async with db() as conn:
         cur = await conn.execute(
             """SELECT m.coin, m.day_volume FROM asset_metrics m
-               JOIN (SELECT coin, MAX(ts) mts FROM asset_metrics GROUP BY coin) x
+               JOIN """ + LATEST_METRICS_TS + """ x
                  ON x.coin = m.coin AND x.mts = m.ts""")
         return {r["coin"]: (r["day_volume"] or 0.0) for r in await cur.fetchall()}
 

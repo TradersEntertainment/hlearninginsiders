@@ -118,28 +118,32 @@ async def poll_metrics(cfg: Config, client: HLClient) -> int:
     return n
 
 
-async def latest_metric(coin: str) -> dict | None:
-    async with db() as conn:
-        cur = await conn.execute(
-            "SELECT * FROM asset_metrics WHERE coin=? ORDER BY ts DESC LIMIT 1", (coin,))
+async def _one(sql: str, args: tuple, conn=None) -> dict | None:
+    """Tek satır; `conn` verilirse onu kullanır. Döngüde coin başına çağıranlar (/funding 150 coin × 2) her çağrıda yeni
+    bağlantı açıyordu: sayfa başına 301 bağlantı, ≈0,6 sn yalnız açma/PRAGMA (ölçüm 22.10)."""
+    if conn is not None:
+        cur = await conn.execute(sql, args)
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    async with db() as c:
+        cur = await c.execute(sql, args)
         row = await cur.fetchone()
         return dict(row) if row else None
 
 
-async def metric_at(coin: str, ts: int) -> dict | None:
+async def latest_metric(coin: str, conn=None) -> dict | None:
+    return await _one("SELECT * FROM asset_metrics WHERE coin=? ORDER BY ts DESC LIMIT 1", (coin,), conn)
+
+
+async def metric_at(coin: str, ts: int, conn=None) -> dict | None:
     """ts'ten önceki en yakın ölçüm."""
-    async with db() as conn:
-        cur = await conn.execute(
-            "SELECT * FROM asset_metrics WHERE coin=? AND ts<=? ORDER BY ts DESC LIMIT 1",
-            (coin, ts))
-        row = await cur.fetchone()
-        return dict(row) if row else None
+    return await _one("SELECT * FROM asset_metrics WHERE coin=? AND ts<=? ORDER BY ts DESC LIMIT 1", (coin, ts), conn)
 
 
-async def summary(coin: str) -> dict:
+async def summary(coin: str, conn=None) -> dict:
     """Rapor başlığı için: güncel + 24h önceki karşılaştırma."""
-    cur = await latest_metric(coin)
-    prev = await metric_at(coin, now() - 86400)
+    cur = await latest_metric(coin, conn)
+    prev = await metric_at(coin, now() - 86400, conn)
     out = {"mark": None, "oi_ntl": None, "funding": None, "day_volume": None,
            "oi_change_pct": None, "px_change_pct": None}
     if cur:

@@ -19,7 +19,7 @@ import logging
 import statistics
 
 from .. import assets
-from ..db import db, kv_set, now
+from ..db import db, kv_get, kv_set, now
 
 log = logging.getLogger("radar.twap")
 
@@ -396,16 +396,36 @@ async def _spot_names() -> dict:
         return {}
 
 
+COVERAGE_KV = "fills_coverage"
+
+
 async def coverage() -> dict:
-    """Fill arşivinin kapsamı — "neden boş" sorusunun cevabı burada."""
+    """Fill arşivinin kapsamı — "neden boş" sorusunun cevabı burada.
+
+    Arka planda (sweeper.refresh_fills_count, 10 dk'da bir) hesaplanıp kv'den okunur: istekte iki `LIKE '%:%'` sayımı
+    10M satırlık fills'i baştan sona tarıyordu, /twap'ın sunucu süresinin ≈%95'i (canlı boyutta 1,7 sn, soğukta ≈5 sn;
+    ölçüm 22.10). Henüz hesaplanmadıysa `pending` (sayfa "hesaplanıyor" der, "arşiv boş" demez)."""
+    rec = await kv_get(COVERAGE_KV)
+    if not rec:
+        return {"crypto": {"n": None, "a": None}, "equity": {"n": None, "a": None}, "pending": True}
+    return {"crypto": rec.get("crypto") or {"n": 0, "a": None}, "equity": rec.get("equity") or {"n": 0, "a": None},
+            "ts": rec.get("ts")}
+
+
+async def compute_coverage() -> dict:
+    """Tek tarama (coin başına sayım + en eski) → kripto / hisse ayrımı Python'da. Arka plan işi."""
     async with db() as conn:
-        cur = await conn.execute(
-            "SELECT COUNT(*) n, MIN(ts) a FROM fills WHERE coin NOT LIKE '%:%'")
-        cr = dict(await cur.fetchone())
-        cur = await conn.execute(
-            "SELECT COUNT(*) n, MIN(ts) a FROM fills WHERE coin LIKE '%:%'")
-        eq = dict(await cur.fetchone())
-    return {"crypto": cr, "equity": eq}
+        cur = await conn.execute("SELECT coin, COUNT(*) n, MIN(ts) a FROM fills GROUP BY coin")
+        rows = [dict(r) for r in await cur.fetchall()]
+    out = {"crypto": {"n": 0, "a": None}, "equity": {"n": 0, "a": None}}
+    for r in rows:
+        k = out["equity" if ":" in str(r["coin"]) else "crypto"]
+        k["n"] += int(r["n"] or 0)
+        if r["a"] is not None and (k["a"] is None or int(r["a"]) < k["a"]):
+            k["a"] = int(r["a"])
+    out["ts"] = now()
+    await kv_set(COVERAGE_KV, out)
+    return out
 
 
 async def prune(days: int = RETENTION_D) -> int:

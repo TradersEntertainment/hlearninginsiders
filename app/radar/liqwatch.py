@@ -10,7 +10,7 @@ import logging
 
 from .. import assets
 from ..config import Config
-from ..db import alert_log, alert_recent, db, kv_set, now
+from ..db import LATEST_METRICS_TS, alert_log, alert_recent, db, kv_set, now
 from ..hl.client import HLClient
 from ..hl.universe import norm_coin
 from ..telegram import format as fmt
@@ -231,7 +231,7 @@ async def find_clusters(cfg: Config) -> list[dict]:
     async with db() as conn:
         cur = await conn.execute(
             """SELECT a.coin, a.mark_px FROM asset_metrics a
-               JOIN (SELECT coin, MAX(ts) mts FROM asset_metrics GROUP BY coin) b
+               JOIN """ + LATEST_METRICS_TS + """ b
                  ON a.coin=b.coin AND a.ts=b.mts""")
         marks = {r["coin"]: r["mark_px"] for r in await cur.fetchall()}
         cur = await conn.execute(

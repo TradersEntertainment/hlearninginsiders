@@ -538,6 +538,14 @@ def set_db_path(path: str) -> None:
 #     diskinde yazma gecikmesi (dolayısıyla kilidin tutulduğu süre) kat kat düşer,
 #   temp_store=MEMORY — DISTINCT/ORDER BY geçici tabloları diske inmesin,
 #   cache_size=-8000 (8 MB) — 1,6 GB DB'de indeks taramaları için.
+# Coin başına en yeni asset_metrics zamanı — (coin, mts) alt sorgusu. Eskiden `SELECT coin, MAX(ts) FROM asset_metrics
+# GROUP BY coin`: 45 günlük tablonun (≈6,5M satır) bütün indeksini tarıyordu (canlı boyutta ≈600 ms; ana sayfada iki
+# kez). Bu sürüm coin'leri indeksle tek tek atlar (skip-scan), her coin için tek arama: ≈3 ms, aynı sonuç (22.10).
+LATEST_METRICS_TS = (
+    "(WITH RECURSIVE c(coin) AS (SELECT MIN(coin) FROM asset_metrics UNION ALL"
+    " SELECT (SELECT MIN(coin) FROM asset_metrics WHERE coin > c.coin) FROM c WHERE c.coin IS NOT NULL)"
+    " SELECT coin, (SELECT MAX(ts) FROM asset_metrics m WHERE m.coin = c.coin) mts FROM c WHERE coin IS NOT NULL)")
+
 PRAGMAS = ("PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=30000",
            "PRAGMA synchronous=NORMAL", "PRAGMA temp_store=MEMORY",
            "PRAGMA cache_size=-8000")

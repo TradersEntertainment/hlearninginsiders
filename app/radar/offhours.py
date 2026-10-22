@@ -70,12 +70,18 @@ async def screener(cfg=None, limit: int | None = None) -> dict:
     from .. import assets
     from ..propr import is_listed as propr_listed
     rows, n_stale, n_nodata = [], 0, 0
+    # Tek bağlantı: coin başına iki metric_at her biri yeni bağlantı açıyordu (/funding ile aynı desen, 22.10)
+    got: dict[str, tuple] = {}
+    async with db() as conn:
+        for t in tickers:
+            if not assets.is_crypto_dex(t["coin"]):
+                got[t["coin"]] = (await metrics.metric_at(t["coin"], anchor, conn),
+                                  await metrics.metric_at(t["coin"], measure_ts, conn))
     for t in tickers:
         coin = t["coin"]
         if assets.is_crypto_dex(coin):
             continue                        # kripto dex (para): kapalı seans kavramı yok
-        base = await metrics.metric_at(coin, anchor)
-        cur_m = await metrics.metric_at(coin, measure_ts)
+        base, cur_m = got.get(coin, (None, None))
         if not base or not cur_m or not base.get("mark_px") or not cur_m.get("mark_px"):
             n_nodata += 1
             continue

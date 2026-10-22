@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..config import EDITABLE_FIELDS, convert_value, display_value
 from .. import assets
-from ..db import db, kv_get, kv_set, now
+from ..db import LATEST_METRICS_TS, db, kv_get, kv_set, now
 from ..earnings.calendar import annotate, upcoming_events
 from ..hl.universe import (MAIN_CTX_KV, crypto_names, find_in_hip3, find_ticker, get_universe, hip3_known,
                            resolve_coin, similar_names)
@@ -354,7 +354,7 @@ async def index(request: Request):
     async with db() as conn:
         cur = await conn.execute(
             """SELECT a.coin, a.mark_px FROM asset_metrics a
-               JOIN (SELECT coin, MAX(ts) mts FROM asset_metrics GROUP BY coin) b
+               JOIN """ + LATEST_METRICS_TS + """ b
                  ON a.coin=b.coin AND a.ts=b.mts""")
         marks = {r["coin"]: r["mark_px"] for r in await cur.fetchall()}
         cur = await conn.execute(
@@ -440,8 +440,8 @@ async def index(request: Request):
     live_events = [e for e in events if not e["passed"]]
     for e in (live_events or events)[:6]:
         coin = e["coin"]
-        s = await metrics.summary(coin)
         async with db() as conn:
+            s = await metrics.summary(coin, conn)       # aynı bağlantı (kart başına 2 bağlantı daha açılıyordu)
             cur = await conn.execute(
                 "SELECT side, SUM(notional) t FROM positions_current WHERE coin=? GROUP BY side",
                 (coin,))

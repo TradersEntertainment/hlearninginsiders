@@ -13,7 +13,7 @@ import logging
 
 from .. import assets
 from ..config import Config
-from ..db import alert_log, alert_recent, db, now
+from ..db import LATEST_METRICS_TS, alert_log, alert_recent, db, now
 from ..telegram import format as fmt
 
 log = logging.getLogger("radar.lowvol")
@@ -28,7 +28,7 @@ async def latest_metrics_all() -> dict[str, dict]:
         cur = await conn.execute(
             """SELECT m.coin, m.mark_px, m.oi, m.funding, m.day_volume
                FROM asset_metrics m
-               JOIN (SELECT coin, MAX(ts) mts FROM asset_metrics GROUP BY coin) x
+               JOIN """ + LATEST_METRICS_TS + """ x
                  ON x.coin = m.coin AND x.mts = m.ts""")
         return {r["coin"]: dict(r) for r in await cur.fetchall()}
 

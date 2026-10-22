@@ -488,6 +488,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="HL Insider Radar", lifespan=lifespan)
+# Sıkıştırma (22.10, "websitesi çok ağır açılıyor"): base.html ~87 KB satır içi CSS/JS her sayfada ve her yumuşak
+# yenilemede sıkıştırmasız gidiyordu; / 157 KB, /twaplar 633 KB, /devler 1,1 MB → gzip'le ~%85-90 küçük. Canlı akış
+# (text/event-stream) Starlette'in dışlama listesinde — tamponlanmasın diye liste yoksa sıkıştırma hiç eklenmez.
+try:
+    from starlette.middleware import gzip as _gz
+    if "text/event-stream" in getattr(_gz, "DEFAULT_EXCLUDED_CONTENT_TYPES", ()):
+        app.add_middleware(_gz.GZipMiddleware, minimum_size=1000, compresslevel=5)
+except Exception:                                   # noqa: BLE001 — sıkıştırmasız da site çalışır
+    pass
 # Mum grafiği kütüphanesi depoya gömülüdür (CDN yok — site kendi kendine
 # yeterli kalsın). Uzun cache: dosya sürümle birlikte donuk.
 app.mount("/static",

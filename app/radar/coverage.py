@@ -16,7 +16,7 @@ ya da `main_dex_ctx` kv'si (ana dex). Sayfa/PNG/mesaj/`/tani` aynı hesabı kull
 """
 from statistics import median
 
-from ..db import db, kv_get
+from ..db import LATEST_METRICS_TS, db, kv_get
 
 # /tani listesine giren coinlerin asgari HL OI'si: küçük OI'de yüzde anlamsız oynar
 COVERAGE_MIN_OI = 250_000
@@ -123,7 +123,7 @@ async def overview(cfg=None, limit: int = 5) -> dict:
             sums.setdefault(r["coin"], {})[r["side"]] = float(r["s"] or 0)
         cur = await conn.execute(
             """SELECT a.coin, a.mark_px, a.oi FROM asset_metrics a
-               JOIN (SELECT coin, MAX(ts) mts FROM asset_metrics GROUP BY coin) b
+               JOIN """ + LATEST_METRICS_TS + """ b
                  ON a.coin=b.coin AND a.ts=b.mts""")
         oi = {r["coin"]: float(r["oi"] or 0) * float(r["mark_px"] or 0) for r in await cur.fetchall()}
     rows = []
