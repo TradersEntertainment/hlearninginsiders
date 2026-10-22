@@ -289,21 +289,38 @@ def without_leg2(closed: list[dict], start_balance: float, skipped: list[dict] =
                  opens: list[dict] = ()) -> dict:
     """Ters bacak hiç açılmasaydı (kullanıcı 22.10: "ters bacak girmese daha mı çok kazanırdı").
 
-    Gerçek bakiye kapanış sırasıyla yeniden kurulur; her ön bacağın kapanışı o anki bakiyeye oranla (getiri) karşı
-    olgusal bakiyeye bileşik uygulanır, ters bacaklar atlanır. YAKLAŞIK: boyut girişteki bakiyeye göreydi, oran
-    kapanış öncesi bakiyeye göre alınır (aynı anda açık işlemlerde küçük fark). Ters bacak bir dilimi tutarken "bakiye
-    bağlı" diye atlanan ön bacak sinyalleri ayrıca sayılır — onların sonucu BİLİNMİYOR (açılmadılar), hesaba girmez."""
+    Her ön bacağın kâr/zararı, AÇILIŞINDAKİ gerçek bakiyeye oranla (boyut ona göreydi) aynı andaki karşı olgusal
+    bakiyeye ölçeklenir; ters bacaklar atlanır. Ücretler kâr/zararın içinde. Ters bacak bir dilimi tutarken
+    "bakiye bağlı" ya da aynı coinde "ters bacak açık" diye atlanan ön bacak sinyalleri ayrıca sayılır — açılmadıkları
+    için sonuçları BİLİNMİYOR, hesaba girmez. Pencere ters bacağın kayda geçtiği an → kapanış mumu (kapanış mum
+    zamanına geri yazılır; gerçek kapanış turu biraz sonradır: sayım yaklaşık). Atlanma kayıtları saatte bir
+    yinelenmediği için sayı "en az"dır."""
     start = float(start_balance or 0)
+    seq = sorted(closed, key=lambda c: (int(c.get("exit_ts") or 0), int(c.get("id") or 0)))
+    hist: list[tuple[int, float, float]] = []          # (kapanış ts, gerçek bakiye, karşı olgusal bakiye) kapanıştan sonra
     bal = cf = start
-    for c in sorted(closed, key=lambda c: (int(c.get("exit_ts") or 0), int(c.get("id") or 0))):
+
+    def at(ts: int) -> tuple[float, float]:
+        b, f = start, start
+        for t, hb, hf in hist:
+            if t > ts:
+                break
+            b, f = hb, hf
+        return b, f
+
+    for c in seq:
         p = float(c.get("pnl_usd") or 0)
-        if int(c.get("leg") or 1) == 1 and bal > 0:
-            cf *= 1 + p / bal
+        if int(c.get("leg") or 1) == 1:
+            b0, f0 = at(int(c.get("entry_ts") or 0))
+            if b0 > 0:
+                cf += p * f0 / b0
         bal += p
+        hist.append((int(c.get("exit_ts") or 0), bal, cf))
     l2 = [c for c in closed if int(c.get("leg") or 1) == 2]
-    wins = [(int(t.get("entry_ts") or 0), int(t.get("exit_ts") or 0) or 10**12)
+    wins = [(int(t.get("created_ts") or t.get("entry_ts") or 0), int(t.get("exit_ts") or 0) or 10**12)
             for t in list(closed) + list(opens) if int(t.get("leg") or 1) == 2]
-    blocked = sum(1 for s in skipped or [] if str(s.get("skip_reason") or "").startswith("bakiye bağlı")
+    blocked = sum(1 for s in skipped or []
+                  if str(s.get("skip_reason") or "").startswith(("bakiye bağlı", "ters bacak açık"))
                   and any(a <= int(s.get("created_ts") or 0) < b for a, b in wins))
     return {"n": len(l2), "wins": sum(1 for c in l2 if float(c.get("pnl_usd") or 0) > 0),
             "pnl": sum(float(c.get("pnl_usd") or 0) for c in l2), "actual": bal, "without": cf,
@@ -559,7 +576,13 @@ async def on_signal(cfg, client, notifier, coin: str, mark, fresh: list[dict], c
     async with _get_lock():
         acc = await account(cfg)
         opens = await open_trades()
-        if any(o.get("coin") == coin for o in opens):
+        same = [o for o in opens if o.get("coin") == coin]
+        if same:
+            # Aynı coinde ters bacak açıkken gelen doğrulanmış sinyal kayda geçer: "ters bacak olmasaydı" sayımı bunu
+            # da görmeli (inceleme 22.10). Ön bacak açıkken sessiz kalır (tekrar sinyal spam yazmaz).
+            if w.get("verified") and any(int(o.get("leg") or 1) == 2 for o in same):
+                if await _skip(coin, w, "ters bacak açık", int(acc.get("run") or 1)):
+                    await _bump(skipped_signals=1)
             return False
         run = int(acc.get("run") or 1)
         if not w.get("verified"):
