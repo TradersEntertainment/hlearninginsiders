@@ -33,7 +33,7 @@
       </select></label>
     <label>Boyut
       <select name="boyut" onchange="this.form.submit()">
-        {% for x in cl.sizes %}<option value="{{ x|int }}"{% if (loop.first and not boyut) or x == boyut %} selected{% endif %}>{{ x|usd }}+ pozisyon</option>{% endfor %}
+        {% for x in cl.sizes %}<option value="{{ x|int }}"{% if x == cl.min_pos %} selected{% endif %}>{{ x|usd }}+ pozisyon</option>{% endfor %}
       </select></label>
     <label>Görünüm
       <select name="gorunum" onchange="this.form.submit()">
@@ -45,11 +45,11 @@
   </form>
 
   {% if not cl.verify_on %}
-  <p class="warn">⚠️ Doğrulama şeridi KAPALI (LIQ_VERIFY_ENABLED=0): satırlar yeniden okunmuyor, çoğu "doğrulanmamış" görünebilir.</p>
+  <p class="warn">⚠️ Doğrulama şeridi KAPALI (LIQ_VERIFY_ENABLED=0): satırlar yeniden okunmuyor; hepsi gösteriliyor, eski olanların yaşı kırmızı.</p>
   {% endif %}
   {% if cl.n_stale %}
   <p class="sub">⏳ {{ cl.n_stale }} pozisyon ({{ cl.stale_usd|usd }}) son okumadan beri doğrulanmadı —
-  {% if cl.show_stale %}<b>aşağıda gösteriliyor</b> (yaş sütunu kırmızı). <a href="/kriptoliq?mesafe={{ '%g'|format(mesafe) }}&yon={{ yon }}&boyut={{ boyut|int }}&gorunum={{ gorunum }}{{ k|replace('?', '&') }}">Gizle</a>
+  {% if cl.show_stale %}<b>aşağıda gösteriliyor</b> (yaş sütunu kırmızı).{% if cl.verify_on %} <a href="/kriptoliq?mesafe={{ '%g'|format(mesafe) }}&yon={{ yon }}&boyut={{ boyut|int }}&gorunum={{ gorunum }}{{ k|replace('?', '&') }}">Gizle</a>{% endif %}
   {% else %}gizlendi; sıradaki doğrulamayla geri gelir ya da kapanmışsa düşer.
   <a href="/kriptoliq?mesafe={{ '%g'|format(mesafe) }}&yon={{ yon }}&boyut={{ boyut|int }}&gorunum={{ gorunum }}&bayat=1{{ k|replace('?', '&') }}">Onları da göster</a>{% endif %}</p>
   {% endif %}

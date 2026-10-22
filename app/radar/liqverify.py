@@ -46,9 +46,12 @@ CROSSED_SEC = 60               # liq fiyatın öbür yanında: bu kadar eskiyse 
 PAGE_NEAR_SEC = 900
 PAGE_FAR_SEC = 2700
 DISCOVER_WINDOW = 900
+DISCOVER_REREAD_SEC = 600      # keşifte aynı adres en erken bu kadar sonra yeniden (sürekli işlem yapan MM/HLP payı yemesin)
+RETRY_SEC = 60                 # düşen okuma bu kadar sonra yeniden aday
 MIN_FREE = 30
 READ_TIMEOUT = 8.0
-LAST_READ: dict[str, float] = {}
+LAST_READ: dict[str, float] = {}       # son BAŞARILI okuma
+RETRY_AT: dict[str, float] = {}        # düşen okumanın yeniden aday olacağı an (LAST_READ'e dokunmaz)
 STATS: dict = {"reads": 0, "verify": 0, "discover": 0, "closed_seen": 0, "errors": 0, "skipped_busy": 0,
                "due": 0, "disc_due": 0, "last": 0}
 
@@ -89,22 +92,32 @@ async def due_verify(cfg, marks: dict, t: int) -> list[str]:
             if d > FAR_PCT:
                 continue
             key, need = d, (NEAR_SEC if d <= NEAR_PCT else FAR_SEC)
-        if age < need or t - LAST_READ.get(r["address"], 0) < need:
+        if age < need or t - LAST_READ.get(r["address"], 0) < need or RETRY_AT.get(r["address"], 0) > t:
             continue
         best[r["address"]] = min(best.get(r["address"], 1e9), key)
     return sorted(best, key=lambda a: best[a])
 
 
 async def due_discover(cfg, t: int) -> list[str]:
-    """Son DISCOVER_WINDOW'da ana dex kriptoda büyük işlem yapıp o işlemden sonra okunmamış adresler (büyükten)."""
+    """Son DISCOVER_WINDOW'da ana dex kriptoda büyük işlem yapıp o işlemden sonra okunmamış adresler.
+
+    Sıra: hiç okunmamış önce, sonra en büyük TEK işleme göre (toplam değil: sürekli pasif hacim tek büyük yeni işlemi
+    geçmesin). Aynı adres DISCOVER_REREAD_SEC'ten önce yeniden okunmaz; mm / vault etiketliler keşfe girmez
+    (inceleme 22.10: sürekli işlem yapan MM'ler her tur ilk sıraya dönüp yeni balinayı aç bırakıyordu)."""
     floor = float(_cfg(cfg, "liq_discover_min_usd", 50_000) or 50_000)
     async with db() as conn:
         cur = await conn.execute(
-            "SELECT address, MAX(ts) last, SUM(notional) usd FROM fills WHERE ts >= ? AND notional >= ?"
-            " AND instr(coin, ':') = 0 AND substr(coin, 1, 1) != '@' GROUP BY address", (t - DISCOVER_WINDOW, floor))
+            "SELECT f.address, MAX(f.ts) last, MAX(f.notional) big FROM fills f"
+            " LEFT JOIN addresses a ON a.address = f.address"
+            " WHERE f.ts >= ? AND f.notional >= ? AND instr(f.coin, ':') = 0 AND substr(f.coin, 1, 1) != '@'"
+            " AND COALESCE(a.entity, '') NOT IN ('mm', 'vault') GROUP BY f.address", (t - DISCOVER_WINDOW, floor))
         rows = [dict(r) for r in await cur.fetchall()]
-    return [r["address"] for r in sorted(rows, key=lambda r: -float(r["usd"] or 0))
-            if LAST_READ.get(r["address"], 0) < int(r["last"] or 0)]
+    cand = [r for r in rows
+            if LAST_READ.get(r["address"], 0) < int(r["last"] or 0)
+            and t - LAST_READ.get(r["address"], 0) >= DISCOVER_REREAD_SEC
+            and RETRY_AT.get(r["address"], 0) <= t]
+    cand.sort(key=lambda r: (LAST_READ.get(r["address"], 0) > 0, -float(r["big"] or 0)))
+    return [r["address"] for r in cand]
 
 
 async def read(cfg, client, addr: str) -> bool:
@@ -116,24 +129,33 @@ async def read(cfg, client, addr: str) -> bool:
         if not isinstance(resp, dict) or "assetPositions" not in resp:
             raise ValueError("bozuk yanıt")             # bozuk yanıt kayıt kapatmaz (sayımla aynı kural)
         async with db() as conn:
-            cur = await conn.execute("SELECT COUNT(*) n FROM addr_positions WHERE address=? AND closed_ts IS NULL"
+            cur = await conn.execute("SELECT coin FROM addr_positions WHERE address=? AND closed_ts IS NULL"
                                      " AND instr(coin, ':') = 0", (addr,))
-            before = int((await cur.fetchone())["n"] or 0)
-        n_open, _ = await census.write_main(cfg, addr, resp, now(), None)
-        STATS["closed_seen"] += max(0, before - n_open)
+            before = {r["coin"] for r in await cur.fetchall()}
+        await census.write_main(cfg, addr, resp, now(), None)
+        # kapanan = önce açık olup yanıtta olmayan (yeni açılanla sayıca birbirini götürmesin)
+        STATS["closed_seen"] += len(before - set(census._sw._parse_all_positions(resp, 0)))
     except Exception:                                       # noqa: BLE001
         STATS["errors"] += 1
         log.debug("liq doğrulama okuması %s", addr, exc_info=True)
-        LAST_READ[addr] = t - NEAR_SEC + 60                 # düşen okuma: 1 dk sonra yeniden aday
+        RETRY_AT[addr] = t + RETRY_SEC                      # düşen okuma: 1 dk sonra yeniden aday (eşikten bağımsız)
         return False
     LAST_READ[addr] = t
+    RETRY_AT.pop(addr, None)
     STATS["reads"] += 1
     return True
 
 
 def _busy(client) -> bool:
+    """Düşük şerit şu an istek geçirmez mi — şeridin kendi kapısıyla aynı kural (429 sonrası susma, pencere
+    LOW_SHARE'i doldurdu) ya da ortak kotada boş yer az. Öyleyse okumayı 8 sn bekletip hata saymak yerine tur atlanır."""
     try:
-        return int(client.usage()["free"]) < MIN_FREE
+        u = client.usage()
+        if float(u.get("low_paused") or 0) > 0:
+            return True
+        if "rpm" in u and "cap" in u and int(u["rpm"]) >= float(u["cap"]) * float(u.get("low_share") or 0.7) - 2:
+            return True
+        return int(u["free"]) < MIN_FREE
     except Exception:                                       # noqa: BLE001
         return False
 
@@ -157,6 +179,8 @@ async def tick(cfg, client, marks: dict, t: int | None = None) -> dict:
                 done[kind].append(a)
                 STATS[kind] += 1
     STATS["last"] = t
+    for a in [a for a, at in RETRY_AT.items() if at <= t - 3600]:
+        RETRY_AT.pop(a, None)
     if len(LAST_READ) > 50_000:
         for a in sorted(LAST_READ, key=LAST_READ.get)[:10_000]:
             LAST_READ.pop(a, None)
@@ -191,7 +215,7 @@ async def loop(cfg, client) -> None:
 
 async def diag_line(cfg) -> str:
     if not getattr(cfg, "liq_verify_enabled", True):
-        return "🎯 liq doğrulama: KAPALI (LIQ_VERIFY_ENABLED=0) — /kriptoliq bayat satır gösterebilir"
+        return "🎯 liq doğrulama: KAPALI (LIQ_VERIFY_ENABLED=0) — /kriptoliq satırları doğrulanmadan, yaşıyla gösterir"
     s = await kv_get(STATS_KV) or {}
     if not s:
         return "🎯 liq doğrulama: henüz tur yok"

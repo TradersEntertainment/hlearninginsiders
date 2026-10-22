@@ -446,6 +446,9 @@ class Fetcher:
 
 # ────────────────────────────────────────────── yazım
 
+_ACTIVE_OPEN: "_Open | None" = None     # süren turun kümesi — dışarıdan yazanlar (liqverify) da girer
+
+
 class _Open:
     """Açık satırı olan adresler (tur başında yüklenir): pozisyonsuz hesapta
     kapanış sorgusu ancak bunlarda koşar — on binlerce boş UPDATE yerine."""
@@ -485,6 +488,13 @@ async def write_main(cfg, addr: str, resp, ts: int, opened: "_Open | None") -> t
         await _sw._upsert_hl(addr, big, ts, held=set(all_pos), dexes=[""])
         if opened is not None:
             (opened.hl.add if big else opened.hl.discard)(addr)
+    if opened is None and _ACTIVE_OPEN is not None:
+        # Tur dışı yazan (liqverify, opened=None): turun "açık satırı olan" kümesine de gir. Yoksa tur bu adresi
+        # sonra boş görünce kümede bulamaz, yazmayı atlar ve buradan açılan satır kapanmadan kalırdı (inceleme 22.10).
+        if all_pos:
+            _ACTIVE_OPEN.addr.add(addr)
+        if big:
+            _ACTIVE_OPEN.hl.add(addr)
     av = _sw.parse_account_value(resp)
     if av is not None:
         try:
@@ -697,6 +707,8 @@ async def run_pass(cfg, client, *, sleep=asyncio.sleep, max_accounts: int | None
     await kv_set(STATE_KV, st)
     opened = _Open()
     await opened.load(dexes)
+    global _ACTIVE_OPEN
+    _ACTIVE_OPEN = opened
     since_ckpt = 0
     last_ckpt = t0
     last_probe = t0

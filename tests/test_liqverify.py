@@ -36,6 +36,7 @@ MARKS = {"HYPE": 40.0, "BTC": 100_000.0, "SOL": 200.0}
 async def _fresh():
     await dbm.init_db(os.path.join(tempfile.mkdtemp(), "lv.db"))
     lv.LAST_READ.clear()
+    lv.RETRY_AT.clear()
     for k in lv.STATS:
         lv.STATS[k] = 0
     await dbm.kv_set("main_dex_ctx", {"c": {c: {"m": m, "oi": 1_000_000.0} for c, m in MARKS.items()},
@@ -233,4 +234,89 @@ def test_routes_and_wiring():
             assert k in readme and k in env, k
         assert "Kör nokta, açıkça:" in readme.split("### 🎯 Liq doğrulama")[1][:3000]
         print("✅ kablolama) rota süzgeçleri (boyut/görünüm/bayat), _spawn, sağlık, /tani, README, .env.example")
+    asyncio.run(run())
+
+
+def test_review_fixes():
+    """İnceleme (22.10, yeniden üretildi): (a) sürekli işlem yapan MM'ler keşfi her tur kapıyordu → yeni balina hiç
+    okunmuyordu; (b) düşen %5–10 okuması ~21 dk sonra tekrarlanıyordu (sayfa penceresini aşıp gizleniyordu), düşen
+    keşif hiç tekrarlanmıyordu; (c) _busy düşük şeridin kapısını (429 sonrası susma, LOW_SHARE) görmüyordu → okumalar
+    8 sn bekleyip hata sayılıyordu; (d) closed_seen kapanan ile yeni açılanı birbirinden düşüyordu; (e) yön süzgeci
+    kümelemeden önce uygulanınca 'anlamlı band' değişiyordu; (f) doğrulama kapalıyken sayfa her şeyi gizliyordu;
+    (g) tur sürerken liqverify'ın açtığı satırı sayım boş yanıtta kapatmıyordu."""
+    async def run():
+        from app.radar import census
+        cfg = Config()
+        # (a) 10 MM benzeri adres + mm etiketi + tek büyük balina işlemi
+        await _fresh()
+        t = dbm.now()
+        for i in range(10):
+            for k in range(5):
+                await _fill("BTC", A(100 + i), 80_000, 10 + k)
+        await _fill("BTC", A(1), 300_000, 300)
+        async with dbm.db() as c:
+            await c.execute("INSERT INTO addresses(address,first_seen,entity) VALUES(?,?,'mm')", (A(100), t))
+            await c.commit()
+        for i in range(1, 10):
+            lv.LAST_READ[A(100 + i)] = t - 120                 # az önce okundu, yine işlem yaptı
+        due = await lv.due_discover(cfg, t)
+        assert due == [A(1)], due                               # mm etiketli yok, yeniden okuma aralığı dolmadı
+        # (b) düşen uzak satır 1 dk sonra yeniden aday; düşen keşif de
+        await _fresh()
+        t = dbm.now()
+        await _pos("SOL", A(2), "short", 600_000, 214.0, 1800, t)
+        await _fill("SOL", A(3), 100_000, 600)
+        boom = Client(RuntimeError("zaman aşımı"))
+        assert not await lv.read(cfg, boom, A(2)) and not await lv.read(cfg, boom, A(3))
+        assert A(2) not in await lv.due_verify(cfg, MARKS, t + 30)
+        assert A(2) in await lv.due_verify(cfg, MARKS, t + 61)
+        assert A(3) in await lv.due_discover(cfg, t + 61)
+        # (c) düşük şerit kapalıyken tur atlanır, hata sayılmaz
+        assert lv._busy(type("C", (), {"usage": lambda s: {"free": 500, "low_paused": 12.0, "rpm": 0, "cap": 550}})())
+        assert lv._busy(type("C", (), {"usage": lambda s: {"free": 160, "low_paused": 0, "rpm": 390, "cap": 550,
+                                                            "low_share": 0.7}})())
+        assert not lv._busy(type("C", (), {"usage": lambda s: {"free": 400, "low_paused": 0, "rpm": 150, "cap": 550,
+                                                                "low_share": 0.7}})())
+        # (d) SOL kapandı, ETH açıldı → 1 kapanan
+        await _fresh()
+        await _pos("SOL", A(4), "short", 600_000, 214.0, 3600)
+        eth = {"assetPositions": [{"position": {"coin": "ETH", "szi": "1", "positionValue": "300000", "entryPx": "3000",
+                                                "liquidationPx": "2000", "unrealizedPnl": "0",
+                                                "leverage": {"value": 5}}}]}
+        assert await lv.read(cfg, Client(eth), A(4))
+        assert lv.STATS["closed_seen"] == 1, lv.STATS
+        # (e) yalnız LONG görünümü hepsi görünümündeki long satırıyla aynı band
+        await _fresh()
+        t = dbm.now()
+        await _pos("HYPE", A(5), "long", 600_000, 39.6, 60, t)
+        await _pos("HYPE", A(6), "long", 3_000_000, 38.0, 60, t)
+        await _pos("HYPE", A(7), "short", 20_000_000, 41.0, 60, t)
+        both = [r for r in (await cl.page(cfg, dist_pct=10.0, t=t))["rows"] if r["side"] == "long"]
+        only = (await cl.page(cfg, dist_pct=10.0, side="long", t=t))["rows"]
+        assert [(r["px_lo"], r["total"]) for r in both] == [(r["px_lo"], r["total"]) for r in only], (both, only)
+        # (f) doğrulama kapalı: bayat satır yaşıyla gösterilir
+        await _pos("HYPE", A(8), "long", 900_000, 39.5, 3 * 86400, t)
+        off = Config()
+        off.liq_verify_enabled = False
+        out = await cl.page(off, dist_pct=10.0, view="poz", t=t)
+        assert A(8) in [p["address"] for p in out["positions"]] and out["show_stale"] and not out["verify_on"]
+        # (g) tur sürerken liqverify'ın yazdığı adres turun kümesine girer → boş yanıtta kapanır
+        await _fresh()
+        op = census._Open()
+        await op.load([""])
+        census._ACTIVE_OPEN = op
+        try:
+            live = {"assetPositions": [{"position": {"coin": "SOL", "szi": "-1", "positionValue": "600000",
+                                                     "entryPx": "200", "liquidationPx": "214", "unrealizedPnl": "0",
+                                                     "leverage": {"value": 5}}}]}
+            assert await lv.read(cfg, Client(live), A(9))
+            assert A(9) in op.addr
+            await census.write_main(cfg, A(9), EMPTY, dbm.now(), op)
+            async with dbm.db() as c:
+                r = await (await c.execute("SELECT closed_ts FROM addr_positions WHERE address=?", (A(9),))).fetchone()
+            assert r["closed_ts"], "sayım boş yanıtta kapatır"
+        finally:
+            census._ACTIVE_OPEN = None
+        print("✅ inceleme) MM keşfi kapmaz; düşen okuma 1 dk sonra; düşük şerit kapısı; kapanan sayımı;"
+              " yön süzgeci aynı band; doğrulama kapalıyken gösterir; sayım turu liqverify satırını kapatır")
     asyncio.run(run())

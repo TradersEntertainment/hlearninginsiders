@@ -589,6 +589,10 @@ async def page(cfg, dist_pct: float = 5.0, side: str = "hepsi", limit: int = PAG
     floor = max(show_usd, float(min_pos or 0))
     dist_pct = float(dist_pct or 5.0)
     view = view if view in ("band", "poz") else "band"
+    verify_on = bool(getattr(cfg, "liq_verify_enabled", True))
+    if not verify_on:
+        show_stale = True       # doğrulayan yok: tazelik ölçülemez, satırlar yaşıyla (bayat işaretli) gösterilir
+    want = (lambda sd: side not in ("long", "short") or sd == side)
     rec = await kv_get(MAIN_CTX_KV) or {}
     ctx = rec.get("c") or {}
     marks = {c: v["m"] for c, v in ctx.items() if (v or {}).get("m")}
@@ -601,18 +605,19 @@ async def page(cfg, dist_pct: float = 5.0, side: str = "hepsi", limit: int = PAG
         for p in lst:
             p["age"] = max(0, t - int(p.get("ts") or 0))
             p["fresh"] = p["age"] <= liqverify.fresh_sec(p["dist"])
-            if side in ("long", "short") and p["side"] != side:
-                continue
             if not p["fresh"]:
-                n_stale += 1
-                stale_usd += p["notional"]
+                if want(p["side"]):
+                    n_stale += 1
+                    stale_usd += p["notional"]
                 if not show_stale:
                     continue
             near.setdefault(coin, []).append(p)
     cov = await _coverage(t, marks, {c: (v or {}).get("oi") for c, v in ctx.items()}) if near else {}
     merge = float(getattr(cfg, "crypto_liq_band_merge", 5) or 0) / 100
     out: list[dict] = []
-    n_pos = sum(len(v) for v in near.values())
+    # Yön süzgeci kümelemeden SONRA: bantlar ve "anlamlı" tabanı iki yönü birlikte görür (hepsi / yalnız LONG
+    # görünümünde aynı coin-yön satırı aynı band olsun — inceleme 22.10).
+    n_pos = sum(1 for v in near.values() for p in v if want(p["side"]))
     for coin, lst in near.items():
         mark = float(marks[coin])
         bands = liqmap.clusters(lst, mark, dist_pct, per_side=3,
@@ -623,7 +628,7 @@ async def page(cfg, dist_pct: float = 5.0, side: str = "hepsi", limit: int = PAG
         sig_floor = max(min_usd, bands[0]["total"] * NEAR_BAND_SIG_SHARE)
         for sd in ("long", "short"):
             mine = [b for b in bands if b["side"] == sd]
-            if not mine:
+            if not mine or not want(sd):
                 continue
             # Satır = o yöndeki EN YAKIN ANLAMLI band (⭐ ile aynı kural, tek kaynak).
             # Anlamlı yoksa yöndeki en şişman band — "hiç yok" demek yanlış olurdu.
@@ -642,18 +647,18 @@ async def page(cfg, dist_pct: float = 5.0, side: str = "hepsi", limit: int = PAG
                 "cov": cov.get((coin, sd)),
             })
     out.sort(key=lambda r: -r["total"])
-    pos = sorted((p for lst in near.values() for p in lst), key=lambda p: p["dist"])
+    pos = sorted((p for lst in near.values() for p in lst if want(p["side"])), key=lambda p: p["dist"])
     for p in pos:
         p["symbol"] = assets.label(p["coin"])
         p["cov"] = cov.get((p["coin"], p["side"]))
     return {"rows": out[:limit], "positions": pos[:limit], "dist": dist_pct, "side": side, "view": view,
-            "min_pos": floor, "sizes": [x for x in PAGE_SIZES if x >= show_usd],
+            "min_pos": floor, "sizes": sorted({show_usd, *[float(x) for x in PAGE_SIZES if x >= show_usd]}),
             "n_coins": len({r["coin"] for r in out}), "n_pos": n_pos,
             "total": sum(r["total"] for r in out), "min_usd": min_usd,
             "show_usd": show_usd, "mark_ts": int(rec.get("ts") or 0),
             "n_stale": n_stale, "stale_usd": stale_usd, "show_stale": bool(show_stale),
             "fresh_near_min": liqverify.PAGE_NEAR_SEC // 60, "fresh_far_min": liqverify.PAGE_FAR_SEC // 60,
-            "verify_on": bool(getattr(cfg, "liq_verify_enabled", True)),
+            "verify_on": verify_on,
             "n_all": len(out) if view == "band" else len(pos), "cap": limit, "dists": PAGE_DISTS}
 
 

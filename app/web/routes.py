@@ -1513,7 +1513,7 @@ async def crypto_liq_page(request: Request, mesafe: float = 5.0, yon: str = "hep
     cfg = request.app.state.cfg
     yon = yon if yon in ("hepsi", "long", "short") else "hepsi"
     mesafe = mesafe if any(abs(mesafe - d) < 1e-9 for d in cryptoliq.PAGE_DISTS) else 5.0
-    boyut = boyut if any(abs(boyut - x) < 1e-6 for x in cryptoliq.PAGE_SIZES) else 0
+    boyut = boyut if 0 < boyut <= max(cryptoliq.PAGE_SIZES) else 0     # sayfa tabanın altına kendisi kırpar
     gorunum = gorunum if gorunum in ("band", "poz") else "band"
     ws = await kv_get("ws_universe") or {}
     return _render(request, "kriptoliq.html", {

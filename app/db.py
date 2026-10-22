@@ -216,6 +216,8 @@ CREATE TABLE IF NOT EXISTS addr_positions(
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_addrpos_addr ON addr_positions(address);
 CREATE INDEX IF NOT EXISTS idx_addrpos_ts ON addr_positions(ts);
+-- açık + liq'li satırlar (liqverify 15 sn'de bir, cryptoliq turu): kapanmışlar silinmediği için tam tarama büyüyordu
+CREATE INDEX IF NOT EXISTS idx_addrpos_openliq ON addr_positions(notional) WHERE closed_ts IS NULL AND liq_px > 0;
 -- Sayım evreni (census): HL'de "coindeki tüm pozisyonlar" API'si yok; kapsamayı
 -- zincir geneline yaklaştırmanın tek yolu tanıdığımız HER hesabı (leaderboard ∪
 -- addresses ∪ fills) ana dex + kripto dex'lerde tur tur sorgulamak. Sıra bakiye
