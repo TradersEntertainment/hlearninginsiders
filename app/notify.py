@@ -39,6 +39,7 @@ KINDS: dict[str, tuple[str, str, str]] = {
     "koridor":   ("",                 "🏓 Dar koridor (RANGE_CHAT_ID)",       "normal"),
     # 🧯 sert satış / boşaltma: adres bazlı, PUBLIC_KINDS'te YOK; ayar alanı yok — yer UNWIND_CHAT_ID
     "unwind":    ("",                 "🧯 Sert satış / pozisyon boşaltma (UNWIND_CHAT_ID)", "high"),
+    "onehand":   ("",                 "👑 Tek el: tek cüzdan hisseyi oynattı (ONEHAND_CHAT_ID ya da UNWIND_CHAT_ID)", "high"),
     "wall":      ("notify_wall",      "🧱 Emir defteri duvarı",               "high"),
     "sticky":    ("notify_sticky",    "🧲 Yapışkan duvar (kripto kanalı)",    "high"),
     "acct":      ("notify_acct",      "👤 İzlenen hesaplar (hesap grubu)",     "high"),

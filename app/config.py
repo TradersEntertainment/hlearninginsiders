@@ -978,6 +978,19 @@ class Config:
         # 🧯 Sert satış / pozisyon boşaltma (app/radar/unwind.py, kullanıcı 19.10) — ENV-ONLY. Chat boşsa izleme de
         # HL sorgusu da yok (mesaj ana sohbete düşmez). Eşikler vaka 0x0871…e927'ye göre (README "🧯").
         self.unwind_chat_id = (os.getenv("UNWIND_CHAT_ID", "") or "").strip()
+        # 👑 tek el (app/radar/onehand.py, kullanıcı 22.10: "büyükler kapatıyor kanalına at") — ENV-ONLY. Kanal boşsa
+        # UNWIND_CHAT_ID'ye gider; ikisi de boşsa izleme yok. Eşikler: 180 sn pencerede hacim ≥ max($250K, 10 × dk
+        # ortalaması), tek cüzdan ≥ $200K ve ≥ %60, fiyat o yönde ≥ %0,5.
+        self.onehand_enabled = convert_value("bool", os.getenv("ONEHAND_ENABLED", "1"))
+        self.onehand_chat_id = (os.getenv("ONEHAND_CHAT_ID", "") or "").strip()
+        self.onehand_window_sec = int(os.getenv("ONEHAND_WINDOW_SEC", "180"))
+        self.onehand_min_usd = float(os.getenv("ONEHAND_MIN_USD", "250000"))
+        self.onehand_rate_x = float(os.getenv("ONEHAND_RATE_X", "10"))
+        self.onehand_whale_min_usd = float(os.getenv("ONEHAND_WHALE_MIN_USD", "200000"))
+        self.onehand_share_pct = float(os.getenv("ONEHAND_SHARE_PCT", "60"))
+        self.onehand_move_pct = float(os.getenv("ONEHAND_MOVE_PCT", "0.5"))
+        self.onehand_cooldown = int(os.getenv("ONEHAND_COOLDOWN", "7200"))
+        self.onehand_follow_min = int(os.getenv("ONEHAND_FOLLOW_MIN", "30"))
         self.unwind_enabled = convert_value("bool", os.getenv("UNWIND_ENABLED", "1"))
         self.unwind_window_sec = int(os.getenv("UNWIND_WINDOW_SEC", "300"))
         self.unwind_min_usd = float(os.getenv("UNWIND_MIN_USD", "100000"))

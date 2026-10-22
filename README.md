@@ -69,6 +69,7 @@ büyük pozisyonlarını grafikle getirir (bkz. "Kripto liq yakını").
 | `/acilis` | 🔔 Açılışın en hareketlileri: açılış penceresindeyse anlık sıralama, değilse son rapor (raporlar ABD açılışından 5 ve 30 dk sonra hisse kanalına) |
 | `/koridor` | 🏓 Şu an açık dar koridorlar (PROPR coinleri): kenarlar, genişlik, temas, başlangıç — ölçüm, sinyal değil |
 | `/bosaltma` | 🧯 Şu an süren sert satış / pozisyon boşaltma bölümleri: cüzdan, piyasaya sattığı coinler, defterdeki pozisyon sayısı |
+| `/tekel` | 👑 Tek cüzdanın az işlem gören hisseyi kısa sürede oynattığı son olaylar + 30 dk sonraki ölçüm |
 | `/5dk` · `/15dk` · `/5dk 15:30` | ⏱ Şimdiden (ya da verilen TSİ saatten) N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu ara durumu gösterir (haber saatleri için) |
 | `/seans` · `/seans NVDA` | 🕰 ABD seans karnesi (XYZ100 + SP500 tek mesaj; ya da tek ABD hissesi): bugün Asya / Londra / New York ne yaptı, Londra Asya tepesini/dibini süpürdü mü, geçmişte bu şekilde NY ne yaptı (taban oran ve z ile), getiri hangi seansta birikti, oynaklık ilişkisi — sayfa `/seans` |
 | `/strat` · `/strat KURAL` | 🧪 Strateji laboratuvarı (salt okunur): kayıtlı kurallar, durum, olay sayısı, kayıttan SONRAKİ kâğıt üstü ölçüm (net, %95 GA, küme sayısı) — betimleme, karar yalnız planlı bakışta · sayfa `/lab` |
@@ -2417,6 +2418,35 @@ bırak işareti de olsun". `app/web/cuzdan.py`, `app/sitelink.py`, şablonlar `c
 anlarda sayfa gecikmeli kalır (radarlar önce); işlemler yalnız son 24 sa (HL'nin son 2000 kaydı içinden); bildirim akışı yalnız gönderilmiş takip / 🧯 mesajları (son 14 gün;
 bu özellikten önceki başlangıç mesajları kayıtta yok); imzalı bağlantıyı alan herkes o cüzdanın sayfasını görür (veri
 zaten herkese açık HL verisi); `DASHBOARD_TOKEN` değişirse eski bağlantılar açılmaz.
+
+## 👑 Tek el (`ONEHAND_CHAT_ID`, yoksa `UNWIND_CHAT_ID`)
+
+Kullanıcı (22.10, CRWD): "abd piyasası kapalıyken mesela crwd longladılar … hacimsiz hisselerde … o hacimli dakikada ne
+olduysa tespit edip şu balina tek başına kaldırdı diye bildirim" · "büyükler kapatıyor kanalına at".
+
+Vaka (22.10, canlı HL): xyz:CRWD dakikada ~$0 işlem görüyordu. 16:23 TSİ'de tek cüzdan (0x30af…393e) dakikada 2 piyasa
+emriyle almaya başladı ve 16:23'te hacmin %94'ünü, 16:25'te %82'sini yaptı. ~12 dk'da $2,68M LONG açtı; fiyat +%1,15
+çıktı, 16:30 ABD açılışında geri indi (o hâlâ alıyordu).
+
+- **Tetik** canlı akıştan, ek istek yok. Yalnız hisse perp'leri (endeks / emtia / kripto yok). 180 sn'lik pencerede üçü
+  birden:
+  1. pencere hacmi ≥ max($250K, coinin ortalama dakika hacminin 10 katı × 3 dk); büyük hisselerde (GOOGL, NVDA) bu taban
+     kendiliğinden ulaşılmaz olur;
+  2. tek cüzdan o yönde piyasadan ≥ $200K ve pencere hacminin ≥ %60'ı;
+  3. fiyat o yönde ≥ %0,5 (pencereden önceki son işlemden).
+- **Doğrulama** (2 istek): cüzdanın işlemleri (açıyor mu kapatıyor mu, kaç emir; kendi likidasyonuysa yazılmaz) ve o
+  dex'teki pozisyonu.
+- **Mesajın ilk 4 satırı:** ne (coin, yön, hareket, tek cüzdanın payı) · hacme göre ne kadar · ne zamandan beri ve ABD
+  seansına göre an (açık / açılışa N dk / kapalı) · kim, ne yapıyor, pozisyonu ve liq'i.
+- **30 dk sonra ölçüm notu:** fiyat (bildirim fiyatına ve tetik öncesine göre), aradaki tepe/dip, cüzdanın bildirimden
+  sonra aynı ve ters yönde piyasadan yaptıkları. Tahmin yazılmaz; `/tani` kaç olayda fiyatın tetik öncesine döndüğünü sayar.
+- Aynı coin + cüzdan + yön 2 sa içinde bir kez. Kanal boşsa izleme de sorgu da yok; ana sohbete düşmez.
+- `/tekel`: son olaylar ve ölçümler. Env: `ONEHAND_ENABLED`, `ONEHAND_CHAT_ID`, `ONEHAND_WINDOW_SEC` (180),
+  `ONEHAND_MIN_USD` (250000), `ONEHAND_RATE_X` (10), `ONEHAND_WHALE_MIN_USD` (200000), `ONEHAND_SHARE_PCT` (60),
+  `ONEHAND_MOVE_PCT` (0.5), `ONEHAND_COOLDOWN` (7200), `ONEHAND_FOLLOW_MIN` (30).
+
+**Kör nokta, açıkça:** yalnız canlı akışta dinlenen hisse perp'leri. Limit emirle (maker) yapılan birikim tetiklemez.
+Aynı kişinin iki cüzdanı iki ayrı el sayılır. Hacmi bilinmeyen (yeni listelenen) coin tetiklemez.
 
 ## 🏓 Dar koridor (`RANGE_CHAT_ID`)
 

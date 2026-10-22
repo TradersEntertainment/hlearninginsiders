@@ -527,6 +527,8 @@ class TelegramBot:
             await self._cmd_koridor(chat_id)
         elif cmd in ("bosaltma", "boşaltma", "sertsatis", "sertsatış", "unwind"):
             await self._cmd_unwind(chat_id)
+        elif cmd in ("tekel", "tek_el", "onehand"):
+            await self._cmd_onehand(chat_id)
         elif cmd in ("alarm", "alarmlar", "alarm_test", "alarmtest", "uyandim", "uyandım"):
             await self._cmd_alarm(cmd, args, chat_id)   # 🚨 yalnız sahip: gece telefonu çaldırır
         elif cmd in ("sim", "sım", "simulasyon", "simülasyon"):
@@ -949,6 +951,8 @@ class TelegramBot:
             await self._cmd_koridor(chat_id)
         elif cmd in ("bosaltma", "boşaltma", "sertsatis", "sertsatış", "unwind"):
             await self._cmd_unwind(chat_id)
+        elif cmd in ("tekel", "tek_el", "onehand"):
+            await self._cmd_onehand(chat_id)
         elif cmd in ("takipler", "takip", "trackers"):
             if cmd == "takip" and args:
                 await self._cmd_track_manual(args, chat_id)
@@ -984,7 +988,8 @@ class TelegramBot:
             getattr(self.cfg, "twap_mirror_chat_id", ""), getattr(self.cfg, "hidden_twap_chat_id", ""),
             getattr(self.cfg, "twap_loose_chat_id", ""), getattr(self.cfg, "twap_big_chat_id", ""),
             getattr(self.cfg, "strat_chat_id", ""), getattr(self.cfg, "range_chat_id", ""),
-            getattr(self.cfg, "unwind_chat_id", ""), getattr(self.cfg, "unwind_track_chat_id", ""))
+            getattr(self.cfg, "unwind_chat_id", ""), getattr(self.cfg, "unwind_track_chat_id", ""),
+            getattr(self.cfg, "onehand_chat_id", ""))
             if v and str(v).strip()}
 
     def _owner_user_id(self) -> str:
@@ -1610,6 +1615,16 @@ class TelegramBot:
         except Exception as e:
             log.exception("/bosaltma")
             await self.send(f"❌ boşaltma listesi okunamadı: {fmt.esc(e)}", chat_id)
+
+    async def _cmd_onehand(self, chat_id: str) -> None:
+        """/tekel — 👑 son tek el olayları ve ölçüm sayımı (bellekten + kv, HL'ye istek yok)."""
+        from ..radar import onehand
+        try:
+            await self.send(fmt.onehand_list(onehand.STATE, await onehand.diag_line(self.cfg),
+                                             bool(onehand.chat(self.cfg))), chat_id)
+        except Exception as e:
+            log.exception("/tekel")
+            await self.send(f"❌ tek el listesi okunamadı: {fmt.esc(e)}", chat_id)
 
     async def _cmd_koridor(self, chat_id: str) -> None:
         """/koridor — 🏓 şu an açık dar koridorlar (bellekten, HL'ye istek yok) + izlenen coin sayısı."""

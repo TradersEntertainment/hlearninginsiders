@@ -83,6 +83,7 @@ def limits(cfg: Config) -> dict[str, int]:
         "openmove": 600,                   # 5 sn adım; pencere dışında da nabız atar
         "koridor": 60 * 5 + 900,           # 1 dk adım; açılış geri doldurması (~50 coin × 1 sn) payı
         "unwind": 600,                     # 2 sn adım (kapalıyken 60 sn); sorgular kısa
+        "onehand": 600,                    # 2 sn adım (kapalıyken 60 sn)
         "lab": 30 * 3 + 600,               # 30 sn adım; kapalıyken de nabız atar
         "sweeper": cfg.sweep_interval_sec * 5 + 120,
         "hourstats": 7200,
@@ -144,6 +145,7 @@ def periods(cfg: Config) -> dict[str, int]:
         "openmove": 5,
         "koridor": 60,
         "unwind": 2,
+        "onehand": 2,
         "lab": 30,
         "sweeper": cfg.sweep_interval_sec,
         "hourstats": 600,

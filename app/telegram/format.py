@@ -401,6 +401,7 @@ TASK_TR = {
     "openmove": "açılışın en hareketlileri",
     "koridor": "dar koridor",
     "unwind": "sert satış / boşaltma",
+    "onehand": "tek el (tek cüzdan hisseyi oynattı)",
     "lab": "strateji laboratuvarı",
     "propr": "PROPR listesi (yalnız ekler)",
 }
@@ -2987,6 +2988,8 @@ COMMANDS: list[tuple[str, list[tuple[str, str, bool]]]] = [
         ("/bosaltma", "🧯 şu an süren sert satış / pozisyon boşaltma bölümleri (cüzdan, piyasadan kapattıkları,"
          " ilk mesajdaki pozisyon sayısı)"
          " · eş: /boşaltma /sertsatis /sertsatış /unwind", False),
+        ("/tekel", "👑 tek cüzdanın az işlem gören hisseyi kısa sürede oynattığı son olaylar + 30 dk sonraki ölçüm"
+         " · eş: /tek_el /onehand", False),
         ("/5dk · /15dk", "⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete; ölçerken 📊 tuşu"
          " · eş: /5 · /5 dk · /10dakika", False),
         ("/5dk 15:30", "⏱ ölçümü haber saatine kur (TSİ; 3 dk geriye de gider)", False),
@@ -3098,6 +3101,7 @@ def help_text() -> str:
         "/acilis — 🔔 açılışın en hareketlileri: pencere içinde anlık sıralama, dışında son rapor (rapor 5 dk ve 30 dk'da hisse kanalına)\n"
         "/koridor — 🏓 şu an açık dar koridorlar (PROPR coinleri; ölçüm, sinyal değil)\n"
         "/bosaltma — 🧯 süren sert satış / pozisyon boşaltma bölümleri\n"
+        "/tekel — 👑 tek cüzdanın hisseyi oynattığı son olaylar + 30 dk sonraki ölçüm\n"
         "/5dk · /15dk — ⏱ şimdiden N dk ölç (1–60), bitince en çok oynayan hisseler bu sohbete · /5dk 15:30 haber saatine kur (3 dk geriye de gider) · ölçerken 📊 tuşu\n"
         "/takipler — aktif pozisyon takipleri (bırakmak için bildirimdeki 🛑 tuşu ya da /birak_N; ↩️ geri alınabilir)\n"
         "/takip_N — liq mesajındaki pozisyonu takibe al: boyut %10 adımlarla, liq fiyatı %1 kayınca, kapanış/likidasyon\n"
@@ -4049,6 +4053,80 @@ def unwind_done(addr: str, ep: dict, positions: list[dict], t: int) -> str:
             + (f"\nAçık kalan küçükler (ilk mesajda da vardı): {fmt_p(kept)}" if kept else "")
             + (f"\nYeni açtıkları: {fmt_p(new)}" if new else "")
             + DISCLAIMER)
+
+
+# ---------------- 👑 tek el (app/radar/onehand.py) ----------------
+
+_ONEHAND_DIR = {"Open Long": "LONG açıyor", "Open Short": "SHORT açıyor", "Close Long": "LONG'unu kapatıyor",
+                "Close Short": "SHORT'unu kapatıyor", "Long > Short": "LONG'dan SHORT'a dönüyor",
+                "Short > Long": "SHORT'tan LONG'a dönüyor"}
+
+
+def onehand_alert(cand: dict, v: dict, pos: dict | None, vol24: float | None, session: str) -> str:
+    """İlk 4 satır: ne (coin, yön, hareket, tek cüzdanın payı) · hacme göre ne kadar · ne zaman · kim ve ne yapıyor."""
+    from .. import assets
+    sym = esc(assets.label(cand["coin"]))
+    up = cand["side"] == "B"
+    win = max(1, round((int(cand["last_ts"]) - int(cand["win_ts"])) / 60))
+    v1 = cand.get("v1")
+    lines = [f"👑 <b>{sym}</b> {'🟢' if up else '🔴'} {cand['move']:+.2f}% · {win} dk'da tek cüzdan hacmin"
+             f" {_pct_txt(cand['share'] * 100)}'i ({usd(cand['mine'])} piyasadan {'alım' if up else 'satış'})"]
+    if is_listed(cand["coin"]):
+        lines.append(PROPR_NOTE)
+    # PROPR satırı varken de "kim" 4. satırda kalsın: hacim ve zaman tek satır (kural: önemli olan ilk 3-4 satırda)
+    lines.append(f"Pencere hacmi {usd(cand['tot'])}"
+                 + (f" = ortalama dakika hacminin {cand['tot'] / (v1 * win):.0f} katı" if v1 else "")
+                 + f" · 24s hacim {usd(vol24) if vol24 else 'bilinmiyor'}"
+                 + f" · başlangıç {tr_time(int(cand['first_ts']))} · {esc(session)}")
+    act = _ONEHAND_DIR.get(v.get("dir") or "", esc(v.get("dir") or "bilinmiyor"))
+    p_txt = (f" → pozisyon {pos['side']} {usd(pos['usd'])}" + (f" (giriş {px(pos['entry'])}"
+             + (f", liq {px(pos['liq'])}" if pos.get("liq") else "") + ")")) if pos else " → pozisyon yok / okunamadı"
+    lines.append(f"{alink(cand['addr'])} {act} · {v.get('orders', 0)} piyasa emri{p_txt}")
+    lines.append(f"Fiyat {px(cand['ref'])} → {px(cand['px'])} (pencereden önceki son işlemden)")
+    lines.append("30 dk sonra ölçüm notu gelecek (fiyat, tepe/dip, cüzdanın sonraki işlemleri).")
+    return "\n".join(lines) + DISCLAIMER
+
+
+def onehand_follow(m: dict) -> str:
+    """30 dk ölçüm notu: fiyat (bildirim fiyatına ve tetik öncesine göre), aradaki tepe/dip, cüzdanın sonraki işlemleri."""
+    from .. import assets
+    sym = esc(assets.label(m["coin"]))
+    up = m["side"] == "B"
+    last, px0, ref = m.get("last"), float(m["px"]), float(m["ref"])
+    if not last:
+        return ""
+    vs0 = (float(last) / px0 - 1) * 100
+    back = (float(last) <= ref) if up else (float(last) >= ref)
+    word = "aldı" if up else "sattı"
+    rev = "sattı" if up else "aldı"
+    mins = max(1, round((int(m["due"]) - int(m["t"])) / 60))
+    return (f"👑⏱ <b>{sym}</b> {mins} dk sonra: fiyat {px(last)} (bildirime göre {vs0:+.2f}%"
+            + (f"; tetik öncesi fiyat {px(ref)} da geri geçildi" if back else f"; tetik öncesi fiyat {px(ref)}") + ")"
+            + (f" · arada tepe {px(m['hi'])} / dip {px(m['lo'])}" if m.get("hi") and m.get("lo") else "")
+            + f"\n{alink(m['addr'])} bildirimden sonra piyasadan {usd(m['same'])} daha {word}"
+            + (f", {usd(m['opp'])} {rev}" if m.get("opp") else "") + DISCLAIMER)
+
+
+def onehand_list(state: dict, line: str, has_chat: bool) -> str:
+    """/tekel — son olaylar (ölçüm notu bekleyen + ölçülmüş) ve sayım satırı."""
+    from .. import assets
+    out = ["👑 <b>Tek el</b> — tek cüzdan az işlem gören hisseyi kısa sürede oynattı"]
+    if not has_chat:
+        out.append("Kanal tanımsız (ONEHAND_CHAT_ID / UNWIND_CHAT_ID) — izleme yok.")
+    pend = sorted(state.get("follow") or [], key=lambda f: -int(f["t"]))[:5]
+    done = sorted(state.get("log") or [], key=lambda f: -int(f["t"]))[:10]
+    if pend:
+        out.append("Ölçüm notu bekleyen: " + " · ".join(
+            f"<b>{esc(assets.label(f['coin']))}</b> {'🟢' if f['side'] == 'B' else '🔴'} {tr_time(int(f['t']))}"
+            for f in pend))
+    if done:
+        out.append("Son ölçülenler (30 dk sonra, bildirim fiyatına göre): " + " · ".join(
+            f"<b>{esc(assets.label(e['coin']))}</b> {'🟢' if e['side'] == 'B' else '🔴'} {tr_time(int(e['t']))}"
+            f" {(float(e['last']) / float(e['px']) - 1) * 100:+.2f}%" for e in done if e.get("last") and e.get("px")))
+    if not pend and not done:
+        out.append("Henüz olay yok.")
+    out.append(esc(line))
+    return "\n".join(out)
 
 
 # ---- 👣 boşaltma takibi (app/radar/unwindtrack.py, UNWIND_TRACK_CHAT_ID) — bot._track_callback ----

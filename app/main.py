@@ -441,6 +441,8 @@ async def lifespan(app: FastAPI):
     _spawn("koridor", lambda: koridor.loop(cfg, client, notifier, collector), notifier)
     from .radar import unwind
     _spawn("unwind", lambda: unwind.loop(cfg, client, notifier), notifier)
+    from .radar import onehand as _onehand
+    _spawn("onehand", lambda: _onehand.loop(cfg, client, notifier), notifier)
     from .lab import loop as lab_loop
     _spawn("lab", lambda: lab_loop.loop(cfg, client, notifier), notifier)
     _spawn("sweeper", lambda: sweeper.loop(cfg, client), notifier)
