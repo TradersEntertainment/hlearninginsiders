@@ -1505,16 +1505,21 @@ async def sticky_page(request: Request):
 
 
 @router.get("/kriptoliq")
-async def crypto_liq_page(request: Request, mesafe: float = 5.0, yon: str = "hepsi"):
-    """Kripto liq kümeleri — ana dex kriptosunda likidasyona yakın birikim."""
+async def crypto_liq_page(request: Request, mesafe: float = 5.0, yon: str = "hepsi", boyut: float = 0,
+                          gorunum: str = "band", bayat: int = 0):
+    """Kripto liq kümeleri — ana dex kriptosunda likidasyona yakın birikim (boyut süzgeci, tek tek pozisyon
+    görünümü, yalnız yakın zamanda doğrulanmış satırlar; kullanıcı 22.10)."""
     _guard(request)
     cfg = request.app.state.cfg
     yon = yon if yon in ("hepsi", "long", "short") else "hepsi"
     mesafe = mesafe if any(abs(mesafe - d) < 1e-9 for d in cryptoliq.PAGE_DISTS) else 5.0
+    boyut = boyut if any(abs(boyut - x) < 1e-6 for x in cryptoliq.PAGE_SIZES) else 0
+    gorunum = gorunum if gorunum in ("band", "poz") else "band"
     ws = await kv_get("ws_universe") or {}
     return _render(request, "kriptoliq.html", {
-        "cl": await cryptoliq.page(cfg, dist_pct=mesafe, side=yon),
-        "mesafe": mesafe, "yon": yon,
+        "cl": await cryptoliq.page(cfg, dist_pct=mesafe, side=yon, min_pos=boyut, view=gorunum,
+                                   show_stale=bool(bayat)),
+        "mesafe": mesafe, "yon": yon, "boyut": boyut, "gorunum": gorunum, "bayat": 1 if bayat else 0,
         "crypto_n": len(ws.get("crypto") or []), "ws_ts": int(ws.get("ts") or 0),
         "max_liq": getattr(cfg, "max_liq_distance_pct", 50),
     })

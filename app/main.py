@@ -397,6 +397,8 @@ async def lifespan(app: FastAPI):
     _spawn("cryptovol", lambda: cryptovol_loop(cfg, client, notifier), notifier)
     from .radar.cryptoliq import loop as cryptoliq_loop
     _spawn("cryptoliq", lambda: cryptoliq_loop(cfg, client, notifier), notifier)
+    from .radar import liqverify as _liqverify
+    _spawn("liqverify", lambda: _liqverify.loop(cfg, client), notifier)
     from .radar.equityvol import loop as equityvol_loop
     _spawn("equityvol", lambda: equityvol_loop(cfg, client, notifier), notifier)
     from .radar.bars import loop as bars_loop

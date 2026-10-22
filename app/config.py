@@ -793,6 +793,12 @@ class Config:
         # çizmeye devam eder.
         self.crypto_liq_list_dist_pct = float(os.getenv("CRYPTO_LIQ_LIST_DIST_PCT", "20"))
         self.crypto_liq_band_merge = float(os.getenv("CRYPTO_LIQ_BAND_MERGE", "5"))
+        # 🎯 Liq doğrulama + keşif (app/radar/liqverify.py, kullanıcı 22.10: "hem güvenilir olacak hem de poz
+        # kaçırmayacak") — /kriptoliq'teki yakın-liq satırları 10–30 dk'da bir HL'den yeniden okunur, son 15 dk'da büyük
+        # işlem yapan adres okunur. RPM = dakikada en çok kaç adres (clearinghouseState, ağırlık 2), düşük şerit.
+        self.liq_verify_enabled = convert_value("bool", os.getenv("LIQ_VERIFY_ENABLED", "1"))
+        self.liq_verify_rpm = int(os.getenv("LIQ_VERIFY_RPM", "40"))
+        self.liq_discover_min_usd = float(os.getenv("LIQ_DISCOVER_MIN_USD", "50000"))
         # Spot: yalnız TWAP dilimleri için dinlenir (pozisyon/liq/funding yok).
         self.spot_enabled = True
         self.spot_watch_top = int(os.getenv("SPOT_WATCH_TOP", "40"))

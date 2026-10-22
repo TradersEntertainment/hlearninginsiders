@@ -447,6 +447,11 @@ async def _subsystems(cfg, state=None) -> list[str]:
                    + (f" · {_dur(now() - int(cl['ts']))} önce" if cl.get("ts") else ""))
     else:
         out.append("  kripto liq: tur HENÜZ ÇALIŞMADI")
+    try:
+        from .radar import liqverify as _lv
+        out.append("  " + await _lv.diag_line(cfg))
+    except Exception as e:                                  # noqa: BLE001
+        out.append(f"  🎯 liq doğrulama: okunamadı ({type(e).__name__})")
     lw = await kv_get("liqwatch_stats") or {}
     if lw:
         out.append(f"  liq radarı: {lw.get('addrs', 0)} hesap · {lw.get('requests', 0)} dex sorgusu"

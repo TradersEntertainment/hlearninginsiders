@@ -2,13 +2,22 @@
 {% import "_macros.html" as m %}
 {% block title %}💥 Kripto liq · HL Radar{% endblock %}
 {% block content %}
+{% macro ago(sec) -%}
+{%- if sec is none %}bilinmiyor{% elif sec < 60 %}az önce{% elif sec < 3600 %}{{ (sec // 60)|int }} dk önce{% else %}{{ '%.1f'|format(sec / 3600) }} sa önce{% endif -%}
+{%- endmacro %}
+{% macro cov(c) -%}
+{%- if c is none %}<span class="dim" title="Coinin açık pozisyonu (OI) bilinmiyor">bilinmiyor</span>{% elif c < 0.01 %}<span class="dim">&lt;%1</span>{% else %}%{{ (c * 100)|round|int }}{% endif -%}
+{%- endmacro %}
 
 <div class="panel">
   <h2>💥 Kripto liq kümeleri <span class="st">· ana dex kriptosunda likidasyona yakın birikim · toplamı büyükten küçüğe</span></h2>
   <p class="sub">Tek soru: <b>fiyat biraz oynarsa hangi coinde, hangi yönde, ne kadar dolar zorla kapanır?</b>
   Her satır bir coin-yön: o yöndeki <b>en yakın anlamlı</b> likidasyon bandı. Bantlar fiyatta
   bitişikse birleştirilir, yani "kova sınırı" aynı fiyat bölgesini ikiye bölmez.
-  Fiyatlar ana dex özetinden, pozisyonlar süpürme havuzundan — <b>bu sayfa HL'ye istek atmaz</b>.</p>
+  Fiyatlar ana dex özetinden, pozisyonlar bizim pozisyon havuzumuzdan. Sayfa açılırken HL'ye istek atılmaz;
+  <b>🎯 doğrulama şeridi</b> liq'e yakın pozisyonları arka planda HL'den yeniden okur ve
+  <b>yalnız yakın zamanda doğrulananlar gösterilir</b> (liq'e %5 içinde: son {{ cl.fresh_near_min }} dk,
+  %5–10: son {{ cl.fresh_far_min }} dk). Kapanmış ya da likide olmuş pozisyon böylece listeden düşer.</p>
 
   <form method="get" action="/kriptoliq" class="btnrow">
     {% if k %}<input type="hidden" name="key" value="{{ k[5:] }}">{% endif %}
@@ -22,10 +31,65 @@
         <option value="long"{% if yon == 'long' %} selected{% endif %}>yalnız LONG (fiyat düşerse)</option>
         <option value="short"{% if yon == 'short' %} selected{% endif %}>yalnız SHORT (fiyat çıkarsa)</option>
       </select></label>
+    <label>Boyut
+      <select name="boyut" onchange="this.form.submit()">
+        {% for x in cl.sizes %}<option value="{{ x|int }}"{% if (loop.first and not boyut) or x == boyut %} selected{% endif %}>{{ x|usd }}+ pozisyon</option>{% endfor %}
+      </select></label>
+    <label>Görünüm
+      <select name="gorunum" onchange="this.form.submit()">
+        <option value="band"{% if gorunum == 'band' %} selected{% endif %}>bantlar (coin-yön)</option>
+        <option value="poz"{% if gorunum == 'poz' %} selected{% endif %}>tek tek pozisyon (en yakın liq)</option>
+      </select></label>
+    {% if bayat %}<input type="hidden" name="bayat" value="1">{% endif %}
     <button type="submit" class="btn sm">Uygula</button>
   </form>
 
-  {% if cl.rows %}
+  {% if not cl.verify_on %}
+  <p class="warn">⚠️ Doğrulama şeridi KAPALI (LIQ_VERIFY_ENABLED=0): satırlar yeniden okunmuyor, çoğu "doğrulanmamış" görünebilir.</p>
+  {% endif %}
+  {% if cl.n_stale %}
+  <p class="sub">⏳ {{ cl.n_stale }} pozisyon ({{ cl.stale_usd|usd }}) son okumadan beri doğrulanmadı —
+  {% if cl.show_stale %}<b>aşağıda gösteriliyor</b> (yaş sütunu kırmızı). <a href="/kriptoliq?mesafe={{ '%g'|format(mesafe) }}&yon={{ yon }}&boyut={{ boyut|int }}&gorunum={{ gorunum }}{{ k|replace('?', '&') }}">Gizle</a>
+  {% else %}gizlendi; sıradaki doğrulamayla geri gelir ya da kapanmışsa düşer.
+  <a href="/kriptoliq?mesafe={{ '%g'|format(mesafe) }}&yon={{ yon }}&boyut={{ boyut|int }}&gorunum={{ gorunum }}&bayat=1{{ k|replace('?', '&') }}">Onları da göster</a>{% endif %}</p>
+  {% endif %}
+
+  {% if gorunum == 'poz' %}
+  {% if cl.positions %}
+  <div class="tscroll"><div class="tscroll-x">
+  <table>
+    <tr><th class="l">Coin</th><th>Yön</th>
+        <th title="Şimdiki fiyattan pozisyonun liq fiyatına uzaklık">Mesafe</th>
+        <th title="Pozisyonun büyüklüğü">Poz</th>
+        <th title="Likidasyon fiyatı">Liq</th>
+        <th title="Şimdiki işaret fiyatı">Fiyat</th>
+        <th title="Kaldıraç">Kaldıraç</th>
+        <th class="l" title="Cüzdan">Kim</th>
+        <th title="Bu pozisyon HL'den en son ne zaman okundu">Doğrulandı</th>
+        <th title="Bu coinin bu yöndeki açık pozisyonunun (OI) kaçını tanıyoruz">Kapsama</th></tr>
+    {% for p in cl.positions %}
+    <tr>
+      <td class="l"><a href="/t/{{ p.coin }}{{ k }}"><b>{{ p.symbol }}</b></a></td>
+      <td class="{{ p.side }}">{{ 'LONG' if p.side == 'long' else 'SHORT' }}</td>
+      <td class="{{ 'warn' if p.dist < 1 else '' }}" data-v="{{ p.dist }}">%{{ '%.2f'|format(p.dist) }}</td>
+      <td data-v="{{ p.notional|int }}"><b>{{ p.notional|usd }}</b></td>
+      <td class="dim">{{ p.liq_px|px }}</td>
+      <td class="dim">{{ p.mark|px }}</td>
+      <td class="dim">{% if p.leverage %}{{ '%g'|format(p.leverage) }}x{% else %}bilinmiyor{% endif %}</td>
+      <td class="l">{{ m.addr(p.address, k, 6) }}{% if p.entity %} <span class="dim">{{ p.entity }}</span>{% endif %}</td>
+      <td class="{{ 'short' if not p.fresh else 'dim' }}" data-v="{{ p.age }}">{{ ago(p.age) }}</td>
+      <td class="dim">{{ cov(p.cov) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div></div>
+  <p class="kunye">🧾 {{ cl.positions|length }} pozisyon{% if cl.n_all > cl.positions|length %} (sayfa tavanı {{ cl.cap }}, toplam {{ cl.n_all }}){% endif %} ·
+  liq'e en yakından uzağa · boyut ≥ {{ cl.min_pos|usd }}{% if cl.mark_ts %} · fiyatlar {{ cl.mark_ts|age }} önce yazıldı{% endif %}.</p>
+  {% else %}
+  {{ m.empty(['Bu süzgeçle liq\'e yakın pozisyon yok.',
+              'Mesafeyi genişlet, boyutu düşür ya da yön süzgecini gevşet.']) }}
+  {% endif %}
+  {% elif cl.rows %}
   <div class="tscroll"><div class="tscroll-x">
   <table>
     <tr><th class="l">Coin</th><th>Yön</th>
@@ -35,7 +99,9 @@
         <th title="Bandın fiyat aralığı — likidasyonlar bu aralıkta">Band</th>
         <th title="Şimdiki işaret fiyatı">Fiyat</th>
         <th title="Bu coinde bu yöndeki TÜM bantların toplamı (yalnız en yakın anlamlısı listelendi)">Coin toplamı</th>
-        <th class="l" title="Banddaki en büyük pozisyonlar">Kimler</th></tr>
+        <th class="l" title="Banddaki en büyük pozisyonlar">Kimler</th>
+        <th title="Banddaki pozisyonlardan en eski okunanın yaşı">Doğrulandı</th>
+        <th title="Bu coinin bu yöndeki açık pozisyonunun (OI) kaçını tanıyoruz (son 2 sa içinde okunan pozisyonlar)">Kapsama</th></tr>
     {% for r in cl.rows %}
     <tr>
       <td class="l"><a href="/t/{{ r.coin }}{{ k }}"><b>{{ r.symbol }}</b></a></td>
@@ -48,6 +114,8 @@
       <td class="dim">{{ r.mark|px }}</td>
       <td class="dim">{{ r.coin_total|usd }}{% if r.n_bands > 1 %} <span class="dim" title="Bu yönde {{ r.n_bands }} band var">({{ r.n_bands }})</span>{% endif %}</td>
       <td class="l">{% for t in r.top[:3] %}{{ m.addr(t.address, k, 6) }} <span class="dim">{{ t.notional|usd }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</td>
+      <td class="{{ 'short' if r.stale else 'dim' }}" data-v="{{ r.age if r.age is not none else '' }}">{{ ago(r.age) }}</td>
+      <td class="dim">{{ cov(r.cov) }}</td>
     </tr>
     {% endfor %}
   </table>
@@ -80,7 +148,11 @@
   <p><b>Gösterir:</b> ana dex kripto perp'lerinde, süpürme havuzunda görülen ve likidasyon
   fiyatı bilinen pozisyonların kümelenmesi. Yön sağlaması yapılır: long'un liq'i fiyatın
   <b>altında</b>, short'unki <b>üstünde</b> olmalı; tersi veri tutarsızlığıdır ve atlanır.</p>
-  <p><b>Göstermez:</b> havuzda olmayan adresleri (kapsama sayfada coin başına yazılır),
+  <p><b>Doğrulama ve keşif (🎯):</b> liq'e %5 içindeki pozisyonlar 10 dk'da, %5–10 arası 30 dk'da bir,
+  liq fiyatı geçilmiş olanlar hemen HL'den yeniden okunur; kapanmış olan kapandı diye işaretlenir. Son 15 dk'da
+  ana dexte büyük işlem ($50K+) yapan adresler de okunur, yani yeni açılan büyük pozisyon dakikalar içinde listeye girer.
+  <b>Kapsama</b> sütunu: o coinin o yöndeki toplam açık pozisyonunun (OI) kaçını tanıyoruz.</p>
+  <p><b>Göstermez:</b> havuzda olmayan adresleri (kapsama sütununda coin başına),
   pozisyon tabanının altında kalan küçükleri, HIP-3 hisse/endeks perp'lerini (onlar
   <a href="/saldiri{{ k }}">liq attack</a> ve ana sayfa haritasında) ve <b>spot çiftlerini</b> —
   spot'ta pozisyon, likidasyon ve funding yoktur.</p>

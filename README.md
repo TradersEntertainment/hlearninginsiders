@@ -1143,10 +1143,42 @@ Bu yüzden iki ayrı şey var:
 
 **Eksik olan kasıtlı:** `/kriptoliq`'te **defter derinliği yok**, dolayısıyla
 **oran da yok**. `/saldiri`'nin asıl rakamı "patlayacak $ ÷ yenmesi gereken defter $"
-canlı `l2Book` ister — coin başına bir istek. Bu sayfa **HL'ye hiç istek atmaz**
-(pozisyonlar süpürme havuzundan, fiyatlar metrik döngüsünün yazdığı ana dex
+canlı `l2Book` ister — coin başına bir istek. Sayfa açılışı **HL'ye istek atmaz**
+(pozisyonlar süpürme havuzundan, yakın-liq olanlar 🎯 doğrulama şeridince tazelenir, fiyatlar metrik döngüsünün yazdığı ana dex
 özetinden), bu yüzden cevapladığı soru "nerede ne kadar liq birikmiş"tir,
 "itmek kaça mal olur" değil. Sayfa bunu başlıkta ve künyede yazar.
+
+### 🎯 Liq doğrulama + keşif — `/kriptoliq` yalnız doğrulanmış satır gösterir
+
+Kullanıcı (22.10): "sitedeki kripto liqlere bakıyorum hepsi eski basıyorum öyle bir poz yok veya liqi çok farklı"
+· "poz boyutu filtreleyebilmeliyim 500k+ 1m$ vs gibi" · "hem güvenilir olacak hem de poz kaçırmayacak".
+Canlı ölçüm: ekrandaki 7 satırın çözülebilen 6'sı bayattı. AZTEC 6 gün, HYPE 10 gün önce kapanmıştı; SOL 13–18.10'da
+likide olmuştu; bir HYPE pozisyonunun liq'i %9 kaymıştı. Kök neden: satır, adres en son okunduğundaki fotoğraftı ve
+sayfa yaş göstermiyordu. "Liq'e en yakın" sıralaması da ölü satırı en üste taşıyordu.
+
+- **Doğrulama şeridi** (`app/radar/liqverify.py`, 15 sn'de bir tur). Her adres tek istekle (ana dex `clearinghouseState`,
+  düşük şerit) yeniden okunur ve sayımın yazıcısıyla yazılır; kapanan pozisyon "kapandı" diye damgalanır. Okunma sıklığı:
+  - liq'e %5 içindeki satırlar (≥ sayfa tabanı): 10 dk'da bir;
+  - %5–10 arası: 30 dk'da bir;
+  - liq fiyatı geçilmiş (likide olmuş olabilir) satırlar: hemen.
+  Sıra en yakından uzağa.
+- **Keşif.** Son 15 dk'da ana dex kriptoda `LIQ_DISCOVER_MIN_USD` ($50K) üstü işlem yapıp o işlemden sonra okunmamış
+  adres de okunur. Yeni açılan büyük pozisyon dakikalar içinde havuza girer.
+- **Bütçe:** dakikada en çok `LIQ_VERIFY_RPM` (40) adres. Bot kotasında boş yer azsa tur atlanır, radarlar önce gelir.
+- **Sayfa:**
+  - Doğrulama penceresinden eski satırı göstermez (≤ %5: 15 dk, %5–10: 45 dk); kaçının gizlendiğini yazar,
+    "Onları da göster" ile açılır.
+  - Her satırda "Doğrulandı … önce" sütunu var.
+  - **Boyut süzgeci** pozisyon başına çalışır: $200K / $500K / $1M / $2M / $5M / $10M+.
+  - **Görünüm:** bantlar ya da tek tek pozisyon (liq'e en yakından uzağa).
+  - **Kapsama:** o coinin o yöndeki açık pozisyonunun (OI) kaçını tanıyoruz. Son 2 sa içinde okunan pozisyonlar sayılır.
+  - BTC/ETH sayfada var; bildirim onları yine dışarıda tutar.
+- `/tani` satırı: "🎯 liq doğrulama: okunan … · kapanmış bulunan … · bekleyen …".
+- Env: `LIQ_VERIFY_ENABLED` (1), `LIQ_VERIFY_RPM` (40), `LIQ_DISCOVER_MIN_USD` (50000).
+
+Kör nokta, açıkça: HL'de "bir coindeki bütün pozisyonlar" sorgusu yok. Hiç işlem yapmamış ve sayımın görmediği bir
+adres bulunamaz. Keşif yalnız dinlenen coinlerin $5K üstü işlemlerinden beslenir. Kapsama sütunu bu açığı coin
+başına sayıyla gösterir.
 
 ## Likidasyon haritası nasıl okunur — `/t/<sembol>`
 

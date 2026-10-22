@@ -58,6 +58,7 @@ def limits(cfg: Config) -> dict[str, int]:
         "propr": max(600, int(getattr(cfg, "propr_sync_sec", 3600) or 3600)) * 3 + 600,   # her tur nabız (çekim düşse de)
         "cryptovol": int(getattr(cfg, "crypto_vol_poll_sec", 300)) * 3 + 300,
         "cryptoliq": int(getattr(cfg, "crypto_liq_poll_sec", 120)) * 3 + 300,
+        "liqverify": 600,           # 15 sn'lik tur; nabız her turda (kapalıyken de)
         "equityvol": int(getattr(cfg, "equity_vol_poll_sec", 300)) * 3 + 300,
         "bars": int(getattr(cfg, "bars_refresh_sec", 1800)) * 3 + 600,
         "seans": max(600, int(getattr(cfg, "seans_refresh_sec", 3600) or 3600)) * 3 + 600,
@@ -118,6 +119,7 @@ def periods(cfg: Config) -> dict[str, int]:
         "propr": max(600, int(getattr(cfg, "propr_sync_sec", 3600) or 3600)),
         "cryptovol": int(getattr(cfg, "crypto_vol_poll_sec", 300)),
         "cryptoliq": int(getattr(cfg, "crypto_liq_poll_sec", 120)),
+        "liqverify": 15,
         "equityvol": int(getattr(cfg, "equity_vol_poll_sec", 300)),
         "bars": int(getattr(cfg, "bars_refresh_sec", 1800)),
         "seans": max(600, int(getattr(cfg, "seans_refresh_sec", 3600) or 3600)),
