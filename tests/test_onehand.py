@@ -98,6 +98,14 @@ def test_trigger_and_gates():
     oh.VOL1M[C] = 4333
     _crwd(cfg, p1=241.9, side="S")
     assert list(oh.PENDING) == [(C, W, "S")]
+    # budanmış pencere: çıpa saatler önceki fiyat kalmaz (inceleme 22.10)
+    _reset()
+    oh.VOL1M[C] = 4333
+    for i, p in enumerate((230.0, 240.0)):
+        oh.observe(cfg, C, "B", O(9), O(8), p, 1, T0 - 7200 + i * 600)
+    oh._prune(T0)
+    _crwd(cfg, p0=245.0, p1=245.3)
+    assert not oh.PENDING and abs(oh.REF[C] - 245.0) < 1e-9, (oh.PENDING, oh.REF)
     # bekleme
     _reset()
     oh.VOL1M[C] = 4333
@@ -185,6 +193,9 @@ def test_probe_message_follow():
         assert "sattı" in out[0] and not oh.STATE["follow"] and len(oh.STATE["log"]) == 1
         oc = oh.outcome_counts(oh.STATE["log"])
         assert oc["n"] == 1 and oc["below"] == 1 and oc["back"] == 0, oc
+        # satış yönü: HL işlem kaydında satış 'A' (inceleme 22.10: 'S' ile hiç doğrulanmıyordu)
+        assert oh.judge_fills({**cand, "side": "S"}, [_fill(side="A", d="Open Short")])["ok"]
+        assert not oh.judge_fills({**cand, "side": "S"}, [_fill(side="B")])["ok"]
         # ölçülü dil: tahmin yok
         for bad in ("düşecek", "manipül", "muhtemelen", "sinyal"):
             assert bad not in txt.lower() and bad not in out[0].lower(), bad
@@ -206,8 +217,13 @@ def test_no_channel_and_session():
         s = lambda h, m, d=22: oh.us_session(int(dt.datetime(2026, 10, d, h, m, tzinfo=dt.timezone.utc).timestamp()))  # noqa: E731
         assert s(13, 25) == "ABD açılış öncesi (açılışa 5 dk)" and s(15, 0) == "ABD seansı açık"
         assert "kapanış sonrası" in s(21, 0) and "hafta sonu" in s(13, 0, 24)
+        early = int(dt.datetime(2026, 11, 27, 19, 0, tzinfo=dt.timezone.utc).timestamp())    # 14:00 ET, yarım gün
+        assert oh.us_session(early) == "ABD seansı kapalı (kapanış sonrası)", oh.us_session(early)
+        assert oh.session_txt("xyz:SKHX", early) == "ana borsa KRX" and oh.session_txt("xyz:ZHIPU", early) == ""
+        assert oh.session_txt("xyz:CRWD", early).startswith("ABD")
     asyncio.run(run())
-    print("✅ kanal) ONEHAND_CHAT_ID > UNWIND_CHAT_ID; ikisi de boşsa izleme yok; ABD seansı etiketi")
+    print("✅ kanal) ONEHAND_CHAT_ID > UNWIND_CHAT_ID; ikisi de boşsa izleme yok; ABD seansı (yarım gün dahil);"
+          " Kore/Japonya hissesinde ana borsa")
 
 
 def test_wiring():

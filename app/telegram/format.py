@@ -4067,9 +4067,11 @@ def onehand_alert(cand: dict, v: dict, pos: dict | None, vol24: float | None, se
     from .. import assets
     sym = esc(assets.label(cand["coin"]))
     up = cand["side"] == "B"
-    win = max(1, round((int(cand["last_ts"]) - int(cand["win_ts"])) / 60))
+    span = max(1, int(cand["last_ts"]) - int(cand["win_ts"]))          # gerçek saniye (yuvarlanmış dk katı şişiriyordu)
+    win_txt = f"{span} sn" if span < 120 else f"{round(span / 60)} dk"
+    win = max(span, 60) / 60
     v1 = cand.get("v1")
-    lines = [f"👑 <b>{sym}</b> {'🟢' if up else '🔴'} {cand['move']:+.2f}% · {win} dk'da tek cüzdan hacmin"
+    lines = [f"👑 <b>{sym}</b> {'🟢' if up else '🔴'} {cand['move']:+.2f}% · {win_txt} içinde tek cüzdan hacmin"
              f" {_pct_txt(cand['share'] * 100)}'i ({usd(cand['mine'])} piyasadan {'alım' if up else 'satış'})"]
     if is_listed(cand["coin"]):
         lines.append(PROPR_NOTE)
@@ -4077,7 +4079,7 @@ def onehand_alert(cand: dict, v: dict, pos: dict | None, vol24: float | None, se
     lines.append(f"Pencere hacmi {usd(cand['tot'])}"
                  + (f" = ortalama dakika hacminin {cand['tot'] / (v1 * win):.0f} katı" if v1 else "")
                  + f" · 24s hacim {usd(vol24) if vol24 else 'bilinmiyor'}"
-                 + f" · başlangıç {tr_time(int(cand['first_ts']))} · {esc(session)}")
+                 + f" · başlangıç {tr_time(int(cand['first_ts']))}" + (f" · {esc(session)}" if session else ""))
     act = _ONEHAND_DIR.get(v.get("dir") or "", esc(v.get("dir") or "bilinmiyor"))
     p_txt = (f" → pozisyon {pos['side']} {usd(pos['usd'])}" + (f" (giriş {px(pos['entry'])}"
              + (f", liq {px(pos['liq'])}" if pos.get("liq") else "") + ")")) if pos else " → pozisyon yok / okunamadı"

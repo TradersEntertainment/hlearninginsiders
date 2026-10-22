@@ -82,6 +82,11 @@ def _is_stock(coin: str) -> bool:
         return False
 
 
+def _hl_side(s: str) -> str:
+    """İç yön 'B'/'S' → HL işlem kaydındaki 'B'/'A' (satış HL'de 'A'; inceleme 22.10: satış adayı hiç doğrulanmıyordu)."""
+    return "A" if s == "S" else s
+
+
 def floor_usd(cfg, coin: str) -> float | None:
     v1 = VOL1M.get(coin)
     if not v1:
@@ -100,6 +105,8 @@ def observe(cfg, coin: str, aggr: str, buyer: str, seller: str, px: float, sz: f
     usd = float(px) * float(sz)
     ts = int(ts)
     dq = WIN.setdefault(coin, deque())
+    if not dq and coin in LAST:
+        REF[coin] = LAST[coin]                          # boş / budanmış pencere: çıpa pencereden önceki son işlem
     by = BY.setdefault(coin, {})
     dq.append([ts, usd, float(px), taker, side])
     TOT[coin] = TOT.get(coin, 0.0) + usd
@@ -152,6 +159,8 @@ def _prune(t: float) -> None:
         WIN.pop(c, None)
         TOT.pop(c, None)
         BY.pop(c, None)
+        if c in LAST:
+            REF[c] = LAST[c]                            # saatler önceki çıpa kalmasın (inceleme 22.10)
     for k in [k for k, v in COOL.items() if v < t]:
         COOL.pop(k, None)
 
@@ -163,7 +172,7 @@ def judge_fills(cand: dict, fills: list) -> dict:
     coin, side, addr = cand["coin"], cand["side"], str(cand["addr"]).lower()
     since = (int(cand["win_ts"]) - 5) * 1000
     rows = [f for f in fills or [] if f.get("coin") == coin and int(f.get("time") or 0) >= since
-            and str(f.get("side")) == side and f.get("crossed", True)]
+            and str(f.get("side")) == _hl_side(side) and f.get("crossed", True)]
     if not rows:
         return {"ok": False, "why": "işlem doğrulanamadı"}
     if any(str((r.get("liquidation") or {}).get("liquidatedUser") or "").lower() == addr for r in rows):
@@ -195,18 +204,34 @@ def _position(state, coin: str) -> dict | None:
 
 
 def us_session(ts: int) -> str:
-    """ABD hisse seansına göre an: 'ABD seansı açık' · 'ABD açılış öncesi (açılışa N dk)' · 'ABD seansı kapalı'."""
-    from .seans import ET, bounds, is_trading_day
+    """ABD hisse seansına göre an: 'ABD seansı açık' · 'ABD açılış öncesi (açılışa N dk)' · 'ABD seansı kapalı'.
+    Yarım günlerde (US_EARLY_CLOSE) kapanış 13:00 ET."""
+    from datetime import time as dtime
+    from .seans import ET, US_EARLY_CLOSE, bounds, is_trading_day
     d = datetime.fromtimestamp(int(ts), ET).date()
     if not is_trading_day(d):
         return "ABD seansı kapalı (hafta sonu / tatil)"
     b = bounds(d)
-    if b["n0"] <= ts < b["n1"]:
+    end = int(datetime.combine(d, dtime(13, 0), ET).timestamp()) if d in US_EARLY_CLOSE else b["n1"]
+    if b["n0"] <= ts < end:
         return "ABD seansı açık"
     if ts < b["n0"]:
         mins = (b["n0"] - int(ts)) // 60
         return f"ABD açılış öncesi (açılışa {mins} dk)" if mins < 180 else "ABD seansı kapalı (açılış öncesi)"
     return "ABD seansı kapalı (kapanış sonrası)"
+
+
+def session_txt(coin: str, ts: int) -> str:
+    """ABD seansı satırı yalnız ABD'de işlem gören hisselerde (Kore / Japonya hisselerinde yanlış piyasa olurdu)."""
+    from ..assets import NO_CALENDAR
+    from ..tvsymbols import DEFAULT_TV_MAP
+    sym = coin.split(":")[-1].upper()
+    tv = DEFAULT_TV_MAP.get(sym, "")
+    if tv.split(":")[0] in ("KRX", "TSE"):
+        return f"ana borsa {tv.split(':')[0]}"
+    if sym in NO_CALENDAR:                              # Çin / halka arz öncesi: ABD seansı anlamsız
+        return ""
+    return us_session(ts)
 
 
 def _reject(why: str) -> None:
@@ -243,7 +268,7 @@ async def probe(cfg, client, notifier, cand: dict) -> str | None:
     vols = await volumes_cached(None)
     vol24 = (vols.get(coin) or (None,))[0]
     t = int(time.time())
-    txt = fmt.onehand_alert(cand, v, pos, vol24, us_session(t))
+    txt = fmt.onehand_alert(cand, v, pos, vol24, session_txt(coin, t))
     k = f"onehand:{coin}:{cand['addr']}:{cand['side']}:{t // 60}"
     STATS["sent"] += 1
     STATE.setdefault("follow", []).append({"coin": coin, "addr": cand["addr"], "side": cand["side"], "t": t,
@@ -285,7 +310,7 @@ async def follow_up(cfg, client, notifier, t: int | None = None) -> list[str]:
             if x.get("coin") != f["coin"] or not x.get("crossed", True):
                 continue
             u = abs(float(x.get("sz") or 0)) * float(x.get("px") or 0)
-            if str(x.get("side")) == f["side"]:
+            if str(x.get("side")) == _hl_side(f["side"]):
                 same += u
             else:
                 opp += u
