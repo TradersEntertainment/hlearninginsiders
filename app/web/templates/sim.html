@@ -58,6 +58,14 @@
       <div class="s">{% if st.best %}{{ st.best.coin }} · en kötü {{ '%+.0f'|format(st.worst.pnl_usd) }}$ {{ st.worst.coin }}{% else %}henüz kapanış yok{% endif %}</div></div>
     <div><div class="l">Açık işlem</div><div class="v">{{ s.opens|length }}</div>
       <div class="s">kapanan: {{ st.by_leg[1].n }} ön · {{ st.by_leg[2].n }} ters bacak</div></div>
+    {% if s.noleg2 and s.noleg2.n %}{% set nl = s.noleg2 %}
+    <div title="Ön bacakların getirileri bileşik uygulanır, ters bacaklar atlanır (yaklaşık). Ters bacak dilim tutarken atlanan sinyallerin sonucu bilinmiyor, hesaba girmez.">
+      <div class="l">Ters bacak olmasaydı</div>
+      <div class="v">{{ nl.without|usd }}</div>
+      <div class="s">ters bacak {{ nl.n }} işlem · {{ nl.wins }}✓ · {{ '+' if nl.pnl >= 0 else '−' }}{{ (nl.pnl|abs)|usd }}
+        · fark {{ '+' if nl.diff >= 0 else '−' }}{{ (nl.diff|abs)|usd }} (gerçek lehine{% if nl.diff < 0 %} değil{% endif %}){% if nl.blocked %}
+        · dilim tuttuğu için {{ nl.blocked }} sinyal atlandı (sonucu bilinmiyor){% endif %}</div></div>
+    {% endif %}
   </div>
 </div>
 

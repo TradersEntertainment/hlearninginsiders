@@ -3241,6 +3241,12 @@ def sim_summary(s: dict) -> str:
             line += (f" · en iyi {_signed_usd(st['best'].get('pnl_usd'))} {esc(st['best'].get('coin'))}"
                      f" · en kötü {_signed_usd(st['worst'].get('pnl_usd'))} {esc(st['worst'].get('coin'))}")
         lines.append(line)
+        nl = s.get("noleg2") or {}
+        if nl.get("n"):
+            lines.append(f"ters bacak: {nl['n']} işlem · {nl['wins']}✓ · {_signed_usd(nl['pnl'])} · olmasaydı bakiye"
+                         f" ≈{usd(nl['without'])} (gerçek {usd(nl['actual'])})"
+                         + (f" · dilim tuttuğu için {nl['blocked']} sinyal atlandı, sonucu bilinmiyor"
+                            if nl.get("blocked") else ""))
     else:
         lines.append("henüz kapanmış işlem yok")
     for t in s.get("opens") or []:

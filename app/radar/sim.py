@@ -285,6 +285,31 @@ def stats(closed: list[dict], start_balance: float, balance: float) -> dict:
             "by_leg": by_leg, "reasons": reasons}
 
 
+def without_leg2(closed: list[dict], start_balance: float, skipped: list[dict] = (),
+                 opens: list[dict] = ()) -> dict:
+    """Ters bacak hiç açılmasaydı (kullanıcı 22.10: "ters bacak girmese daha mı çok kazanırdı").
+
+    Gerçek bakiye kapanış sırasıyla yeniden kurulur; her ön bacağın kapanışı o anki bakiyeye oranla (getiri) karşı
+    olgusal bakiyeye bileşik uygulanır, ters bacaklar atlanır. YAKLAŞIK: boyut girişteki bakiyeye göreydi, oran
+    kapanış öncesi bakiyeye göre alınır (aynı anda açık işlemlerde küçük fark). Ters bacak bir dilimi tutarken "bakiye
+    bağlı" diye atlanan ön bacak sinyalleri ayrıca sayılır — onların sonucu BİLİNMİYOR (açılmadılar), hesaba girmez."""
+    start = float(start_balance or 0)
+    bal = cf = start
+    for c in sorted(closed, key=lambda c: (int(c.get("exit_ts") or 0), int(c.get("id") or 0))):
+        p = float(c.get("pnl_usd") or 0)
+        if int(c.get("leg") or 1) == 1 and bal > 0:
+            cf *= 1 + p / bal
+        bal += p
+    l2 = [c for c in closed if int(c.get("leg") or 1) == 2]
+    wins = [(int(t.get("entry_ts") or 0), int(t.get("exit_ts") or 0) or 10**12)
+            for t in list(closed) + list(opens) if int(t.get("leg") or 1) == 2]
+    blocked = sum(1 for s in skipped or [] if str(s.get("skip_reason") or "").startswith("bakiye bağlı")
+                  and any(a <= int(s.get("created_ts") or 0) < b for a, b in wins))
+    return {"n": len(l2), "wins": sum(1 for c in l2 if float(c.get("pnl_usd") or 0) > 0),
+            "pnl": sum(float(c.get("pnl_usd") or 0) for c in l2), "actual": bal, "without": cf,
+            "diff": bal - cf, "blocked": blocked}
+
+
 def curve(closed: list[dict], start_balance: float, start_ts: int) -> list[tuple[int, float, dict | None]]:
     """(ts, bakiye, işlem) noktaları: başlangıç + her kapanıştan sonra."""
     pts = [(int(start_ts or 0), float(start_balance or 0), None)]
@@ -793,9 +818,11 @@ async def page(cfg, run: str | None = None) -> dict:
     pts = curve([c for c in closed_all if run_f is None or int(c.get("run") or 1) == run_f],
                 acc.get("start_balance"), acc.get("start_ts")) if closed_all else []
     svg = svg_curve(pts, float(acc.get("start_balance") or 0)) if len(pts) > 1 else ""
+    noleg2 = (without_leg2(closed_all, acc.get("start_balance"), await skipped_trades(run_f, limit=100_000), opens)
+              if run_f is not None and run_f == cur_run else None)
     kv_stats = await kv_get(STATS_KV) or {}
     return {"acc": acc, "run": run_f, "cur_run": cur_run, "opens": opens, "closed": closed,
-            "closed_total": len(closed_all), "skipped": skipped, "stats": st, "equity": equity,
+            "closed_total": len(closed_all), "skipped": skipped, "stats": st, "equity": equity, "noleg2": noleg2,
             "open_pnl": equity - float(acc.get("balance") or 0), "svg": svg, "marks_age": marks_age,
             "gate": gate(cfg, object() if getattr(cfg, "telegram_bot_token", "") else None)
             if False else ("SIM_CHAT_ID yok" if not (getattr(cfg, "sim_chat_id", "") or "").strip()
