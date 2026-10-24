@@ -137,6 +137,10 @@ templates.env.globals["coin_label"] = assets.label
 # term.js önbellek kırıcı: deploy sonrası tam gezinmede yeni JS gelsin (eski JS yeni olay biçimini bilmez — inceleme 19.10)
 templates.env.globals["term_v"] = hashlib.sha1((pathlib.Path(__file__).parent / "static" / "term.js").read_bytes()).hexdigest()[:10]
 templates.env.globals["is_spot"] = assets.is_spot
+# 🐋 Kardeş site bağlantısı (kullanıcı 24.10: "insider sitemize de hypetakip sitemize de birbirinin linkini koyalım,
+# geçilebilsin aralarında, reklam gibi"). Boş bırakılırsa (HYPTAKIP_URL="") bağlantı gösterilmez.
+import os as _os  # noqa: E402
+templates.env.globals["hyptakip_url"] = _os.getenv("HYPTAKIP_URL", "https://hypetakip.up.railway.app").strip().rstrip("/")
 # `select('stale_ts')` şablonda bayat ölçümleri saymak için — Jinja testleri
 # filtre zincirinde kullanılabildiği için sayaç tek satırda kalıyor.
 templates.env.tests["stale_ts"] = _stale_acct

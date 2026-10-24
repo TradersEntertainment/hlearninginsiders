@@ -115,6 +115,7 @@ header form{display:flex;gap:8px}
 .topnav{display:contents}
 .topnav a{padding:3px 8px;margin:0 -7px;border-radius:999px;white-space:nowrap}
 .topnav a.on{color:var(--fg);background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.topnav a.sister{color:#22d3ee;border:1px solid color-mix(in srgb,#22d3ee 45%,transparent);font-weight:700}
 input[type=text],input[type=number],input[type=time],input[type=password],.in{
 background:var(--input-bg);border:1.5px solid var(--border);
 color:var(--fg);padding:8px 16px;border-radius:999px;font:inherit;width:180px;
@@ -710,6 +711,7 @@ section.term .mono,section.term .tr,section.term .lr,section.term .wr{font-famil
   {{ nl('/tani', 'Tam sistem dökümü — düz metin, kopyalayıp gönderilir', '🩺 tanı') }}
   {{ nl('/settings', 'Ayarlar', '⚙️ ayarlar') }}
   {% if has_pw and not is_admin %}{{ nl('/login', 'Ayarları değiştirmek için giriş', '🔐 giriş') }}{% endif %}
+  {% if hyptakip_url %}<a href="{{ hyptakip_url }}" target="_blank" rel="noopener" class="sister" title="HYPTAKIP — seçtiğin balinaların pozisyon, emir, spot ve transfer takibi, K/Z kartları (ayrı site)">🐋 HYPTAKIP ↗</a>{% endif %}
   </nav>
   <span class="themes">
     <a href="#" class="tswitch" data-t="" title="Gece Eriği teması">🌙</a>
@@ -719,7 +721,7 @@ section.term .mono,section.term .tr,section.term .lr,section.term .wr{font-famil
   </span>
 </header>
 <main>{% block content %}{% endblock %}</main>
-<footer>🌙 gözlem aracıdır, yatırım tavsiyesi değildir · veriler hyperliquid'in halka açık api'sinden</footer>
+<footer>🌙 gözlem aracıdır, yatırım tavsiyesi değildir · veriler hyperliquid'in halka açık api'sinden{% if hyptakip_url %} · <a href="{{ hyptakip_url }}" target="_blank" rel="noopener">🐋 balina takibi ve K/Z kartları: HYPTAKIP ↗</a>{% endif %}</footer>
 <script>
 // ---- Tablo sıralama: başlığa tıkla = büyükten küçüğe, tekrar tıkla = tersi ----
 var SORT_STATE = null; // {ti, ci, dir} — yumuşak yenileme sonrası geri uygulanır

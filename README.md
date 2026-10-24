@@ -2917,6 +2917,13 @@ Groq/Cerebras/OpenRouter/DeepSeek aynı OpenAI-uyumlu biçimi konuşur.
 
 Çıktı **yalnız sitede** görünür: doğrulanmamış AI metni Telegram'a düşmez.
 
+## 🐋 Kardeş site: HYPTAKIP
+
+Üst menünün sonunda ve alt bilgide **🐋 HYPTAKIP ↗** bağlantısı var (kullanıcı 24.10: "birbirinin linkini koyalım,
+geçilebilsin aralarında, reklam gibi"). HYPTAKIP seçilen balinaların pozisyon / emir / spot / transfer takibini ve K/Z
+kartlarını yapan ayrı site; o tarafta da bu siteye bağlantı var. Adres `HYPTAKIP_URL` (varsayılan
+`https://hypetakip.up.railway.app`); boş bırakılırsa bağlantı gösterilmez.
+
 ## Üçüncü Taraf
 
 Site kendi kendine yeterlidir: harici CDN'e, yazı tipine ya da script'e istek atmaz.
